@@ -99,6 +99,14 @@ export interface AppSettings {
   weeklyCutoffTime: string; // e.g. "17:00"
 }
 
+export interface OrderHistoryLog {
+  id: string;
+  clientId: string;
+  who: string;
+  summary: string;
+  timestamp: string;
+}
+
 export interface DatabaseSchema {
   clients: ClientProfile[];
   statuses: ClientStatus[];
@@ -107,5 +115,6 @@ export interface DatabaseSchema {
   boxTypes: BoxType[];
   navigators: Navigator[];
   deliveryHistory: DeliveryRecord[];
+  orderHistory: OrderHistoryLog[];
   settings: AppSettings;
 }
