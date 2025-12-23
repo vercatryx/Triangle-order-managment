@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Search, ChevronRight, FileText, Download } from 'lucide-react';
 import { getAllBillingRecords } from '@/lib/actions';
@@ -8,6 +9,7 @@ import { BillingRecord } from '@/lib/types';
 import styles from './BillingList.module.css';
 
 export function BillingList() {
+    const router = useRouter();
     const [records, setRecords] = useState<BillingRecord[]>([]);
     const [search, setSearch] = useState('');
     const [isLoading, setIsLoading] = useState(true);
@@ -48,6 +50,32 @@ export function BillingList() {
             <div className={styles.header}>
                 <h1 className={styles.title}>Billing Records</h1>
                 <div className={styles.headerActions}>
+                    <div className={styles.viewToggle}>
+                        <button
+                            className={styles.viewBtn}
+                            onClick={() => router.push('/clients')}
+                        >
+                            All Clients
+                        </button>
+                        <button
+                            className={styles.viewBtn}
+                            onClick={() => router.push('/clients?view=ineligible')}
+                        >
+                            Ineligible
+                        </button>
+                        <button
+                            className={styles.viewBtn}
+                            onClick={() => router.push('/clients?view=history')}
+                        >
+                            History
+                        </button>
+                        <button
+                            className={`${styles.viewBtn} ${styles.viewBtnActive}`}
+                            onClick={() => router.push('/billing')}
+                        >
+                            Billing
+                        </button>
+                    </div>
                     <button className="btn btn-secondary">
                         <Download size={16} /> Export CSV
                     </button>

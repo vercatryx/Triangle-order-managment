@@ -16,6 +16,36 @@
     font-weight: 700;
 }
 
+.viewToggle {
+    display: flex;
+    background-color: var(--bg-surface);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    padding: 2px;
+}
+
+.viewBtn {
+    background: none;
+    border: none;
+    padding: 6px 12px;
+    border-radius: var(--radius-sm);
+    color: var(--text-secondary);
+    font-size: 0.875rem;
+    cursor: pointer;
+    font-weight: 500;
+    transition: all 0.2s;
+}
+
+.viewBtn:hover {
+    color: var(--text-primary);
+}
+
+.viewBtnActive {
+    background-color: var(--bg-app);
+    color: var(--color-primary);
+    box-shadow: var(--shadow-sm);
+}
+
 .headerActions {
     display: flex;
     gap: 1rem;
