@@ -3,9 +3,10 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { ClientProfile, ClientStatus, Navigator, Vendor, MenuItem, BoxType, ServiceType, AppSettings, DeliveryRecord } from '@/lib/types';
-import { getClient, updateClient, getStatuses, getNavigators, getVendors, getMenuItems, getBoxTypes, getSettings, getClientHistory, updateDeliveryProof, recordClientChange } from '@/lib/actions';
-import { Save, ArrowLeft, Truck, Package, AlertTriangle, Upload, Trash2, Plus, Check } from 'lucide-react';
+import { getClient, updateClient, getStatuses, getNavigators, getVendors, getMenuItems, getBoxTypes, getSettings, getClientHistory, updateDeliveryProof, recordClientChange, getOrderHistory } from '@/lib/actions';
+import { Save, ArrowLeft, Truck, Package, AlertTriangle, Upload, Trash2, Plus, Check, ClipboardList, History } from 'lucide-react';
 import styles from './ClientProfile.module.css';
+import { OrderHistoryItem } from './OrderHistoryItem';
 
 interface Props {
     clientId: string;
@@ -23,6 +24,8 @@ export function ClientProfileDetail({ clientId }: Props) {
     const [boxTypes, setBoxTypes] = useState<BoxType[]>([]);
     const [settings, setSettings] = useState<AppSettings | null>(null);
     const [history, setHistory] = useState<DeliveryRecord[]>([]);
+    const [orderHistory, setOrderHistory] = useState<any[]>([]);
+    const [activeHistoryTab, setActiveHistoryTab] = useState<'deliveries' | 'audit'>('deliveries');
 
     const [formData, setFormData] = useState<Partial<ClientProfile>>({});
     const [orderConfig, setOrderConfig] = useState<any>({});
@@ -59,8 +62,13 @@ export function ClientProfileDetail({ clientId }: Props) {
                 }
             }
             setOrderConfig(activeOrder);
-            const h = await getClientHistory(clientId);
+
+            const [h, oh] = await Promise.all([
+                getClientHistory(clientId),
+                getOrderHistory(clientId)
+            ]);
             setHistory(h);
+            setOrderHistory(oh);
         }
         setStatuses(s);
         setNavigators(n);
@@ -167,6 +175,10 @@ export function ClientProfileDetail({ clientId }: Props) {
         // Refresh original client data to reflect latest saved state
         const updatedClient = await getClient(clientId);
         if (updatedClient) setClient(updatedClient);
+
+        // Refresh history
+        const oh = await getOrderHistory(clientId);
+        setOrderHistory(oh);
 
         setSaving(false);
         setMessage('Client profile updated.');
@@ -429,45 +441,73 @@ export function ClientProfileDetail({ clientId }: Props) {
                     </section>
 
                     <section className={styles.card} style={{ marginTop: 'var(--spacing-lg)' }}>
-                        <h3 className={styles.sectionTitle}>Order History</h3>
-                        <div className={styles.historyList}>
-                            {history.map(record => (
-                                <div key={record.id} className={styles.item} style={{ flexDirection: 'column', alignItems: 'flex-start', gap: '8px', padding: '12px', borderBottom: '1px solid var(--border-color)' }}>
-                                    <div style={{ display: 'flex', justifyContent: 'space-between', width: '100%' }}>
-                                        <span style={{ fontWeight: 500 }}>{new Date(record.deliveryDate).toLocaleDateString()}</span>
-                                        <span className="badge">{record.serviceType}</span>
-                                    </div>
-                                    <div style={{ color: 'var(--text-secondary)', fontSize: '0.875rem' }}>{record.itemsSummary}</div>
+                        <div className={styles.historyHeader}>
+                            <h3 className={styles.sectionTitle}>Order History</h3>
+                            <div className={styles.tabs}>
+                                <button
+                                    className={`${styles.tab} ${activeHistoryTab === 'deliveries' ? styles.activeTab : ''}`}
+                                    onClick={() => setActiveHistoryTab('deliveries')}
+                                >
+                                    <ClipboardList size={14} /> Deliveries
+                                </button>
+                                <button
+                                    className={`${styles.tab} ${activeHistoryTab === 'audit' ? styles.activeTab : ''}`}
+                                    onClick={() => setActiveHistoryTab('audit')}
+                                >
+                                    <History size={14} /> Change Log ({orderHistory.length})
+                                </button>
+                            </div>
+                        </div>
 
-                                    <div style={{ width: '100%', marginTop: '8px', paddingTop: '8px' }}>
-                                        {record.proofOfDeliveryImage ? (
-                                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                                <Check size={16} color="var(--color-success)" />
-                                                <a href={record.proofOfDeliveryImage} target="_blank" style={{ color: 'var(--color-primary)', fontSize: '0.875rem' }}>
-                                                    Proof Uploaded
-                                                </a>
+                        <div className={styles.historyList}>
+                            {activeHistoryTab === 'deliveries' ? (
+                                <>
+                                    {history.map(record => (
+                                        <div key={record.id} className={styles.item} style={{ flexDirection: 'column', alignItems: 'flex-start', gap: '8px', padding: '12px', borderBottom: '1px solid var(--border-color)' }}>
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', width: '100%' }}>
+                                                <span style={{ fontWeight: 500 }}>{new Date(record.deliveryDate).toLocaleDateString()}</span>
+                                                <span className="badge">{record.serviceType}</span>
                                             </div>
-                                        ) : (
-                                            <div style={{ display: 'flex', gap: '8px', width: '100%' }}>
-                                                <input
-                                                    placeholder="Paste Proof URL & Enter..."
-                                                    className="input"
-                                                    style={{ fontSize: '0.8rem', padding: '4px 8px' }}
-                                                    onKeyDown={async (e) => {
-                                                        if (e.key === 'Enter') {
-                                                            await updateDeliveryProof(record.id, (e.target as HTMLInputElement).value);
-                                                            // reload
-                                                            const h = await getClientHistory(clientId);
-                                                            setHistory(h);
-                                                        }
-                                                    }}
-                                                />
+                                            <div style={{ color: 'var(--text-secondary)', fontSize: '0.875rem' }}>{record.itemsSummary}</div>
+
+                                            <div style={{ width: '100%', marginTop: '8px', paddingTop: '8px' }}>
+                                                {record.proofOfDeliveryImage ? (
+                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                                        <Check size={16} color="var(--color-success)" />
+                                                        <a href={record.proofOfDeliveryImage} target="_blank" style={{ color: 'var(--color-primary)', fontSize: '0.875rem' }}>
+                                                            Proof Uploaded
+                                                        </a>
+                                                    </div>
+                                                ) : (
+                                                    <div style={{ display: 'flex', gap: '8px', width: '100%' }}>
+                                                        <input
+                                                            placeholder="Paste Proof URL & Enter..."
+                                                            className="input"
+                                                            style={{ fontSize: '0.8rem', padding: '4px 8px' }}
+                                                            onKeyDown={async (e) => {
+                                                                if (e.key === 'Enter') {
+                                                                    await updateDeliveryProof(record.id, (e.target as HTMLInputElement).value);
+                                                                    // reload
+                                                                    const h = await getClientHistory(clientId);
+                                                                    setHistory(h);
+                                                                }
+                                                            }}
+                                                        />
+                                                    </div>
+                                                )}
                                             </div>
-                                        )}
-                                    </div>
+                                        </div>
+                                    ))}
+                                    {history.length === 0 && <div className={styles.empty}>No deliveries recorded yet.</div>}
+                                </>
+                            ) : (
+                                <div className={styles.animateFadeIn}>
+                                    {orderHistory.map(log => (
+                                        <OrderHistoryItem key={log.id} log={log} />
+                                    ))}
+                                    {orderHistory.length === 0 && <div className={styles.empty}>No changes recorded yet.</div>}
                                 </div>
-                            ))}
-                            {history.length === 0 && <div className={styles.empty}>No deliveries recorded yet.</div>}
+                            )}
                         </div>
                     </section>
                 </div>

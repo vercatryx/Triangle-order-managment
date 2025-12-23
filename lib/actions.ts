@@ -450,3 +450,39 @@ export async function recordClientChange(clientId: string, summary: string, who:
         console.error('Error recording audit log:', error);
     }
 }
+
+export async function getOrderHistory(clientId: string) {
+    if (!clientId) return [];
+
+    // Attempt with timestamp first
+    let result = await supabase
+        .from('order_history')
+        .select('*')
+        .eq('client_id', clientId)
+        .order('timestamp', { ascending: false });
+
+    // Fallback if timestamp column doesn't exist or other error
+    if (result.error) {
+        result = await supabase
+            .from('order_history')
+            .select('*')
+            .eq('client_id', clientId)
+            .order('created_at', { ascending: false });
+    }
+
+    if (result.error) {
+        console.error('Error fetching order history:', result.error);
+        return [];
+    }
+
+    const data = result.data;
+    if (!data || data.length === 0) return [];
+
+    return data.map((d: any) => ({
+        id: d.id,
+        clientId: d.client_id || d.clientId,
+        who: d.who,
+        summary: d.summary,
+        timestamp: d.timestamp || d.created_at || new Date().toISOString()
+    }));
+}
