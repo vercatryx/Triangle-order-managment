@@ -435,3 +435,18 @@ export async function updateDeliveryProof(id: string, proofUrl: string) {
     handleError(error);
     revalidatePath('/clients');
 }
+
+export async function recordClientChange(clientId: string, summary: string, who: string = 'Admin') {
+    const { error } = await supabase
+        .from('order_history')
+        .insert([{
+            client_id: clientId,
+            who: who,
+            summary: summary,
+            timestamp: new Date().toISOString()
+        }]);
+
+    if (error) {
+        console.error('Error recording audit log:', error);
+    }
+}
