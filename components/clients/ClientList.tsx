@@ -6,8 +6,10 @@ import { ClientProfile, ClientStatus, Navigator } from '@/lib/types';
 import { getClients, getStatuses, getNavigators, addClient } from '@/lib/actions';
 import { Plus, Search, ChevronRight } from 'lucide-react';
 import styles from './ClientList.module.css';
+import { useRouter } from 'next/navigation';
 
 export function ClientList() {
+    const router = useRouter();
     const [clients, setClients] = useState<ClientProfile[]>([]);
     const [statuses, setStatuses] = useState<ClientStatus[]>([]);
     const [navigators, setNavigators] = useState<Navigator[]>([]);
@@ -123,7 +125,7 @@ export function ClientList() {
                         </button>
                         <button
                             className={`${styles.viewBtn} ${currentView === 'billing' ? styles.viewBtnActive : ''}`}
-                            onClick={() => setCurrentView('billing')}
+                            onClick={() => router.push('/billing')}
                         >
                             Billing
                         </button>

@@ -531,3 +531,26 @@ export async function getBillingHistory(clientId: string) {
         createdAt: d.created_at
     }));
 }
+
+export async function getAllBillingRecords() {
+    const { data, error } = await supabase
+        .from('billing_records')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+    if (error) {
+        console.error('Error fetching all billing records:', error);
+        return [];
+    }
+
+    return (data || []).map((d: any) => ({
+        id: d.id,
+        clientId: d.client_id,
+        clientName: d.client_name,
+        status: d.status,
+        remarks: d.remarks,
+        navigator: d.navigator,
+        amount: d.amount,
+        createdAt: d.created_at
+    }));
+}
