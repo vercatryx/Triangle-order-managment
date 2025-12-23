@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { ClientProfile, ClientStatus, Navigator, Vendor, MenuItem, BoxType, ServiceType, AppSettings, DeliveryRecord } from '@/lib/types';
-import { getClient, updateClient, getStatuses, getNavigators, getVendors, getMenuItems, getBoxTypes, getSettings, getClientHistory, updateDeliveryProof } from '@/lib/actions';
+import { getClient, updateClient, getStatuses, getNavigators, getVendors, getMenuItems, getBoxTypes, getSettings, getClientHistory, updateDeliveryProof, recordClientChange } from '@/lib/actions';
 import { Save, ArrowLeft, Truck, Package, AlertTriangle, Upload, Trash2, Plus, Check } from 'lucide-react';
 import styles from './ClientProfile.module.css';
 
@@ -96,6 +96,8 @@ export function ClientProfileDetail({ clientId }: Props) {
     }
 
     async function handleSave() {
+        if (!client) return;
+
         if (formData.serviceType === 'Food') {
             const currentTotal = getCurrentOrderTotalValue();
             const limit = formData.approvedMealsPerWeek || 0;
@@ -106,6 +108,36 @@ export function ClientProfileDetail({ clientId }: Props) {
         }
 
         setSaving(true);
+
+        // -- Change Detection --
+        const changes: string[] = [];
+        if (client.fullName !== formData.fullName) changes.push(`Full Name: "${client.fullName}" -> "${formData.fullName}"`);
+        if (client.address !== formData.address) changes.push(`Address: "${client.address}" -> "${formData.address}"`);
+        if (client.phoneNumber !== formData.phoneNumber) changes.push(`Phone: "${client.phoneNumber}" -> "${formData.phoneNumber}"`);
+        if (client.notes !== formData.notes) changes.push('Notes updated');
+        if (client.statusId !== formData.statusId) {
+            const oldStatus = statuses.find(s => s.id === client.statusId)?.name || 'Unknown';
+            const newStatus = statuses.find(s => s.id === formData.statusId)?.name || 'Unknown';
+            changes.push(`Status: "${oldStatus}" -> "${newStatus}"`);
+        }
+        if (client.navigatorId !== formData.navigatorId) {
+            const oldNav = navigators.find(n => n.id === client.navigatorId)?.name || 'Unassigned';
+            const newNav = navigators.find(n => n.id === formData.navigatorId)?.name || 'Unassigned';
+            changes.push(`Navigator: "${oldNav}" -> "${newNav}"`);
+        }
+        if (client.serviceType !== formData.serviceType) changes.push(`Service Type: "${client.serviceType}" -> "${formData.serviceType}"`);
+        if (client.approvedMealsPerWeek !== formData.approvedMealsPerWeek) changes.push(`Approved Meals: ${client.approvedMealsPerWeek} -> ${formData.approvedMealsPerWeek}`);
+        if (client.screeningTookPlace !== formData.screeningTookPlace) changes.push(`Screening Took Place: ${client.screeningTookPlace} -> ${formData.screeningTookPlace}`);
+        if (client.screeningSigned !== formData.screeningSigned) changes.push(`Screening Signed: ${client.screeningSigned} -> ${formData.screeningSigned}`);
+
+        // Simplified Order comparison
+        const oldOrderStr = JSON.stringify(client.activeOrder);
+        const newOrderStr = JSON.stringify(orderConfig);
+        if (oldOrderStr !== newOrderStr) {
+            changes.push('Order configuration changed');
+        }
+
+        const summary = changes.length > 0 ? changes.join(', ') : 'No functional changes detected (re-saved profile)';
 
         // Ensure structure is correct
         const cleanedOrderConfig = { ...orderConfig };
@@ -130,6 +162,12 @@ export function ClientProfileDetail({ clientId }: Props) {
         };
 
         await updateClient(clientId, updateData);
+        await recordClientChange(clientId, summary, 'Admin');
+
+        // Refresh original client data to reflect latest saved state
+        const updatedClient = await getClient(clientId);
+        if (updatedClient) setClient(updatedClient);
+
         setSaving(false);
         setMessage('Client profile updated.');
         setTimeout(() => setMessage(null), 3000);
