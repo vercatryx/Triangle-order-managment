@@ -12,6 +12,7 @@ export function BillingList() {
     const router = useRouter();
     const [records, setRecords] = useState<BillingRecord[]>([]);
     const [search, setSearch] = useState('');
+    const [statusFilter, setStatusFilter] = useState<'all' | 'success' | 'failed' | 'pending'>('all');
     const [isLoading, setIsLoading] = useState(true);
 
     useEffect(() => {
@@ -25,11 +26,15 @@ export function BillingList() {
         setIsLoading(false);
     }
 
-    const filteredRecords = records.filter(r =>
-        (r.clientName || '').toLowerCase().includes(search.toLowerCase()) ||
-        (r.remarks || '').toLowerCase().includes(search.toLowerCase()) ||
-        (r.navigator || '').toLowerCase().includes(search.toLowerCase())
-    );
+    const filteredRecords = records.filter(r => {
+        const matchesSearch = (r.clientName || '').toLowerCase().includes(search.toLowerCase()) ||
+            (r.remarks || '').toLowerCase().includes(search.toLowerCase()) ||
+            (r.navigator || '').toLowerCase().includes(search.toLowerCase());
+
+        const matchesStatus = statusFilter === 'all' || r.status === statusFilter;
+
+        return matchesSearch && matchesStatus;
+    });
 
     if (isLoading) {
         return (
@@ -92,6 +97,20 @@ export function BillingList() {
                         value={search}
                         onChange={e => setSearch(e.target.value)}
                     />
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <label className="label" style={{ marginBottom: 0, whiteSpace: 'nowrap' }}>Filter Status:</label>
+                    <select
+                        className="input"
+                        style={{ width: '150px' }}
+                        value={statusFilter}
+                        onChange={(e) => setStatusFilter(e.target.value as any)}
+                    >
+                        <option value="all">All Statuses</option>
+                        <option value="success">Success</option>
+                        <option value="failed">Failed</option>
+                        <option value="pending">Pending</option>
+                    </select>
                 </div>
             </div>
 
