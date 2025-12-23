@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { ClientProfile, ClientStatus, Navigator, Vendor, MenuItem, BoxType, ServiceType, AppSettings, DeliveryRecord } from '@/lib/types';
 import { getClient, updateClient, getStatuses, getNavigators, getVendors, getMenuItems, getBoxTypes, getSettings, getClientHistory, updateDeliveryProof, recordClientChange, getOrderHistory } from '@/lib/actions';
-import { Save, ArrowLeft, Truck, Package, AlertTriangle, Upload, Trash2, Plus, Check, ClipboardList, History } from 'lucide-react';
+import { Save, ArrowLeft, Truck, Package, AlertTriangle, Upload, Trash2, Plus, Check, ClipboardList, History, CreditCard } from 'lucide-react';
 import styles from './ClientProfile.module.css';
 import { OrderHistoryItem } from './OrderHistoryItem';
 
@@ -241,6 +241,9 @@ export function ClientProfileDetail({ clientId }: Props) {
                 <h1 className={styles.title}>{formData.fullName}</h1>
                 <div className={styles.actions}>
                     {message && <span className={styles.successMessage}>{message}</span>}
+                    <button className="btn btn-secondary" onClick={() => router.push(`/clients/${clientId}/billing`)} style={{ marginRight: '8px' }}>
+                        <CreditCard size={16} /> Billing
+                    </button>
                     <button className="btn btn-primary" onClick={handleSave} disabled={saving}>
                         <Save size={16} /> Save Changes
                     </button>
