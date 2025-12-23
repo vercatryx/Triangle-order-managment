@@ -319,8 +319,27 @@ export async function addClient(data: Omit<ClientProfile, 'id' | 'createdAt' | '
 
     const { data: res, error } = await supabase.from('clients').insert([payload]).select().single();
     handleError(error);
-    revalidatePath('/clients');
-    if (res) return mapClientFromDB(res);
+
+    if (res) {
+        // Automatically create initial billing record
+        let navigatorName = 'Unassigned';
+        if (data.navigatorId) {
+            const { data: nav } = await supabase.from('navigators').select('name').eq('id', data.navigatorId).single();
+            if (nav) navigatorName = nav.name;
+        }
+
+        await supabase.from('billing_records').insert([{
+            client_id: res.id,
+            client_name: res.full_name,
+            status: 'pending',
+            remarks: 'Initial record created upon client registration',
+            navigator: navigatorName,
+            amount: 0
+        }]);
+
+        revalidatePath('/clients');
+        return mapClientFromDB(res);
+    }
 }
 
 export async function updateClient(id: string, data: Partial<ClientProfile>) {
@@ -484,5 +503,31 @@ export async function getOrderHistory(clientId: string) {
         who: d.who,
         summary: d.summary,
         timestamp: d.timestamp || d.created_at || new Date().toISOString()
+    }));
+}
+
+export async function getBillingHistory(clientId: string) {
+    if (!clientId) return [];
+
+    const { data, error } = await supabase
+        .from('billing_records')
+        .select('*')
+        .eq('client_id', clientId)
+        .order('created_at', { ascending: false });
+
+    if (error) {
+        console.error('Error fetching billing history:', error);
+        return [];
+    }
+
+    return (data || []).map((d: any) => ({
+        id: d.id,
+        clientId: d.client_id,
+        clientName: d.client_name,
+        status: d.status,
+        remarks: d.remarks,
+        navigator: d.navigator,
+        amount: d.amount,
+        createdAt: d.created_at
     }));
 }

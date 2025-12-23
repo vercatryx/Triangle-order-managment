@@ -107,6 +107,17 @@ export interface OrderHistoryLog {
   timestamp: string;
 }
 
+export interface BillingRecord {
+  id: string;
+  clientId: string;
+  clientName?: string;
+  status: 'success' | 'failed' | 'pending';
+  remarks: string;
+  navigator: string;
+  amount: number;
+  createdAt: string;
+}
+
 export interface DatabaseSchema {
   clients: ClientProfile[];
   statuses: ClientStatus[];
@@ -116,5 +127,6 @@ export interface DatabaseSchema {
   navigators: Navigator[];
   deliveryHistory: DeliveryRecord[];
   orderHistory: OrderHistoryLog[];
+  billingHistory: BillingRecord[];
   settings: AppSettings;
 }
