@@ -1,0 +1,439 @@
+'use client';
+
+import { useState, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
+import { ClientProfile, ClientStatus, Navigator, Vendor, MenuItem, BoxType, ServiceType, AppSettings, DeliveryRecord } from '@/lib/types';
+import { getClient, updateClient, getStatuses, getNavigators, getVendors, getMenuItems, getBoxTypes, getSettings, getClientHistory, updateDeliveryProof } from '@/lib/actions';
+import { Save, ArrowLeft, Truck, Package, AlertTriangle, Upload, Trash2, Plus, Check } from 'lucide-react';
+import styles from './ClientProfile.module.css';
+
+interface Props {
+    clientId: string;
+}
+
+const SERVICE_TYPES: ServiceType[] = ['Food', 'Boxes', 'Cooking supplies', 'Care plan'];
+
+export function ClientProfileDetail({ clientId }: Props) {
+    const router = useRouter();
+    const [client, setClient] = useState<ClientProfile | null>(null);
+    const [statuses, setStatuses] = useState<ClientStatus[]>([]);
+    const [navigators, setNavigators] = useState<Navigator[]>([]);
+    const [vendors, setVendors] = useState<Vendor[]>([]);
+    const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
+    const [boxTypes, setBoxTypes] = useState<BoxType[]>([]);
+    const [settings, setSettings] = useState<AppSettings | null>(null);
+    const [history, setHistory] = useState<DeliveryRecord[]>([]);
+
+    const [formData, setFormData] = useState<Partial<ClientProfile>>({});
+    const [orderConfig, setOrderConfig] = useState<any>({});
+
+    const [saving, setSaving] = useState(false);
+    const [message, setMessage] = useState<string | null>(null);
+
+    useEffect(() => {
+        loadData();
+    }, [clientId]);
+
+    async function loadData() {
+        const [c, s, n, v, m, b, appSettings] = await Promise.all([
+            getClient(clientId),
+            getStatuses(),
+            getNavigators(),
+            getVendors(),
+            getMenuItems(),
+            getBoxTypes(),
+            getSettings()
+        ]);
+
+        if (c) {
+            setClient(c);
+            setFormData(c);
+            const activeOrder: any = c.activeOrder || { serviceType: c.serviceType };
+            // Migration/Safety: Ensure vendorSelections exists for Food
+            if (activeOrder.serviceType === 'Food' && !activeOrder.vendorSelections) {
+                if (activeOrder.vendorId) {
+                    // Migrate old format
+                    activeOrder.vendorSelections = [{ vendorId: activeOrder.vendorId, items: activeOrder.menuSelections || {} }];
+                } else {
+                    activeOrder.vendorSelections = [{ vendorId: '', items: {} }];
+                }
+            }
+            setOrderConfig(activeOrder);
+            const h = await getClientHistory(clientId);
+            setHistory(h);
+        }
+        setStatuses(s);
+        setNavigators(n);
+        setVendors(v);
+        setMenuItems(m);
+        setBoxTypes(b);
+        setSettings(appSettings);
+    }
+
+    if (!client) return <div>Loading...</div>;
+
+    // -- Logic Helpers --
+
+    function getVendorMenuItems(vendorId: string) {
+        return menuItems.filter(i => i.vendorId === vendorId && i.isActive);
+    }
+
+    function getCurrentOrderTotalValue() {
+        if (!orderConfig.vendorSelections) return 0;
+        let total = 0;
+        for (const selection of orderConfig.vendorSelections) {
+            if (!selection.items) continue;
+            for (const [itemId, qty] of Object.entries(selection.items)) {
+                const item = menuItems.find(i => i.id === itemId);
+                total += (item ? item.value * (qty as number) : 0);
+            }
+        }
+        return total;
+    }
+
+    function isCutoffPassed() {
+        return false; // MVP simplified
+    }
+
+    async function handleSave() {
+        if (formData.serviceType === 'Food') {
+            const currentTotal = getCurrentOrderTotalValue();
+            const limit = formData.approvedMealsPerWeek || 0;
+            if (currentTotal > limit) {
+                setMessage(`Error: Order value (${currentTotal}) exceeds approved limit (${limit}).`);
+                return;
+            }
+        }
+
+        setSaving(true);
+
+        // Ensure structure is correct
+        const cleanedOrderConfig = { ...orderConfig };
+        if (formData.serviceType === 'Food') {
+            // Remove empty selections or selections with no vendor
+            cleanedOrderConfig.vendorSelections = (cleanedOrderConfig.vendorSelections || [])
+                .filter((s: any) => s.vendorId)
+                .map((s: any) => ({
+                    vendorId: s.vendorId,
+                    items: s.items || {}
+                }));
+        }
+
+        const updateData: Partial<ClientProfile> = {
+            ...formData,
+            activeOrder: {
+                ...cleanedOrderConfig,
+                serviceType: formData.serviceType,
+                lastUpdated: new Date().toISOString(),
+                updatedBy: 'Admin'
+            }
+        };
+
+        await updateClient(clientId, updateData);
+        setSaving(false);
+        setMessage('Client profile updated.');
+        setTimeout(() => setMessage(null), 3000);
+    }
+
+    // -- Event Handlers --
+
+    function handleServiceChange(type: ServiceType) {
+        setFormData({ ...formData, serviceType: type });
+        // Reset order config for new type
+        if (type === 'Food') {
+            setOrderConfig({ serviceType: type, vendorSelections: [{ vendorId: '', items: {} }] });
+        } else {
+            setOrderConfig({ serviceType: type });
+        }
+    }
+
+    function addVendorBlock() {
+        setOrderConfig({
+            ...orderConfig,
+            vendorSelections: [...(orderConfig.vendorSelections || []), { vendorId: '', items: {} }]
+        });
+    }
+
+    function removeVendorBlock(index: number) {
+        const current = [...(orderConfig.vendorSelections || [])];
+        current.splice(index, 1);
+        setOrderConfig({ ...orderConfig, vendorSelections: current });
+    }
+
+    function updateVendorSelection(index: number, field: string, value: any) {
+        const current = [...(orderConfig.vendorSelections || [])];
+        current[index] = { ...current[index], [field]: value };
+        // If changing vendor, maybe clear items?
+        if (field === 'vendorId') {
+            current[index].items = {};
+        }
+        setOrderConfig({ ...orderConfig, vendorSelections: current });
+    }
+
+    function updateItemQuantity(blockIndex: number, itemId: string, qty: number) {
+        const current = [...(orderConfig.vendorSelections || [])];
+        const items = { ...(current[blockIndex].items || {}) };
+        if (qty > 0) {
+            items[itemId] = qty;
+        } else {
+            delete items[itemId];
+        }
+        current[blockIndex].items = items;
+        setOrderConfig({ ...orderConfig, vendorSelections: current });
+    }
+
+    return (
+        <div className={styles.container}>
+            <header className={styles.header}>
+                <button className={styles.backBtn} onClick={() => router.push('/clients')}>
+                    <ArrowLeft size={20} /> Back to List
+                </button>
+                <h1 className={styles.title}>{formData.fullName}</h1>
+                <div className={styles.actions}>
+                    {message && <span className={styles.successMessage}>{message}</span>}
+                    <button className="btn btn-primary" onClick={handleSave} disabled={saving}>
+                        <Save size={16} /> Save Changes
+                    </button>
+                </div>
+            </header>
+
+            <div className={styles.grid}>
+                <div className={styles.column}>
+                    <section className={styles.card}>
+                        <h3 className={styles.sectionTitle}>Client Details</h3>
+
+                        <div className={styles.formGroup}>
+                            <label className="label">Full Name</label>
+                            <input className="input" value={formData.fullName} onChange={e => setFormData({ ...formData, fullName: e.target.value })} />
+                        </div>
+
+                        <div className={styles.formGroup}>
+                            <label className="label">Status</label>
+                            <select className="input" value={formData.statusId} onChange={e => setFormData({ ...formData, statusId: e.target.value })}>
+                                {statuses.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                            </select>
+                        </div>
+
+                        <div className={styles.formGroup}>
+                            <label className="label">Assigned Navigator</label>
+                            <select className="input" value={formData.navigatorId} onChange={e => setFormData({ ...formData, navigatorId: e.target.value })}>
+                                <option value="">Unassigned</option>
+                                {navigators.map(n => <option key={n.id} value={n.id}>{n.name}</option>)}
+                            </select>
+                        </div>
+
+                        <div className={styles.formGroup}>
+                            <label className="label">Address</label>
+                            <input className="input" value={formData.address} onChange={e => setFormData({ ...formData, address: e.target.value })} />
+                        </div>
+
+                        <div className={styles.formGroup}>
+                            <label className="label">Phone</label>
+                            <input className="input" value={formData.phoneNumber} onChange={e => setFormData({ ...formData, phoneNumber: e.target.value })} />
+                        </div>
+
+                        <div className={styles.formGroup}>
+                            <label className="label">General Notes</label>
+                            <textarea className="input" style={{ height: '100px' }} value={formData.notes} onChange={e => setFormData({ ...formData, notes: e.target.value })} />
+                        </div>
+
+                        <div className={styles.checkboxTitle}>Screening</div>
+                        <div className={styles.row}>
+                            <label className={styles.checkboxLabel}>
+                                <input type="checkbox" checked={formData.screeningTookPlace} onChange={e => setFormData({ ...formData, screeningTookPlace: e.target.checked })} />
+                                Took Place
+                            </label>
+                            <label className={styles.checkboxLabel}>
+                                <input type="checkbox" checked={formData.screeningSigned} onChange={e => setFormData({ ...formData, screeningSigned: e.target.checked })} />
+                                Signed
+                            </label>
+                        </div>
+                    </section>
+                </div>
+
+                <div className={styles.column}>
+                    <section className={styles.card}>
+                        <h3 className={styles.sectionTitle}>Service Configuration</h3>
+
+                        <div className={styles.formGroup}>
+                            <label className="label">Service Type</label>
+                            <div className={styles.serviceTypes}>
+                                {SERVICE_TYPES.map(type => (
+                                    <button
+                                        key={type}
+                                        className={`${styles.serviceBtn} ${formData.serviceType === type ? styles.activeService : ''}`}
+                                        onClick={() => handleServiceChange(type)}
+                                    >
+                                        {type}
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+
+                        {formData.serviceType === 'Food' && (
+                            <div className="animate-fade-in">
+                                <div className={styles.formGroup}>
+                                    <label className="label">Approved Meals Per Week</label>
+                                    <input
+                                        type="number"
+                                        className="input"
+                                        value={formData.approvedMealsPerWeek || 0}
+                                        onChange={e => setFormData({ ...formData, approvedMealsPerWeek: Number(e.target.value) })}
+                                    />
+                                </div>
+
+                                <div className={styles.divider} />
+
+                                <div className={styles.orderHeader}>
+                                    <h4>Current Order Request</h4>
+                                    <div className={styles.budget} style={{
+                                        color: getCurrentOrderTotalValue() > (formData.approvedMealsPerWeek || 0) ? 'var(--color-danger)' : 'inherit',
+                                        backgroundColor: getCurrentOrderTotalValue() > (formData.approvedMealsPerWeek || 0) ? 'rgba(239, 68, 68, 0.1)' : 'var(--bg-surface-hover)'
+                                    }}>
+                                        Value: {getCurrentOrderTotalValue()} / {formData.approvedMealsPerWeek || 0}
+                                    </div>
+                                </div>
+
+                                {isCutoffPassed() && <div className={styles.alert}><AlertTriangle size={16} /> Cutoff passed. Changes will apply to next cycle.</div>}
+
+                                {/* Multi-Vendor Configuration */}
+                                <div className={styles.vendorsList}>
+                                    {(orderConfig.vendorSelections || []).map((selection: any, index: number) => (
+                                        <div key={index} className={styles.vendorBlock}>
+                                            <div className={styles.vendorHeader}>
+                                                <select
+                                                    className="input"
+                                                    value={selection.vendorId}
+                                                    onChange={e => updateVendorSelection(index, 'vendorId', e.target.value)}
+                                                >
+                                                    <option value="">Select Vendor...</option>
+                                                    {vendors.filter(v => v.serviceType === 'Food' && v.isActive).map(v => (
+                                                        <option key={v.id} value={v.id} disabled={orderConfig.vendorSelections.some((s: any, i: number) => i !== index && s.vendorId === v.id)}>
+                                                            {v.name}
+                                                        </option>
+                                                    ))}
+                                                </select>
+                                                <button className={`${styles.iconBtn} ${styles.danger}`} onClick={() => removeVendorBlock(index)} title="Remove Vendor">
+                                                    <Trash2 size={16} />
+                                                </button>
+                                            </div>
+
+                                            {selection.vendorId && (
+                                                <div className={styles.menuList}>
+                                                    {getVendorMenuItems(selection.vendorId).map(item => (
+                                                        <div key={item.id} className={styles.menuItem}>
+                                                            <div className={styles.itemInfo}>
+                                                                <span>{item.name}</span>
+                                                                <span className={styles.itemValue}>Value: {item.value}</span>
+                                                            </div>
+                                                            <div className={styles.quantityControl}>
+                                                                <input
+                                                                    type="number"
+                                                                    className={styles.qtyInput}
+                                                                    min="0"
+                                                                    value={selection.items?.[item.id] || ''}
+                                                                    placeholder="0"
+                                                                    onChange={e => updateItemQuantity(index, item.id, parseInt(e.target.value) || 0)}
+                                                                />
+                                                            </div>
+                                                        </div>
+                                                    ))}
+                                                    {getVendorMenuItems(selection.vendorId).length === 0 && <span className={styles.hint}>No active menu items.</span>}
+                                                </div>
+                                            )}
+                                        </div>
+                                    ))}
+
+                                    <button className={styles.addVendorBtn} onClick={addVendorBlock}>
+                                        <Plus size={14} /> Add Vendor
+                                    </button>
+                                </div>
+                            </div>
+                        )}
+
+                        {formData.serviceType === 'Boxes' && (
+                            <div className="animate-fade-in">
+                                <div className={styles.formGroup}>
+                                    <label className="label">Box Type</label>
+                                    <select
+                                        className="input"
+                                        value={orderConfig.boxTypeId || ''}
+                                        onChange={e => setOrderConfig({ ...orderConfig, boxTypeId: e.target.value })}
+                                    >
+                                        <option value="">Select Box Type...</option>
+                                        {boxTypes.filter(b => b.isActive).map(b => (
+                                            <option key={b.id} value={b.id}>{b.name}</option>
+                                        ))}
+                                    </select>
+                                </div>
+
+                                <div className={styles.formGroup}>
+                                    <label className="label">Vendor</label>
+                                    <select className="input" value={orderConfig.vendorId || ''} onChange={e => setOrderConfig({ ...orderConfig, vendorId: e.target.value })}>
+                                        <option value="">Select Vendor...</option>
+                                        {vendors.filter(v => v.serviceType === 'Boxes' && v.isActive).map(v => (
+                                            <option key={v.id} value={v.id}>{v.name}</option>
+                                        ))}
+                                    </select>
+                                </div>
+
+                                <div className={styles.formGroup}>
+                                    <label className="label">Quantity</label>
+                                    <input
+                                        type="number"
+                                        className="input"
+                                        value={orderConfig.boxQuantity || 1}
+                                        onChange={e => setOrderConfig({ ...orderConfig, boxQuantity: Number(e.target.value) })}
+                                    />
+                                </div>
+                            </div>
+                        )}
+                    </section>
+
+                    <section className={styles.card} style={{ marginTop: 'var(--spacing-lg)' }}>
+                        <h3 className={styles.sectionTitle}>Order History</h3>
+                        <div className={styles.historyList}>
+                            {history.map(record => (
+                                <div key={record.id} className={styles.item} style={{ flexDirection: 'column', alignItems: 'flex-start', gap: '8px', padding: '12px', borderBottom: '1px solid var(--border-color)' }}>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', width: '100%' }}>
+                                        <span style={{ fontWeight: 500 }}>{new Date(record.deliveryDate).toLocaleDateString()}</span>
+                                        <span className="badge">{record.serviceType}</span>
+                                    </div>
+                                    <div style={{ color: 'var(--text-secondary)', fontSize: '0.875rem' }}>{record.itemsSummary}</div>
+
+                                    <div style={{ width: '100%', marginTop: '8px', paddingTop: '8px' }}>
+                                        {record.proofOfDeliveryImage ? (
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                                <Check size={16} color="var(--color-success)" />
+                                                <a href={record.proofOfDeliveryImage} target="_blank" style={{ color: 'var(--color-primary)', fontSize: '0.875rem' }}>
+                                                    Proof Uploaded
+                                                </a>
+                                            </div>
+                                        ) : (
+                                            <div style={{ display: 'flex', gap: '8px', width: '100%' }}>
+                                                <input
+                                                    placeholder="Paste Proof URL & Enter..."
+                                                    className="input"
+                                                    style={{ fontSize: '0.8rem', padding: '4px 8px' }}
+                                                    onKeyDown={async (e) => {
+                                                        if (e.key === 'Enter') {
+                                                            await updateDeliveryProof(record.id, (e.target as HTMLInputElement).value);
+                                                            // reload
+                                                            const h = await getClientHistory(clientId);
+                                                            setHistory(h);
+                                                        }
+                                                    }}
+                                                />
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                            ))}
+                            {history.length === 0 && <div className={styles.empty}>No deliveries recorded yet.</div>}
+                        </div>
+                    </section>
+                </div>
+            </div>
+        </div>
+    );
+}
