@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useParams } from 'next/navigation';
 import { ClientProfile, ClientStatus, Navigator, Vendor, MenuItem, BoxType, ServiceType, AppSettings, DeliveryRecord } from '@/lib/types';
 import { getClient, updateClient, getStatuses, getNavigators, getVendors, getMenuItems, getBoxTypes, getSettings, getClientHistory, updateDeliveryProof, recordClientChange, getOrderHistory } from '@/lib/actions';
 import { Save, ArrowLeft, Truck, Package, AlertTriangle, Upload, Trash2, Plus, Check, ClipboardList, History, CreditCard } from 'lucide-react';
@@ -14,8 +14,11 @@ interface Props {
 
 const SERVICE_TYPES: ServiceType[] = ['Food', 'Boxes', 'Cooking supplies', 'Care plan'];
 
-export function ClientProfileDetail({ clientId }: Props) {
+export function ClientProfileDetail({ clientId: propClientId }: Props) {
     const router = useRouter();
+    const params = useParams();
+    const clientId = (params?.id as string) || propClientId;
+
     const [client, setClient] = useState<ClientProfile | null>(null);
     const [statuses, setStatuses] = useState<ClientStatus[]>([]);
     const [navigators, setNavigators] = useState<Navigator[]>([]);
@@ -505,8 +508,27 @@ export function ClientProfileDetail({ clientId }: Props) {
                                 </>
                             ) : (
                                 <div className={styles.animateFadeIn}>
-                                    {orderHistory.map(log => (
-                                        <OrderHistoryItem key={log.id} log={log} />
+                                    {orderHistory.map((log, idx) => (
+                                        <div key={log.id || idx} className={styles.item} style={{ flexDirection: 'column', alignItems: 'flex-start', gap: '8px', padding: '16px', borderBottom: '1px solid var(--border-color)' }}>
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', width: '100%' }}>
+                                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                                    <History size={14} color="var(--color-primary)" />
+                                                    <span style={{ fontWeight: 600, fontSize: '0.9rem' }}>{log.who}</span>
+                                                </div>
+                                                <span style={{ color: 'var(--text-tertiary)', fontSize: '0.75rem' }}>
+                                                    {new Date(log.timestamp).toLocaleString('en-US', {
+                                                        month: 'short',
+                                                        day: 'numeric',
+                                                        year: 'numeric',
+                                                        hour: '2-digit',
+                                                        minute: '2-digit'
+                                                    })}
+                                                </span>
+                                            </div>
+                                            <div style={{ color: 'var(--text-secondary)', fontSize: '0.875rem', lineHeight: '1.5' }}>
+                                                {log.summary}
+                                            </div>
+                                        </div>
                                     ))}
                                     {orderHistory.length === 0 && <div className={styles.empty}>No changes recorded yet.</div>}
                                 </div>
