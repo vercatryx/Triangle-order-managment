@@ -7,12 +7,13 @@ import { VendorManagement } from '@/components/admin/VendorManagement';
 import { MenuManagement } from '@/components/admin/MenuManagement';
 import { BoxTypeManagement } from '@/components/admin/BoxTypeManagement';
 import { NavigatorManagement } from '@/components/admin/NavigatorManagement';
+import { AdminManagement } from '@/components/admin/AdminManagement';
 import { GlobalSettings } from '@/components/admin/GlobalSettings';
 
-type Tab = 'vendors' | 'menus' | 'statuses' | 'boxes' | 'navigators' | 'settings';
+type Tab = 'vendors' | 'menus' | 'statuses' | 'boxes' | 'navigators' | 'settings' | 'admins';
 
 export default function AdminPage() {
-    const [activeTab, setActiveTab] = useState<Tab>('statuses');
+    const [activeTab, setActiveTab] = useState<Tab>('admins');
 
     return (
         <div className={styles.container}>
@@ -23,22 +24,10 @@ export default function AdminPage() {
 
             <div className={styles.tabs}>
                 <button
-                    className={`${styles.tab} ${activeTab === 'vendors' ? styles.activeTab : ''}`}
-                    onClick={() => setActiveTab('vendors')}
-                >
-                    Vendors
-                </button>
-                <button
                     className={`${styles.tab} ${activeTab === 'menus' ? styles.activeTab : ''}`}
                     onClick={() => setActiveTab('menus')}
                 >
                     Menus
-                </button>
-                <button
-                    className={`${styles.tab} ${activeTab === 'statuses' ? styles.activeTab : ''}`}
-                    onClick={() => setActiveTab('statuses')}
-                >
-                    Statuses
                 </button>
                 <button
                     className={`${styles.tab} ${activeTab === 'boxes' ? styles.activeTab : ''}`}
@@ -47,10 +36,22 @@ export default function AdminPage() {
                     Box Types
                 </button>
                 <button
+                    className={`${styles.tab} ${activeTab === 'vendors' ? styles.activeTab : ''}`}
+                    onClick={() => setActiveTab('vendors')}
+                >
+                    Vendors
+                </button>
+                <button
                     className={`${styles.tab} ${activeTab === 'navigators' ? styles.activeTab : ''}`}
                     onClick={() => setActiveTab('navigators')}
                 >
                     Navigators
+                </button>
+                <button
+                    className={`${styles.tab} ${activeTab === 'statuses' ? styles.activeTab : ''}`}
+                    onClick={() => setActiveTab('statuses')}
+                >
+                    Statuses
                 </button>
                 <button
                     className={`${styles.tab} ${activeTab === 'settings' ? styles.activeTab : ''}`}
@@ -58,15 +59,22 @@ export default function AdminPage() {
                 >
                     Settings
                 </button>
+                <button
+                    className={`${styles.tab} ${activeTab === 'admins' ? styles.activeTab : ''}`}
+                    onClick={() => setActiveTab('admins')}
+                >
+                    Admins
+                </button>
             </div>
 
             <div className={styles.content}>
-                {activeTab === 'statuses' && <StatusManagement />}
-                {activeTab === 'vendors' && <VendorManagement />}
                 {activeTab === 'menus' && <MenuManagement />}
                 {activeTab === 'boxes' && <BoxTypeManagement />}
+                {activeTab === 'vendors' && <VendorManagement />}
                 {activeTab === 'navigators' && <NavigatorManagement />}
+                {activeTab === 'statuses' && <StatusManagement />}
                 {activeTab === 'settings' && <GlobalSettings />}
+                {activeTab === 'admins' && <AdminManagement />}
             </div>
         </div>
     );

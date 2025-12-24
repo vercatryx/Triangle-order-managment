@@ -15,7 +15,7 @@ export function BoxTypeManagement() {
     const [formData, setFormData] = useState<Partial<BoxType>>({
         name: '',
         isActive: true,
-        vendorIds: []
+        vendorId: ''
     });
 
     useEffect(() => {
@@ -33,18 +33,14 @@ export function BoxTypeManagement() {
         }
     }
 
-    // Filter boxes: In this new model, are boxes global or per vendor? 
-    // The previous model had `vendorIds: string[]` on BoxType, implying many-to-many.
-    // The user request "Box types should allow company selection using the same UI pattern as menus"
-    // implies we select a company on left, and see THEIR boxes.
-    // So we should filter boxes where box.vendorIds includes selectedVendorId.
-    const filteredBoxes = boxTypes.filter(box => box.vendorIds.includes(selectedVendorId));
+    // Filter boxes: Show boxes belonging to the selected vendor
+    const filteredBoxes = boxTypes.filter(box => box.vendorId === selectedVendorId);
 
     function resetForm() {
         setFormData({
             name: '',
             isActive: true,
-            vendorIds: []
+            vendorId: ''
         });
         setIsCreating(false);
         setEditingId(null);
@@ -60,13 +56,8 @@ export function BoxTypeManagement() {
         if (!formData.name) return;
         if (!selectedVendorId) return;
 
-        // When creating/editing in context of a vendor, ensure that vendor is linked
-        const currentVendorIds = formData.vendorIds || [];
-        const newVendorIds = currentVendorIds.includes(selectedVendorId)
-            ? currentVendorIds
-            : [...currentVendorIds, selectedVendorId];
-
-        const payload = { ...formData, vendorIds: newVendorIds };
+        // Ensure vendorId is set to the currently selected vendor
+        const payload = { ...formData, vendorId: selectedVendorId };
 
         if (editingId) {
             await updateBoxType(editingId, payload);
@@ -85,20 +76,6 @@ export function BoxTypeManagement() {
             const bData = await getBoxTypes();
             setBoxTypes(bData);
         }
-    }
-
-    async function handleUnlink(boxId: string) {
-        // Just remove the current vendor from this box type, effectively "deleting" it from this view
-        const box = boxTypes.find(b => b.id === boxId);
-        if (!box) return;
-
-        const newVendorIds = box.vendorIds.filter(id => id !== selectedVendorId);
-        // If no vendors left, should we delete the box? Or just leave it orphaned?
-        // Let's just update for now.
-
-        await updateBoxType(boxId, { ...box, vendorIds: newVendorIds });
-        const bData = await getBoxTypes();
-        setBoxTypes(bData);
     }
 
     if (vendors.length === 0) {
@@ -186,14 +163,7 @@ export function BoxTypeManagement() {
                                 <button className={styles.iconBtn} onClick={() => handleEditInit(box)} title="Edit">
                                     <Edit2 size={16} />
                                 </button>
-                                {/* We offer Unlink (Remove from this vendor) or Delete (Global delete)? 
-                                    Given req "Box types should visually match menus", I'll stick to a delete button 
-                                    but explicitly implementing it as a global delete is simpler for now, 
-                                    or maybe a "Remove" that unlinks? 
-                                    User said "visually match menus", menus have delete. 
-                                    I'll stick to delete.
-                                */}
-                                <button className={`${styles.iconBtn} ${styles.danger}`} onClick={() => handleDelete(box.id)} title="Delete Global Box Type">
+                                <button className={`${styles.iconBtn} ${styles.danger}`} onClick={() => handleDelete(box.id)} title="Delete Box Type">
                                     <Trash2 size={16} />
                                 </button>
                             </div>

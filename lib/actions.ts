@@ -174,12 +174,12 @@ export async function getBoxTypes() {
         id: b.id,
         name: b.name,
         isActive: b.is_active,
-        vendorIds: [] // Currently not mapping vendor links in DB schema for Boxes fully, usage was simplified
+        vendorId: b.vendor_id || null
     }));
 }
 
 export async function addBoxType(data: Omit<BoxType, 'id'>) {
-    const { data: res, error } = await supabase.from('box_types').insert([{ name: data.name, is_active: data.isActive }]).select().single();
+    const { data: res, error } = await supabase.from('box_types').insert([{ name: data.name, is_active: data.isActive, vendor_id: data.vendorId || null }]).select().single();
     handleError(error);
     revalidatePath('/admin');
     return { ...data, id: res.id };
@@ -189,6 +189,7 @@ export async function updateBoxType(id: string, data: Partial<BoxType>) {
     const payload: any = {};
     if (data.name) payload.name = data.name;
     if (data.isActive !== undefined) payload.is_active = data.isActive;
+    if (data.vendorId !== undefined) payload.vendor_id = data.vendorId;
 
     const { error } = await supabase.from('box_types').update(payload).eq('id', id);
     handleError(error);
@@ -273,6 +274,7 @@ function mapClientFromDB(c: any): ClientProfile {
     return {
         id: c.id,
         fullName: c.full_name,
+        email: c.email || '',
         address: c.address || '',
         phoneNumber: c.phone_number || '',
         navigatorId: c.navigator_id || '',
@@ -304,6 +306,7 @@ export async function getClient(id: string) {
 export async function addClient(data: Omit<ClientProfile, 'id' | 'createdAt' | 'updatedAt'>) {
     const payload = {
         full_name: data.fullName,
+        email: data.email,
         address: data.address,
         phone_number: data.phoneNumber,
         navigator_id: data.navigatorId || null,
@@ -345,6 +348,7 @@ export async function addClient(data: Omit<ClientProfile, 'id' | 'createdAt' | '
 export async function updateClient(id: string, data: Partial<ClientProfile>) {
     const payload: any = {};
     if (data.fullName) payload.full_name = data.fullName;
+    if (data.email !== undefined) payload.email = data.email;
     if (data.address !== undefined) payload.address = data.address;
     if (data.phoneNumber !== undefined) payload.phone_number = data.phoneNumber;
     if (data.navigatorId !== undefined) payload.navigator_id = data.navigatorId || null;
@@ -363,6 +367,12 @@ export async function updateClient(id: string, data: Partial<ClientProfile>) {
     handleError(error);
     revalidatePath('/clients');
     revalidatePath(`/clients/${id}`);
+}
+
+export async function deleteClient(id: string) {
+    const { error } = await supabase.from('clients').delete().eq('id', id);
+    handleError(error);
+    revalidatePath('/clients');
 }
 
 // --- DELIVERY ACTIONS ---

@@ -3,18 +3,19 @@
 import { useState, useEffect } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import { ClientProfile, ClientStatus, Navigator, Vendor, MenuItem, BoxType, ServiceType, AppSettings, DeliveryRecord } from '@/lib/types';
-import { getClient, updateClient, getStatuses, getNavigators, getVendors, getMenuItems, getBoxTypes, getSettings, getClientHistory, updateDeliveryProof, recordClientChange, getOrderHistory } from '@/lib/actions';
+import { getClient, updateClient, deleteClient, getStatuses, getNavigators, getVendors, getMenuItems, getBoxTypes, getSettings, getClientHistory, updateDeliveryProof, recordClientChange, getOrderHistory } from '@/lib/actions';
 import { Save, ArrowLeft, Truck, Package, AlertTriangle, Upload, Trash2, Plus, Check, ClipboardList, History, CreditCard } from 'lucide-react';
 import styles from './ClientProfile.module.css';
 import { OrderHistoryItem } from './OrderHistoryItem';
 
 interface Props {
     clientId: string;
+    onClose?: () => void;
 }
 
 const SERVICE_TYPES: ServiceType[] = ['Food', 'Boxes', 'Cooking supplies', 'Care plan'];
 
-export function ClientProfileDetail({ clientId: propClientId }: Props) {
+export function ClientProfileDetail({ clientId: propClientId, onClose }: Props) {
     const router = useRouter();
     const params = useParams();
     const clientId = (params?.id as string) || propClientId;
@@ -106,6 +107,20 @@ export function ClientProfileDetail({ clientId: propClientId }: Props) {
         return false; // MVP simplified
     }
 
+    async function handleDelete() {
+        if (!confirm('Are you sure you want to delete this client? This action cannot be undone.')) return;
+
+        setSaving(true);
+        await deleteClient(clientId);
+        setSaving(false);
+
+        if (onClose) {
+            onClose();
+        } else {
+            router.push('/clients');
+        }
+    }
+
     async function handleSave() {
         if (!client) return;
 
@@ -124,6 +139,7 @@ export function ClientProfileDetail({ clientId: propClientId }: Props) {
         const changes: string[] = [];
         if (client.fullName !== formData.fullName) changes.push(`Full Name: "${client.fullName}" -> "${formData.fullName}"`);
         if (client.address !== formData.address) changes.push(`Address: "${client.address}" -> "${formData.address}"`);
+        if (client.email !== formData.email) changes.push(`Email: "${client.email}" -> "${formData.email}"`);
         if (client.phoneNumber !== formData.phoneNumber) changes.push(`Phone: "${client.phoneNumber}" -> "${formData.phoneNumber}"`);
         if (client.notes !== formData.notes) changes.push('Notes updated');
         if (client.statusId !== formData.statusId) {
@@ -188,6 +204,11 @@ export function ClientProfileDetail({ clientId: propClientId }: Props) {
         setTimeout(() => setMessage(null), 3000);
     }
 
+    async function handleSaveAndClose() {
+        await handleSave();
+        if (onClose) onClose();
+    }
+
     // -- Event Handlers --
 
     function handleServiceChange(type: ServiceType) {
@@ -235,21 +256,26 @@ export function ClientProfileDetail({ clientId: propClientId }: Props) {
         setOrderConfig({ ...orderConfig, vendorSelections: current });
     }
 
-    return (
-        <div className={styles.container}>
+    const content = (
+        <div className={onClose ? '' : styles.container}>
             <header className={styles.header}>
-                <button className={styles.backBtn} onClick={() => router.push('/clients')}>
-                    <ArrowLeft size={20} /> Back to List
+                <button className={styles.backBtn} onClick={onClose ? handleSaveAndClose : () => router.push('/clients')}>
+                    <ArrowLeft size={20} /> {onClose ? 'Close' : 'Back to List'}
                 </button>
                 <h1 className={styles.title}>{formData.fullName}</h1>
                 <div className={styles.actions}>
                     {message && <span className={styles.successMessage}>{message}</span>}
+                    <button className="btn" onClick={handleDelete} style={{ marginRight: '8px', backgroundColor: '#ef4444', color: 'white', border: 'none' }}>
+                        <Trash2 size={16} /> Delete
+                    </button>
                     <button className="btn btn-secondary" onClick={() => router.push(`/clients/${clientId}/billing`)} style={{ marginRight: '8px' }}>
                         <CreditCard size={16} /> Billing
                     </button>
-                    <button className="btn btn-primary" onClick={handleSave} disabled={saving}>
-                        <Save size={16} /> Save Changes
-                    </button>
+                    {!onClose && (
+                        <button className="btn btn-primary" onClick={handleSave} disabled={saving}>
+                            <Save size={16} /> Save Changes
+                        </button>
+                    )}
                 </div>
             </header>
 
@@ -286,6 +312,9 @@ export function ClientProfileDetail({ clientId: propClientId }: Props) {
                         <div className={styles.formGroup}>
                             <label className="label">Phone</label>
                             <input className="input" value={formData.phoneNumber} onChange={e => setFormData({ ...formData, phoneNumber: e.target.value })} />
+                            <div style={{ height: '1rem' }} /> {/* Spacer */}
+                            <label className="label">Email</label>
+                            <input className="input" value={formData.email || ''} onChange={e => setFormData({ ...formData, email: e.target.value })} />
                         </div>
 
                         <div className={styles.formGroup}>
@@ -410,27 +439,43 @@ export function ClientProfileDetail({ clientId: propClientId }: Props) {
                         {formData.serviceType === 'Boxes' && (
                             <div className="animate-fade-in">
                                 <div className={styles.formGroup}>
-                                    <label className="label">Box Type</label>
+                                    <label className="label">Vendor</label>
                                     <select
                                         className="input"
-                                        value={orderConfig.boxTypeId || ''}
-                                        onChange={e => setOrderConfig({ ...orderConfig, boxTypeId: e.target.value })}
+                                        value={orderConfig.vendorId || ''}
+                                        onChange={e => {
+                                            const newVendorId = e.target.value;
+                                            setOrderConfig({
+                                                ...orderConfig,
+                                                vendorId: newVendorId,
+                                                boxTypeId: '' // Reset box selection when vendor changes
+                                            });
+                                        }}
                                     >
-                                        <option value="">Select Box Type...</option>
-                                        {boxTypes.filter(b => b.isActive).map(b => (
-                                            <option key={b.id} value={b.id}>{b.name}</option>
-                                        ))}
-                                    </select>
-                                </div>
-
-                                <div className={styles.formGroup}>
-                                    <label className="label">Vendor</label>
-                                    <select className="input" value={orderConfig.vendorId || ''} onChange={e => setOrderConfig({ ...orderConfig, vendorId: e.target.value })}>
                                         <option value="">Select Vendor...</option>
                                         {vendors.filter(v => v.serviceType === 'Boxes' && v.isActive).map(v => (
                                             <option key={v.id} value={v.id}>{v.name}</option>
                                         ))}
                                     </select>
+                                </div>
+
+                                <div className={styles.formGroup}>
+                                    <label className="label">Box Type</label>
+                                    <select
+                                        className="input"
+                                        value={orderConfig.boxTypeId || ''}
+                                        onChange={e => setOrderConfig({ ...orderConfig, boxTypeId: e.target.value })}
+                                        disabled={!orderConfig.vendorId}
+                                    >
+                                        <option value="">Select Box Type...</option>
+                                        {boxTypes
+                                            .filter(b => b.isActive && orderConfig.vendorId && b.vendorId === orderConfig.vendorId)
+                                            .map(b => (
+                                                <option key={b.id} value={b.id}>{b.name}</option>
+                                            ))
+                                        }
+                                    </select>
+                                    {!orderConfig.vendorId && <span className={styles.hint} style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)', marginTop: '4px', display: 'block' }}>Select a vendor first to see available boxes.</span>}
                                 </div>
 
                                 <div className={styles.formGroup}>
@@ -537,6 +582,27 @@ export function ClientProfileDetail({ clientId: propClientId }: Props) {
                     </section>
                 </div>
             </div>
-        </div>
+            {
+                onClose && (
+                    <div className={styles.bottomAction}>
+                        <button className="btn btn-primary" onClick={handleSaveAndClose} style={{ width: '200px' }}>
+                            Close
+                        </button>
+                    </div>
+                )
+            }
+        </div >
     );
+
+    if (onClose) {
+        return (
+            <div className={styles.modalOverlay} onClick={handleSaveAndClose}>
+                <div className={styles.modalContent} onClick={e => e.stopPropagation()}>
+                    {content}
+                </div>
+            </div>
+        );
+    }
+
+    return content;
 }

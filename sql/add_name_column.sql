@@ -1,0 +1,1 @@
+ALTER TABLE admins ADD COLUMN name TEXT DEFAULT 'Admin';

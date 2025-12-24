@@ -1,10 +1,11 @@
 'use client';
 
+import { ClientProfileDetail } from './ClientProfile';
+
 import { useState, useEffect } from 'react';
-import Link from 'next/link';
-import { ClientProfile, ClientStatus, Navigator } from '@/lib/types';
-import { getClients, getStatuses, getNavigators, addClient } from '@/lib/actions';
-import { Plus, Search, ChevronRight } from 'lucide-react';
+import { ClientProfile, ClientStatus, Navigator, Vendor, BoxType } from '@/lib/types';
+import { getClients, getStatuses, getNavigators, addClient, getVendors, getBoxTypes } from '@/lib/actions';
+import { Plus, Search, ChevronRight, CheckSquare, Square, StickyNote, Package } from 'lucide-react';
 import styles from './ClientList.module.css';
 import { useRouter } from 'next/navigation';
 
@@ -13,15 +14,20 @@ export function ClientList() {
     const [clients, setClients] = useState<ClientProfile[]>([]);
     const [statuses, setStatuses] = useState<ClientStatus[]>([]);
     const [navigators, setNavigators] = useState<Navigator[]>([]);
+    const [vendors, setVendors] = useState<Vendor[]>([]);
+    const [boxTypes, setBoxTypes] = useState<BoxType[]>([]);
     const [search, setSearch] = useState('');
     const [isLoading, setIsLoading] = useState(true);
 
     // Views
-    const [currentView, setCurrentView] = useState<'all' | 'ineligible' | 'history' | 'billing'>('all');
+    const [currentView, setCurrentView] = useState<'all' | 'eligible' | 'ineligible' | 'history' | 'billing'>('all');
 
     // New Client Modal state
     const [isCreating, setIsCreating] = useState(false);
     const [newClientName, setNewClientName] = useState('');
+
+    // Selected Client for Modal
+    const [selectedClientId, setSelectedClientId] = useState<string | null>(null);
 
     useEffect(() => {
         loadData();
@@ -29,10 +35,18 @@ export function ClientList() {
 
     async function loadData() {
         setIsLoading(true);
-        const [cData, sData, nData] = await Promise.all([getClients(), getStatuses(), getNavigators()]);
+        const [cData, sData, nData, vData, bData] = await Promise.all([
+            getClients(),
+            getStatuses(),
+            getNavigators(),
+            getVendors(),
+            getBoxTypes()
+        ]);
         setClients(cData);
         setStatuses(sData);
         setNavigators(nData);
+        setVendors(vData);
+        setBoxTypes(bData);
         setIsLoading(false);
     }
 
@@ -41,7 +55,11 @@ export function ClientList() {
 
         // Filter by View
         let matchesView = true;
-        if (currentView === 'ineligible') {
+        if (currentView === 'eligible') {
+            const status = statuses.find(s => s.id === c.statusId);
+            // Show clients whose status allows deliveries
+            matchesView = status ? status.deliveriesAllowed : false;
+        } else if (currentView === 'ineligible') {
             const status = statuses.find(s => s.id === c.statusId);
             // Show clients whose status does NOT allow deliveries
             matchesView = status ? !status.deliveriesAllowed : false;
@@ -60,6 +78,7 @@ export function ClientList() {
 
         const newClient = await addClient({
             fullName: newClientName,
+            email: '',
             address: '',
             phoneNumber: '',
             navigatorId: navigators.find(n => n.isActive)?.id || '',
@@ -73,7 +92,10 @@ export function ClientList() {
         });
 
         if (newClient) {
-            window.location.href = `/clients/${newClient.id}`; // Redirect to edit
+            setIsCreating(false);
+            setNewClientName(''); // Reset
+            await loadData(); // Refresh list
+            setSelectedClientId(newClient.id); // Open modal
         }
     }
 
@@ -84,6 +106,81 @@ export function ClientList() {
     function getNavigatorName(id: string) {
         return navigators.find(n => n.id === id)?.name || 'Unassigned';
     }
+
+    function getOrderSummaryText(client: ClientProfile) {
+        if (!client.activeOrder) return '-';
+        const st = client.serviceType;
+        const conf = client.activeOrder;
+
+        let content = '';
+
+        if (st === 'Food') {
+            const limit = client.approvedMealsPerWeek || 0;
+            const vendorsSummary = (conf.vendorSelections || [])
+                .map(v => {
+                    const vendorName = vendors.find(ven => ven.id === v.vendorId)?.name || 'Unknown';
+                    const itemCount = Object.values(v.items || {}).reduce((a: number, b: any) => a + Number(b), 0);
+                    return `${vendorName} (${itemCount})`;
+                }).join(', ');
+            content = `: ${vendorsSummary || 'None'} [Max ${limit}]`;
+        } else if (st === 'Boxes') {
+            const box = boxTypes.find(b => b.id === conf.boxTypeId);
+            const vendorName = vendors.find(v => v.id === box?.vendorId)?.name || '-';
+            const boxName = box?.name || 'Unknown Box';
+            content = `: ${vendorName} - ${boxName} (x${conf.boxQuantity || 1})`;
+        }
+
+        return `${st}${content}`;
+    }
+
+    function getOrderSummary(client: ClientProfile) {
+        if (!client.activeOrder) return '-';
+        const st = client.serviceType;
+        // Re-use logic or just extract the content part if needed, but for now duplicate logic is safer to avoid breaking JSX structure if not careful.
+        // Actually, to ensure consistency, let's just grab the content suffix.
+        const fullText = getOrderSummaryText(client);
+        // st is the first word usually, but we want to bold it.
+        // Let's stick to the existing JSX structure for now and just use the new function for the tooltip.
+
+        const conf = client.activeOrder;
+        let content = '';
+        if (st === 'Food') {
+            const limit = client.approvedMealsPerWeek || 0;
+            const vendorsSummary = (conf.vendorSelections || [])
+                .map(v => {
+                    const vendorName = vendors.find(ven => ven.id === v.vendorId)?.name || 'Unknown';
+                    const itemCount = Object.values(v.items || {}).reduce((a: number, b: any) => a + Number(b), 0);
+                    return `${vendorName} (${itemCount})`;
+                }).join(', ');
+            content = `: ${vendorsSummary || 'None'} [Max ${limit}]`;
+        } else if (st === 'Boxes') {
+            const box = boxTypes.find(b => b.id === conf.boxTypeId);
+            const vendorName = vendors.find(v => v.id === box?.vendorId)?.name || '-';
+            const boxName = box?.name || 'Unknown Box';
+            content = `: ${vendorName} - ${boxName} (x${conf.boxQuantity || 1})`;
+        }
+
+        return (
+            <span title={fullText}>
+                <strong style={{ fontWeight: 600 }}>{st}</strong>{content}
+            </span>
+        );
+    }
+
+    function getScreeningStatus(client: ClientProfile) {
+        return (
+            <div style={{ display: 'flex', gap: '8px' }}>
+                <span title="Took Place" style={{ color: client.screeningTookPlace ? 'var(--color-success)' : 'var(--text-tertiary)' }}>
+                    {client.screeningTookPlace ? <CheckSquare size={16} /> : <Square size={16} />}
+                </span>
+                <span title="Signed" style={{ color: client.screeningSigned ? 'var(--color-success)' : 'var(--text-tertiary)' }}>
+                    {client.screeningSigned ? <StickyNote size={16} /> : <Square size={16} />}
+                </span>
+            </div>
+        );
+    }
+
+
 
     if (isLoading) {
         return (
@@ -110,6 +207,12 @@ export function ClientList() {
                             onClick={() => setCurrentView('all')}
                         >
                             All Clients
+                        </button>
+                        <button
+                            className={`${styles.viewBtn} ${currentView === 'eligible' ? styles.viewBtnActive : ''}`}
+                            onClick={() => setCurrentView('eligible')}
+                        >
+                            Eligible
                         </button>
                         <button
                             className={`${styles.viewBtn} ${currentView === 'ineligible' ? styles.viewBtnActive : ''}`}
@@ -175,39 +278,78 @@ export function ClientList() {
 
             <div className={styles.list}>
                 <div className={styles.listHeader}>
-                    <span style={{ flex: 2 }}>Name</span>
-                    <span style={{ flex: 2 }}>Status</span>
-                    <span style={{ flex: 1.5 }}>Navigator</span>
-                    <span style={{ flex: 1 }}>Service</span>
-                    <span style={{ flex: 1.5 }}>Phone</span>
-                    <span style={{ flex: 1.5 }}>Address</span>
+                    <span style={{ minWidth: '200px', flex: 2, paddingRight: '16px' }}>Name</span>
+                    <span style={{ minWidth: '140px', flex: 1, paddingRight: '16px' }}>Status</span>
+                    <span style={{ minWidth: '160px', flex: 1, paddingRight: '16px' }}>Navigator</span>
+                    <span style={{ minWidth: '100px', flex: 0.8, paddingRight: '16px' }}>Screening</span>
+                    <span style={{ minWidth: '350px', flex: 3, paddingRight: '16px' }}>Active Order</span>
+                    <span style={{ minWidth: '180px', flex: 1.2, paddingRight: '16px' }}>Email</span>
+                    <span style={{ minWidth: '140px', flex: 1, paddingRight: '16px' }}>Phone</span>
+                    <span style={{ minWidth: '250px', flex: 2, paddingRight: '16px' }}>Address</span>
+                    <span style={{ minWidth: '200px', flex: 2 }}>Notes</span>
                     <span style={{ width: '40px' }}></span>
                 </div>
-                {filteredClients.map(client => (
-                    <Link key={client.id} href={`/clients/${client.id}`} className={styles.clientRow}>
-                        <span style={{ flex: 2, fontWeight: 600 }}>{client.fullName}</span>
-                        <span style={{ flex: 2 }}>
-                            <span className={`badge ${getStatusName(client.statusId) === 'Active' ? 'badge-success' : ''}`}>
-                                {getStatusName(client.statusId)}
+                {filteredClients.map(client => {
+                    const status = statuses.find(s => s.id === client.statusId);
+                    const isNotAllowed = status ? status.deliveriesAllowed === false : false;
+
+                    return (
+                        <div
+                            key={client.id}
+                            onClick={() => setSelectedClientId(client.id)}
+                            className={`${styles.clientRow} ${isNotAllowed ? styles.clientRowNotAllowed : ''}`}
+                            style={{ cursor: 'pointer' }}
+                        >
+                            <span title={client.fullName} style={{ minWidth: '200px', flex: 2, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: '16px' }}>{client.fullName}</span>
+                            <span title={getStatusName(client.statusId)} style={{ minWidth: '140px', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: '16px' }}>
+                                <span className={`badge ${getStatusName(client.statusId) === 'Active' ? 'badge-success' : ''}`}>
+                                    {getStatusName(client.statusId)}
+                                </span>
                             </span>
-                        </span>
-                        <span style={{ flex: 1.5 }}>{getNavigatorName(client.navigatorId)}</span>
-                        <span style={{ flex: 1 }}>{client.serviceType}</span>
-                        <span style={{ flex: 1.5, fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                            {client.phoneNumber || '-'}
-                        </span>
-                        <span style={{ flex: 1.5, fontSize: '0.85rem', color: 'var(--text-secondary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                            {client.address || '-'}
-                        </span>
-                        <span style={{ width: '40px' }}><ChevronRight size={16} /></span>
-                    </Link>
-                ))}
+                            <span title={getNavigatorName(client.navigatorId)} style={{ minWidth: '160px', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: '16px' }}>{getNavigatorName(client.navigatorId)}</span>
+                            <span style={{ minWidth: '100px', flex: 0.8, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: '16px' }}>{getScreeningStatus(client)}</span>
+                            <span style={{ minWidth: '350px', flex: 3, fontSize: '0.9rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: '16px' }}>
+                                {getOrderSummary(client)}
+                            </span>
+                            <span title={client.email || undefined} style={{ minWidth: '180px', flex: 1.2, fontSize: '0.85rem', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: '16px' }}>
+                                {client.email || '-'}
+                            </span>
+                            <span title={client.phoneNumber} style={{ minWidth: '140px', flex: 1, fontSize: '0.85rem', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: '16px' }}>
+                                {client.phoneNumber || '-'}
+                            </span>
+                            <span title={client.address} style={{ minWidth: '250px', flex: 2, fontSize: '0.85rem', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: '16px' }}>
+                                {client.address || '-'}
+                            </span>
+                            <span title={client.notes} style={{ minWidth: '200px', flex: 2, fontSize: '0.85rem', color: 'var(--text-tertiary)', fontStyle: 'italic', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: '16px' }}>
+                                {client.notes || '-'}
+                            </span>
+                            <span style={{ width: '40px' }}><ChevronRight size={16} /></span>
+                        </div>
+                    );
+                })}
                 {filteredClients.length === 0 && !isLoading && (
                     <div className={styles.empty}>
-                        {currentView === 'ineligible' ? 'No ineligible clients found.' : 'No clients found.'}
+                        {currentView === 'ineligible' ? 'No ineligible clients found.' :
+                            currentView === 'eligible' ? 'No eligible clients found.' :
+                                'No clients found.'}
                     </div>
                 )}
             </div>
+
+            {selectedClientId && (
+                <div className={styles.profileModal}>
+                    <div className={styles.profileCard}>
+                        <ClientProfileDetail
+                            clientId={selectedClientId}
+                            onClose={() => {
+                                setSelectedClientId(null);
+                                loadData(); // Refresh data on close in case of changes
+                            }}
+                        />
+                    </div>
+                    <div className={styles.overlay} onClick={() => setSelectedClientId(null)}></div>
+                </div>
+            )}
 
             {/* Disclaimer for unimplemented views */}
             {(currentView === 'history' || currentView === 'billing') && (

@@ -3,6 +3,7 @@ export type ServiceType = 'Food' | 'Boxes' | 'Cooking supplies' | 'Care plan';
 export interface ClientProfile {
   id: string;
   fullName: string;
+  email: string | null;
   address: string;
   phoneNumber: string;
   navigatorId: string;
@@ -84,7 +85,7 @@ export interface MenuItem {
 export interface BoxType {
   id: string;
   name: string;
-  vendorIds: string[]; // Vendors that supply this box
+  vendorId?: string | null; // Single vendor ownership
   isActive: boolean;
 }
 
