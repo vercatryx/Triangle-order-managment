@@ -26,6 +26,9 @@ export interface ClientProfile {
 
 export interface OrderConfiguration {
   serviceType: ServiceType;
+  // Case ID for the specific service request (required to proceed)
+  caseId?: string;
+
   // Previously single vendor/menuSelections, now supporting multi-vendor for Food
   vendorSelections: {
     vendorId: string;
@@ -74,12 +77,26 @@ export interface Vendor {
   serviceType: ServiceType; // Vendor usually specializes in Food OR Boxes? Or both? Assuming one for simplicity mostly.
 }
 
+export interface ItemCategory {
+  id: string;
+  name: string;
+}
+
 export interface MenuItem {
   id: string;
   vendorId: string;
   name: string;
   value: number;
   isActive: boolean;
+  categoryId?: string | null;
+  quotaValue?: number; // How much this item counts towards a quota (default 1)
+}
+
+export interface BoxQuota {
+  id: string;
+  boxTypeId: string;
+  categoryId: string;
+  targetValue: number;
 }
 
 export interface BoxType {
@@ -87,6 +104,7 @@ export interface BoxType {
   name: string;
   vendorId?: string | null; // Single vendor ownership
   isActive: boolean;
+  quotas?: BoxQuota[];
 }
 
 export interface Navigator {

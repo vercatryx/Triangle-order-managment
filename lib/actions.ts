@@ -2,7 +2,7 @@
 
 import { revalidatePath } from 'next/cache';
 import { supabase } from './supabase';
-import { ClientStatus, Vendor, MenuItem, BoxType, AppSettings, Navigator, ClientProfile, DeliveryRecord } from './types';
+import { ClientStatus, Vendor, MenuItem, BoxType, AppSettings, Navigator, ClientProfile, DeliveryRecord, ItemCategory, BoxQuota } from './types';
 import { randomUUID } from 'crypto';
 
 // --- HELPERS ---
@@ -131,7 +131,9 @@ export async function getMenuItems() {
         vendorId: i.vendor_id,
         name: i.name,
         value: i.value,
-        isActive: i.is_active
+        isActive: i.is_active,
+        categoryId: i.category_id,
+        quotaValue: i.quota_value
     }));
 }
 
@@ -140,7 +142,9 @@ export async function addMenuItem(data: Omit<MenuItem, 'id'>) {
         vendor_id: data.vendorId,
         name: data.name,
         value: data.value,
-        is_active: data.isActive
+        is_active: data.isActive,
+        category_id: data.categoryId,
+        quota_value: data.quotaValue
     };
     const { data: res, error } = await supabase.from('menu_items').insert([payload]).select().single();
     handleError(error);
@@ -153,6 +157,8 @@ export async function updateMenuItem(id: string, data: Partial<MenuItem>) {
     if (data.name) payload.name = data.name;
     if (data.value) payload.value = data.value;
     if (data.isActive !== undefined) payload.is_active = data.isActive;
+    if (data.categoryId !== undefined) payload.category_id = data.categoryId;
+    if (data.quotaValue !== undefined) payload.quota_value = data.quotaValue;
 
     const { error } = await supabase.from('menu_items').update(payload).eq('id', id);
     handleError(error);
@@ -161,6 +167,73 @@ export async function updateMenuItem(id: string, data: Partial<MenuItem>) {
 
 export async function deleteMenuItem(id: string) {
     const { error } = await supabase.from('menu_items').delete().eq('id', id);
+    handleError(error);
+    revalidatePath('/admin');
+}
+
+// --- ITEM CATEGORY ACTIONS ---
+
+export async function getCategories() {
+    const { data, error } = await supabase.from('item_categories').select('*').order('name');
+    if (error) return [];
+    return data.map((c: any) => ({
+        id: c.id,
+        name: c.name
+    }));
+}
+
+export async function addCategory(name: string) {
+    const { data, error } = await supabase.from('item_categories').insert([{ name }]).select().single();
+    handleError(error);
+    revalidatePath('/admin');
+    return { id: data.id, name: data.name };
+}
+
+export async function deleteCategory(id: string) {
+    const { error } = await supabase.from('item_categories').delete().eq('id', id);
+    handleError(error);
+    revalidatePath('/admin');
+}
+
+export async function updateCategory(id: string, name: string) {
+    const { error } = await supabase.from('item_categories').update({ name }).eq('id', id);
+    handleError(error);
+    revalidatePath('/admin');
+}
+
+// --- BOX QUOTA ACTIONS ---
+
+export async function getBoxQuotas(boxTypeId: string) {
+    const { data, error } = await supabase.from('box_quotas').select('*').eq('box_type_id', boxTypeId);
+    if (error) return [];
+    return data.map((q: any) => ({
+        id: q.id,
+        boxTypeId: q.box_type_id,
+        categoryId: q.category_id,
+        targetValue: q.target_value
+    }));
+}
+
+export async function addBoxQuota(data: Omit<BoxQuota, 'id'>) {
+    const payload = {
+        box_type_id: data.boxTypeId,
+        category_id: data.categoryId,
+        target_value: data.targetValue
+    };
+    const { data: res, error } = await supabase.from('box_quotas').insert([payload]).select().single();
+    handleError(error);
+    revalidatePath('/admin');
+    return { ...data, id: res.id };
+}
+
+export async function updateBoxQuota(id: string, targetValue: number) {
+    const { error } = await supabase.from('box_quotas').update({ target_value: targetValue }).eq('id', id);
+    handleError(error);
+    revalidatePath('/admin');
+}
+
+export async function deleteBoxQuota(id: string) {
+    const { error } = await supabase.from('box_quotas').delete().eq('id', id);
     handleError(error);
     revalidatePath('/admin');
 }

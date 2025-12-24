@@ -91,17 +91,17 @@
 
 .listHeader {
     display: flex;
-    padding: var(--spacing-sm) var(--spacing-md);
+    padding: 1.5rem var(--spacing-lg);
     border-bottom: 2px solid var(--border-color);
     color: var(--text-secondary);
-    font-size: 0.875rem;
+    font-size: 1.1rem;
     font-weight: 600;
 }
 
 .item {
     display: flex;
     align-items: center;
-    padding: var(--spacing-sm) var(--spacing-md);
+    padding: 1.5rem var(--spacing-lg);
     border-bottom: 1px solid var(--border-color);
     transition: background-color 0.2s;
 }

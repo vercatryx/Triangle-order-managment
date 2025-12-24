@@ -1,81 +1,181 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { BoxType, Vendor } from '@/lib/types';
-import { getVendors, getBoxTypes, addBoxType, updateBoxType, deleteBoxType } from '@/lib/actions';
-import { Plus, Edit2, Trash2, X, Check, Package } from 'lucide-react';
+import { BoxType, Vendor, BoxQuota, ItemCategory, MenuItem } from '@/lib/types';
+import { getVendors, getBoxTypes, addBoxType, updateBoxType, deleteBoxType, getBoxQuotas, addBoxQuota, updateBoxQuota, deleteBoxQuota, getCategories, addCategory, updateCategory, getMenuItems, addMenuItem, updateMenuItem, deleteMenuItem } from '@/lib/actions';
+import { Plus, Edit2, Trash2, X, Check, Package, Scale, Save } from 'lucide-react';
 import styles from './BoxTypeManagement.module.css';
 
 export function BoxTypeManagement() {
-    const [boxTypes, setBoxTypes] = useState<BoxType[]>([]);
     const [vendors, setVendors] = useState<Vendor[]>([]);
+    const [categories, setCategories] = useState<ItemCategory[]>([]);
+    const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
     const [selectedVendorId, setSelectedVendorId] = useState<string>('');
-    const [isCreating, setIsCreating] = useState(false);
-    const [editingId, setEditingId] = useState<string | null>(null);
-    const [formData, setFormData] = useState<Partial<BoxType>>({
-        name: '',
-        isActive: true,
-        vendorId: ''
-    });
+
+    // The single active box for the selected vendor
+    const [activeBoxId, setActiveBoxId] = useState<string | null>(null);
+
+    // Quota State
+    const [currentQuotas, setCurrentQuotas] = useState<BoxQuota[]>([]);
+    const [newQuotaCategoryId, setNewQuotaCategoryId] = useState('');
+    const [newQuotaTarget, setNewQuotaTarget] = useState(1);
+
+    // Inline Category Creation
+    const [isAddingCategory, setIsAddingCategory] = useState(false);
+    const [newCategoryName, setNewCategoryName] = useState('');
+
+    // Inline Item Creation
+    const [newItemName, setNewItemName] = useState('');
+    const [newItemQuotaValue, setNewItemQuotaValue] = useState(1);
+    const [addingItemForCategory, setAddingItemForCategory] = useState<string | null>(null);
+
+    // Editing States
+    const [editingQuotaId, setEditingQuotaId] = useState<string | null>(null);
+    const [tempQuotaTarget, setTempQuotaTarget] = useState<number>(0);
+
+    const [editingCategoryId, setEditingCategoryId] = useState<string | null>(null);
+    const [tempCategoryName, setTempCategoryName] = useState('');
 
     useEffect(() => {
         loadData();
     }, []);
 
+    // When vendor changes, load/create their box
+    useEffect(() => {
+        if (selectedVendorId) {
+            loadVendorBox(selectedVendorId);
+        } else {
+            setActiveBoxId(null);
+            setCurrentQuotas([]);
+        }
+    }, [selectedVendorId]);
+
     async function loadData() {
-        const [bData, vData] = await Promise.all([getBoxTypes(), getVendors()]);
+        const [vData, cData, mData] = await Promise.all([getVendors(), getCategories(), getMenuItems()]);
         // Filter: Box configuration only for companies that ship 'Boxes'
         const boxVendors = vData.filter(v => v.serviceType === 'Boxes');
         setVendors(boxVendors);
-        setBoxTypes(bData);
+        setCategories(cData);
+        setMenuItems(mData);
         if (boxVendors.length > 0 && !selectedVendorId) {
             setSelectedVendorId(boxVendors[0].id);
         }
     }
 
-    // Filter boxes: Show boxes belonging to the selected vendor
-    const filteredBoxes = boxTypes.filter(box => box.vendorId === selectedVendorId);
+    async function loadVendorBox(vendorId: string) {
+        const allBoxes = await getBoxTypes() as BoxType[];
+        let box = allBoxes.find(b => b.vendorId === vendorId);
 
-    function resetForm() {
-        setFormData({
-            name: '',
-            isActive: true,
-            vendorId: ''
+        if (!box) {
+            // Auto-create default box for this vendor if none exists
+            // We use a safe default name "Standard Box"
+            const newBox = await addBoxType({
+                name: 'Standard Box',
+                isActive: true,
+                vendorId: vendorId
+            });
+            box = newBox as BoxType;
+        }
+
+        if (box) {
+            setActiveBoxId(box.id);
+            const qData = await getBoxQuotas(box.id);
+            setCurrentQuotas(qData);
+        }
+    }
+
+    async function handleAddQuota() {
+        if (!activeBoxId || !newQuotaCategoryId) return;
+
+        await addBoxQuota({
+            boxTypeId: activeBoxId,
+            categoryId: newQuotaCategoryId,
+            targetValue: newQuotaTarget
         });
-        setIsCreating(false);
-        setEditingId(null);
+        const qData = await getBoxQuotas(activeBoxId);
+        setCurrentQuotas(qData);
+        setNewQuotaCategoryId('');
+        setNewQuotaTarget(1);
     }
 
-    function handleEditInit(box: BoxType) {
-        setFormData({ ...box });
-        setEditingId(box.id);
-        setIsCreating(false);
+    async function handleQuickAddCategory() {
+        if (!newCategoryName.trim()) return;
+        const newCat = await addCategory(newCategoryName);
+
+        // Refresh categories
+        const cData = await getCategories();
+        setCategories(cData);
+        setNewQuotaCategoryId(newCat.id);
+        setIsAddingCategory(false);
+        setNewCategoryName('');
     }
 
-    async function handleSubmit() {
-        if (!formData.name) return;
-        if (!selectedVendorId) return;
+    async function handleAddItem(categoryId: string) {
+        if (!newItemName.trim() || !selectedVendorId) return;
 
-        // Ensure vendorId is set to the currently selected vendor
-        const payload = { ...formData, vendorId: selectedVendorId };
+        await addMenuItem({
+            vendorId: selectedVendorId,
+            name: newItemName,
+            value: 0, // Default value for box items
+            isActive: true,
+            categoryId: categoryId,
+            quotaValue: newItemQuotaValue
+        });
 
-        if (editingId) {
-            await updateBoxType(editingId, payload);
-        } else {
-            await addBoxType(payload as Omit<BoxType, 'id'>);
+        const mData = await getMenuItems();
+        setMenuItems(mData);
+        setNewItemName('');
+        setNewItemQuotaValue(1);
+        setAddingItemForCategory(null);
+    }
+
+    async function handleDeleteItem(id: string) {
+        if (confirm('Remove this item?')) {
+            await deleteMenuItem(id);
+            const mData = await getMenuItems();
+            setMenuItems(mData);
+        }
+    }
+
+    async function handleDeleteQuota(id: string) {
+        if (!activeBoxId) return;
+        await deleteBoxQuota(id);
+        const qData = await getBoxQuotas(activeBoxId);
+        setCurrentQuotas(qData);
+    }
+
+    function handleEditQuota(quotaId: string, currentCategoryName: string, currentTarget: number) {
+        setEditingQuotaId(quotaId);
+        setTempCategoryName(currentCategoryName);
+        setTempQuotaTarget(currentTarget);
+    }
+
+    function handleCancelEdit() {
+        setEditingQuotaId(null);
+        setTempCategoryName('');
+        setTempQuotaTarget(0);
+    }
+
+    async function handleSaveEdit() {
+        if (!editingQuotaId || !activeBoxId) return;
+
+        // 1. Update quota target
+        await updateBoxQuota(editingQuotaId, tempQuotaTarget);
+
+        // 2. Update category name if needed (find category id from quota)
+        const quota = currentQuotas.find(q => q.id === editingQuotaId);
+        if (quota && quota.categoryId) {
+            // Note: This updates the category GLOBALLY for all boxes/items
+            await updateCategory(quota.categoryId, tempCategoryName);
         }
 
-        const bData = await getBoxTypes(); // Reload all
-        setBoxTypes(bData);
-        resetForm();
-    }
+        // 3. Refresh
+        const qData = await getBoxQuotas(activeBoxId);
+        setCurrentQuotas(qData);
+        const cData = await getCategories();
+        setCategories(cData);
 
-    async function handleDelete(id: string) {
-        if (confirm('Delete this box type?')) {
-            await deleteBoxType(id);
-            const bData = await getBoxTypes();
-            setBoxTypes(bData);
-        }
+        handleCancelEdit();
     }
 
     if (vendors.length === 0) {
@@ -91,7 +191,7 @@ export function BoxTypeManagement() {
                         <button
                             key={v.id}
                             className={`${styles.vendorBtn} ${selectedVendorId === v.id ? styles.activeVendor : ''}`}
-                            onClick={() => { setSelectedVendorId(v.id); resetForm(); }}
+                            onClick={() => setSelectedVendorId(v.id)}
                         >
                             {v.name}
                         </button>
@@ -102,77 +202,208 @@ export function BoxTypeManagement() {
             <div className={styles.main}>
                 <div className={styles.header}>
                     <div>
-                        <h2 className={styles.title}>Box Types</h2>
-                        <p className={styles.subtitle}>Manage boxes for {vendors.find(v => v.id === selectedVendorId)?.name}</p>
+                        <h2 className={styles.title}>Box Configuration</h2>
+                        <p className={styles.subtitle}>Configure box contents for {vendors.find(v => v.id === selectedVendorId)?.name}</p>
                     </div>
-                    {!isCreating && !editingId && (
-                        <button className="btn btn-primary" onClick={() => setIsCreating(true)}>
-                            <Plus size={16} /> Add Box Type
-                        </button>
-                    )}
                 </div>
 
-                {(isCreating || editingId) && (
-                    <div className={styles.formCard}>
-                        <h3 className={styles.formTitle}>{editingId ? 'Edit Box Type' : 'New Box Type'}</h3>
+                {/* Quota Management Section - Always Visible for Selected Vendor */}
+                {activeBoxId && (
+                    <div className={styles.quotaSection} style={{ marginTop: '0', paddingTop: '0' }}>
+                        <div className={styles.quotaList} style={{ marginBottom: '1rem' }}>
+                            {currentQuotas.map(q => {
+                                const cat = categories.find(c => c.id === q.categoryId);
+                                return (
+                                    <div key={q.id} style={{ marginBottom: '1rem', background: 'var(--bg-surface-hover)', padding: '0.75rem', borderRadius: '4px', border: '1px solid var(--border-color)' }}>
+                                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
+                                            {editingQuotaId === q.id ? (
+                                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flex: 1 }}>
+                                                    <input
+                                                        className="input"
+                                                        value={tempCategoryName}
+                                                        onChange={e => setTempCategoryName(e.target.value)}
+                                                        style={{ fontSize: '0.95rem', padding: '4px', width: '150px' }}
+                                                        placeholder="Category Name"
+                                                    />
+                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                                        <span style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>Target:</span>
+                                                        <input
+                                                            type="number"
+                                                            className="input"
+                                                            value={tempQuotaTarget}
+                                                            onChange={e => setTempQuotaTarget(Number(e.target.value))}
+                                                            style={{ fontSize: '0.85rem', padding: '4px', width: '60px' }}
+                                                        />
+                                                    </div>
+                                                    <div style={{ display: 'flex', gap: '0.25rem' }}>
+                                                        <button
+                                                            onClick={handleSaveEdit}
+                                                            style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: 'var(--color-success)' }}
+                                                            title="Save"
+                                                        >
+                                                            <Check size={16} />
+                                                        </button>
+                                                        <button
+                                                            onClick={handleCancelEdit}
+                                                            style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: 'var(--text-secondary)' }}
+                                                            title="Cancel"
+                                                        >
+                                                            <X size={16} />
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                            ) : (
+                                                <>
+                                                    <span style={{ fontWeight: 600, fontSize: '0.95rem' }}>{cat?.name || 'Unknown Category'}</span>
+                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                                        <span style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>Target: <strong style={{ color: 'var(--text-primary)' }}>{q.targetValue}</strong></span>
+                                                        <button
+                                                            onClick={() => handleEditQuota(q.id, cat?.name || '', q.targetValue)}
+                                                            style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: 'var(--text-primary)' }}
+                                                            title="Edit Rule"
+                                                        >
+                                                            <Edit2 size={14} />
+                                                        </button>
+                                                        <button
+                                                            onClick={() => handleDeleteQuota(q.id)}
+                                                            style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: 'var(--color-danger)' }}
+                                                            title="Remove Rule"
+                                                        >
+                                                            <Trash2 size={14} />
+                                                        </button>
+                                                    </div>
+                                                </>
+                                            )}
+                                        </div>
 
-                        <div className={styles.formGroup}>
-                            <label className="label">Box Name</label>
-                            <input
-                                className="input"
-                                value={formData.name}
-                                onChange={e => setFormData({ ...formData, name: e.target.value })}
-                            />
+                                        {/* Inline Item Management */}
+                                        <div style={{ padding: '0.5rem', background: 'var(--bg-app)', borderRadius: '4px' }}>
+                                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', marginBottom: '0.5rem' }}>
+                                                {menuItems.filter(i => i.categoryId === q.categoryId && i.vendorId === selectedVendorId).map(item => (
+                                                    <div key={item.id} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', background: 'var(--bg-surface)', padding: '2px 6px', borderRadius: '4px', border: '1px solid var(--border-color)', fontSize: '0.8rem' }}>
+                                                        <span>{item.name}</span>
+                                                        <span style={{ color: 'var(--text-tertiary)' }}>(x{item.quotaValue || 1})</span>
+                                                        <button onClick={() => handleDeleteItem(item.id)} style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: 'var(--text-tertiary)', padding: 0 }}>
+                                                            <X size={12} />
+                                                        </button>
+                                                    </div>
+                                                ))}
+                                                {menuItems.filter(i => i.categoryId === q.categoryId && i.vendorId === selectedVendorId).length === 0 && (
+                                                    <span style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)', fontStyle: 'italic' }}>No items in this category yet.</span>
+                                                )}
+                                            </div>
+
+                                            {addingItemForCategory === q.categoryId ? (
+                                                <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginTop: '0.5rem' }}>
+                                                    <input
+                                                        placeholder="Item Name (e.g. Apple)"
+                                                        className="input"
+                                                        autoFocus
+                                                        style={{ padding: '2px 6px', fontSize: '0.8rem', height: '24px' }}
+                                                        value={newItemName}
+                                                        onChange={e => setNewItemName(e.target.value)}
+                                                        onKeyDown={e => e.key === 'Enter' && handleAddItem(q.categoryId)}
+                                                    />
+                                                    <input
+                                                        type="number"
+                                                        placeholder="Val"
+                                                        className="input"
+                                                        style={{ padding: '2px 6px', fontSize: '0.8rem', width: '50px', height: '24px' }}
+                                                        value={newItemQuotaValue}
+                                                        onChange={e => setNewItemQuotaValue(Number(e.target.value))}
+                                                    />
+                                                    <button className="btn btn-primary" style={{ padding: '2px 8px', height: '24px', fontSize: '0.75rem' }} onClick={() => handleAddItem(q.categoryId)}>Add</button>
+                                                    <button className="btn btn-secondary" style={{ padding: '2px 8px', height: '24px', fontSize: '0.75rem' }} onClick={() => setAddingItemForCategory(null)}>Cancel</button>
+                                                </div>
+                                            ) : (
+                                                <button
+                                                    className="btn btn-secondary"
+                                                    style={{ padding: '2px 8px', height: '24px', fontSize: '0.75rem', marginTop: '4px' }}
+                                                    onClick={() => {
+                                                        setAddingItemForCategory(q.categoryId);
+                                                        setNewItemName('');
+                                                        setNewItemQuotaValue(1);
+                                                    }}
+                                                >
+                                                    <Plus size={12} /> Add Item
+                                                </button>
+                                            )}
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                            {currentQuotas.length === 0 && <div style={{ fontSize: '0.85rem', color: 'var(--text-tertiary)', fontStyle: 'italic', padding: '1rem', border: '1px dashed var(--border-color)', borderRadius: '6px', textAlign: 'center' }}>No configuration logic defined. Add a Category Rule below to start.</div>}
                         </div>
 
-                        <div className={styles.formGroup}>
-                            <label className={styles.checkboxLabel}>
-                                <input
-                                    type="checkbox"
-                                    checked={formData.isActive}
-                                    onChange={e => setFormData({ ...formData, isActive: e.target.checked })}
-                                />
-                                Active
-                            </label>
-                        </div>
-
-                        <div className={styles.formActions}>
-                            <button className="btn btn-primary" onClick={handleSubmit}>
-                                <Check size={16} /> Save
-                            </button>
-                            <button className="btn btn-secondary" onClick={resetForm}>
-                                <X size={16} /> Cancel
-                            </button>
+                        <div style={{ background: 'var(--bg-surface)', padding: '1rem', borderRadius: '6px', border: '1px solid var(--border-color)' }}>
+                            {!isAddingCategory ? (
+                                <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'flex-end' }}>
+                                    <div style={{ flex: 2 }}>
+                                        <label style={{ display: 'block', fontSize: '0.75rem', marginBottom: '0.35rem', color: 'var(--text-secondary)' }}>Category</label>
+                                        <select
+                                            className="select"
+                                            style={{
+                                                fontSize: '0.85rem',
+                                                padding: '8px',
+                                                width: '100%',
+                                                backgroundColor: 'var(--bg-app)',
+                                                color: 'var(--text-primary)',
+                                                borderColor: 'var(--border-color)'
+                                            }}
+                                            value={newQuotaCategoryId}
+                                            onChange={e => {
+                                                if (e.target.value === 'NEW') {
+                                                    setIsAddingCategory(true);
+                                                    setNewQuotaCategoryId('');
+                                                } else {
+                                                    setNewQuotaCategoryId(e.target.value);
+                                                }
+                                            }}
+                                        >
+                                            <option value="">-- Select Category --</option>
+                                            {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                                            <option value="NEW" style={{ fontWeight: 'bold', color: 'var(--color-primary)' }}>+ Create New Category</option>
+                                        </select>
+                                    </div>
+                                    <div style={{ flex: 1 }}>
+                                        <label style={{ display: 'block', fontSize: '0.75rem', marginBottom: '0.35rem', color: 'var(--text-secondary)' }}>Qty</label>
+                                        <input
+                                            type="number"
+                                            className="input"
+                                            style={{ fontSize: '0.85rem', padding: '8px' }}
+                                            value={newQuotaTarget}
+                                            onChange={e => setNewQuotaTarget(Number(e.target.value))}
+                                        />
+                                    </div>
+                                    <button
+                                        className="btn btn-primary"
+                                        style={{ padding: '8px 16px', fontSize: '0.85rem', height: '38px' }}
+                                        onClick={handleAddQuota}
+                                        disabled={!newQuotaCategoryId}
+                                    >
+                                        <Plus size={14} /> Add Rule
+                                    </button>
+                                </div>
+                            ) : (
+                                <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'flex-end', animation: 'fadeIn 0.2s' }}>
+                                    <div style={{ flex: 3 }}>
+                                        <label style={{ display: 'block', fontSize: '0.75rem', marginBottom: '0.35rem', color: 'var(--color-primary)' }}>New Category Name</label>
+                                        <input
+                                            className="input"
+                                            autoFocus
+                                            placeholder="e.g., Dairy"
+                                            value={newCategoryName}
+                                            onChange={e => setNewCategoryName(e.target.value)}
+                                            onKeyDown={e => e.key === 'Enter' && handleQuickAddCategory()}
+                                        />
+                                    </div>
+                                    <button className="btn btn-primary" onClick={handleQuickAddCategory}>Create</button>
+                                    <button className="btn btn-secondary" onClick={() => setIsAddingCategory(false)}>Cancel</button>
+                                </div>
+                            )}
                         </div>
                     </div>
                 )}
-
-                <div className={styles.list}>
-                    <div className={styles.listHeader}>
-                        <span style={{ flex: 2 }}>Name</span>
-                        <span style={{ width: '100px' }}>Status</span>
-                        <span style={{ width: '80px' }}>Actions</span>
-                    </div>
-                    {filteredBoxes.map(box => (
-                        <div key={box.id} className={styles.item}>
-                            <span style={{ flex: 2, fontWeight: 500 }}>{box.name}</span>
-                            <span style={{ width: '100px' }}>
-                                {box.isActive ? <span className="badge" style={{ color: 'var(--color-success)', background: 'rgba(34, 197, 94, 0.1)' }}>Active</span> : <span className="badge">Inactive</span>}
-                            </span>
-                            <div className={styles.actions}>
-                                <button className={styles.iconBtn} onClick={() => handleEditInit(box)} title="Edit">
-                                    <Edit2 size={16} />
-                                </button>
-                                <button className={`${styles.iconBtn} ${styles.danger}`} onClick={() => handleDelete(box.id)} title="Delete Box Type">
-                                    <Trash2 size={16} />
-                                </button>
-                            </div>
-                        </div>
-                    ))}
-                    {filteredBoxes.length === 0 && !isCreating && (
-                        <div className={styles.emptyList}>No box types found for this vendor.</div>
-                    )}
-                </div>
             </div>
         </div>
     );

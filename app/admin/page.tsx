@@ -8,6 +8,7 @@ import { MenuManagement } from '@/components/admin/MenuManagement';
 import { BoxTypeManagement } from '@/components/admin/BoxTypeManagement';
 import { NavigatorManagement } from '@/components/admin/NavigatorManagement';
 import { AdminManagement } from '@/components/admin/AdminManagement';
+
 import { GlobalSettings } from '@/components/admin/GlobalSettings';
 
 type Tab = 'vendors' | 'menus' | 'statuses' | 'boxes' | 'navigators' | 'settings' | 'admins';
@@ -29,6 +30,7 @@ export default function AdminPage() {
                 >
                     Menus
                 </button>
+
                 <button
                     className={`${styles.tab} ${activeTab === 'boxes' ? styles.activeTab : ''}`}
                     onClick={() => setActiveTab('boxes')}

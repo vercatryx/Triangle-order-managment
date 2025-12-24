@@ -40,7 +40,9 @@ export function MenuManagement() {
         setFormData({
             name: '',
             value: 0,
-            isActive: true
+            isActive: true,
+            quotaValue: 1,
+            categoryId: ''
         });
         setIsCreating(false);
         setEditingId(null);
@@ -104,7 +106,7 @@ export function MenuManagement() {
             <div className={styles.main}>
                 <div className={styles.header}>
                     <div>
-                        <h2 className={styles.title}>Menu Items</h2>
+                        <h2 className={styles.title}>Menu Items (v2)</h2>
                         <p className={styles.subtitle}>Manage items for {vendors.find(v => v.id === selectedVendorId)?.name}</p>
                     </div>
                     {!isCreating && !editingId && (
@@ -118,7 +120,7 @@ export function MenuManagement() {
                     <div className={styles.formCard}>
                         <h3 className={styles.formTitle}>{editingId ? 'Edit Item' : 'New Item'}</h3>
                         <div className={styles.row}>
-                            <div className={styles.formGroup} style={{ flex: 2 }}>
+                            <div className={styles.formGroup} style={{ flex: 1 }}>
                                 <label className="label">Item Name</label>
                                 <input
                                     className="input"
@@ -127,8 +129,11 @@ export function MenuManagement() {
                                     onChange={e => setFormData({ ...formData, name: e.target.value })}
                                 />
                             </div>
+                        </div>
+
+                        <div className={styles.row}>
                             <div className={styles.formGroup} style={{ flex: 1 }}>
-                                <label className="label">Value</label>
+                                <label className="label">Value (Price/Points)</label>
                                 <input
                                     type="number"
                                     className="input"
@@ -162,24 +167,24 @@ export function MenuManagement() {
 
                 <div className={styles.list}>
                     <div className={styles.listHeader}>
-                        <span style={{ flex: 2 }}>Name</span>
+                        <span style={{ flex: 3 }}>Name</span>
                         <span style={{ flex: 1 }}>Value</span>
-                        <span style={{ width: '100px' }}>Status</span>
-                        <span style={{ width: '80px' }}>Actions</span>
+                        <span style={{ flex: 1 }}>Status</span>
+                        <span style={{ width: '120px', textAlign: 'right' }}>Actions</span>
                     </div>
                     {filteredItems.map(item => (
                         <div key={item.id} className={styles.item}>
-                            <span style={{ flex: 2, fontWeight: 500 }}>{item.name}</span>
-                            <span style={{ flex: 1 }}>{item.value}</span>
-                            <span style={{ width: '100px' }}>
-                                {item.isActive ? <span className="badge" style={{ color: 'var(--color-success)', background: 'rgba(34, 197, 94, 0.1)' }}>Active</span> : <span className="badge">Inactive</span>}
+                            <span style={{ flex: 3, fontWeight: 500, fontSize: '1.1rem' }}>{item.name}</span>
+                            <span style={{ flex: 1, fontSize: '1rem' }}>{item.value}</span>
+                            <span style={{ flex: 1 }}>
+                                {item.isActive ? <span className="badge" style={{ color: 'var(--color-success)', background: 'rgba(34, 197, 94, 0.1)', fontSize: '0.9rem', padding: '4px 12px' }}>Active</span> : <span className="badge" style={{ fontSize: '0.9rem', padding: '4px 12px' }}>Inactive</span>}
                             </span>
                             <div className={styles.actions}>
                                 <button className={styles.iconBtn} onClick={() => handleEditInit(item)}>
-                                    <Edit2 size={16} />
+                                    <Edit2 size={20} />
                                 </button>
                                 <button className={`${styles.iconBtn} ${styles.danger}`} onClick={() => handleDelete(item.id)}>
-                                    <Trash2 size={16} />
+                                    <Trash2 size={20} />
                                 </button>
                             </div>
                         </div>
