@@ -12,7 +12,7 @@ export function BillingList() {
     const router = useRouter();
     const [records, setRecords] = useState<BillingRecord[]>([]);
     const [search, setSearch] = useState('');
-    const [statusFilter, setStatusFilter] = useState<'all' | 'success' | 'failed' | 'pending'>('all');
+    const [statusFilter, setStatusFilter] = useState<'all' | 'success' | 'failed' | 'pending' | 'request sent'>('all');
     const [isLoading, setIsLoading] = useState(true);
 
     useEffect(() => {
@@ -110,6 +110,7 @@ export function BillingList() {
                         <option value="success">Success</option>
                         <option value="failed">Failed</option>
                         <option value="pending">Pending</option>
+                        <option value="request sent">Request Sent</option>
                     </select>
                 </div>
             </div>
@@ -133,9 +134,10 @@ export function BillingList() {
                             <span className={
                                 record.status === 'success' ? styles.statusSuccess :
                                     record.status === 'failed' ? styles.statusFailed :
+                                    record.status === 'request sent' ? styles.statusPending :
                                         styles.statusPending
                             }>
-                                {record.status.toUpperCase()}
+                                {record.status === 'request sent' ? 'REQUEST SENT' : record.status.toUpperCase()}
                             </span>
                         </span>
                         <span style={{ flex: 2, fontSize: '0.85rem', color: 'var(--text-secondary)' }}>

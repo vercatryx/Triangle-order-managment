@@ -1,183 +1,216 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getClients, getMenuItems, getVendors, getBoxTypes, getSettings } from '@/lib/actions';
-import { ClientProfile, OrderConfiguration } from '@/lib/types';
+import { supabase } from '@/lib/supabase';
+import { getMenuItems, getVendors, getBoxTypes, getSettings, getClient } from '@/lib/actions';
 
 /**
- * Helper function to check if a date is in the current week
- * Week starts on Sunday and ends on Saturday
- */
-function isInCurrentWeek(dateString: string): boolean {
-    if (!dateString) return false;
-    
-    const date = new Date(dateString);
-    const today = new Date();
-    
-    // Get the start of the week (Sunday)
-    const startOfWeek = new Date(today);
-    const day = startOfWeek.getDay();
-    startOfWeek.setDate(today.getDate() - day);
-    startOfWeek.setHours(0, 0, 0, 0);
-    
-    // Get the end of the week (Saturday)
-    const endOfWeek = new Date(startOfWeek);
-    endOfWeek.setDate(startOfWeek.getDate() + 6);
-    endOfWeek.setHours(23, 59, 59, 999);
-    
-    return date >= startOfWeek && date <= endOfWeek;
-}
-
-/**
- * Process a single order and return summary data
- */
-function processOrder(
-    client: ClientProfile,
-    order: OrderConfiguration,
-    menuItems: any[],
-    vendors: any[],
-    boxTypes: any[]
-) {
-    const orderSummary: any = {
-        clientId: client.id,
-        clientName: client.fullName,
-        serviceType: order.serviceType,
-        lastUpdated: order.lastUpdated,
-        updatedBy: order.updatedBy,
-        caseId: order.caseId || null,
-        vendorDetails: [],
-        totalValue: 0,
-        totalItems: 0,
-        deliveryDistribution: order.deliveryDistribution || {}
-    };
-
-    if (order.serviceType === 'Food' && order.vendorSelections) {
-        // Process Food orders with multiple vendors
-        for (const selection of order.vendorSelections) {
-            if (!selection.vendorId || !selection.items) continue;
-
-            const vendor = vendors.find(v => v.id === selection.vendorId);
-            const vendorSummary: any = {
-                vendorId: selection.vendorId,
-                vendorName: vendor?.name || 'Unknown Vendor',
-                items: [],
-                totalValue: 0,
-                totalQuantity: 0
-            };
-
-            for (const [itemId, quantity] of Object.entries(selection.items)) {
-                if (quantity <= 0) continue;
-
-                const item = menuItems.find(m => m.id === itemId);
-                if (item) {
-                    const itemValue = item.value * quantity;
-                    vendorSummary.items.push({
-                        itemId: item.id,
-                        itemName: item.name,
-                        quantity: quantity,
-                        unitValue: item.value,
-                        totalValue: itemValue
-                    });
-                    vendorSummary.totalValue += itemValue;
-                    vendorSummary.totalQuantity += quantity;
-                }
-            }
-
-            if (vendorSummary.items.length > 0) {
-                orderSummary.vendorDetails.push(vendorSummary);
-                orderSummary.totalValue += vendorSummary.totalValue;
-                orderSummary.totalItems += vendorSummary.totalQuantity;
-            }
-        }
-    } else if (order.serviceType === 'Boxes' && order.boxTypeId) {
-        // Process Box orders
-        const boxType = boxTypes.find(b => b.id === order.boxTypeId);
-        const vendor = vendors.find(v => v.id === order.vendorId);
-        
-        orderSummary.vendorDetails.push({
-            vendorId: order.vendorId || null,
-            vendorName: vendor?.name || 'Unknown Vendor',
-            boxTypeId: order.boxTypeId,
-            boxTypeName: boxType?.name || 'Unknown Box Type',
-            quantity: order.boxQuantity || 0
-        });
-        orderSummary.totalItems = order.boxQuantity || 0;
-    }
-
-    return orderSummary;
-}
-
-/**
- * API Route: Process all current orders of the week
+ * API Route: Process all current active orders from orders table
  * 
  * POST /api/process-weekly-orders
  * 
- * Request Body (optional):
- * {
- *   "weekStart": "2025-01-05T00:00:00Z",  // Optional: Custom week start date
- *   "weekEnd": "2025-01-11T23:59:59Z"     // Optional: Custom week end date
- * }
+ * This endpoint:
+ * 1. Fetches all active orders (status: 'pending' or 'confirmed') from the orders table
+ * 2. Processes each order with full details (vendor selections, items, box selections)
+ * 3. Creates a billing record for each processed order
  * 
- * If no body is provided, processes orders for the current week (Sunday-Saturday)
- * Returns a comprehensive summary of all orders updated in the specified week
+ * Returns a comprehensive summary of processed orders and created billing records
  */
 export async function POST(request: NextRequest) {
     try {
-        const body = await request.json().catch(() => ({}));
-        const { weekStart, weekEnd } = body;
+        // Fetch all active orders from orders table
+        const { data: orders, error: ordersError } = await supabase
+            .from('orders')
+            .select('*')
+            .in('status', ['pending', 'confirmed'])
+            .order('created_at', { ascending: true });
 
-        // If custom week range provided, use it; otherwise use current week
-        let startOfWeek: Date;
-        let endOfWeek: Date;
-
-        if (weekStart && weekEnd) {
-            startOfWeek = new Date(weekStart);
-            endOfWeek = new Date(weekEnd);
-        } else {
-            const today = new Date();
-            startOfWeek = new Date(today);
-            const day = startOfWeek.getDay();
-            startOfWeek.setDate(today.getDate() - day);
-            startOfWeek.setHours(0, 0, 0, 0);
-            
-            endOfWeek = new Date(startOfWeek);
-            endOfWeek.setDate(startOfWeek.getDate() + 6);
-            endOfWeek.setHours(23, 59, 59, 999);
+        if (ordersError) {
+            throw new Error(`Failed to fetch orders: ${ordersError.message}`);
         }
 
-        // Custom function to check if date is in specified week range
-        const isInWeekRange = (dateString: string): boolean => {
-            if (!dateString) return false;
-            const date = new Date(dateString);
-            return date >= startOfWeek && date <= endOfWeek;
-        };
+        if (!orders || orders.length === 0) {
+            return NextResponse.json({
+                success: true,
+                message: 'No active orders found to process',
+                statistics: {
+                    totalOrders: 0,
+                    totalBillingRecords: 0,
+                    totalValue: 0,
+                    totalItems: 0
+                },
+                orders: [],
+                billingRecords: [],
+                processedAt: new Date().toISOString()
+            }, { status: 200 });
+        }
 
-        // Fetch all required data
-        const [clients, menuItems, vendors, boxTypes, settings] = await Promise.all([
-            getClients(),
+        // Fetch all required reference data
+        const [menuItems, vendors, boxTypes, settings] = await Promise.all([
             getMenuItems(),
             getVendors(),
             getBoxTypes(),
             getSettings()
         ]);
 
-        // Filter clients with active orders in the specified week
-        const weekOrders = clients
-            .filter(client => {
-                if (!client.activeOrder || !client.activeOrder.lastUpdated) return false;
-                return isInWeekRange(client.activeOrder.lastUpdated);
-            })
-            .map(client => ({
-                client,
-                order: client.activeOrder!
-            }));
+        const processedOrders: any[] = [];
+        const billingRecords: any[] = [];
+        const errors: string[] = [];
 
-        // Process each order using the shared processOrder function
-        const processedOrders = weekOrders.map(({ client, order }) =>
-            processOrder(client, order, menuItems, vendors, boxTypes)
-        );
+        // Process each order
+        for (const order of orders) {
+            try {
+                // Fetch client information
+                const client = await getClient(order.client_id);
+                if (!client) {
+                    errors.push(`Client not found for order ${order.id}`);
+                    continue;
+                }
+
+                // Get navigator name
+                let navigatorName = 'Unassigned';
+                if (client.navigatorId) {
+                    const { data: navigator } = await supabase
+                        .from('navigators')
+                        .select('name')
+                        .eq('id', client.navigatorId)
+                        .single();
+                    if (navigator) {
+                        navigatorName = navigator.name;
+                    }
+                }
+
+                // Fetch order details based on service type
+                let orderSummary: any = {
+                    orderId: order.id,
+                    clientId: order.client_id,
+                    clientName: client.fullName,
+                    serviceType: order.service_type,
+                    status: order.status,
+                    caseId: order.case_id || null,
+                    scheduledDeliveryDate: order.scheduled_delivery_date,
+                    actualDeliveryDate: order.actual_delivery_date,
+                    deliveryDistribution: order.delivery_distribution || {},
+                    totalValue: parseFloat(order.total_value?.toString() || '0'),
+                    totalItems: parseInt(order.total_items?.toString() || '0'),
+                    notes: order.notes,
+                    createdAt: order.created_at,
+                    lastUpdated: order.last_updated,
+                    updatedBy: order.updated_by,
+                    vendorDetails: []
+                };
+
+                if (order.service_type === 'Food') {
+                    // Fetch vendor selections for Food orders
+                    const { data: vendorSelections } = await supabase
+                        .from('order_vendor_selections')
+                        .select('*')
+                        .eq('order_id', order.id);
+
+                    if (vendorSelections) {
+                        for (const vs of vendorSelections) {
+                            const vendor = vendors.find(v => v.id === vs.vendor_id);
+                            
+                            // Fetch items for this vendor selection
+                            const { data: items } = await supabase
+                                .from('order_items')
+                                .select('*')
+                                .eq('vendor_selection_id', vs.id);
+
+                            const vendorSummary: any = {
+                                vendorId: vs.vendor_id,
+                                vendorName: vendor?.name || 'Unknown Vendor',
+                                items: []
+                            };
+
+                            let vendorTotalValue = 0;
+                            let vendorTotalQuantity = 0;
+
+                            if (items) {
+                                for (const item of items) {
+                                    const menuItem = menuItems.find(m => m.id === item.menu_item_id);
+                                    vendorSummary.items.push({
+                                        itemId: item.menu_item_id,
+                                        itemName: menuItem?.name || 'Unknown Item',
+                                        quantity: item.quantity,
+                                        unitValue: parseFloat(item.unit_value?.toString() || '0'),
+                                        totalValue: parseFloat(item.total_value?.toString() || '0')
+                                    });
+                                    vendorTotalValue += parseFloat(item.total_value?.toString() || '0');
+                                    vendorTotalQuantity += item.quantity;
+                                }
+                            }
+
+                            vendorSummary.totalValue = vendorTotalValue;
+                            vendorSummary.totalQuantity = vendorTotalQuantity;
+                            orderSummary.vendorDetails.push(vendorSummary);
+                        }
+                    }
+                } else if (order.service_type === 'Boxes') {
+                    // Fetch box selections for Box orders
+                    const { data: boxSelections } = await supabase
+                        .from('order_box_selections')
+                        .select('*')
+                        .eq('order_id', order.id);
+
+                    if (boxSelections && boxSelections.length > 0) {
+                        for (const bs of boxSelections) {
+                            const boxType = boxTypes.find(b => b.id === bs.box_type_id);
+                            const vendor = vendors.find(v => v.id === bs.vendor_id);
+                            
+                            orderSummary.vendorDetails.push({
+                                vendorId: bs.vendor_id || null,
+                                vendorName: vendor?.name || 'Unknown Vendor',
+                                boxTypeId: bs.box_type_id,
+                                boxTypeName: boxType?.name || 'Unknown Box Type',
+                                quantity: bs.quantity
+                            });
+                        }
+                    }
+                }
+
+                processedOrders.push(orderSummary);
+
+                // Create billing record for this order
+                const billingAmount = orderSummary.totalValue;
+                const billingRemarks = `Order #${order.id.substring(0, 8)} - ${order.service_type} service${order.caseId ? ` (Case: ${order.caseId})` : ''}`;
+
+                const { data: billingRecord, error: billingError } = await supabase
+                    .from('billing_records')
+                    .insert({
+                        client_id: order.client_id,
+                        client_name: client.fullName,
+                        status: 'request sent',
+                        remarks: billingRemarks,
+                        navigator: navigatorName,
+                        amount: billingAmount
+                    })
+                    .select()
+                    .single();
+
+                if (billingError) {
+                    errors.push(`Failed to create billing record for order ${order.id}: ${billingError.message}`);
+                } else if (billingRecord) {
+                    billingRecords.push({
+                        id: billingRecord.id,
+                        clientId: billingRecord.client_id,
+                        clientName: billingRecord.client_name,
+                        status: billingRecord.status,
+                        remarks: billingRecord.remarks,
+                        navigator: billingRecord.navigator,
+                        amount: parseFloat(billingRecord.amount?.toString() || '0'),
+                        createdAt: billingRecord.created_at,
+                        orderId: order.id
+                    });
+                }
+
+            } catch (error: any) {
+                errors.push(`Error processing order ${order.id}: ${error.message}`);
+            }
+        }
 
         // Calculate aggregate statistics
         const stats = {
             totalOrders: processedOrders.length,
+            totalBillingRecords: billingRecords.length,
             totalClients: new Set(processedOrders.map(o => o.clientId)).size,
             totalValue: processedOrders.reduce((sum, o) => sum + o.totalValue, 0),
             totalItems: processedOrders.reduce((sum, o) => sum + o.totalItems, 0),
@@ -187,9 +220,14 @@ export async function POST(request: NextRequest) {
                 'Cooking supplies': processedOrders.filter(o => o.serviceType === 'Cooking supplies').length,
                 'Care plan': processedOrders.filter(o => o.serviceType === 'Care plan').length
             },
+            byStatus: {
+                pending: processedOrders.filter(o => o.status === 'pending').length,
+                confirmed: processedOrders.filter(o => o.status === 'confirmed').length
+            },
             byVendor: {} as Record<string, number>
         };
 
+        // Count orders by vendor
         processedOrders.forEach(order => {
             order.vendorDetails.forEach((vendor: any) => {
                 const vendorName = vendor.vendorName || 'Unknown';
@@ -199,28 +237,15 @@ export async function POST(request: NextRequest) {
 
         return NextResponse.json({
             success: true,
-            weekRange: {
-                start: startOfWeek.toISOString(),
-                end: endOfWeek.toISOString(),
-                startFormatted: startOfWeek.toLocaleDateString('en-US', { 
-                    weekday: 'long', 
-                    year: 'numeric', 
-                    month: 'long', 
-                    day: 'numeric' 
-                }),
-                endFormatted: endOfWeek.toLocaleDateString('en-US', { 
-                    weekday: 'long', 
-                    year: 'numeric', 
-                    month: 'long', 
-                    day: 'numeric' 
-                })
-            },
+            message: `Successfully processed ${processedOrders.length} order(s) and created ${billingRecords.length} billing record(s)`,
             settings: {
                 weeklyCutoffDay: settings.weeklyCutoffDay,
                 weeklyCutoffTime: settings.weeklyCutoffTime
             },
             statistics: stats,
             orders: processedOrders,
+            billingRecords: billingRecords,
+            errors: errors.length > 0 ? errors : undefined,
             processedAt: new Date().toISOString()
         }, { status: 200 });
 
@@ -233,4 +258,3 @@ export async function POST(request: NextRequest) {
         }, { status: 500 });
     }
 }
-

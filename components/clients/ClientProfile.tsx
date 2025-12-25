@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import { ClientProfile, ClientStatus, Navigator, Vendor, MenuItem, BoxType, ServiceType, AppSettings, DeliveryRecord, ItemCategory, BoxQuota } from '@/lib/types';
-import { getClient, updateClient, deleteClient, getStatuses, getNavigators, getVendors, getMenuItems, getBoxTypes, getSettings, getClientHistory, updateDeliveryProof, recordClientChange, getOrderHistory, getCategories, getBoxQuotas, getClients } from '@/lib/actions';
+import { getClient, updateClient, deleteClient, getStatuses, getNavigators, getVendors, getMenuItems, getBoxTypes, getSettings, getClientHistory, updateDeliveryProof, recordClientChange, getOrderHistory, getCategories, getBoxQuotas, getClients, syncCurrentOrderToUpcoming, getBillingHistory } from '@/lib/actions';
 import { Save, ArrowLeft, Truck, Package, AlertTriangle, Upload, Trash2, Plus, Check, ClipboardList, History, CreditCard, Calendar } from 'lucide-react';
 import styles from './ClientProfile.module.css';
 import { OrderHistoryItem } from './OrderHistoryItem';
@@ -31,7 +31,8 @@ export function ClientProfileDetail({ clientId: propClientId, onClose }: Props) 
     const [settings, setSettings] = useState<AppSettings | null>(null);
     const [history, setHistory] = useState<DeliveryRecord[]>([]);
     const [orderHistory, setOrderHistory] = useState<any[]>([]);
-    const [activeHistoryTab, setActiveHistoryTab] = useState<'deliveries' | 'audit'>('deliveries');
+    const [billingHistory, setBillingHistory] = useState<any[]>([]);
+    const [activeHistoryTab, setActiveHistoryTab] = useState<'deliveries' | 'audit' | 'billing'>('deliveries');
     const [allClients, setAllClients] = useState<ClientProfile[]>([]);
 
     const [formData, setFormData] = useState<Partial<ClientProfile>>({});
@@ -73,12 +74,14 @@ export function ClientProfileDetail({ clientId: propClientId, onClose }: Props) 
             }
             setOrderConfig(activeOrder);
 
-            const [h, oh] = await Promise.all([
+            const [h, oh, bh] = await Promise.all([
                 getClientHistory(clientId),
-                getOrderHistory(clientId)
+                getOrderHistory(clientId),
+                getBillingHistory(clientId)
             ]);
             setHistory(h);
             setOrderHistory(oh);
+            setBillingHistory(bh);
         }
         setStatuses(s);
         setNavigators(n);
@@ -157,11 +160,10 @@ export function ClientProfileDetail({ clientId: propClientId, onClose }: Props) 
         return date >= startOfWeek && date <= endOfWeek;
     }
 
-    // Get clients with orders updated this week
-    const thisWeekOrders = allClients.filter(c => {
-        if (!c.activeOrder || !c.activeOrder.lastUpdated) return false;
-        return isInCurrentWeek(c.activeOrder.lastUpdated);
-    });
+    // Check if current client has an order updated this week
+    const hasCurrentWeekOrder = client && client.activeOrder && client.activeOrder.lastUpdated 
+        ? isInCurrentWeek(client.activeOrder.lastUpdated)
+        : false;
 
     // Helper functions for displaying order info
     function getOrderSummaryText(client: ClientProfile) {
@@ -196,6 +198,59 @@ export function ClientProfileDetail({ clientId: propClientId, onClose }: Props) 
 
     function getNavigatorName(id: string) {
         return navigators.find(n => n.id === id)?.name || 'Unassigned';
+    }
+
+    // Get the next delivery date for a vendor (first occurrence)
+    function getNextDeliveryDate(vendorId: string): { dayOfWeek: string; date: string } | null {
+        if (!vendorId) {
+            return null;
+        }
+
+        const vendor = vendors.find(v => v.id === vendorId);
+        if (!vendor || !vendor.deliveryDays || vendor.deliveryDays.length === 0) {
+            return null;
+        }
+
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        
+        const dayNameToNumber: { [key: string]: number } = {
+            'Sunday': 0,
+            'Monday': 1,
+            'Tuesday': 2,
+            'Wednesday': 3,
+            'Thursday': 4,
+            'Friday': 5,
+            'Saturday': 6
+        };
+
+        const deliveryDayNumbers = vendor.deliveryDays
+            .map(day => dayNameToNumber[day])
+            .filter(num => num !== undefined) as number[];
+
+        if (deliveryDayNumbers.length === 0) {
+            return null;
+        }
+
+        // Find the next delivery date (start from today, check next 14 days)
+        for (let i = 0; i <= 14; i++) {
+            const checkDate = new Date(today);
+            checkDate.setDate(today.getDate() + i);
+            const dayOfWeek = checkDate.getDay();
+            
+            if (deliveryDayNumbers.includes(dayOfWeek)) {
+                return {
+                    dayOfWeek: checkDate.toLocaleDateString('en-US', { weekday: 'long' }),
+                    date: checkDate.toLocaleDateString('en-US', {
+                        month: 'short',
+                        day: 'numeric',
+                        year: 'numeric'
+                    })
+                };
+            }
+        }
+
+        return null;
     }
 
     function getNextDeliveryDateForVendor(vendorId: string): string | null {
@@ -422,9 +477,13 @@ export function ClientProfileDetail({ clientId: propClientId, onClose }: Props) 
         await updateClient(clientId, updateData);
         await recordClientChange(clientId, summary, 'Admin');
 
-        // Refresh original client data to reflect latest saved state
+        // Sync Current Order Request to upcoming_orders table
         const updatedClient = await getClient(clientId);
-        if (updatedClient) setClient(updatedClient);
+        if (updatedClient) {
+            setClient(updatedClient);
+            // Sync to upcoming_orders in real-time
+            await syncCurrentOrderToUpcoming(clientId, updatedClient);
+        }
 
         // Refresh history
         const oh = await getOrderHistory(clientId);
@@ -900,70 +959,109 @@ export function ClientProfileDetail({ clientId: propClientId, onClose }: Props) 
                         )}
                     </section>
 
-                    {/* This Week's Orders Panel */}
-                    {thisWeekOrders.length > 0 && (
+                    {/* This Week's Order Panel */}
+                    {hasCurrentWeekOrder && client && client.activeOrder && (
                         <section className={styles.card} style={{ marginTop: 'var(--spacing-lg)' }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: 'var(--spacing-md)' }}>
                                 <Calendar size={18} />
                                 <h3 className={styles.sectionTitle} style={{ marginBottom: 0, borderBottom: 'none', paddingBottom: 0 }}>
-                                    This Week's Orders
+                                    This Week's Order
                                 </h3>
-                                <span style={{ fontSize: '0.875rem', color: 'var(--text-secondary)' }}>({thisWeekOrders.length})</span>
                             </div>
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '300px', overflowY: 'auto' }}>
-                                {thisWeekOrders.map(c => {
-                                    const lastUpdated = c.activeOrder?.lastUpdated 
-                                        ? new Date(c.activeOrder.lastUpdated).toLocaleDateString('en-US', {
-                                            month: 'short',
-                                            day: 'numeric',
-                                            year: 'numeric',
-                                            hour: '2-digit',
-                                            minute: '2-digit'
-                                        })
-                                        : '-';
+                            <div>
+                                {(() => {
+                                    const order = client.activeOrder;
+                                    const isFood = client.serviceType === 'Food';
+                                    const isBoxes = client.serviceType === 'Boxes';
 
                                     return (
-                                        <div
-                                            key={c.id}
-                                            onClick={() => {
-                                                if (onClose) {
-                                                    onClose();
-                                                }
-                                                router.push(`/clients/${c.id}`);
-                                            }}
-                                            style={{
-                                                padding: '12px',
-                                                border: '1px solid var(--border-color)',
-                                                borderRadius: 'var(--radius-sm)',
-                                                cursor: 'pointer',
-                                                transition: 'background-color 0.2s',
-                                                backgroundColor: c.id === clientId ? 'var(--bg-surface-hover)' : 'var(--bg-app)'
-                                            }}
-                                            onMouseEnter={(e) => {
-                                                if (c.id !== clientId) {
-                                                    e.currentTarget.style.backgroundColor = 'var(--bg-surface-hover)';
-                                                }
-                                            }}
-                                            onMouseLeave={(e) => {
-                                                if (c.id !== clientId) {
-                                                    e.currentTarget.style.backgroundColor = 'var(--bg-app)';
-                                                }
-                                            }}
-                                        >
-                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '4px' }}>
-                                                <span style={{ fontWeight: 600, fontSize: '0.95rem' }}>{c.fullName}</span>
-                                                <span className="badge" style={{ fontSize: '0.75rem' }}>{getStatusName(c.statusId)}</span>
-                                            </div>
-                                            <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '4px' }}>
-                                                {getOrderSummaryText(c)}
-                                            </div>
-                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.75rem', color: 'var(--text-tertiary)' }}>
-                                                <span>{getNavigatorName(c.navigatorId)}</span>
-                                                <span>{lastUpdated}</span>
-                                            </div>
+                                        <div>
+                                            {/* Order Details */}
+                                            {isFood && order.vendorSelections && order.vendorSelections.length > 0 && (
+                                                <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--spacing-md)' }}>
+                                                    {order.vendorSelections.map((vendorSelection, idx) => {
+                                                        const vendor = vendors.find(v => v.id === vendorSelection.vendorId);
+                                                        const vendorName = vendor?.name || 'Unknown Vendor';
+                                                        const nextDelivery = getNextDeliveryDate(vendorSelection.vendorId);
+                                                        const items = vendorSelection.items || {};
+
+                                                        return (
+                                                            <div key={idx} style={{ padding: 'var(--spacing-sm)', backgroundColor: 'var(--bg-surface)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)' }}>
+                                                                {/* Vendor Header with Next Delivery Date */}
+                                                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--spacing-sm)' }}>
+                                                                    <div style={{ fontWeight: 600, fontSize: '0.95rem' }}>{vendorName}</div>
+                                                                    {nextDelivery && (
+                                                                        <div style={{ fontSize: '0.8rem', color: 'var(--color-primary)', fontWeight: 500 }}>
+                                                                            Next delivery date: {nextDelivery.dayOfWeek}, {nextDelivery.date}
+                                                                        </div>
+                                                                    )}
+                                                                </div>
+
+                                                                {/* Items List */}
+                                                                {Object.keys(items).length > 0 ? (
+                                                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                                                                        {Object.entries(items).map(([itemId, quantity]) => {
+                                                                            const item = menuItems.find(m => m.id === itemId);
+                                                                            const itemName = item?.name || 'Unknown Item';
+                                                                            const qty = Number(quantity) || 0;
+                                                                            if (qty === 0) return null;
+
+                                                                            return (
+                                                                                <div key={itemId} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.85rem', padding: '4px 8px', backgroundColor: 'var(--bg-app)', borderRadius: '4px' }}>
+                                                                                    <span>{itemName}</span>
+                                                                                    <span style={{ fontWeight: 500, color: 'var(--text-secondary)' }}>Qty: {qty}</span>
+                                                                                </div>
+                                                                            );
+                                                                        })}
+                                                                    </div>
+                                                                ) : (
+                                                                    <div style={{ fontSize: '0.85rem', color: 'var(--text-tertiary)', fontStyle: 'italic', padding: '4px' }}>
+                                                                        No items selected
+                                                                    </div>
+                                                                )}
+                                                            </div>
+                                                        );
+                                                    })}
+                                                </div>
+                                            )}
+
+                                            {isBoxes && order.boxTypeId && (
+                                                <div style={{ padding: 'var(--spacing-sm)', backgroundColor: 'var(--bg-surface)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)' }}>
+                                                    {(() => {
+                                                        const box = boxTypes.find(b => b.id === order.boxTypeId);
+                                                        const boxVendorId = box?.vendorId;
+                                                        const vendor = boxVendorId ? vendors.find(v => v.id === boxVendorId) : null;
+                                                        const vendorName = vendor?.name || 'Unknown Vendor';
+                                                        const boxName = box?.name || 'Unknown Box';
+                                                        const nextDelivery = boxVendorId ? getNextDeliveryDate(boxVendorId) : null;
+
+                                                        return (
+                                                            <>
+                                                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--spacing-sm)' }}>
+                                                                    <div style={{ fontWeight: 600, fontSize: '0.95rem' }}>{vendorName}</div>
+                                                                    {nextDelivery && (
+                                                                        <div style={{ fontSize: '0.8rem', color: 'var(--color-primary)', fontWeight: 500 }}>
+                                                                            Next delivery date: {nextDelivery.dayOfWeek}, {nextDelivery.date}
+                                                                        </div>
+                                                                    )}
+                                                                </div>
+                                                                <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                                                                    {boxName} × {order.boxQuantity || 1}
+                                                                </div>
+                                                            </>
+                                                        );
+                                                    })()}
+                                                </div>
+                                            )}
+
+                                            {!isFood && !isBoxes && (
+                                                <div style={{ fontSize: '0.85rem', color: 'var(--text-tertiary)', fontStyle: 'italic', padding: '4px' }}>
+                                                    No order details available
+                                                </div>
+                                            )}
                                         </div>
                                     );
-                                })}
+                                })()}
                             </div>
                         </section>
                     )}
@@ -983,6 +1081,12 @@ export function ClientProfileDetail({ clientId: propClientId, onClose }: Props) 
                                     onClick={() => setActiveHistoryTab('audit')}
                                 >
                                     <History size={14} /> Change Log ({orderHistory.length})
+                                </button>
+                                <button
+                                    className={`${styles.tab} ${activeHistoryTab === 'billing' ? styles.activeTab : ''}`}
+                                    onClick={() => setActiveHistoryTab('billing')}
+                                >
+                                    <CreditCard size={14} /> Billing ({billingHistory.length})
                                 </button>
                             </div>
                         </div>
@@ -1028,7 +1132,7 @@ export function ClientProfileDetail({ clientId: propClientId, onClose }: Props) 
                                     ))}
                                     {history.length === 0 && <div className={styles.empty}>No deliveries recorded yet.</div>}
                                 </>
-                            ) : (
+                            ) : activeHistoryTab === 'audit' ? (
                                 <div className={styles.animateFadeIn}>
                                     {orderHistory.map((log, idx) => (
                                         <div key={log.id || idx} className={styles.item} style={{ flexDirection: 'column', alignItems: 'flex-start', gap: '8px', padding: '16px', borderBottom: '1px solid var(--border-color)' }}>
@@ -1053,6 +1157,98 @@ export function ClientProfileDetail({ clientId: propClientId, onClose }: Props) 
                                         </div>
                                     ))}
                                     {orderHistory.length === 0 && <div className={styles.empty}>No changes recorded yet.</div>}
+                                </div>
+                            ) : (
+                                <div className={styles.animateFadeIn}>
+                                    {billingHistory.length > 0 ? (
+                                        <>
+                                            {/* Show current billing record (most recent) */}
+                                            <div className={styles.item} style={{ flexDirection: 'column', alignItems: 'flex-start', gap: '12px', padding: '16px', borderBottom: '1px solid var(--border-color)', backgroundColor: 'var(--bg-surface-hover)' }}>
+                                                <div style={{ display: 'flex', justifyContent: 'space-between', width: '100%', alignItems: 'center' }}>
+                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                                        <CreditCard size={16} color="var(--color-primary)" />
+                                                        <span style={{ fontWeight: 600, fontSize: '0.95rem' }}>Current Billing Record</span>
+                                                    </div>
+                                                    <span className="badge" style={{
+                                                        backgroundColor: billingHistory[0].status === 'request sent' ? 'var(--color-warning)' :
+                                                            billingHistory[0].status === 'success' ? 'var(--color-success)' :
+                                                            billingHistory[0].status === 'failed' ? 'var(--color-danger)' :
+                                                            'var(--color-secondary)'
+                                                    }}>
+                                                        {billingHistory[0].status === 'request sent' ? 'REQUEST SENT' : billingHistory[0].status.toUpperCase()}
+                                                    </span>
+                                                </div>
+                                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', width: '100%' }}>
+                                                    <div>
+                                                        <div style={{ color: 'var(--text-secondary)', fontSize: '0.75rem', marginBottom: '4px' }}>Amount</div>
+                                                        <div style={{ fontWeight: 600, fontSize: '1.1rem', color: 'var(--text-primary)' }}>
+                                                            ${parseFloat(billingHistory[0].amount?.toString() || '0').toFixed(2)}
+                                                        </div>
+                                                    </div>
+                                                    <div>
+                                                        <div style={{ color: 'var(--text-secondary)', fontSize: '0.75rem', marginBottom: '4px' }}>Date</div>
+                                                        <div style={{ fontSize: '0.9rem', color: 'var(--text-primary)' }}>
+                                                            {new Date(billingHistory[0].createdAt).toLocaleDateString('en-US', {
+                                                                month: 'short',
+                                                                day: 'numeric',
+                                                                year: 'numeric'
+                                                            })}
+                                                        </div>
+                                                    </div>
+                                                    <div>
+                                                        <div style={{ color: 'var(--text-secondary)', fontSize: '0.75rem', marginBottom: '4px' }}>Navigator</div>
+                                                        <div style={{ fontSize: '0.9rem', color: 'var(--text-primary)' }}>{billingHistory[0].navigator || 'Unassigned'}</div>
+                                                    </div>
+                                                    <div>
+                                                        <div style={{ color: 'var(--text-secondary)', fontSize: '0.75rem', marginBottom: '4px' }}>Client</div>
+                                                        <div style={{ fontSize: '0.9rem', color: 'var(--text-primary)' }}>{billingHistory[0].clientName || 'Unknown'}</div>
+                                                    </div>
+                                                </div>
+                                                {billingHistory[0].remarks && (
+                                                    <div style={{ width: '100%', marginTop: '8px', paddingTop: '12px', borderTop: '1px solid var(--border-color)' }}>
+                                                        <div style={{ color: 'var(--text-secondary)', fontSize: '0.75rem', marginBottom: '4px' }}>Remarks</div>
+                                                        <div style={{ color: 'var(--text-primary)', fontSize: '0.875rem', lineHeight: '1.5' }}>
+                                                            {billingHistory[0].remarks}
+                                                        </div>
+                                                    </div>
+                                                )}
+                                            </div>
+                                            
+                                            {/* Show all billing history if there are more records */}
+                                            {billingHistory.length > 1 && (
+                                                <>
+                                                    <div style={{ marginTop: '16px', marginBottom: '8px', padding: '8px 0', borderTop: '2px solid var(--border-color)' }}>
+                                                        <span style={{ fontWeight: 600, fontSize: '0.9rem', color: 'var(--text-secondary)' }}>All Billing Records</span>
+                                                    </div>
+                                                    {billingHistory.slice(1).map((record, idx) => (
+                                                        <div key={record.id || idx} className={styles.item} style={{ flexDirection: 'column', alignItems: 'flex-start', gap: '8px', padding: '12px', borderBottom: '1px solid var(--border-color)' }}>
+                                                            <div style={{ display: 'flex', justifyContent: 'space-between', width: '100%', alignItems: 'center' }}>
+                                                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                                                    <span style={{ fontWeight: 500 }}>{new Date(record.createdAt).toLocaleDateString()}</span>
+                                                                </div>
+                                                                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                                                                    <span style={{ fontWeight: 600 }}>${parseFloat(record.amount?.toString() || '0').toFixed(2)}</span>
+                                                                    <span className="badge" style={{
+                                                                        backgroundColor: record.status === 'request sent' ? 'var(--color-warning)' :
+                                                                            record.status === 'success' ? 'var(--color-success)' :
+                                                                            record.status === 'failed' ? 'var(--color-danger)' :
+                                                                            'var(--color-secondary)'
+                                                                    }}>
+                                                                        {record.status === 'request sent' ? 'REQUEST SENT' : record.status.toUpperCase()}
+                                                                    </span>
+                                                                </div>
+                                                            </div>
+                                                            {record.remarks && (
+                                                                <div style={{ color: 'var(--text-secondary)', fontSize: '0.875rem' }}>{record.remarks}</div>
+                                                            )}
+                                                        </div>
+                                                    ))}
+                                                </>
+                                            )}
+                                        </>
+                                    ) : (
+                                        <div className={styles.empty}>No billing records found.</div>
+                                    )}
                                 </div>
                             )}
                         </div>

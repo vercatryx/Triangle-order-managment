@@ -131,7 +131,7 @@ export interface BillingRecord {
   id: string;
   clientId: string;
   clientName?: string;
-  status: 'success' | 'failed' | 'pending';
+  status: 'success' | 'failed' | 'pending' | 'request sent';
   remarks: string;
   navigator: string;
   amount: number;
