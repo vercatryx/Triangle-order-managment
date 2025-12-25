@@ -39,9 +39,9 @@ export async function createSession(userId: string, name: string = 'Admin', role
 
     cookieStore.set('session', session, {
         httpOnly: true,
-        secure: process.env.NODE_ENV === 'production',
+        secure: true,
         expires: expires,
-        sameSite: 'lax',
+        sameSite: 'none',
         path: '/',
     });
 }
