@@ -1320,7 +1320,7 @@ export function ClientProfileDetail({ clientId: propClientId, onClose }: Props) 
                                                         {billingHistory[0].status === 'request sent' ? 'REQUEST SENT' : billingHistory[0].status.toUpperCase()}
                                                     </span>
                                                 </div>
-                                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', width: '100%' }}>
+                                                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '12px', width: '100%' }}>
                                                     <div>
                                                         <div style={{ color: 'var(--text-secondary)', fontSize: '0.75rem', marginBottom: '4px' }}>Amount</div>
                                                         <div style={{ fontWeight: 600, fontSize: '1.1rem', color: 'var(--text-primary)' }}>
@@ -1345,6 +1345,26 @@ export function ClientProfileDetail({ clientId: propClientId, onClose }: Props) 
                                                         <div style={{ color: 'var(--text-secondary)', fontSize: '0.75rem', marginBottom: '4px' }}>Client</div>
                                                         <div style={{ fontSize: '0.9rem', color: 'var(--text-primary)' }}>{billingHistory[0].clientName || 'Unknown'}</div>
                                                     </div>
+                                                    {billingHistory[0].orderId && (
+                                                        <div>
+                                                            <div style={{ color: 'var(--text-secondary)', fontSize: '0.75rem', marginBottom: '4px' }}>Order ID</div>
+                                                            <div style={{ fontSize: '0.9rem', color: 'var(--text-primary)', fontFamily: 'monospace' }}>
+                                                                {billingHistory[0].orderId.slice(0, 8)}...
+                                                            </div>
+                                                        </div>
+                                                    )}
+                                                    {billingHistory[0].deliveryDate && (
+                                                        <div>
+                                                            <div style={{ color: 'var(--text-secondary)', fontSize: '0.75rem', marginBottom: '4px' }}>Delivery Date</div>
+                                                            <div style={{ fontSize: '0.9rem', color: 'var(--text-primary)' }}>
+                                                                {new Date(billingHistory[0].deliveryDate).toLocaleDateString('en-US', {
+                                                                    month: 'short',
+                                                                    day: 'numeric',
+                                                                    year: 'numeric'
+                                                                })}
+                                                            </div>
+                                                        </div>
+                                                    )}
                                                 </div>
                                                 {billingHistory[0].remarks && (
                                                     <div style={{ width: '100%', marginTop: '8px', paddingTop: '12px', borderTop: '1px solid var(--border-color)' }}>
@@ -1379,6 +1399,24 @@ export function ClientProfileDetail({ clientId: propClientId, onClose }: Props) 
                                                                         {record.status === 'request sent' ? 'REQUEST SENT' : record.status.toUpperCase()}
                                                                     </span>
                                                                 </div>
+                                                            </div>
+                                                            <div style={{ display: 'flex', gap: '16px', fontSize: '0.85rem', color: 'var(--text-secondary)', marginTop: '4px' }}>
+                                                                {record.orderId && (
+                                                                    <div>
+                                                                        <span style={{ fontWeight: 500 }}>Order ID: </span>
+                                                                        <span style={{ fontFamily: 'monospace' }}>{record.orderId.slice(0, 8)}...</span>
+                                                                    </div>
+                                                                )}
+                                                                {record.deliveryDate && (
+                                                                    <div>
+                                                                        <span style={{ fontWeight: 500 }}>Delivery Date: </span>
+                                                                        <span>{new Date(record.deliveryDate).toLocaleDateString('en-US', {
+                                                                            month: 'short',
+                                                                            day: 'numeric',
+                                                                            year: 'numeric'
+                                                                        })}</span>
+                                                                    </div>
+                                                                )}
                                                             </div>
                                                             {record.remarks && (
                                                                 <div style={{ color: 'var(--text-secondary)', fontSize: '0.875rem' }}>{record.remarks}</div>

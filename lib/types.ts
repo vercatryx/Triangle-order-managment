@@ -136,6 +136,8 @@ export interface BillingRecord {
   navigator: string;
   amount: number;
   createdAt: string;
+  orderId?: string;
+  deliveryDate?: string; // Delivery date from the associated order (actual_delivery_date or scheduled_delivery_date)
 }
 
 export interface DatabaseSchema {

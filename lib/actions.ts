@@ -597,16 +597,41 @@ export async function getBillingHistory(clientId: string) {
         return [];
     }
 
-    return (data || []).map((d: any) => ({
-        id: d.id,
-        clientId: d.client_id,
-        clientName: d.client_name,
-        status: d.status,
-        remarks: d.remarks,
-        navigator: d.navigator,
-        amount: d.amount,
-        createdAt: d.created_at
-    }));
+    // Fetch order details separately if order_id exists
+    const billingRecords = data || [];
+    const recordsWithOrderData = await Promise.all(
+        billingRecords.map(async (d: any) => {
+            let deliveryDate: string | undefined = undefined;
+            
+            if (d.order_id) {
+                const { data: orderData, error: orderError } = await supabase
+                    .from('orders')
+                    .select('scheduled_delivery_date, actual_delivery_date')
+                    .eq('id', d.order_id)
+                    .single();
+                
+                if (!orderError && orderData) {
+                    // Prefer actual_delivery_date, fallback to scheduled_delivery_date
+                    deliveryDate = orderData.actual_delivery_date || orderData.scheduled_delivery_date || undefined;
+                }
+            }
+
+            return {
+                id: d.id,
+                clientId: d.client_id,
+                clientName: d.client_name,
+                status: d.status,
+                remarks: d.remarks,
+                navigator: d.navigator,
+                amount: d.amount,
+                createdAt: d.created_at,
+                orderId: d.order_id || undefined,
+                deliveryDate: deliveryDate
+            };
+        })
+    );
+
+    return recordsWithOrderData;
 }
 
 export async function getAllBillingRecords() {
@@ -620,16 +645,41 @@ export async function getAllBillingRecords() {
         return [];
     }
 
-    return (data || []).map((d: any) => ({
-        id: d.id,
-        clientId: d.client_id,
-        clientName: d.client_name,
-        status: d.status,
-        remarks: d.remarks,
-        navigator: d.navigator,
-        amount: d.amount,
-        createdAt: d.created_at
-    }));
+    // Fetch order details separately if order_id exists
+    const billingRecords = data || [];
+    const recordsWithOrderData = await Promise.all(
+        billingRecords.map(async (d: any) => {
+            let deliveryDate: string | undefined = undefined;
+            
+            if (d.order_id) {
+                const { data: orderData, error: orderError } = await supabase
+                    .from('orders')
+                    .select('scheduled_delivery_date, actual_delivery_date')
+                    .eq('id', d.order_id)
+                    .single();
+                
+                if (!orderError && orderData) {
+                    // Prefer actual_delivery_date, fallback to scheduled_delivery_date
+                    deliveryDate = orderData.actual_delivery_date || orderData.scheduled_delivery_date || undefined;
+                }
+            }
+
+            return {
+                id: d.id,
+                clientId: d.client_id,
+                clientName: d.client_name,
+                status: d.status,
+                remarks: d.remarks,
+                navigator: d.navigator,
+                amount: d.amount,
+                createdAt: d.created_at,
+                orderId: d.order_id || undefined,
+                deliveryDate: deliveryDate
+            };
+        })
+    );
+
+    return recordsWithOrderData;
 }
 
 // --- UPCOMING ORDERS ACTIONS ---

@@ -577,7 +577,8 @@ export async function GET(request: NextRequest) {
                         status: 'request sent',
                         remarks: billingRemarks,
                         navigator: navigatorName,
-                        amount: billingAmount
+                        amount: billingAmount,
+                        order_id: orderIdForBilling
                     })
                     .select()
                     .single();
