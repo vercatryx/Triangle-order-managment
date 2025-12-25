@@ -217,3 +217,28 @@
 .clientRowNotAllowed:hover {
     background-color: rgba(239, 68, 68, 0.15);
 }
+
+/* This Week's Orders Section */
+.weekOrdersSection {
+    margin-bottom: var(--spacing-xl);
+}
+
+.weekOrdersHeader {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: var(--spacing-md);
+}
+
+.weekOrdersTitle {
+    font-size: 1.25rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin: 0;
+}
+
+.weekOrdersCount {
+    font-size: 0.875rem;
+    color: var(--text-secondary);
+    font-weight: 500;
+}

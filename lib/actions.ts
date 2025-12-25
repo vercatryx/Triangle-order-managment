@@ -133,7 +133,8 @@ export async function getMenuItems() {
         value: i.value,
         isActive: i.is_active,
         categoryId: i.category_id,
-        quotaValue: i.quota_value
+        quotaValue: i.quota_value,
+        minimumOrder: i.minimum_order ?? 0
     }));
 }
 
@@ -144,7 +145,8 @@ export async function addMenuItem(data: Omit<MenuItem, 'id'>) {
         value: data.value,
         is_active: data.isActive,
         category_id: data.categoryId,
-        quota_value: data.quotaValue
+        quota_value: data.quotaValue,
+        minimum_order: data.minimumOrder ?? 0
     };
     const { data: res, error } = await supabase.from('menu_items').insert([payload]).select().single();
     handleError(error);
@@ -159,6 +161,7 @@ export async function updateMenuItem(id: string, data: Partial<MenuItem>) {
     if (data.isActive !== undefined) payload.is_active = data.isActive;
     if (data.categoryId !== undefined) payload.category_id = data.categoryId;
     if (data.quotaValue !== undefined) payload.quota_value = data.quotaValue;
+    if (data.minimumOrder !== undefined) payload.minimum_order = data.minimumOrder;
 
     const { error } = await supabase.from('menu_items').update(payload).eq('id', id);
     handleError(error);

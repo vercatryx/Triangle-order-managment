@@ -3,8 +3,8 @@
 import { useState, useEffect } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import { ClientProfile, ClientStatus, Navigator, Vendor, MenuItem, BoxType, ServiceType, AppSettings, DeliveryRecord, ItemCategory, BoxQuota } from '@/lib/types';
-import { getClient, updateClient, deleteClient, getStatuses, getNavigators, getVendors, getMenuItems, getBoxTypes, getSettings, getClientHistory, updateDeliveryProof, recordClientChange, getOrderHistory, getCategories, getBoxQuotas } from '@/lib/actions';
-import { Save, ArrowLeft, Truck, Package, AlertTriangle, Upload, Trash2, Plus, Check, ClipboardList, History, CreditCard } from 'lucide-react';
+import { getClient, updateClient, deleteClient, getStatuses, getNavigators, getVendors, getMenuItems, getBoxTypes, getSettings, getClientHistory, updateDeliveryProof, recordClientChange, getOrderHistory, getCategories, getBoxQuotas, getClients } from '@/lib/actions';
+import { Save, ArrowLeft, Truck, Package, AlertTriangle, Upload, Trash2, Plus, Check, ClipboardList, History, CreditCard, Calendar } from 'lucide-react';
 import styles from './ClientProfile.module.css';
 import { OrderHistoryItem } from './OrderHistoryItem';
 
@@ -32,6 +32,7 @@ export function ClientProfileDetail({ clientId: propClientId, onClose }: Props) 
     const [history, setHistory] = useState<DeliveryRecord[]>([]);
     const [orderHistory, setOrderHistory] = useState<any[]>([]);
     const [activeHistoryTab, setActiveHistoryTab] = useState<'deliveries' | 'audit'>('deliveries');
+    const [allClients, setAllClients] = useState<ClientProfile[]>([]);
 
     const [formData, setFormData] = useState<Partial<ClientProfile>>({});
     const [orderConfig, setOrderConfig] = useState<any>({});
@@ -45,7 +46,7 @@ export function ClientProfileDetail({ clientId: propClientId, onClose }: Props) 
     }, [clientId]);
 
     async function loadData() {
-        const [c, s, n, v, m, b, appSettings, catData] = await Promise.all([
+        const [c, s, n, v, m, b, appSettings, catData, allClientsData] = await Promise.all([
             getClient(clientId),
             getStatuses(),
             getNavigators(),
@@ -53,7 +54,8 @@ export function ClientProfileDetail({ clientId: propClientId, onClose }: Props) 
             getMenuItems(),
             getBoxTypes(),
             getSettings(),
-            getCategories()
+            getCategories(),
+            getClients()
         ]);
 
         if (c) {
@@ -85,6 +87,7 @@ export function ClientProfileDetail({ clientId: propClientId, onClose }: Props) 
         setBoxTypes(b);
         setSettings(appSettings);
         setCategories(catData);
+        setAllClients(allClientsData);
     }
 
     // Effect: Auto-select Box Type when Vendor changes (for Boxes)
@@ -133,6 +136,124 @@ export function ClientProfileDetail({ clientId: propClientId, onClose }: Props) 
         return false; // MVP simplified
     }
 
+    // Helper function to check if a date is in the current week
+    function isInCurrentWeek(dateString: string): boolean {
+        if (!dateString) return false;
+        
+        const date = new Date(dateString);
+        const today = new Date();
+        
+        // Get the start of the week (Sunday)
+        const startOfWeek = new Date(today);
+        const day = startOfWeek.getDay();
+        startOfWeek.setDate(today.getDate() - day);
+        startOfWeek.setHours(0, 0, 0, 0);
+        
+        // Get the end of the week (Saturday)
+        const endOfWeek = new Date(startOfWeek);
+        endOfWeek.setDate(startOfWeek.getDate() + 6);
+        endOfWeek.setHours(23, 59, 59, 999);
+        
+        return date >= startOfWeek && date <= endOfWeek;
+    }
+
+    // Get clients with orders updated this week
+    const thisWeekOrders = allClients.filter(c => {
+        if (!c.activeOrder || !c.activeOrder.lastUpdated) return false;
+        return isInCurrentWeek(c.activeOrder.lastUpdated);
+    });
+
+    // Helper functions for displaying order info
+    function getOrderSummaryText(client: ClientProfile) {
+        if (!client.activeOrder) return '-';
+        const st = client.serviceType;
+        const conf = client.activeOrder;
+
+        let content = '';
+
+        if (st === 'Food') {
+            const limit = client.approvedMealsPerWeek || 0;
+            const vendorsSummary = (conf.vendorSelections || [])
+                .map(v => {
+                    const vendorName = vendors.find(ven => ven.id === v.vendorId)?.name || 'Unknown';
+                    const itemCount = Object.values(v.items || {}).reduce((a: number, b: any) => a + Number(b), 0);
+                    return `${vendorName} (${itemCount})`;
+                }).join(', ');
+            content = `: ${vendorsSummary || 'None'} [Max ${limit}]`;
+        } else if (st === 'Boxes') {
+            const box = boxTypes.find(b => b.id === conf.boxTypeId);
+            const vendorName = vendors.find(v => v.id === box?.vendorId)?.name || '-';
+            const boxName = box?.name || 'Unknown Box';
+            content = `: ${vendorName} - ${boxName} (x${conf.boxQuantity || 1})`;
+        }
+
+        return `${st}${content}`;
+    }
+
+    function getStatusName(id: string) {
+        return statuses.find(s => s.id === id)?.name || 'Unknown';
+    }
+
+    function getNavigatorName(id: string) {
+        return navigators.find(n => n.id === id)?.name || 'Unassigned';
+    }
+
+    function getNextDeliveryDateForVendor(vendorId: string): string | null {
+        if (!vendorId) {
+            return null;
+        }
+
+        const vendor = vendors.find(v => v.id === vendorId);
+        if (!vendor || !vendor.deliveryDays || vendor.deliveryDays.length === 0) {
+            return null;
+        }
+
+        // Find the next delivery date
+        const today = new Date();
+        today.setHours(0, 0, 0, 0); // Reset time to start of day
+        
+        // Map day names to day of week (0 = Sunday, 1 = Monday, etc.)
+        const dayNameToNumber: { [key: string]: number } = {
+            'Sunday': 0,
+            'Monday': 1,
+            'Tuesday': 2,
+            'Wednesday': 3,
+            'Thursday': 4,
+            'Friday': 5,
+            'Saturday': 6
+        };
+
+        const deliveryDayNumbers = vendor.deliveryDays
+            .map(day => dayNameToNumber[day])
+            .filter(num => num !== undefined) as number[];
+
+        if (deliveryDayNumbers.length === 0) {
+            return null;
+        }
+
+        // Check the next 21 days to find the second (next next) delivery day (start from tomorrow)
+        let foundCount = 0;
+        for (let i = 1; i <= 21; i++) {
+            const checkDate = new Date(today);
+            checkDate.setDate(today.getDate() + i);
+            const dayOfWeek = checkDate.getDay();
+            
+            if (deliveryDayNumbers.includes(dayOfWeek)) {
+                foundCount++;
+                // Return the second occurrence (next next delivery day)
+                if (foundCount === 2) {
+                    return checkDate.toLocaleDateString('en-US', {
+                        weekday: 'long',
+                        year: 'numeric',
+                        month: 'long',
+                        day: 'numeric'
+                    });
+                }
+            }
+        }
+
+        return null;
+    }
 
     if (!client) return <div>Loading...</div>;
 
@@ -174,6 +295,31 @@ export function ClientProfileDetail({ clientId: propClientId, onClose }: Props) 
                 return {
                     isValid: false,
                     messages: [`Order value (${currentTotal}) exceeds approved limit (${limit}).`]
+                };
+            }
+
+            // Validate minimum order requirements
+            const minimumOrderErrors: string[] = [];
+            if (orderConfig.vendorSelections) {
+                orderConfig.vendorSelections.forEach((selection: any, blockIndex: number) => {
+                    if (!selection.items) return;
+                    Object.entries(selection.items).forEach(([itemId, qty]) => {
+                        const item = menuItems.find(i => i.id === itemId);
+                        const quantity = qty as number;
+                        // Only validate minimum if quantity > 0 (if they're actually ordering the item)
+                        if (item && item.minimumOrder && item.minimumOrder > 0 && quantity > 0 && quantity < item.minimumOrder) {
+                            const vendor = vendors.find(v => v.id === selection.vendorId);
+                            minimumOrderErrors.push(
+                                `"${item.name}"${vendor ? ` (${vendor.name})` : ''}: Minimum order is ${item.minimumOrder}, but only ${quantity} is ordered.`
+                            );
+                        }
+                    });
+                });
+            }
+            if (minimumOrderErrors.length > 0) {
+                return {
+                    isValid: false,
+                    messages: minimumOrderErrors
                 };
             }
         }
@@ -552,27 +698,71 @@ export function ClientProfileDetail({ clientId: propClientId, onClose }: Props) 
                                                     </div>
 
                                                     {selection.vendorId && (
-                                                        <div className={styles.menuList}>
-                                                            {getVendorMenuItems(selection.vendorId).map(item => (
-                                                                <div key={item.id} className={styles.menuItem}>
-                                                                    <div className={styles.itemInfo}>
-                                                                        <span>{item.name}</span>
-                                                                        <span className={styles.itemValue}>Value: {item.value}</span>
-                                                                    </div>
-                                                                    <div className={styles.quantityControl}>
-                                                                        <input
-                                                                            type="number"
-                                                                            className={styles.qtyInput}
-                                                                            min="0"
-                                                                            value={selection.items?.[item.id] || ''}
-                                                                            placeholder="0"
-                                                                            onChange={e => updateItemQuantity(index, item.id, parseInt(e.target.value) || 0)}
-                                                                        />
-                                                                    </div>
-                                                                </div>
-                                                            ))}
-                                                            {getVendorMenuItems(selection.vendorId).length === 0 && <span className={styles.hint}>No active menu items.</span>}
-                                                        </div>
+                                                        <>
+                                                            <div className={styles.menuList}>
+                                                                {getVendorMenuItems(selection.vendorId).map(item => {
+                                                                    const currentQty = selection.items?.[item.id] || 0;
+                                                                    const minOrder = item.minimumOrder || 0;
+                                                                    const isBelowMinimum = minOrder > 0 && currentQty > 0 && currentQty < minOrder;
+                                                                    return (
+                                                                        <div key={item.id} className={styles.menuItem}>
+                                                                            <div className={styles.itemInfo}>
+                                                                                <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                                                                                    <span>{item.name}</span>
+                                                                                    <div style={{ display: 'flex', gap: '12px', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                                                                                        <span className={styles.itemValue}>Value: {item.value}</span>
+                                                                                        {minOrder > 0 && (
+                                                                                            <span style={{ 
+                                                                                                color: isBelowMinimum ? 'var(--color-danger)' : 'var(--color-primary)',
+                                                                                                fontWeight: 500 
+                                                                                            }}>
+                                                                                                Min: {minOrder}
+                                                                                            </span>
+                                                                                        )}
+                                                                                    </div>
+                                                                                </div>
+                                                                            </div>
+                                                                            <div className={styles.quantityControl}>
+                                                                                <input
+                                                                                    type="number"
+                                                                                    className={styles.qtyInput}
+                                                                                    min={minOrder > 0 ? minOrder : 0}
+                                                                                    value={selection.items?.[item.id] || ''}
+                                                                                    placeholder={minOrder > 0 ? minOrder.toString() : "0"}
+                                                                                    onChange={e => updateItemQuantity(index, item.id, parseInt(e.target.value) || 0)}
+                                                                                    style={{
+                                                                                        borderColor: isBelowMinimum ? 'var(--color-danger)' : undefined
+                                                                                    }}
+                                                                                />
+                                                                            </div>
+                                                                        </div>
+                                                                    );
+                                                                })}
+                                                                {getVendorMenuItems(selection.vendorId).length === 0 && <span className={styles.hint}>No active menu items.</span>}
+                                                            </div>
+
+                                                            {/* Next Delivery Date for this vendor */}
+                                                            {(() => {
+                                                                const nextDeliveryDate = getNextDeliveryDateForVendor(selection.vendorId);
+                                                                if (nextDeliveryDate) {
+                                                                    return (
+                                                                        <div style={{
+                                                                            marginTop: 'var(--spacing-md)',
+                                                                            padding: '0.75rem',
+                                                                            backgroundColor: 'var(--bg-surface-hover)',
+                                                                            borderRadius: 'var(--radius-sm)',
+                                                                            border: '1px solid var(--border-color)',
+                                                                            fontSize: '0.85rem',
+                                                                            color: 'var(--text-secondary)',
+                                                                            textAlign: 'center'
+                                                                        }}>
+                                                                            <strong style={{ color: 'var(--text-primary)' }}>Take Effect Date:</strong> {nextDeliveryDate}
+                                                                        </div>
+                                                                    );
+                                                                }
+                                                                return null;
+                                                            })()}
+                                                        </>
                                                     )}
                                                 </div>
                                             ))}
@@ -606,6 +796,28 @@ export function ClientProfileDetail({ clientId: propClientId, onClose }: Props) 
                                                 ))}
                                             </select>
                                         </div>
+
+                                        {/* Next Delivery Date for this vendor */}
+                                        {orderConfig.vendorId && (() => {
+                                            const nextDeliveryDate = getNextDeliveryDateForVendor(orderConfig.vendorId);
+                                            if (nextDeliveryDate) {
+                                                return (
+                                                    <div style={{
+                                                        marginTop: 'var(--spacing-md)',
+                                                        padding: '0.75rem',
+                                                        backgroundColor: 'var(--bg-surface-hover)',
+                                                        borderRadius: 'var(--radius-sm)',
+                                                        border: '1px solid var(--border-color)',
+                                                        fontSize: '0.85rem',
+                                                        color: 'var(--text-secondary)',
+                                                        textAlign: 'center'
+                                                    }}>
+                                                        <strong style={{ color: 'var(--text-primary)' }}>Take Effect Date:</strong> {nextDeliveryDate}
+                                                    </div>
+                                                );
+                                            }
+                                            return null;
+                                        })()}
 
                                         <div style={{ display: 'none' }}>
                                             <label className="label">Quantity</label>
@@ -687,6 +899,74 @@ export function ClientProfileDetail({ clientId: propClientId, onClose }: Props) 
                             </>
                         )}
                     </section>
+
+                    {/* This Week's Orders Panel */}
+                    {thisWeekOrders.length > 0 && (
+                        <section className={styles.card} style={{ marginTop: 'var(--spacing-lg)' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: 'var(--spacing-md)' }}>
+                                <Calendar size={18} />
+                                <h3 className={styles.sectionTitle} style={{ marginBottom: 0, borderBottom: 'none', paddingBottom: 0 }}>
+                                    This Week's Orders
+                                </h3>
+                                <span style={{ fontSize: '0.875rem', color: 'var(--text-secondary)' }}>({thisWeekOrders.length})</span>
+                            </div>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '300px', overflowY: 'auto' }}>
+                                {thisWeekOrders.map(c => {
+                                    const lastUpdated = c.activeOrder?.lastUpdated 
+                                        ? new Date(c.activeOrder.lastUpdated).toLocaleDateString('en-US', {
+                                            month: 'short',
+                                            day: 'numeric',
+                                            year: 'numeric',
+                                            hour: '2-digit',
+                                            minute: '2-digit'
+                                        })
+                                        : '-';
+
+                                    return (
+                                        <div
+                                            key={c.id}
+                                            onClick={() => {
+                                                if (onClose) {
+                                                    onClose();
+                                                }
+                                                router.push(`/clients/${c.id}`);
+                                            }}
+                                            style={{
+                                                padding: '12px',
+                                                border: '1px solid var(--border-color)',
+                                                borderRadius: 'var(--radius-sm)',
+                                                cursor: 'pointer',
+                                                transition: 'background-color 0.2s',
+                                                backgroundColor: c.id === clientId ? 'var(--bg-surface-hover)' : 'var(--bg-app)'
+                                            }}
+                                            onMouseEnter={(e) => {
+                                                if (c.id !== clientId) {
+                                                    e.currentTarget.style.backgroundColor = 'var(--bg-surface-hover)';
+                                                }
+                                            }}
+                                            onMouseLeave={(e) => {
+                                                if (c.id !== clientId) {
+                                                    e.currentTarget.style.backgroundColor = 'var(--bg-app)';
+                                                }
+                                            }}
+                                        >
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '4px' }}>
+                                                <span style={{ fontWeight: 600, fontSize: '0.95rem' }}>{c.fullName}</span>
+                                                <span className="badge" style={{ fontSize: '0.75rem' }}>{getStatusName(c.statusId)}</span>
+                                            </div>
+                                            <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '4px' }}>
+                                                {getOrderSummaryText(c)}
+                                            </div>
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.75rem', color: 'var(--text-tertiary)' }}>
+                                                <span>{getNavigatorName(c.navigatorId)}</span>
+                                                <span>{lastUpdated}</span>
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        </section>
+                    )}
 
                     <section className={styles.card} style={{ marginTop: 'var(--spacing-lg)' }}>
                         <div className={styles.historyHeader}>

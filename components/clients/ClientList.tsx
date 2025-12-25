@@ -5,7 +5,7 @@ import { ClientProfileDetail } from './ClientProfile';
 import { useState, useEffect } from 'react';
 import { ClientProfile, ClientStatus, Navigator, Vendor, BoxType } from '@/lib/types';
 import { getClients, getStatuses, getNavigators, addClient, getVendors, getBoxTypes } from '@/lib/actions';
-import { Plus, Search, ChevronRight, CheckSquare, Square, StickyNote, Package } from 'lucide-react';
+import { Plus, Search, ChevronRight, CheckSquare, Square, StickyNote, Package, Calendar } from 'lucide-react';
 import styles from './ClientList.module.css';
 import { useRouter } from 'next/navigation';
 
@@ -20,7 +20,7 @@ export function ClientList() {
     const [isLoading, setIsLoading] = useState(true);
 
     // Views
-    const [currentView, setCurrentView] = useState<'all' | 'eligible' | 'ineligible' | 'history' | 'billing'>('all');
+    const [currentView, setCurrentView] = useState<'all' | 'eligible' | 'ineligible' | 'history' | 'billing' | 'orders'>('all');
 
     // New Client Modal state
     const [isCreating, setIsCreating] = useState(false);
@@ -63,6 +63,10 @@ export function ClientList() {
             const status = statuses.find(s => s.id === c.statusId);
             // Show clients whose status does NOT allow deliveries
             matchesView = status ? !status.deliveriesAllowed : false;
+        } else if (currentView === 'orders') {
+            // Show only clients with orders updated this week
+            if (!c.activeOrder || !c.activeOrder.lastUpdated) return false;
+            matchesView = isInCurrentWeek(c.activeOrder.lastUpdated);
         }
         // 'history' and 'billing' might just show all clients but with different columns? 
         // Or maybe just a placeholder for now as requested.
@@ -180,6 +184,33 @@ export function ClientList() {
         );
     }
 
+    // Helper function to check if a date is in the current week
+    function isInCurrentWeek(dateString: string): boolean {
+        if (!dateString) return false;
+        
+        const date = new Date(dateString);
+        const today = new Date();
+        
+        // Get the start of the week (Sunday)
+        const startOfWeek = new Date(today);
+        const day = startOfWeek.getDay();
+        startOfWeek.setDate(today.getDate() - day);
+        startOfWeek.setHours(0, 0, 0, 0);
+        
+        // Get the end of the week (Saturday)
+        const endOfWeek = new Date(startOfWeek);
+        endOfWeek.setDate(startOfWeek.getDate() + 6);
+        endOfWeek.setHours(23, 59, 59, 999);
+        
+        return date >= startOfWeek && date <= endOfWeek;
+    }
+
+    // Get clients with orders updated this week
+    const thisWeekOrders = clients.filter(client => {
+        if (!client.activeOrder || !client.activeOrder.lastUpdated) return false;
+        return isInCurrentWeek(client.activeOrder.lastUpdated);
+    });
+
 
 
     if (isLoading) {
@@ -225,6 +256,13 @@ export function ClientList() {
                             onClick={() => setCurrentView('history')}
                         >
                             History
+                        </button>
+                        <button
+                            className={`${styles.viewBtn} ${currentView === 'orders' ? styles.viewBtnActive : ''}`}
+                            onClick={() => setCurrentView('orders')}
+                        >
+                            <Calendar size={14} style={{ marginRight: '4px' }} />
+                            This Week's Orders
                         </button>
                         <button
                             className={`${styles.viewBtn} ${currentView === 'billing' ? styles.viewBtnActive : ''}`}
@@ -278,20 +316,42 @@ export function ClientList() {
 
             <div className={styles.list}>
                 <div className={styles.listHeader}>
-                    <span style={{ minWidth: '200px', flex: 2, paddingRight: '16px' }}>Name</span>
-                    <span style={{ minWidth: '140px', flex: 1, paddingRight: '16px' }}>Status</span>
-                    <span style={{ minWidth: '160px', flex: 1, paddingRight: '16px' }}>Navigator</span>
-                    <span style={{ minWidth: '100px', flex: 0.8, paddingRight: '16px' }}>Screening</span>
-                    <span style={{ minWidth: '350px', flex: 3, paddingRight: '16px' }}>Active Order</span>
-                    <span style={{ minWidth: '180px', flex: 1.2, paddingRight: '16px' }}>Email</span>
-                    <span style={{ minWidth: '140px', flex: 1, paddingRight: '16px' }}>Phone</span>
-                    <span style={{ minWidth: '250px', flex: 2, paddingRight: '16px' }}>Address</span>
-                    <span style={{ minWidth: '200px', flex: 2 }}>Notes</span>
-                    <span style={{ width: '40px' }}></span>
+                    {currentView === 'orders' ? (
+                        <>
+                            <span style={{ minWidth: '200px', flex: 2, paddingRight: '16px' }}>Client Name</span>
+                            <span style={{ minWidth: '140px', flex: 1, paddingRight: '16px' }}>Status</span>
+                            <span style={{ minWidth: '160px', flex: 1, paddingRight: '16px' }}>Navigator</span>
+                            <span style={{ minWidth: '350px', flex: 3, paddingRight: '16px' }}>Order Details</span>
+                            <span style={{ minWidth: '180px', flex: 1.2, paddingRight: '16px' }}>Last Updated</span>
+                            <span style={{ width: '40px' }}></span>
+                        </>
+                    ) : (
+                        <>
+                            <span style={{ minWidth: '200px', flex: 2, paddingRight: '16px' }}>Name</span>
+                            <span style={{ minWidth: '140px', flex: 1, paddingRight: '16px' }}>Status</span>
+                            <span style={{ minWidth: '160px', flex: 1, paddingRight: '16px' }}>Navigator</span>
+                            <span style={{ minWidth: '100px', flex: 0.8, paddingRight: '16px' }}>Screening</span>
+                            <span style={{ minWidth: '350px', flex: 3, paddingRight: '16px' }}>Active Order</span>
+                            <span style={{ minWidth: '180px', flex: 1.2, paddingRight: '16px' }}>Email</span>
+                            <span style={{ minWidth: '140px', flex: 1, paddingRight: '16px' }}>Phone</span>
+                            <span style={{ minWidth: '250px', flex: 2, paddingRight: '16px' }}>Address</span>
+                            <span style={{ minWidth: '200px', flex: 2 }}>Notes</span>
+                            <span style={{ width: '40px' }}></span>
+                        </>
+                    )}
                 </div>
                 {filteredClients.map(client => {
                     const status = statuses.find(s => s.id === client.statusId);
                     const isNotAllowed = status ? status.deliveriesAllowed === false : false;
+                    const lastUpdated = currentView === 'orders' && client.activeOrder?.lastUpdated 
+                        ? new Date(client.activeOrder.lastUpdated).toLocaleDateString('en-US', {
+                            month: 'short',
+                            day: 'numeric',
+                            year: 'numeric',
+                            hour: '2-digit',
+                            minute: '2-digit'
+                        })
+                        : null;
 
                     return (
                         <div
@@ -307,22 +367,35 @@ export function ClientList() {
                                 </span>
                             </span>
                             <span title={getNavigatorName(client.navigatorId)} style={{ minWidth: '160px', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: '16px' }}>{getNavigatorName(client.navigatorId)}</span>
-                            <span style={{ minWidth: '100px', flex: 0.8, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: '16px' }}>{getScreeningStatus(client)}</span>
-                            <span style={{ minWidth: '350px', flex: 3, fontSize: '0.9rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: '16px' }}>
-                                {getOrderSummary(client)}
-                            </span>
-                            <span title={client.email || undefined} style={{ minWidth: '180px', flex: 1.2, fontSize: '0.85rem', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: '16px' }}>
-                                {client.email || '-'}
-                            </span>
-                            <span title={client.phoneNumber} style={{ minWidth: '140px', flex: 1, fontSize: '0.85rem', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: '16px' }}>
-                                {client.phoneNumber || '-'}
-                            </span>
-                            <span title={client.address} style={{ minWidth: '250px', flex: 2, fontSize: '0.85rem', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: '16px' }}>
-                                {client.address || '-'}
-                            </span>
-                            <span title={client.notes} style={{ minWidth: '200px', flex: 2, fontSize: '0.85rem', color: 'var(--text-tertiary)', fontStyle: 'italic', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: '16px' }}>
-                                {client.notes || '-'}
-                            </span>
+                            {currentView === 'orders' ? (
+                                <>
+                                    <span style={{ minWidth: '350px', flex: 3, fontSize: '0.9rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: '16px' }}>
+                                        {getOrderSummary(client)}
+                                    </span>
+                                    <span title={lastUpdated || '-'} style={{ minWidth: '180px', flex: 1.2, fontSize: '0.85rem', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: '16px' }}>
+                                        {lastUpdated || '-'}
+                                    </span>
+                                </>
+                            ) : (
+                                <>
+                                    <span style={{ minWidth: '100px', flex: 0.8, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: '16px' }}>{getScreeningStatus(client)}</span>
+                                    <span style={{ minWidth: '350px', flex: 3, fontSize: '0.9rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: '16px' }}>
+                                        {getOrderSummary(client)}
+                                    </span>
+                                    <span title={client.email || undefined} style={{ minWidth: '180px', flex: 1.2, fontSize: '0.85rem', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: '16px' }}>
+                                        {client.email || '-'}
+                                    </span>
+                                    <span title={client.phoneNumber} style={{ minWidth: '140px', flex: 1, fontSize: '0.85rem', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: '16px' }}>
+                                        {client.phoneNumber || '-'}
+                                    </span>
+                                    <span title={client.address} style={{ minWidth: '250px', flex: 2, fontSize: '0.85rem', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: '16px' }}>
+                                        {client.address || '-'}
+                                    </span>
+                                    <span title={client.notes} style={{ minWidth: '200px', flex: 2, fontSize: '0.85rem', color: 'var(--text-tertiary)', fontStyle: 'italic', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: '16px' }}>
+                                        {client.notes || '-'}
+                                    </span>
+                                </>
+                            )}
                             <span style={{ width: '40px' }}><ChevronRight size={16} /></span>
                         </div>
                     );
@@ -331,6 +404,7 @@ export function ClientList() {
                     <div className={styles.empty}>
                         {currentView === 'ineligible' ? 'No ineligible clients found.' :
                             currentView === 'eligible' ? 'No eligible clients found.' :
+                            currentView === 'orders' ? 'No orders found for this week.' :
                                 'No clients found.'}
                     </div>
                 )}

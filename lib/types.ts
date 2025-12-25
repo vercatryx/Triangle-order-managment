@@ -90,6 +90,7 @@ export interface MenuItem {
   isActive: boolean;
   categoryId?: string | null;
   quotaValue?: number; // How much this item counts towards a quota (default 1)
+  minimumOrder?: number; // Minimum order quantity required for this product (default 0, meaning no minimum)
 }
 
 export interface BoxQuota {
