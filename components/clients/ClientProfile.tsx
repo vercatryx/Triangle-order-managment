@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import { ClientProfile, ClientStatus, Navigator, Vendor, MenuItem, BoxType, ServiceType, AppSettings, DeliveryRecord, ItemCategory, BoxQuota } from '@/lib/types';
-import { getClient, updateClient, deleteClient, getStatuses, getNavigators, getVendors, getMenuItems, getBoxTypes, getSettings, getClientHistory, updateDeliveryProof, recordClientChange, getOrderHistory, getCategories, getBoxQuotas, getClients, syncCurrentOrderToUpcoming, getBillingHistory } from '@/lib/actions';
+import { getClient, updateClient, deleteClient, getStatuses, getNavigators, getVendors, getMenuItems, getBoxTypes, getSettings, getClientHistory, updateDeliveryProof, recordClientChange, getOrderHistory, getCategories, getBoxQuotas, getClients, syncCurrentOrderToUpcoming, getBillingHistory, getActiveOrderForClient, getUpcomingOrderForClient } from '@/lib/actions';
 import { Save, ArrowLeft, Truck, Package, AlertTriangle, Upload, Trash2, Plus, Check, ClipboardList, History, CreditCard, Calendar } from 'lucide-react';
 import styles from './ClientProfile.module.css';
 import { OrderHistoryItem } from './OrderHistoryItem';
@@ -36,7 +36,8 @@ export function ClientProfileDetail({ clientId: propClientId, onClose }: Props) 
     const [allClients, setAllClients] = useState<ClientProfile[]>([]);
 
     const [formData, setFormData] = useState<Partial<ClientProfile>>({});
-    const [orderConfig, setOrderConfig] = useState<any>({});
+    const [orderConfig, setOrderConfig] = useState<any>({}); // Current Order Request (from upcoming_orders)
+    const [activeOrder, setActiveOrder] = useState<any>(null); // This Week's Order (from orders table)
 
     const [saving, setSaving] = useState(false);
     const [message, setMessage] = useState<string | null>(null);
@@ -47,7 +48,7 @@ export function ClientProfileDetail({ clientId: propClientId, onClose }: Props) 
     }, [clientId]);
 
     async function loadData() {
-        const [c, s, n, v, m, b, appSettings, catData, allClientsData] = await Promise.all([
+        const [c, s, n, v, m, b, appSettings, catData, allClientsData, activeOrderData, upcomingOrderData] = await Promise.all([
             getClient(clientId),
             getStatuses(),
             getNavigators(),
@@ -56,23 +57,39 @@ export function ClientProfileDetail({ clientId: propClientId, onClose }: Props) 
             getBoxTypes(),
             getSettings(),
             getCategories(),
-            getClients()
+            getClients(),
+            getActiveOrderForClient(clientId), // This Week's Order from orders table
+            getUpcomingOrderForClient(clientId) // Current Order Request from upcoming_orders table
         ]);
 
         if (c) {
             setClient(c);
             setFormData(c);
-            const activeOrder: any = c.activeOrder || { serviceType: c.serviceType };
-            // Migration/Safety: Ensure vendorSelections exists for Food
-            if (activeOrder.serviceType === 'Food' && !activeOrder.vendorSelections) {
-                if (activeOrder.vendorId) {
-                    // Migrate old format
-                    activeOrder.vendorSelections = [{ vendorId: activeOrder.vendorId, items: activeOrder.menuSelections || {} }];
-                } else {
-                    activeOrder.vendorSelections = [{ vendorId: '', items: {} }];
+            
+            // Set active order from orders table (This Week's Order)
+            setActiveOrder(activeOrderData);
+            
+            // Set order config from upcoming_orders table (Current Order Request)
+            // If no upcoming order exists, initialize with default based on service type
+            if (upcomingOrderData) {
+                // Migration/Safety: Ensure vendorSelections exists for Food
+                if (upcomingOrderData.serviceType === 'Food' && !upcomingOrderData.vendorSelections) {
+                    if (upcomingOrderData.vendorId) {
+                        // Migrate old format
+                        upcomingOrderData.vendorSelections = [{ vendorId: upcomingOrderData.vendorId, items: upcomingOrderData.menuSelections || {} }];
+                    } else {
+                        upcomingOrderData.vendorSelections = [{ vendorId: '', items: {} }];
+                    }
                 }
+                setOrderConfig(upcomingOrderData);
+            } else {
+                // No upcoming order, initialize with default
+                const defaultOrder: any = { serviceType: c.serviceType };
+                if (c.serviceType === 'Food') {
+                    defaultOrder.vendorSelections = [{ vendorId: '', items: {} }];
+                }
+                setOrderConfig(defaultOrder);
             }
-            setOrderConfig(activeOrder);
 
             const [h, oh, bh] = await Promise.all([
                 getClientHistory(clientId),
@@ -114,6 +131,114 @@ export function ClientProfileDetail({ clientId: propClientId, onClose }: Props) 
             setActiveBoxQuotas([]);
         }
     }, [orderConfig.boxTypeId]);
+
+    // Effect: Check and save Service Configuration when form is being edited
+    useEffect(() => {
+        if (!client || !orderConfig || !orderConfig.caseId) return;
+
+        // Debounce check to avoid too many calls
+        const timeoutId = setTimeout(async () => {
+            try {
+                // Check if there's an existing upcoming order
+                const existingUpcomingOrder = await getUpcomingOrderForClient(clientId);
+                
+                // If no upcoming order exists, or if the data doesn't match, save it
+                let needsSave = false;
+                
+                if (!existingUpcomingOrder) {
+                    // No upcoming order exists, need to save
+                    needsSave = true;
+                } else {
+                    // Compare key fields to see if data has changed
+                    const configChanged = 
+                        existingUpcomingOrder.caseId !== orderConfig.caseId ||
+                        existingUpcomingOrder.serviceType !== formData.serviceType ||
+                        JSON.stringify(existingUpcomingOrder.vendorSelections || []) !== JSON.stringify(orderConfig.vendorSelections || []) ||
+                        existingUpcomingOrder.vendorId !== orderConfig.vendorId ||
+                        existingUpcomingOrder.boxTypeId !== orderConfig.boxTypeId ||
+                        existingUpcomingOrder.boxQuantity !== orderConfig.boxQuantity;
+                    
+                    if (configChanged) {
+                        needsSave = true;
+                    }
+                }
+
+                if (needsSave) {
+                    // Ensure structure is correct
+                    const cleanedOrderConfig = { ...orderConfig };
+                    if (formData.serviceType === 'Food') {
+                        // Remove empty selections or selections with no vendor
+                        cleanedOrderConfig.vendorSelections = (cleanedOrderConfig.vendorSelections || [])
+                            .filter((s: any) => s.vendorId)
+                            .map((s: any) => ({
+                                vendorId: s.vendorId,
+                                items: s.items || {}
+                            }));
+                    }
+
+                    // Create a temporary client object for syncCurrentOrderToUpcoming
+                    const tempClient: ClientProfile = {
+                        ...client,
+                        ...formData,
+                        activeOrder: {
+                            ...cleanedOrderConfig,
+                            serviceType: formData.serviceType,
+                            lastUpdated: new Date().toISOString(),
+                            updatedBy: 'Admin'
+                        }
+                    } as ClientProfile;
+
+                    // Sync to upcoming_orders table
+                    await syncCurrentOrderToUpcoming(clientId, tempClient);
+                }
+            } catch (error) {
+                console.error('Error checking/saving Service Configuration:', error);
+            }
+        }, 500); // 500ms debounce for check
+
+        return () => clearTimeout(timeoutId);
+    }, [orderConfig.caseId, orderConfig.vendorSelections, orderConfig.vendorId, orderConfig.boxTypeId, orderConfig.boxQuantity, formData.serviceType, client, clientId]);
+
+    // Effect: Sync Current Order Request to upcoming_orders table in real-time (debounced)
+    useEffect(() => {
+        if (!client || !orderConfig || !orderConfig.caseId) return;
+
+        // Debounce: wait 1 second after user stops typing before syncing
+        const timeoutId = setTimeout(async () => {
+            try {
+                // Ensure structure is correct
+                const cleanedOrderConfig = { ...orderConfig };
+                if (formData.serviceType === 'Food') {
+                    // Remove empty selections or selections with no vendor
+                    cleanedOrderConfig.vendorSelections = (cleanedOrderConfig.vendorSelections || [])
+                        .filter((s: any) => s.vendorId)
+                        .map((s: any) => ({
+                            vendorId: s.vendorId,
+                            items: s.items || {}
+                        }));
+                }
+
+                // Create a temporary client object for syncCurrentOrderToUpcoming
+                const tempClient: ClientProfile = {
+                    ...client,
+                    ...formData,
+                    activeOrder: {
+                        ...cleanedOrderConfig,
+                        serviceType: formData.serviceType,
+                        lastUpdated: new Date().toISOString(),
+                        updatedBy: 'Admin'
+                    }
+                } as ClientProfile;
+
+                // Sync to upcoming_orders table
+                await syncCurrentOrderToUpcoming(clientId, tempClient);
+            } catch (error) {
+                console.error('Error syncing to upcoming_orders:', error);
+            }
+        }, 1000); // 1 second debounce
+
+        return () => clearTimeout(timeoutId);
+    }, [orderConfig, client, formData, clientId]);
 
 
     // -- Logic Helpers --
@@ -160,10 +285,9 @@ export function ClientProfileDetail({ clientId: propClientId, onClose }: Props) 
         return date >= startOfWeek && date <= endOfWeek;
     }
 
-    // Check if current client has an order updated this week
-    const hasCurrentWeekOrder = client && client.activeOrder && client.activeOrder.lastUpdated 
-        ? isInCurrentWeek(client.activeOrder.lastUpdated)
-        : false;
+    // Check if current client has an active order (This Week's Order)
+    // getActiveOrderForClient already filters for current week orders, so if activeOrder exists, it's valid
+    const hasCurrentWeekOrder = activeOrder !== null;
 
     // Helper functions for displaying order info
     function getOrderSummaryText(client: ClientProfile) {
@@ -443,47 +567,65 @@ export function ClientProfileDetail({ clientId: propClientId, onClose }: Props) 
         if (client.screeningTookPlace !== formData.screeningTookPlace) changes.push(`Screening Took Place: ${client.screeningTookPlace} -> ${formData.screeningTookPlace}`);
         if (client.screeningSigned !== formData.screeningSigned) changes.push(`Screening Signed: ${client.screeningSigned} -> ${formData.screeningSigned}`);
 
-        // Simplified Order comparison
-        const oldOrderStr = JSON.stringify(client.activeOrder);
-        const newOrderStr = JSON.stringify(orderConfig);
-        if (oldOrderStr !== newOrderStr) {
+        // Check if order configuration changed
+        const hasOrderChanges = orderConfig && orderConfig.caseId;
+        if (hasOrderChanges) {
             changes.push('Order configuration changed');
         }
 
         const summary = changes.length > 0 ? changes.join(', ') : 'No functional changes detected (re-saved profile)';
 
-        // Ensure structure is correct
-        const cleanedOrderConfig = { ...orderConfig };
-        if (formData.serviceType === 'Food') {
-            // Remove empty selections or selections with no vendor
-            cleanedOrderConfig.vendorSelections = (cleanedOrderConfig.vendorSelections || [])
-                .filter((s: any) => s.vendorId)
-                .map((s: any) => ({
-                    vendorId: s.vendorId,
-                    items: s.items || {}
-                }));
-        }
-
+        // Update client profile (without activeOrder - that comes from orders table)
         const updateData: Partial<ClientProfile> = {
-            ...formData,
-            activeOrder: {
-                ...cleanedOrderConfig,
-                serviceType: formData.serviceType,
-                lastUpdated: new Date().toISOString(),
-                updatedBy: 'Admin'
-            }
+            ...formData
         };
 
         await updateClient(clientId, updateData);
         await recordClientChange(clientId, summary, 'Admin');
 
         // Sync Current Order Request to upcoming_orders table
+        if (hasOrderChanges) {
+            // Ensure structure is correct
+            const cleanedOrderConfig = { ...orderConfig };
+            if (formData.serviceType === 'Food') {
+                // Remove empty selections or selections with no vendor
+                cleanedOrderConfig.vendorSelections = (cleanedOrderConfig.vendorSelections || [])
+                    .filter((s: any) => s.vendorId)
+                    .map((s: any) => ({
+                        vendorId: s.vendorId,
+                        items: s.items || {}
+                    }));
+            }
+
+            // Create a temporary client object for syncCurrentOrderToUpcoming
+            const tempClient: ClientProfile = {
+                ...client,
+                ...formData,
+                activeOrder: {
+                    ...cleanedOrderConfig,
+                    serviceType: formData.serviceType,
+                    lastUpdated: new Date().toISOString(),
+                    updatedBy: 'Admin'
+                }
+            } as ClientProfile;
+
+            // Sync to upcoming_orders table
+            await syncCurrentOrderToUpcoming(clientId, tempClient);
+            
+            // Reload upcoming order to reflect changes
+            const updatedUpcomingOrder = await getUpcomingOrderForClient(clientId);
+            if (updatedUpcomingOrder) {
+                setOrderConfig(updatedUpcomingOrder);
+            }
+        }
+
+        // Refresh client and active order
         const updatedClient = await getClient(clientId);
         if (updatedClient) {
             setClient(updatedClient);
-            // Sync to upcoming_orders in real-time
-            await syncCurrentOrderToUpcoming(clientId, updatedClient);
         }
+        const updatedActiveOrder = await getActiveOrderForClient(clientId);
+        setActiveOrder(updatedActiveOrder);
 
         // Refresh history
         const oh = await getOrderHistory(clientId);
@@ -960,7 +1102,7 @@ export function ClientProfileDetail({ clientId: propClientId, onClose }: Props) 
                     </section>
 
                     {/* This Week's Order Panel */}
-                    {hasCurrentWeekOrder && client && client.activeOrder && (
+                    {hasCurrentWeekOrder && activeOrder && (
                         <section className={styles.card} style={{ marginTop: 'var(--spacing-lg)' }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: 'var(--spacing-md)' }}>
                                 <Calendar size={18} />
@@ -970,16 +1112,16 @@ export function ClientProfileDetail({ clientId: propClientId, onClose }: Props) 
                             </div>
                             <div>
                                 {(() => {
-                                    const order = client.activeOrder;
-                                    const isFood = client.serviceType === 'Food';
-                                    const isBoxes = client.serviceType === 'Boxes';
+                                    const order = activeOrder;
+                                    const isFood = order.serviceType === 'Food';
+                                    const isBoxes = order.serviceType === 'Boxes';
 
                                     return (
                                         <div>
                                             {/* Order Details */}
                                             {isFood && order.vendorSelections && order.vendorSelections.length > 0 && (
                                                 <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--spacing-md)' }}>
-                                                    {order.vendorSelections.map((vendorSelection, idx) => {
+                                                    {order.vendorSelections.map((vendorSelection: any, idx: number) => {
                                                         const vendor = vendors.find(v => v.id === vendorSelection.vendorId);
                                                         const vendorName = vendor?.name || 'Unknown Vendor';
                                                         const nextDelivery = getNextDeliveryDate(vendorSelection.vendorId);

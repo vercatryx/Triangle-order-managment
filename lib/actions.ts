@@ -739,8 +739,8 @@ export async function syncCurrentOrderToUpcoming(clientId: string, client: Clien
                         'Thursday': 4, 'Friday': 5, 'Saturday': 6
                     };
                     const deliveryDayNumbers = vendor.deliveryDays
-                        .map(day => dayNameToNumber[day])
-                        .filter(num => num !== undefined) as number[];
+                        .map((day: string) => dayNameToNumber[day])
+                        .filter((num: number | undefined): num is number => num !== undefined);
                     
                     for (let i = 0; i <= 14; i++) {
                         const checkDate = new Date(today);
@@ -753,10 +753,10 @@ export async function syncCurrentOrderToUpcoming(clientId: string, client: Clien
                 }
             }
         }
-    } else if (orderConfig.serviceType === 'Boxes' && orderConfig.vendorId) {
-        takeEffectDate = calculateTakeEffectDate(orderConfig.vendorId, vendors);
+    } else if (orderConfig.serviceType === 'Boxes' && (orderConfig as any).vendorId) {
+        takeEffectDate = calculateTakeEffectDate((orderConfig as any).vendorId, vendors);
         // For Box orders, scheduled_delivery_date is also the first delivery date
-        const vendor = vendors.find(v => v.id === orderConfig.vendorId);
+        const vendor = vendors.find(v => v.id === (orderConfig as any).vendorId);
         if (vendor && vendor.deliveryDays) {
             const today = new Date();
             today.setHours(0, 0, 0, 0);
@@ -765,8 +765,8 @@ export async function syncCurrentOrderToUpcoming(clientId: string, client: Clien
                 'Thursday': 4, 'Friday': 5, 'Saturday': 6
             };
             const deliveryDayNumbers = vendor.deliveryDays
-                .map(day => dayNameToNumber[day])
-                .filter(num => num !== undefined) as number[];
+                .map((day: string) => dayNameToNumber[day])
+                .filter((num: number | undefined): num is number => num !== undefined);
             
             for (let i = 0; i <= 14; i++) {
                 const checkDate = new Date(today);
@@ -903,7 +903,7 @@ export async function syncCurrentOrderToUpcoming(clientId: string, client: Clien
         await supabase.from('upcoming_order_box_selections').insert({
             upcoming_order_id: upcomingOrderId,
             box_type_id: orderConfig.boxTypeId,
-            vendor_id: orderConfig.vendorId || null,
+            vendor_id: (orderConfig as any).vendorId || null,
             quantity: orderConfig.boxQuantity || 1
         });
     }
@@ -1041,4 +1041,268 @@ export async function processUpcomingOrders() {
 
     revalidatePath('/clients');
     return { processed: processedCount, errors };
+}
+
+/**
+ * Get active order from orders table for a client
+ * This is used for "This Week's Order" display
+ * Returns orders with scheduled_delivery_date in the current week, or orders created/updated this week
+ */
+export async function getActiveOrderForClient(clientId: string) {
+    if (!clientId) return null;
+
+    try {
+        // Calculate current week range (Sunday to Saturday)
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const day = today.getDay();
+        const startOfWeek = new Date(today);
+        startOfWeek.setDate(today.getDate() - day);
+        startOfWeek.setHours(0, 0, 0, 0);
+        const endOfWeek = new Date(startOfWeek);
+        endOfWeek.setDate(startOfWeek.getDate() + 6);
+        endOfWeek.setHours(23, 59, 59, 999);
+
+        const startOfWeekStr = startOfWeek.toISOString().split('T')[0];
+        const endOfWeekStr = endOfWeek.toISOString().split('T')[0];
+        const startOfWeekISO = startOfWeek.toISOString();
+        const endOfWeekISO = endOfWeek.toISOString();
+
+        // Try to get order with scheduled_delivery_date in current week first
+        let { data, error } = await supabase
+            .from('orders')
+            .select('*')
+            .eq('client_id', clientId)
+            .in('status', ['pending', 'confirmed', 'processing'])
+            .gte('scheduled_delivery_date', startOfWeekStr)
+            .lte('scheduled_delivery_date', endOfWeekStr)
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+
+        // If no order found with scheduled_delivery_date in current week,
+        // try to get order created or updated this week (fallback)
+        if (!data) {
+            // Log error if it's not just "no rows returned"
+            if (error && error.code !== 'PGRST116') {
+                console.error('Error fetching order by scheduled_delivery_date:', error);
+            }
+            
+            // Try fetching by created_at in current week
+            const { data: dataByCreated, error: errorByCreated } = await supabase
+                .from('orders')
+                .select('*')
+                .eq('client_id', clientId)
+                .in('status', ['pending', 'confirmed', 'processing'])
+                .gte('created_at', startOfWeekISO)
+                .lte('created_at', endOfWeekISO)
+                .order('created_at', { ascending: false })
+                .limit(1)
+                .maybeSingle();
+
+            if (errorByCreated && errorByCreated.code !== 'PGRST116') {
+                console.error('Error fetching order by created_at:', errorByCreated);
+            }
+
+            // If still no data, try by last_updated
+            if (!dataByCreated) {
+                const { data: dataByUpdated, error: errorByUpdated } = await supabase
+                    .from('orders')
+                    .select('*')
+                    .eq('client_id', clientId)
+                    .in('status', ['pending', 'confirmed', 'processing'])
+                    .gte('last_updated', startOfWeekISO)
+                    .lte('last_updated', endOfWeekISO)
+                    .order('created_at', { ascending: false })
+                    .limit(1)
+                    .maybeSingle();
+
+                if (errorByUpdated && errorByUpdated.code !== 'PGRST116') {
+                    console.error('Error fetching order by last_updated:', errorByUpdated);
+                }
+
+                data = dataByUpdated;
+            } else {
+                data = dataByCreated;
+            }
+        }
+
+        if (!data) {
+            // No active order found
+            return null;
+        }
+
+        // Fetch related data
+        const menuItems = await getMenuItems();
+        const vendors = await getVendors();
+        const boxTypes = await getBoxTypes();
+
+        // Build order configuration object
+        const orderConfig: any = {
+            id: data.id,
+            serviceType: data.service_type,
+            caseId: data.case_id,
+            status: data.status,
+            lastUpdated: data.last_updated,
+            updatedBy: data.updated_by,
+            scheduledDeliveryDate: data.scheduled_delivery_date,
+            createdAt: data.created_at,
+            deliveryDistribution: data.delivery_distribution,
+            totalValue: data.total_value,
+            totalItems: data.total_items,
+            notes: data.notes
+        };
+
+        if (data.service_type === 'Food') {
+            // Fetch vendor selections and items
+            const { data: vendorSelections, error: vendorSelectionsError } = await supabase
+                .from('order_vendor_selections')
+                .select('*')
+                .eq('order_id', data.id);
+
+            if (vendorSelectionsError) {
+                console.error('Error fetching vendor selections:', vendorSelectionsError);
+            }
+
+            if (vendorSelections && vendorSelections.length > 0) {
+                orderConfig.vendorSelections = [];
+                for (const vs of vendorSelections) {
+                    const { data: items, error: itemsError } = await supabase
+                        .from('order_items')
+                        .select('*')
+                        .eq('vendor_selection_id', vs.id);
+
+                    if (itemsError) {
+                        console.error('Error fetching order items:', itemsError);
+                    }
+
+                    const itemsMap: any = {};
+                    if (items && items.length > 0) {
+                        for (const item of items) {
+                            itemsMap[item.menu_item_id] = item.quantity;
+                        }
+                    }
+
+                    orderConfig.vendorSelections.push({
+                        vendorId: vs.vendor_id,
+                        items: itemsMap
+                    });
+                }
+            } else {
+                // Initialize empty vendor selections if none found
+                orderConfig.vendorSelections = [];
+            }
+        } else if (data.service_type === 'Boxes') {
+            // Fetch box selection
+            const { data: boxSelection, error: boxSelectionError } = await supabase
+                .from('order_box_selections')
+                .select('*')
+                .eq('order_id', data.id)
+                .maybeSingle();
+
+            if (boxSelectionError && boxSelectionError.code !== 'PGRST116') {
+                console.error('Error fetching box selection:', boxSelectionError);
+            }
+
+            if (boxSelection) {
+                orderConfig.vendorId = boxSelection.vendor_id;
+                orderConfig.boxTypeId = boxSelection.box_type_id;
+                orderConfig.boxQuantity = boxSelection.quantity;
+            }
+        }
+
+        return orderConfig;
+    } catch (err) {
+        console.error('Error in getActiveOrderForClient:', err);
+        return null;
+    }
+}
+
+/**
+ * Get upcoming order from upcoming_orders table for a client
+ * This is used for "Current Order Request" form
+ */
+export async function getUpcomingOrderForClient(clientId: string) {
+    if (!clientId) return null;
+
+    // Fetch the upcoming order for this client
+    const { data, error } = await supabase
+        .from('upcoming_orders')
+        .select('*')
+        .eq('client_id', clientId)
+        .eq('status', 'scheduled')
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .single();
+
+    if (error || !data) {
+        // No upcoming order found
+        return null;
+    }
+
+    // Fetch related data
+    const menuItems = await getMenuItems();
+    const vendors = await getVendors();
+    const boxTypes = await getBoxTypes();
+
+    // Build order configuration object
+    const orderConfig: any = {
+        id: data.id,
+        serviceType: data.service_type,
+        caseId: data.case_id,
+        status: data.status,
+        lastUpdated: data.last_updated,
+        updatedBy: data.updated_by,
+        scheduledDeliveryDate: data.scheduled_delivery_date,
+        takeEffectDate: data.take_effect_date,
+        deliveryDistribution: data.delivery_distribution,
+        totalValue: data.total_value,
+        totalItems: data.total_items,
+        notes: data.notes
+    };
+
+    if (data.service_type === 'Food') {
+        // Fetch vendor selections and items
+        const { data: vendorSelections } = await supabase
+            .from('upcoming_order_vendor_selections')
+            .select('*')
+            .eq('upcoming_order_id', data.id);
+
+        if (vendorSelections) {
+            orderConfig.vendorSelections = [];
+            for (const vs of vendorSelections) {
+                const { data: items } = await supabase
+                    .from('upcoming_order_items')
+                    .select('*')
+                    .eq('vendor_selection_id', vs.id);
+
+                const itemsMap: any = {};
+                if (items) {
+                    for (const item of items) {
+                        itemsMap[item.menu_item_id] = item.quantity;
+                    }
+                }
+
+                orderConfig.vendorSelections.push({
+                    vendorId: vs.vendor_id,
+                    items: itemsMap
+                });
+            }
+        }
+    } else if (data.service_type === 'Boxes') {
+        // Fetch box selection
+        const { data: boxSelection } = await supabase
+            .from('upcoming_order_box_selections')
+            .select('*')
+            .eq('upcoming_order_id', data.id)
+            .single();
+
+        if (boxSelection) {
+            orderConfig.vendorId = boxSelection.vendor_id;
+            orderConfig.boxTypeId = boxSelection.box_type_id;
+            orderConfig.boxQuantity = boxSelection.quantity;
+        }
+    }
+
+    return orderConfig;
 }
