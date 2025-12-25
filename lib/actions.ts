@@ -957,6 +957,43 @@ export async function syncCurrentOrderToUpcoming(clientId: string, client: Clien
             quantity: orderConfig.boxQuantity || 1
         });
     }
+
+    // Check if there's an upcoming_order with scheduled_delivery_date matching take_effect_date
+    // If the existing upcoming_order has a different scheduled_delivery_date, 
+    // update it to have scheduled_delivery_date = take_effect_date
+    const takeEffectDateStr = takeEffectDate.toISOString().split('T')[0];
+    const currentScheduledDateStr = scheduledDeliveryDate.toISOString().split('T')[0];
+    
+    // Check if scheduled_delivery_date already matches take_effect_date
+    if (currentScheduledDateStr !== takeEffectDateStr && takeEffectDate) {
+        // Check if there's already an upcoming_order with scheduled_delivery_date = take_effect_date
+        const { data: existingUpcomingOrderWithTakeEffect } = await supabase
+            .from('upcoming_orders')
+            .select('id')
+            .eq('client_id', clientId)
+            .eq('scheduled_delivery_date', takeEffectDateStr)
+            .limit(1);
+
+        // If no upcoming_order exists with scheduled_delivery_date matching take_effect_date, 
+        // update the existing one we just created
+        if ((!existingUpcomingOrderWithTakeEffect || existingUpcomingOrderWithTakeEffect.length === 0) && upcomingOrderId) {
+            try {
+                // Update the existing upcoming_order to have scheduled_delivery_date = take_effect_date
+                const { error: updateError } = await supabase
+                    .from('upcoming_orders')
+                    .update({
+                        scheduled_delivery_date: takeEffectDateStr
+                    })
+                    .eq('id', upcomingOrderId);
+
+                if (updateError) {
+                    console.error('Error updating upcoming order scheduled_delivery_date:', updateError);
+                }
+            } catch (error: any) {
+                console.error('Error updating upcoming order with take_effect_date:', error);
+            }
+        }
+    }
 }
 
 /**
