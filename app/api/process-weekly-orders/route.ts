@@ -9,8 +9,9 @@ import { getMenuItems, getVendors, getBoxTypes, getSettings, getClient } from '@
  * 
  * This endpoint:
  * 1. Fetches all active orders (status: 'pending' or 'confirmed') from the orders table
- * 2. Processes each order with full details (vendor selections, items, box selections)
- * 3. Creates a billing record for each processed order
+ * 2. If no orders exist, falls back to upcoming_orders table (status: 'scheduled' or 'confirmed')
+ * 3. Processes each order with full details (vendor selections, items, box selections)
+ * 4. Creates a billing record for each processed order
  * 
  * Returns a comprehensive summary of processed orders and created billing records
  */
@@ -27,20 +28,42 @@ export async function POST(request: NextRequest) {
             throw new Error(`Failed to fetch orders: ${ordersError.message}`);
         }
 
+        // If no orders found, fetch from upcoming_orders table
+        let ordersToProcess: any[] = [];
+        let isFromUpcomingOrders = false;
+
         if (!orders || orders.length === 0) {
-            return NextResponse.json({
-                success: true,
-                message: 'No active orders found to process',
-                statistics: {
-                    totalOrders: 0,
-                    totalBillingRecords: 0,
-                    totalValue: 0,
-                    totalItems: 0
-                },
-                orders: [],
-                billingRecords: [],
-                processedAt: new Date().toISOString()
-            }, { status: 200 });
+            // Fetch from upcoming_orders table
+            const { data: upcomingOrders, error: upcomingError } = await supabase
+                .from('upcoming_orders')
+                .select('*')
+                .in('status', ['scheduled', 'confirmed'])
+                .order('created_at', { ascending: true });
+
+            if (upcomingError) {
+                throw new Error(`Failed to fetch upcoming orders: ${upcomingError.message}`);
+            }
+
+            if (!upcomingOrders || upcomingOrders.length === 0) {
+                return NextResponse.json({
+                    success: true,
+                    message: 'No active orders found to process',
+                    statistics: {
+                        totalOrders: 0,
+                        totalBillingRecords: 0,
+                        totalValue: 0,
+                        totalItems: 0
+                    },
+                    orders: [],
+                    billingRecords: [],
+                    processedAt: new Date().toISOString()
+                }, { status: 200 });
+            }
+
+            ordersToProcess = upcomingOrders;
+            isFromUpcomingOrders = true;
+        } else {
+            ordersToProcess = orders;
         }
 
         // Fetch all required reference data
@@ -56,7 +79,7 @@ export async function POST(request: NextRequest) {
         const errors: string[] = [];
 
         // Process each order
-        for (const order of orders) {
+        for (const order of ordersToProcess) {
             try {
                 // Fetch client information
                 const client = await getClient(order.client_id);
@@ -87,23 +110,29 @@ export async function POST(request: NextRequest) {
                     status: order.status,
                     caseId: order.case_id || null,
                     scheduledDeliveryDate: order.scheduled_delivery_date,
-                    actualDeliveryDate: order.actual_delivery_date,
+                    actualDeliveryDate: order.actual_delivery_date || null, // May not exist in upcoming_orders
                     deliveryDistribution: order.delivery_distribution || {},
                     totalValue: parseFloat(order.total_value?.toString() || '0'),
                     totalItems: parseInt(order.total_items?.toString() || '0'),
-                    notes: order.notes,
+                    notes: order.notes || null,
                     createdAt: order.created_at,
                     lastUpdated: order.last_updated,
                     updatedBy: order.updated_by,
-                    vendorDetails: []
+                    vendorDetails: [],
+                    orderSource: isFromUpcomingOrders ? 'upcoming_orders' : 'orders'
                 };
 
                 if (order.service_type === 'Food') {
-                    // Fetch vendor selections for Food orders
+                    // Fetch vendor selections for Food orders (from orders or upcoming_orders)
+                    const vendorSelectionsTable = isFromUpcomingOrders ? 'upcoming_order_vendor_selections' : 'order_vendor_selections';
+                    const orderIdField = isFromUpcomingOrders ? 'upcoming_order_id' : 'order_id';
+                    const itemsTable = isFromUpcomingOrders ? 'upcoming_order_items' : 'order_items';
+                    const vendorSelectionIdField = isFromUpcomingOrders ? 'vendor_selection_id' : 'vendor_selection_id';
+
                     const { data: vendorSelections } = await supabase
-                        .from('order_vendor_selections')
+                        .from(vendorSelectionsTable)
                         .select('*')
-                        .eq('order_id', order.id);
+                        .eq(orderIdField, order.id);
 
                     if (vendorSelections) {
                         for (const vs of vendorSelections) {
@@ -111,9 +140,9 @@ export async function POST(request: NextRequest) {
                             
                             // Fetch items for this vendor selection
                             const { data: items } = await supabase
-                                .from('order_items')
+                                .from(itemsTable)
                                 .select('*')
-                                .eq('vendor_selection_id', vs.id);
+                                .eq(vendorSelectionIdField, vs.id);
 
                             const vendorSummary: any = {
                                 vendorId: vs.vendor_id,
@@ -145,11 +174,14 @@ export async function POST(request: NextRequest) {
                         }
                     }
                 } else if (order.service_type === 'Boxes') {
-                    // Fetch box selections for Box orders
+                    // Fetch box selections for Box orders (from orders or upcoming_orders)
+                    const boxSelectionsTable = isFromUpcomingOrders ? 'upcoming_order_box_selections' : 'order_box_selections';
+                    const orderIdField = isFromUpcomingOrders ? 'upcoming_order_id' : 'order_id';
+
                     const { data: boxSelections } = await supabase
-                        .from('order_box_selections')
+                        .from(boxSelectionsTable)
                         .select('*')
-                        .eq('order_id', order.id);
+                        .eq(orderIdField, order.id);
 
                     if (boxSelections && boxSelections.length > 0) {
                         for (const bs of boxSelections) {
@@ -171,7 +203,8 @@ export async function POST(request: NextRequest) {
 
                 // Create billing record for this order
                 const billingAmount = orderSummary.totalValue;
-                const billingRemarks = `Order #${order.id.substring(0, 8)} - ${order.service_type} service${order.caseId ? ` (Case: ${order.caseId})` : ''}`;
+                const orderSource = isFromUpcomingOrders ? 'Upcoming Order' : 'Order';
+                const billingRemarks = `${orderSource} #${order.id.substring(0, 8)} - ${order.service_type} service${order.case_id ? ` (Case: ${order.case_id})` : ''}`;
 
                 const { data: billingRecord, error: billingError } = await supabase
                     .from('billing_records')
@@ -187,7 +220,7 @@ export async function POST(request: NextRequest) {
                     .single();
 
                 if (billingError) {
-                    errors.push(`Failed to create billing record for order ${order.id}: ${billingError.message}`);
+                    errors.push(`Failed to create billing record for ${isFromUpcomingOrders ? 'upcoming order' : 'order'} ${order.id}: ${billingError.message}`);
                 } else if (billingRecord) {
                     billingRecords.push({
                         id: billingRecord.id,
@@ -198,12 +231,13 @@ export async function POST(request: NextRequest) {
                         navigator: billingRecord.navigator,
                         amount: parseFloat(billingRecord.amount?.toString() || '0'),
                         createdAt: billingRecord.created_at,
-                        orderId: order.id
+                        orderId: order.id,
+                        orderSource: isFromUpcomingOrders ? 'upcoming_orders' : 'orders'
                     });
                 }
 
             } catch (error: any) {
-                errors.push(`Error processing order ${order.id}: ${error.message}`);
+                errors.push(`Error processing ${isFromUpcomingOrders ? 'upcoming order' : 'order'} ${order.id}: ${error.message}`);
             }
         }
 
@@ -238,6 +272,7 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({
             success: true,
             message: `Successfully processed ${processedOrders.length} order(s) and created ${billingRecords.length} billing record(s)`,
+            orderSource: isFromUpcomingOrders ? 'upcoming_orders' : 'orders',
             settings: {
                 weeklyCutoffDay: settings.weeklyCutoffDay,
                 weeklyCutoffTime: settings.weeklyCutoffTime
