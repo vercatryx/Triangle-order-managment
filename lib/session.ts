@@ -48,7 +48,13 @@ export async function createSession(userId: string, name: string = 'Admin', role
 
 export async function deleteSession() {
     const cookieStore = await cookies();
-    cookieStore.delete('session');
+    cookieStore.set('session', '', {
+        httpOnly: true,
+        secure: true,
+        expires: new Date(0),
+        sameSite: 'none',
+        path: '/',
+    });
 }
 
 export async function verifySession() {
