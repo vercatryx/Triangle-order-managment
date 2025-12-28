@@ -14,6 +14,7 @@ export function BoxTypeManagement() {
     const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
     const [selectedVendorId, setSelectedVendorId] = useState<string>('');
 
+
     // The single active box for the selected vendor
     const [activeBoxId, setActiveBoxId] = useState<string | null>(null);
 
