@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabase } from '@/lib/supabase';
 import { getMenuItems, getVendors, getBoxTypes, getSettings, getClient } from '@/lib/actions';
+import { randomUUID } from 'crypto';
 
 /**
  * API Route: Process all current active orders from orders table
@@ -20,6 +21,105 @@ import { getMenuItems, getVendors, getBoxTypes, getSettings, getClient } from '@
  * 
  * Returns a comprehensive summary of processed orders and created billing records
  */
+/**
+ * Generate a unique case_id for upcoming orders
+ */
+function generateUniqueCaseId(): string {
+    const timestamp = Date.now();
+    const random = Math.random().toString(36).substring(2, 8).toUpperCase();
+    return `CASE-${timestamp}-${random}`;
+}
+
+/**
+ * Calculate the take effect date (second occurrence of vendor delivery day)
+ */
+function calculateTakeEffectDate(vendorId: string, vendors: any[]): Date | null {
+    if (!vendorId) return null;
+
+    const vendor = vendors.find(v => v.id === vendorId);
+    if (!vendor || !vendor.deliveryDays || vendor.deliveryDays.length === 0) {
+        return null;
+    }
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const dayNameToNumber: { [key: string]: number } = {
+        'Sunday': 0,
+        'Monday': 1,
+        'Tuesday': 2,
+        'Wednesday': 3,
+        'Thursday': 4,
+        'Friday': 5,
+        'Saturday': 6
+    };
+
+    const deliveryDayNumbers = vendor.deliveryDays
+        .map((day: string) => dayNameToNumber[day])
+        .filter((num: number | undefined): num is number => num !== undefined);
+
+    if (deliveryDayNumbers.length === 0) return null;
+
+    // Find the second occurrence (next next delivery day, starting from tomorrow)
+    let foundCount = 0;
+    for (let i = 1; i <= 21; i++) {
+        const checkDate = new Date(today);
+        checkDate.setDate(today.getDate() + i);
+        const dayOfWeek = checkDate.getDay();
+
+        if (deliveryDayNumbers.includes(dayOfWeek)) {
+            foundCount++;
+            if (foundCount === 2) {
+                return checkDate;
+            }
+        }
+    }
+
+    return null;
+}
+
+/**
+ * Calculate scheduled delivery date (first occurrence of vendor delivery day)
+ */
+function calculateScheduledDeliveryDate(vendorId: string, vendors: any[]): Date | null {
+    if (!vendorId) return null;
+
+    const vendor = vendors.find(v => v.id === vendorId);
+    if (!vendor || !vendor.deliveryDays || vendor.deliveryDays.length === 0) {
+        return null;
+    }
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const dayNameToNumber: { [key: string]: number } = {
+        'Sunday': 0,
+        'Monday': 1,
+        'Tuesday': 2,
+        'Wednesday': 3,
+        'Thursday': 4,
+        'Friday': 5,
+        'Saturday': 6
+    };
+
+    const deliveryDayNumbers = vendor.deliveryDays
+        .map((day: string) => dayNameToNumber[day])
+        .filter((num: number | undefined): num is number => num !== undefined);
+
+    if (deliveryDayNumbers.length === 0) return null;
+
+    // Find the first occurrence (next delivery day)
+    for (let i = 0; i <= 14; i++) {
+        const checkDate = new Date(today);
+        checkDate.setDate(today.getDate() + i);
+        if (deliveryDayNumbers.includes(checkDate.getDay())) {
+            return checkDate;
+        }
+    }
+
+    return null;
+}
+
 /**
  * Precheck function: Transfer upcoming orders for clients who have no orders yet
  * This checks each client in upcoming_orders and transfers their orders if they don't exist in orders table
@@ -70,6 +170,24 @@ async function precheckAndTransferUpcomingOrders() {
             if (clientOrdersCount === 0) {
                 for (const upcomingOrder of clientUpcomingOrders) {
                     try {
+                        // Skip if case_id already exists in orders table
+                        if (upcomingOrder.case_id) {
+                            const { count: caseIdCount, error: caseIdError } = await supabase
+                                .from('orders')
+                                .select('*', { count: 'exact', head: true })
+                                .eq('case_id', upcomingOrder.case_id);
+
+                            if (caseIdError) {
+                                transferResults.errors.push(`Failed to check case_id for upcoming order ${upcomingOrder.id}: ${caseIdError.message}`);
+                                continue;
+                            }
+
+                            if (caseIdCount && caseIdCount > 0) {
+                                transferResults.skipped++;
+                                continue; // Skip this upcoming order as case_id already exists
+                            }
+                        }
+
                         // Create order in orders table
                         const orderData: any = {
                             client_id: upcomingOrder.client_id,
@@ -241,6 +359,44 @@ export async function GET(request: NextRequest) {
             // Flatten the map to get all orders (all orders for each client)
             ordersToProcess = Array.from(ordersByClient.values()).flat();
             isFromUpcomingOrders = true;
+
+            // Filter out upcoming orders whose case_id already exists in orders table
+            if (ordersToProcess.length > 0) {
+                // Get all case_ids from upcoming orders that have a case_id
+                const upcomingCaseIds = ordersToProcess
+                    .map(o => o.case_id)
+                    .filter((id): id is string => id !== null && id !== undefined);
+
+                if (upcomingCaseIds.length > 0) {
+                    // Check which case_ids already exist in orders table
+                    const { data: existingOrders, error: existingOrdersError } = await supabase
+                        .from('orders')
+                        .select('case_id')
+                        .in('case_id', upcomingCaseIds)
+                        .not('case_id', 'is', null);
+
+                    if (existingOrdersError) {
+                        console.error('Error checking existing case_ids:', existingOrdersError);
+                    } else {
+                        // Get set of existing case_ids
+                        const existingCaseIds = new Set(
+                            (existingOrders || []).map((o: any) => o.case_id)
+                        );
+
+                        // Filter out upcoming orders with existing case_ids
+                        const originalCount = ordersToProcess.length;
+                        ordersToProcess = ordersToProcess.filter(order => {
+                            if (!order.case_id) return true; // Keep orders without case_id
+                            return !existingCaseIds.has(order.case_id);
+                        });
+
+                        const skippedCount = originalCount - ordersToProcess.length;
+                        if (skippedCount > 0) {
+                            console.log(`Skipped ${skippedCount} upcoming order(s) with case_ids that already exist in orders table`);
+                        }
+                    }
+                }
+            }
         } else {
             // Orders table has records, fetch active orders
             const { data: orders, error: ordersError } = await supabase
@@ -284,9 +440,27 @@ export async function GET(request: NextRequest) {
         const billingRecords: any[] = [];
         const errors: string[] = [];
 
-        // Process each order
+                // Process each order
         for (const order of ordersToProcess) {
             try {
+                // If processing from upcoming_orders, check if case_id already exists in orders table
+                if (isFromUpcomingOrders && order.case_id) {
+                    const { count: caseIdCount, error: caseIdError } = await supabase
+                        .from('orders')
+                        .select('*', { count: 'exact', head: true })
+                        .eq('case_id', order.case_id);
+
+                    if (caseIdError) {
+                        errors.push(`Failed to check case_id for upcoming order ${order.id}: ${caseIdError.message}`);
+                        continue;
+                    }
+
+                    if (caseIdCount && caseIdCount > 0) {
+                        // Skip this order as case_id already exists in orders table
+                        continue;
+                    }
+                }
+
                 // Fetch client information
                 const client = await getClient(order.client_id);
                 if (!client) {
@@ -407,10 +581,10 @@ export async function GET(request: NextRequest) {
 
                 processedOrders.push(orderSummary);
 
-                // If processing from upcoming_orders, transfer to orders table
+                // If processing from upcoming_orders, copy to orders table (don't transfer)
                 if (isFromUpcomingOrders) {
                     try {
-                        // Create order in orders table
+                        // Create order in orders table (copy, not transfer)
                         const orderData: any = {
                             client_id: order.client_id,
                             service_type: order.service_type,
@@ -432,14 +606,14 @@ export async function GET(request: NextRequest) {
                             .single();
 
                         if (orderError || !newOrder) {
-                            errors.push(`Failed to transfer upcoming order ${order.id} to orders table: ${orderError?.message}`);
+                            errors.push(`Failed to copy upcoming order ${order.id} to orders table: ${orderError?.message}`);
                         } else {
-                            let transferErrors: string[] = [];
+                            let copyErrors: string[] = [];
                             let itemsCopied = 0;
                             let vendorSelectionsCopied = 0;
                             let boxSelectionsCopied = 0;
 
-                            // Transfer all related records:
+                            // Copy all related records:
                             // 1. order_vendor_selections (from upcoming_order_vendor_selections)
                             // 2. order_items (from upcoming_order_items)
                             // 3. order_box_selections (from upcoming_order_box_selections)
@@ -452,7 +626,7 @@ export async function GET(request: NextRequest) {
                                     .eq('upcoming_order_id', order.id);
 
                                 if (vsFetchError) {
-                                    transferErrors.push(`Failed to fetch vendor selections: ${vsFetchError.message}`);
+                                    copyErrors.push(`Failed to fetch vendor selections: ${vsFetchError.message}`);
                                 } else if (vendorSelections && vendorSelections.length > 0) {
                                     for (const vs of vendorSelections) {
                                         const { data: newVs, error: vsError } = await supabase
@@ -465,7 +639,7 @@ export async function GET(request: NextRequest) {
                                             .single();
 
                                         if (vsError || !newVs) {
-                                            transferErrors.push(`Failed to copy vendor selection ${vs.id}: ${vsError?.message}`);
+                                            copyErrors.push(`Failed to copy vendor selection ${vs.id}: ${vsError?.message}`);
                                             continue;
                                         }
 
@@ -478,7 +652,7 @@ export async function GET(request: NextRequest) {
                                             .eq('vendor_selection_id', vs.id);
 
                                         if (itemsFetchError) {
-                                            transferErrors.push(`Failed to fetch items for vendor selection ${vs.id}: ${itemsFetchError.message}`);
+                                            copyErrors.push(`Failed to fetch items for vendor selection ${vs.id}: ${itemsFetchError.message}`);
                                         } else if (items && items.length > 0) {
                                             for (const item of items) {
                                                 const { error: itemError } = await supabase.from('order_items').insert({
@@ -491,7 +665,7 @@ export async function GET(request: NextRequest) {
                                                 });
 
                                                 if (itemError) {
-                                                    transferErrors.push(`Failed to copy item ${item.id}: ${itemError.message}`);
+                                                    copyErrors.push(`Failed to copy item ${item.id}: ${itemError.message}`);
                                                 } else {
                                                     itemsCopied++;
                                                 }
@@ -509,7 +683,7 @@ export async function GET(request: NextRequest) {
                                     .eq('upcoming_order_id', order.id);
 
                                 if (bsFetchError) {
-                                    transferErrors.push(`Failed to fetch box selections: ${bsFetchError.message}`);
+                                    copyErrors.push(`Failed to fetch box selections: ${bsFetchError.message}`);
                                 } else if (boxSelections && boxSelections.length > 0) {
                                     for (const bs of boxSelections) {
                                         const { error: bsError } = await supabase.from('order_box_selections').insert({
@@ -520,7 +694,7 @@ export async function GET(request: NextRequest) {
                                         });
 
                                         if (bsError) {
-                                            transferErrors.push(`Failed to copy box selection ${bs.id}: ${bsError.message}`);
+                                            copyErrors.push(`Failed to copy box selection ${bs.id}: ${bsError.message}`);
                                         } else {
                                             boxSelectionsCopied++;
                                         }
@@ -528,45 +702,52 @@ export async function GET(request: NextRequest) {
                                 }
                             }
 
-                            // Log transfer summary and any errors
-                            if (transferErrors.length > 0) {
-                                errors.push(`Transfer errors for order ${order.id}: ${transferErrors.join('; ')}`);
+                            // Log copy summary and any errors
+                            if (copyErrors.length > 0) {
+                                errors.push(`Copy errors for order ${order.id}: ${copyErrors.join('; ')}`);
                             }
 
-                            // Log successful transfer summary
-                            const transferSummary = [];
-                            if (vendorSelectionsCopied > 0) transferSummary.push(`${vendorSelectionsCopied} vendor selection(s)`);
-                            if (itemsCopied > 0) transferSummary.push(`${itemsCopied} item(s)`);
-                            if (boxSelectionsCopied > 0) transferSummary.push(`${boxSelectionsCopied} box selection(s)`);
+                            // Log successful copy summary
+                            const copySummary = [];
+                            if (vendorSelectionsCopied > 0) copySummary.push(`${vendorSelectionsCopied} vendor selection(s)`);
+                            if (itemsCopied > 0) copySummary.push(`${itemsCopied} item(s)`);
+                            if (boxSelectionsCopied > 0) copySummary.push(`${boxSelectionsCopied} box selection(s)`);
                             
-                            if (transferSummary.length > 0) {
-                                console.log(`Successfully transferred order ${order.id}: ${transferSummary.join(', ')}`);
+                            if (copySummary.length > 0) {
+                                console.log(`Successfully copied order ${order.id}: ${copySummary.join(', ')}`);
                             }
 
-                            // Update upcoming order status to 'processed'
+                            // Update existing upcoming order with new case_id but keep all other details
+                            // Generate unique case_id for the updated upcoming order
+                            const newCaseId = generateUniqueCaseId();
+                            
                             await supabase
                                 .from('upcoming_orders')
                                 .update({
-                                    status: 'processed',
+                                    case_id: newCaseId,
+                                    last_updated: new Date().toISOString(),
+                                    updated_by: order.updated_by || 'System',
                                     processed_order_id: newOrder.id,
                                     processed_at: new Date().toISOString()
+                                    // Keep status as 'scheduled' (don't change to 'processed')
+                                    // Keep all other fields the same (scheduled_delivery_date, take_effect_date, etc.)
                                 })
                                 .eq('id', order.id);
 
                             // Update orderSummary with the new order ID
                             orderSummary.orderId = newOrder.id;
-                            orderSummary.transferredFromUpcoming = true;
+                            orderSummary.copiedFromUpcoming = true;
                         }
-                    } catch (transferError: any) {
-                        errors.push(`Error transferring upcoming order ${order.id} to orders table: ${transferError.message}`);
+                    } catch (copyError: any) {
+                        errors.push(`Error copying upcoming order ${order.id} to orders table: ${copyError.message}`);
                     }
                 }
 
                 // Create billing record for this order
                 const billingAmount = orderSummary.totalValue;
                 const orderSource = isFromUpcomingOrders ? 'Upcoming Order' : 'Order';
-                // Use the new order ID if it was transferred, otherwise use the original ID
-                const orderIdForBilling = (orderSummary.transferredFromUpcoming && orderSummary.orderId) ? orderSummary.orderId : order.id;
+                // Use the new order ID if it was copied, otherwise use the original ID
+                const orderIdForBilling = (orderSummary.copiedFromUpcoming && orderSummary.orderId) ? orderSummary.orderId : order.id;
                 const billingRemarks = `${orderSource} #${orderIdForBilling.substring(0, 8)} - ${order.service_type} service${order.case_id ? ` (Case: ${order.case_id})` : ''}`;
 
                 const { data: billingRecord, error: billingError } = await supabase
@@ -597,8 +778,167 @@ export async function GET(request: NextRequest) {
                         createdAt: billingRecord.created_at,
                         orderId: orderIdForBilling,
                         orderSource: isFromUpcomingOrders ? 'upcoming_orders' : 'orders',
-                        transferredFromUpcoming: orderSummary.transferredFromUpcoming || false
+                        copiedFromUpcoming: orderSummary.copiedFromUpcoming || false
                     });
+                }
+
+                // After processing the order and creating billing record, create upcoming orders
+                // One upcoming order per vendor with unique case_id and current order details
+                try {
+                    // Create upcoming orders for each vendor
+                    if (order.service_type === 'Food' && orderSummary.vendorDetails.length > 0) {
+                        // For Food orders, create one upcoming order per vendor
+                        for (const vendorDetail of orderSummary.vendorDetails) {
+                                if (!vendorDetail.vendorId) continue;
+
+                                const vendor = vendors.find(v => v.id === vendorDetail.vendorId);
+                                if (!vendor) continue;
+
+                                // Calculate take effect date and scheduled delivery date for this vendor
+                                const takeEffectDate = calculateTakeEffectDate(vendorDetail.vendorId, vendors);
+                                const scheduledDeliveryDate = calculateScheduledDeliveryDate(vendorDetail.vendorId, vendors);
+
+                                if (!takeEffectDate || !scheduledDeliveryDate) {
+                                    errors.push(`Failed to calculate dates for vendor ${vendorDetail.vendorId} when creating upcoming order`);
+                                    continue;
+                                }
+
+                                // Generate unique case_id
+                                const uniqueCaseId = generateUniqueCaseId();
+
+                                // Create upcoming order
+                                const upcomingOrderData: any = {
+                                    client_id: order.client_id,
+                                    service_type: order.service_type,
+                                    case_id: uniqueCaseId,
+                                    status: 'scheduled',
+                                    last_updated: new Date().toISOString(),
+                                    updated_by: order.updated_by || 'System',
+                                    scheduled_delivery_date: scheduledDeliveryDate.toISOString().split('T')[0],
+                                    take_effect_date: takeEffectDate.toISOString().split('T')[0],
+                                    delivery_distribution: order.delivery_distribution || null,
+                                    total_value: vendorDetail.totalValue || 0,
+                                    total_items: vendorDetail.totalQuantity || 0,
+                                    notes: order.notes || null
+                                };
+
+                                const { data: newUpcomingOrder, error: upcomingOrderError } = await supabase
+                                    .from('upcoming_orders')
+                                    .insert(upcomingOrderData)
+                                    .select()
+                                    .single();
+
+                                if (upcomingOrderError || !newUpcomingOrder) {
+                                    errors.push(`Failed to create upcoming order for vendor ${vendorDetail.vendorId}: ${upcomingOrderError?.message}`);
+                                    continue;
+                                }
+
+                                // Create vendor selection for this upcoming order
+                                const { data: newVendorSelection, error: vsError } = await supabase
+                                    .from('upcoming_order_vendor_selections')
+                                    .insert({
+                                        upcoming_order_id: newUpcomingOrder.id,
+                                        vendor_id: vendorDetail.vendorId
+                                    })
+                                    .select()
+                                    .single();
+
+                                if (vsError || !newVendorSelection) {
+                                    errors.push(`Failed to create vendor selection for upcoming order ${newUpcomingOrder.id}: ${vsError?.message}`);
+                                    continue;
+                                }
+
+                                // Copy items for this vendor from the processed order
+                                if (vendorDetail.items && vendorDetail.items.length > 0) {
+                                    for (const item of vendorDetail.items) {
+                                        const { error: itemError } = await supabase
+                                            .from('upcoming_order_items')
+                                            .insert({
+                                                upcoming_order_id: newUpcomingOrder.id,
+                                                vendor_selection_id: newVendorSelection.id,
+                                                menu_item_id: item.itemId,
+                                                quantity: item.quantity,
+                                                unit_value: item.unitValue,
+                                                total_value: item.totalValue
+                                            });
+
+                                        if (itemError) {
+                                            errors.push(`Failed to copy item ${item.itemId} to upcoming order: ${itemError.message}`);
+                                        }
+                                    }
+                                }
+                            }
+                        } else if (order.service_type === 'Boxes' && orderSummary.vendorDetails.length > 0) {
+                            // For Box orders, create one upcoming order per vendor
+                            for (const vendorDetail of orderSummary.vendorDetails) {
+                                const vendorId = vendorDetail.vendorId;
+                                if (!vendorId) continue;
+
+                                const vendor = vendors.find(v => v.id === vendorId);
+                                if (!vendor) continue;
+
+                                // Calculate take effect date and scheduled delivery date for this vendor
+                                const takeEffectDate = calculateTakeEffectDate(vendorId, vendors);
+                                const scheduledDeliveryDate = calculateScheduledDeliveryDate(vendorId, vendors);
+
+                                if (!takeEffectDate || !scheduledDeliveryDate) {
+                                    errors.push(`Failed to calculate dates for vendor ${vendorId} when creating upcoming order`);
+                                    continue;
+                                }
+
+                                // Generate unique case_id
+                                const uniqueCaseId = generateUniqueCaseId();
+
+                                // Calculate totals for this vendor's box selection
+                                const boxType = boxTypes.find(b => b.id === vendorDetail.boxTypeId);
+                                const boxValue = boxType?.value || 0;
+                                const boxQuantity = vendorDetail.quantity || 0;
+                                const totalValue = boxValue * boxQuantity;
+
+                                // Create upcoming order
+                                const upcomingOrderData: any = {
+                                    client_id: order.client_id,
+                                    service_type: order.service_type,
+                                    case_id: uniqueCaseId,
+                                    status: 'scheduled',
+                                    last_updated: new Date().toISOString(),
+                                    updated_by: order.updated_by || 'System',
+                                    scheduled_delivery_date: scheduledDeliveryDate.toISOString().split('T')[0],
+                                    take_effect_date: takeEffectDate.toISOString().split('T')[0],
+                                    delivery_distribution: order.delivery_distribution || null,
+                                    total_value: totalValue,
+                                    total_items: boxQuantity,
+                                    notes: order.notes || null
+                                };
+
+                                const { data: newUpcomingOrder, error: upcomingOrderError } = await supabase
+                                    .from('upcoming_orders')
+                                    .insert(upcomingOrderData)
+                                    .select()
+                                    .single();
+
+                                if (upcomingOrderError || !newUpcomingOrder) {
+                                    errors.push(`Failed to create upcoming order for vendor ${vendorId}: ${upcomingOrderError?.message}`);
+                                    continue;
+                                }
+
+                                // Create box selection for this upcoming order
+                                const { error: bsError } = await supabase
+                                    .from('upcoming_order_box_selections')
+                                    .insert({
+                                        upcoming_order_id: newUpcomingOrder.id,
+                                        box_type_id: vendorDetail.boxTypeId,
+                                        vendor_id: vendorId,
+                                        quantity: boxQuantity
+                                    });
+
+                                if (bsError) {
+                                    errors.push(`Failed to create box selection for upcoming order ${newUpcomingOrder.id}: ${bsError.message}`);
+                                }
+                            }
+                        }
+                } catch (upcomingOrderError: any) {
+                    errors.push(`Error creating upcoming orders for processed order ${order.id}: ${upcomingOrderError.message}`);
                 }
 
             } catch (error: any) {
@@ -634,21 +974,21 @@ export async function GET(request: NextRequest) {
             });
         });
 
-        const transferredCount = processedOrders.filter(o => o.transferredFromUpcoming).length;
+        const copiedCount = processedOrders.filter(o => o.copiedFromUpcoming).length;
 
         // Combine precheck errors with processing errors
         const allErrors = [...precheckResults.errors, ...errors];
 
         return NextResponse.json({
             success: true,
-            message: `Successfully processed ${processedOrders.length} order(s)${transferredCount > 0 ? `, transferred ${transferredCount} order(s) from upcoming_orders to orders table` : ''} and created ${billingRecords.length} billing record(s)`,
+            message: `Successfully processed ${processedOrders.length} order(s)${copiedCount > 0 ? `, copied ${copiedCount} order(s) from upcoming_orders to orders table` : ''} and created ${billingRecords.length} billing record(s)`,
             precheck: {
                 transferred: precheckResults.transferred,
                 skipped: precheckResults.skipped,
                 errors: precheckResults.errors.length > 0 ? precheckResults.errors : undefined
             },
             orderSource: isFromUpcomingOrders ? 'upcoming_orders' : 'orders',
-            transferredFromUpcoming: transferredCount,
+            copiedFromUpcoming: copiedCount,
             settings: {
                 weeklyCutoffDay: settings.weeklyCutoffDay,
                 weeklyCutoffTime: settings.weeklyCutoffTime

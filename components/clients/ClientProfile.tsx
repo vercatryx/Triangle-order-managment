@@ -3,9 +3,9 @@
 import { useState, useEffect } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import { ClientProfile, ClientStatus, Navigator, Vendor, MenuItem, BoxType, ServiceType, AppSettings, DeliveryRecord, ItemCategory, BoxQuota } from '@/lib/types';
-import { updateClient, deleteClient, getClientHistory, updateDeliveryProof, recordClientChange, getOrderHistory, getBoxQuotas, syncCurrentOrderToUpcoming, getBillingHistory, getActiveOrderForClient, getUpcomingOrderForClient } from '@/lib/actions';
-import { getClient, getStatuses, getNavigators, getVendors, getMenuItems, getBoxTypes, getSettings, getCategories, getClients, invalidateClientData, invalidateReferenceData } from '@/lib/cached-data';
-import { Save, ArrowLeft, Truck, Package, AlertTriangle, Upload, Trash2, Plus, Check, ClipboardList, History, CreditCard, Calendar } from 'lucide-react';
+import { updateClient, deleteClient, updateDeliveryProof, recordClientChange, getBoxQuotas, syncCurrentOrderToUpcoming } from '@/lib/actions';
+import { getClient, getStatuses, getNavigators, getVendors, getMenuItems, getBoxTypes, getSettings, getCategories, getClients, invalidateClientData, invalidateReferenceData, getActiveOrderForClient, getUpcomingOrderForClient, getOrderHistory, getClientHistory, getBillingHistory, invalidateOrderData } from '@/lib/cached-data';
+import { Save, ArrowLeft, Truck, Package, AlertTriangle, Upload, Trash2, Plus, Check, ClipboardList, History, CreditCard, Calendar, ChevronDown, ChevronUp, ShoppingCart } from 'lucide-react';
 import styles from './ClientProfile.module.css';
 import { OrderHistoryItem } from './OrderHistoryItem';
 
@@ -35,9 +35,11 @@ export function ClientProfileDetail({ clientId: propClientId, onClose }: Props) 
     const [billingHistory, setBillingHistory] = useState<any[]>([]);
     const [activeHistoryTab, setActiveHistoryTab] = useState<'deliveries' | 'audit' | 'billing'>('deliveries');
     const [allClients, setAllClients] = useState<ClientProfile[]>([]);
+    const [expandedBillingRows, setExpandedBillingRows] = useState<Set<string>>(new Set());
 
     const [formData, setFormData] = useState<Partial<ClientProfile>>({});
     const [orderConfig, setOrderConfig] = useState<any>({}); // Current Order Request (from upcoming_orders)
+    const [originalOrderConfig, setOriginalOrderConfig] = useState<any>({}); // Original Order Request for comparison
     const [activeOrder, setActiveOrder] = useState<any>(null); // This Week's Order (from orders table)
 
     const [saving, setSaving] = useState(false);
@@ -72,6 +74,7 @@ export function ClientProfileDetail({ clientId: propClientId, onClose }: Props) 
             
             // Set order config from upcoming_orders table (Current Order Request)
             // If no upcoming order exists, initialize with default based on service type
+            let configToSet: any = {};
             if (upcomingOrderData) {
                 // Migration/Safety: Ensure vendorSelections exists for Food
                 if (upcomingOrderData.serviceType === 'Food' && !upcomingOrderData.vendorSelections) {
@@ -82,15 +85,17 @@ export function ClientProfileDetail({ clientId: propClientId, onClose }: Props) 
                         upcomingOrderData.vendorSelections = [{ vendorId: '', items: {} }];
                     }
                 }
-                setOrderConfig(upcomingOrderData);
+                configToSet = upcomingOrderData;
             } else {
                 // No upcoming order, initialize with default
                 const defaultOrder: any = { serviceType: c.serviceType };
                 if (c.serviceType === 'Food') {
                     defaultOrder.vendorSelections = [{ vendorId: '', items: {} }];
                 }
-                setOrderConfig(defaultOrder);
+                configToSet = defaultOrder;
             }
+            setOrderConfig(configToSet);
+            setOriginalOrderConfig(JSON.parse(JSON.stringify(configToSet))); // Deep copy for comparison
 
             const [h, oh, bh] = await Promise.all([
                 getClientHistory(clientId),
@@ -190,6 +195,7 @@ export function ClientProfileDetail({ clientId: propClientId, onClose }: Props) 
 
                     // Sync to upcoming_orders table
                     await syncCurrentOrderToUpcoming(clientId, tempClient);
+                    invalidateOrderData(clientId); // Invalidate order cache after sync
                 }
             } catch (error) {
                 console.error('Error checking/saving Service Configuration:', error);
@@ -231,6 +237,7 @@ export function ClientProfileDetail({ clientId: propClientId, onClose }: Props) 
 
                 // Sync to upcoming_orders table
                 await syncCurrentOrderToUpcoming(clientId, tempClient);
+                invalidateOrderData(clientId); // Invalidate order cache after sync
             } catch (error) {
                 console.error('Error syncing to upcoming_orders:', error);
             }
@@ -543,6 +550,119 @@ export function ClientProfileDetail({ clientId: propClientId, onClose }: Props) 
         }
     }
 
+    // Helper function to detect order configuration changes
+    function detectOrderConfigChanges(oldConfig: any, newConfig: any): string[] {
+        const changes: string[] = [];
+        
+        if (!oldConfig && !newConfig) return changes;
+        if (!oldConfig && newConfig) {
+            changes.push('Order configuration created');
+            return changes;
+        }
+        if (oldConfig && !newConfig) {
+            changes.push('Order configuration removed');
+            return changes;
+        }
+
+        // Compare service type
+        if (oldConfig.serviceType !== newConfig.serviceType) {
+            changes.push(`Order Service Type: "${oldConfig.serviceType || 'None'}" -> "${newConfig.serviceType || 'None'}"`);
+        }
+
+        // Compare Food order configurations
+        if (newConfig.serviceType === 'Food' || oldConfig.serviceType === 'Food') {
+            const oldSelections = oldConfig.vendorSelections || [];
+            const newSelections = newConfig.vendorSelections || [];
+            
+            // Compare vendor selections
+            const oldVendorIds = new Set<string>(oldSelections.map((s: any) => s.vendorId).filter((id: string) => id));
+            const newVendorIds = new Set<string>(newSelections.map((s: any) => s.vendorId).filter((id: string) => id));
+            
+            // Check for added/removed vendors
+            newVendorIds.forEach((vendorId) => {
+                if (!oldVendorIds.has(vendorId)) {
+                    const vendor = vendors.find(v => v.id === vendorId);
+                    changes.push(`Vendor added: ${vendor?.name || vendorId}`);
+                }
+            });
+            oldVendorIds.forEach((vendorId) => {
+                if (!newVendorIds.has(vendorId)) {
+                    const vendor = vendors.find(v => v.id === vendorId);
+                    changes.push(`Vendor removed: ${vendor?.name || vendorId}`);
+                }
+            });
+            
+            // Compare item quantities for each vendor
+            oldSelections.forEach((oldSel: any) => {
+                if (!oldSel.vendorId) return;
+                const newSel = newSelections.find((s: any) => s.vendorId === oldSel.vendorId);
+                const vendor = vendors.find(v => v.id === oldSel.vendorId);
+                const vendorName = vendor?.name || oldSel.vendorId;
+                
+                if (!newSel) return; // Already handled as removed vendor
+                
+                const oldItems = oldSel.items || {};
+                const newItems = newSel.items || {};
+                const allItemIds = new Set([...Object.keys(oldItems), ...Object.keys(newItems)]);
+                
+                allItemIds.forEach((itemId: string) => {
+                    const oldQty = oldItems[itemId] || 0;
+                    const newQty = newItems[itemId] || 0;
+                    if (oldQty !== newQty) {
+                        const item = menuItems.find(m => m.id === itemId);
+                        const itemName = item?.name || itemId;
+                        changes.push(`${vendorName} - ${itemName}: ${oldQty} -> ${newQty}`);
+                    }
+                });
+            });
+            
+            // Check for new vendors with items
+            newSelections.forEach((newSel: any) => {
+                if (!newSel.vendorId) return;
+                if (!oldVendorIds.has(newSel.vendorId)) {
+                    // New vendor, check if it has items
+                    const items = Object.entries(newSel.items || {}).filter(([_, qty]) => (qty as number) > 0);
+                    if (items.length > 0) {
+                        const vendor = vendors.find(v => v.id === newSel.vendorId);
+                        const vendorName = vendor?.name || newSel.vendorId;
+                        items.forEach(([itemId, qty]) => {
+                            const item = menuItems.find(m => m.id === itemId);
+                            const itemName = item?.name || itemId;
+                            changes.push(`${vendorName} - ${itemName}: 0 -> ${qty}`);
+                        });
+                    }
+                }
+            });
+        }
+
+        // Compare Box order configurations
+        if (newConfig.serviceType === 'Boxes' || oldConfig.serviceType === 'Boxes') {
+            if (oldConfig.boxTypeId !== newConfig.boxTypeId) {
+                const oldBoxType = boxTypes.find(b => b.id === oldConfig.boxTypeId);
+                const newBoxType = boxTypes.find(b => b.id === newConfig.boxTypeId);
+                changes.push(`Box Type: "${oldBoxType?.name || oldConfig.boxTypeId || 'None'}" -> "${newBoxType?.name || newConfig.boxTypeId || 'None'}"`);
+            }
+            if (oldConfig.boxQuantity !== newConfig.boxQuantity) {
+                changes.push(`Box Quantity: ${oldConfig.boxQuantity || 0} -> ${newConfig.boxQuantity || 0}`);
+            }
+            if (oldConfig.vendorId !== newConfig.vendorId) {
+                const oldVendor = vendors.find(v => v.id === oldConfig.vendorId);
+                const newVendor = vendors.find(v => v.id === newConfig.vendorId);
+                changes.push(`Box Vendor: "${oldVendor?.name || oldConfig.vendorId || 'None'}" -> "${newVendor?.name || newConfig.vendorId || 'None'}"`);
+            }
+        }
+
+        // Compare delivery distribution
+        const oldDist = oldConfig.deliveryDistribution || {};
+        const newDist = newConfig.deliveryDistribution || {};
+        const distChanged = JSON.stringify(oldDist) !== JSON.stringify(newDist);
+        if (distChanged) {
+            changes.push('Delivery distribution changed');
+        }
+
+        return changes;
+    }
+
     async function handleSave(): Promise<boolean> {
         if (!client) return false;
 
@@ -554,13 +674,30 @@ export function ClientProfileDetail({ clientId: propClientId, onClose }: Props) 
 
         setSaving(true);
 
-        // -- Change Detection --
+        // -- Change Detection for Client Profile Fields --
         const changes: string[] = [];
+        
+        // Basic client information
         if (client.fullName !== formData.fullName) changes.push(`Full Name: "${client.fullName}" -> "${formData.fullName}"`);
         if (client.address !== formData.address) changes.push(`Address: "${client.address}" -> "${formData.address}"`);
-        if (client.email !== formData.email) changes.push(`Email: "${client.email}" -> "${formData.email}"`);
+        if (client.email !== formData.email) changes.push(`Email: "${client.email || '(empty)'}" -> "${formData.email || '(empty)'}"`);
         if (client.phoneNumber !== formData.phoneNumber) changes.push(`Phone: "${client.phoneNumber}" -> "${formData.phoneNumber}"`);
-        if (client.notes !== formData.notes) changes.push('Notes updated');
+        
+        // Dates
+        if (client.endDate !== formData.endDate) {
+            const oldDate = client.endDate ? new Date(client.endDate).toLocaleDateString() : 'None';
+            const newDate = formData.endDate ? new Date(formData.endDate).toLocaleDateString() : 'None';
+            changes.push(`End Date: "${oldDate}" -> "${newDate}"`);
+        }
+        
+        // Notes
+        if (client.notes !== formData.notes) {
+            const oldNotesPreview = client.notes ? (client.notes.length > 50 ? client.notes.substring(0, 50) + '...' : client.notes) : '(empty)';
+            const newNotesPreview = formData.notes ? (formData.notes.length > 50 ? formData.notes.substring(0, 50) + '...' : formData.notes) : '(empty)';
+            changes.push(`Notes: "${oldNotesPreview}" -> "${newNotesPreview}"`);
+        }
+        
+        // Status and Navigator
         if (client.statusId !== formData.statusId) {
             const oldStatus = statuses.find(s => s.id === client.statusId)?.name || 'Unknown';
             const newStatus = statuses.find(s => s.id === formData.statusId)?.name || 'Unknown';
@@ -571,16 +708,18 @@ export function ClientProfileDetail({ clientId: propClientId, onClose }: Props) 
             const newNav = navigators.find(n => n.id === formData.navigatorId)?.name || 'Unassigned';
             changes.push(`Navigator: "${oldNav}" -> "${newNav}"`);
         }
+        
+        // Service type and food-specific
         if (client.serviceType !== formData.serviceType) changes.push(`Service Type: "${client.serviceType}" -> "${formData.serviceType}"`);
-        if (client.approvedMealsPerWeek !== formData.approvedMealsPerWeek) changes.push(`Approved Meals: ${client.approvedMealsPerWeek} -> ${formData.approvedMealsPerWeek}`);
+        if (client.approvedMealsPerWeek !== formData.approvedMealsPerWeek) changes.push(`Approved Meals: ${client.approvedMealsPerWeek || 0} -> ${formData.approvedMealsPerWeek || 0}`);
+        
+        // Screening fields
         if (client.screeningTookPlace !== formData.screeningTookPlace) changes.push(`Screening Took Place: ${client.screeningTookPlace} -> ${formData.screeningTookPlace}`);
         if (client.screeningSigned !== formData.screeningSigned) changes.push(`Screening Signed: ${client.screeningSigned} -> ${formData.screeningSigned}`);
 
-        // Check if order configuration changed
-        const hasOrderChanges = orderConfig && orderConfig.caseId;
-        if (hasOrderChanges) {
-            changes.push('Order configuration changed');
-        }
+        // -- Change Detection for Order Configuration --
+        const orderConfigChanges = detectOrderConfigChanges(originalOrderConfig, orderConfig);
+        changes.push(...orderConfigChanges);
 
         const summary = changes.length > 0 ? changes.join(', ') : 'No functional changes detected (re-saved profile)';
 
@@ -593,8 +732,11 @@ export function ClientProfileDetail({ clientId: propClientId, onClose }: Props) 
         invalidateClientData(clientId); // Invalidate cache for this client
         invalidateClientData(); // Also invalidate client list cache
         await recordClientChange(clientId, summary);
+        invalidateOrderData(clientId); // Invalidate order history cache after recording change
 
         // Sync Current Order Request to upcoming_orders table
+        // Sync if order config exists and has a caseId, or if there are order config changes
+        const hasOrderChanges = orderConfig && orderConfig.caseId;
         if (hasOrderChanges) {
             // Ensure structure is correct
             const cleanedOrderConfig = { ...orderConfig };
@@ -621,11 +763,13 @@ export function ClientProfileDetail({ clientId: propClientId, onClose }: Props) 
 
             // Sync to upcoming_orders table
             await syncCurrentOrderToUpcoming(clientId, tempClient);
+            invalidateOrderData(clientId); // Invalidate order cache after sync
             
             // Reload upcoming order to reflect changes
             const updatedUpcomingOrder = await getUpcomingOrderForClient(clientId);
             if (updatedUpcomingOrder) {
                 setOrderConfig(updatedUpcomingOrder);
+                setOriginalOrderConfig(JSON.parse(JSON.stringify(updatedUpcomingOrder))); // Update original for future comparisons
             }
         }
 
@@ -739,6 +883,94 @@ export function ClientProfileDetail({ clientId: propClientId, onClose }: Props) 
         current[blockIndex].items = items;
         setOrderConfig({ ...orderConfig, vendorSelections: current });
     }
+
+    const toggleBillingRow = (id: string) => {
+        const newExpanded = new Set(expandedBillingRows);
+        if (newExpanded.has(id)) {
+            newExpanded.delete(id);
+        } else {
+            newExpanded.add(id);
+        }
+        setExpandedBillingRows(newExpanded);
+    };
+
+    const renderOrderDetails = (orderDetails: any) => {
+        if (!orderDetails) return null;
+
+        if (orderDetails.serviceType === 'Food' && orderDetails.vendorSelections) {
+            return (
+                <div style={{ padding: '12px', background: 'var(--bg-surface)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', marginTop: '8px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: 600, fontSize: '0.9rem', marginBottom: '12px', color: 'var(--text-primary)' }}>
+                        <ShoppingCart size={16} />
+                        <span>Order Items</span>
+                    </div>
+                    {orderDetails.vendorSelections.map((vs: any, idx: number) => (
+                        <div key={idx} style={{ marginBottom: '12px', padding: '8px', background: 'var(--bg-surface-hover)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)' }}>
+                            <div style={{ fontWeight: 500, marginBottom: '8px', paddingBottom: '8px', borderBottom: '1px solid var(--border-color)', fontSize: '0.875rem' }}>
+                                <strong>Vendor:</strong> {vs.vendorName}
+                            </div>
+                            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8125rem' }}>
+                                <thead>
+                                    <tr style={{ background: 'var(--bg-surface)' }}>
+                                        <th style={{ textAlign: 'left', padding: '6px 8px', fontWeight: 600, color: 'var(--text-secondary)', fontSize: '0.75rem', borderBottom: '1px solid var(--border-color)' }}>Item</th>
+                                        <th style={{ textAlign: 'left', padding: '6px 8px', fontWeight: 600, color: 'var(--text-secondary)', fontSize: '0.75rem', borderBottom: '1px solid var(--border-color)' }}>Quantity</th>
+                                        <th style={{ textAlign: 'left', padding: '6px 8px', fontWeight: 600, color: 'var(--text-secondary)', fontSize: '0.75rem', borderBottom: '1px solid var(--border-color)' }}>Unit Value</th>
+                                        <th style={{ textAlign: 'left', padding: '6px 8px', fontWeight: 600, color: 'var(--text-secondary)', fontSize: '0.75rem', borderBottom: '1px solid var(--border-color)' }}>Total</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {vs.items.map((item: any, itemIdx: number) => (
+                                        <tr key={itemIdx} style={{ borderBottom: '1px solid var(--border-color)' }}>
+                                            <td style={{ padding: '6px 8px', color: 'var(--text-primary)' }}>{item.menuItemName}</td>
+                                            <td style={{ padding: '6px 8px', color: 'var(--text-primary)' }}>{item.quantity}</td>
+                                            <td style={{ padding: '6px 8px', color: 'var(--text-primary)' }}>${item.unitValue.toFixed(2)}</td>
+                                            <td style={{ padding: '6px 8px', color: 'var(--text-primary)' }}>${item.totalValue.toFixed(2)}</td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    ))}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '12px', paddingTop: '12px', borderTop: '2px solid var(--border-color)', fontSize: '0.875rem', color: 'var(--text-primary)' }}>
+                        <div><strong>Total Items:</strong> {orderDetails.totalItems || 0}</div>
+                        <div><strong>Total Value:</strong> ${orderDetails.totalValue.toFixed(2)}</div>
+                    </div>
+                </div>
+            );
+        } else if (orderDetails.serviceType === 'Boxes') {
+            return (
+                <div style={{ padding: '12px', background: 'var(--bg-surface)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', marginTop: '8px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: 600, fontSize: '0.9rem', marginBottom: '12px', color: 'var(--text-primary)' }}>
+                        <Package size={16} />
+                        <span>Box Order Details</span>
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '12px', fontSize: '0.875rem', color: 'var(--text-primary)' }}>
+                        <div><strong>Vendor:</strong> {orderDetails.vendorName}</div>
+                        <div><strong>Box Type:</strong> {orderDetails.boxTypeName}</div>
+                        <div><strong>Quantity:</strong> {orderDetails.boxQuantity}</div>
+                        <div><strong>Total Value:</strong> ${orderDetails.totalValue.toFixed(2)}</div>
+                    </div>
+                </div>
+            );
+        } else {
+            return (
+                <div style={{ padding: '12px', background: 'var(--bg-surface)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', marginTop: '8px' }}>
+                    <div style={{ fontWeight: 600, fontSize: '0.9rem', marginBottom: '12px', color: 'var(--text-primary)' }}>
+                        <span>Order Details</span>
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '12px', fontSize: '0.875rem', color: 'var(--text-primary)' }}>
+                        <div><strong>Service Type:</strong> {orderDetails.serviceType}</div>
+                        {orderDetails.totalValue && (
+                            <div><strong>Total Value:</strong> ${orderDetails.totalValue.toFixed(2)}</div>
+                        )}
+                        {orderDetails.notes && (
+                            <div><strong>Notes:</strong> {orderDetails.notes}</div>
+                        )}
+                    </div>
+                </div>
+            );
+        }
+    };
 
     const content = (
         <div className={onClose ? '' : styles.container}>
@@ -959,6 +1191,9 @@ export function ClientProfileDetail({ clientId: propClientId, onClose }: Props) 
                                                                                                 <span>{item.name}</span>
                                                                                                 <div style={{ display: 'flex', gap: '12px', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
                                                                                                     <span className={styles.itemValue}>Value: {item.value}</span>
+                                                                                                    {item.priceEach !== undefined && (
+                                                                                                        <span className={styles.itemValue}>Price Each: {item.priceEach}</span>
+                                                                                                    )}
                                                                                                 </div>
                                                                                             </div>
                                                                                         </div>
@@ -1300,6 +1535,7 @@ export function ClientProfileDetail({ clientId: propClientId, onClose }: Props) 
                                                             onKeyDown={async (e) => {
                                                                 if (e.key === 'Enter') {
                                                                     await updateDeliveryProof(record.id, (e.target as HTMLInputElement).value);
+                                                                    invalidateOrderData(clientId); // Invalidate order cache after update
                                                                     // reload
                                                                     const h = await getClientHistory(clientId);
                                                                     setHistory(h);
@@ -1413,6 +1649,28 @@ export function ClientProfileDetail({ clientId: propClientId, onClose }: Props) 
                                                         </div>
                                                     </div>
                                                 )}
+                                                {billingHistory[0].orderDetails && (
+                                                    <div style={{ width: '100%', marginTop: '12px', paddingTop: '12px', borderTop: '1px solid var(--border-color)' }}>
+                                                        <button
+                                                            onClick={() => toggleBillingRow(billingHistory[0].id)}
+                                                            style={{
+                                                                display: 'flex',
+                                                                alignItems: 'center',
+                                                                gap: '0.5rem',
+                                                                background: 'none',
+                                                                border: 'none',
+                                                                color: 'var(--color-primary)',
+                                                                cursor: 'pointer',
+                                                                fontSize: '0.875rem',
+                                                                padding: '4px 0'
+                                                            }}
+                                                        >
+                                                            {expandedBillingRows.has(billingHistory[0].id) ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                                                            {expandedBillingRows.has(billingHistory[0].id) ? 'Hide' : 'View'} Order Details
+                                                        </button>
+                                                        {expandedBillingRows.has(billingHistory[0].id) && renderOrderDetails(billingHistory[0].orderDetails)}
+                                                    </div>
+                                                )}
                                             </div>
                                             
                                             {/* Show all billing history if there are more records */}
@@ -1459,6 +1717,28 @@ export function ClientProfileDetail({ clientId: propClientId, onClose }: Props) 
                                                             </div>
                                                             {record.remarks && (
                                                                 <div style={{ color: 'var(--text-secondary)', fontSize: '0.875rem' }}>{record.remarks}</div>
+                                                            )}
+                                                            {record.orderDetails && (
+                                                                <div style={{ width: '100%', marginTop: '8px', paddingTop: '8px', borderTop: '1px solid var(--border-color)' }}>
+                                                                    <button
+                                                                        onClick={() => toggleBillingRow(record.id)}
+                                                                        style={{
+                                                                            display: 'flex',
+                                                                            alignItems: 'center',
+                                                                            gap: '0.5rem',
+                                                                            background: 'none',
+                                                                            border: 'none',
+                                                                            color: 'var(--color-primary)',
+                                                                            cursor: 'pointer',
+                                                                            fontSize: '0.875rem',
+                                                                            padding: '4px 0'
+                                                                        }}
+                                                                    >
+                                                                        {expandedBillingRows.has(record.id) ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                                                                        {expandedBillingRows.has(record.id) ? 'Hide' : 'View'} Order Details
+                                                                    </button>
+                                                                    {expandedBillingRows.has(record.id) && renderOrderDetails(record.orderDetails)}
+                                                                </div>
                                                             )}
                                                         </div>
                                                     ))}

@@ -15,9 +15,14 @@ import {
     getSettings as serverGetSettings,
     getClients as serverGetClients,
     getClient as serverGetClient,
+    getActiveOrderForClient as serverGetActiveOrderForClient,
+    getOrderHistory as serverGetOrderHistory,
+    getClientHistory as serverGetClientHistory,
+    getBillingHistory as serverGetBillingHistory,
+    getUpcomingOrderForClient as serverGetUpcomingOrderForClient,
 } from './actions';
 
-import { ClientProfile, ClientStatus, Navigator, Vendor, MenuItem, BoxType, AppSettings, ItemCategory } from './types';
+import { ClientProfile, ClientStatus, Navigator, Vendor, MenuItem, BoxType, AppSettings, ItemCategory, DeliveryRecord } from './types';
 
 // Cache entry with timestamp
 interface CacheEntry<T> {
@@ -30,12 +35,19 @@ const CACHE_DURATION = {
     REFERENCE_DATA: 5 * 60 * 1000, // 5 minutes for reference data
     CLIENT_DATA: 2 * 60 * 1000, // 2 minutes for client-specific data
     CLIENT_LIST: 1 * 60 * 1000, // 1 minute for client list
+    ORDER_DATA: 1 * 60 * 1000, // 1 minute for order-related data (changes frequently)
 };
 
 // In-memory cache stores (shared across all calls)
 const referenceCache: Map<string, CacheEntry<any>> = new Map();
 let clientsCache: CacheEntry<ClientProfile[]> | undefined;
 const clientCache: Map<string, CacheEntry<ClientProfile>> = new Map();
+// Order-related caches (per client)
+const activeOrderCache: Map<string, CacheEntry<any>> = new Map();
+const upcomingOrderCache: Map<string, CacheEntry<any>> = new Map();
+const orderHistoryCache: Map<string, CacheEntry<any[]>> = new Map();
+const deliveryHistoryCache: Map<string, CacheEntry<DeliveryRecord[]>> = new Map();
+const billingHistoryCache: Map<string, CacheEntry<any[]>> = new Map();
 
 // Helper to check if cache entry is stale
 function isStale<T>(entry: CacheEntry<T> | undefined, duration: number): boolean {
@@ -148,9 +160,20 @@ export function invalidateReferenceData(key?: string) {
 export function invalidateClientData(clientId?: string) {
     if (clientId) {
         clientCache.delete(clientId);
+        // Also invalidate order-related caches for this client
+        activeOrderCache.delete(clientId);
+        upcomingOrderCache.delete(clientId);
+        orderHistoryCache.delete(clientId);
+        deliveryHistoryCache.delete(clientId);
+        billingHistoryCache.delete(clientId);
     } else {
         clientCache.clear();
         clientsCache = undefined;
+        activeOrderCache.clear();
+        upcomingOrderCache.clear();
+        orderHistoryCache.clear();
+        deliveryHistoryCache.clear();
+        billingHistoryCache.clear();
     }
 }
 
@@ -158,5 +181,70 @@ export function invalidateAll() {
     referenceCache.clear();
     clientCache.clear();
     clientsCache = undefined;
+    activeOrderCache.clear();
+    upcomingOrderCache.clear();
+    orderHistoryCache.clear();
+    deliveryHistoryCache.clear();
+    billingHistoryCache.clear();
+}
+
+// Order-related data getters (cached)
+export async function getActiveOrderForClient(clientId: string): Promise<any> {
+    const cached = activeOrderCache.get(clientId);
+    if (!isStale(cached, CACHE_DURATION.ORDER_DATA)) {
+        return cached!.data;
+    }
+    const data = await serverGetActiveOrderForClient(clientId);
+    activeOrderCache.set(clientId, { data, timestamp: Date.now() });
+    return data;
+}
+
+export async function getUpcomingOrderForClient(clientId: string): Promise<any> {
+    const cached = upcomingOrderCache.get(clientId);
+    if (!isStale(cached, CACHE_DURATION.ORDER_DATA)) {
+        return cached!.data;
+    }
+    const data = await serverGetUpcomingOrderForClient(clientId);
+    upcomingOrderCache.set(clientId, { data, timestamp: Date.now() });
+    return data;
+}
+
+export async function getOrderHistory(clientId: string): Promise<any[]> {
+    const cached = orderHistoryCache.get(clientId);
+    if (!isStale(cached, CACHE_DURATION.ORDER_DATA)) {
+        return cached!.data;
+    }
+    const data = await serverGetOrderHistory(clientId);
+    orderHistoryCache.set(clientId, { data, timestamp: Date.now() });
+    return data;
+}
+
+export async function getClientHistory(clientId: string): Promise<DeliveryRecord[]> {
+    const cached = deliveryHistoryCache.get(clientId);
+    if (!isStale(cached, CACHE_DURATION.ORDER_DATA)) {
+        return cached!.data;
+    }
+    const data = await serverGetClientHistory(clientId);
+    deliveryHistoryCache.set(clientId, { data, timestamp: Date.now() });
+    return data;
+}
+
+export async function getBillingHistory(clientId: string): Promise<any[]> {
+    const cached = billingHistoryCache.get(clientId);
+    if (!isStale(cached, CACHE_DURATION.ORDER_DATA)) {
+        return cached!.data;
+    }
+    const data = await serverGetBillingHistory(clientId);
+    billingHistoryCache.set(clientId, { data, timestamp: Date.now() });
+    return data;
+}
+
+// Invalidate order-related caches for a specific client
+export function invalidateOrderData(clientId: string) {
+    activeOrderCache.delete(clientId);
+    upcomingOrderCache.delete(clientId);
+    orderHistoryCache.delete(clientId);
+    deliveryHistoryCache.delete(clientId);
+    billingHistoryCache.delete(clientId);
 }
 

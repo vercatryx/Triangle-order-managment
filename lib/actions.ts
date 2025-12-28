@@ -135,6 +135,7 @@ export async function getMenuItems() {
         vendorId: i.vendor_id,
         name: i.name,
         value: i.value,
+        priceEach: i.price_each ?? undefined,
         isActive: i.is_active,
         categoryId: i.category_id,
         quotaValue: i.quota_value,
@@ -143,7 +144,7 @@ export async function getMenuItems() {
 }
 
 export async function addMenuItem(data: Omit<MenuItem, 'id'>) {
-    const payload = {
+    const payload: any = {
         vendor_id: data.vendorId,
         name: data.name,
         value: data.value,
@@ -152,6 +153,9 @@ export async function addMenuItem(data: Omit<MenuItem, 'id'>) {
         quota_value: data.quotaValue,
         minimum_order: data.minimumOrder ?? 0
     };
+    if (data.priceEach !== undefined) {
+        payload.price_each = data.priceEach;
+    }
     const { data: res, error } = await supabase.from('menu_items').insert([payload]).select().single();
     handleError(error);
     revalidatePath('/admin');
@@ -161,7 +165,8 @@ export async function addMenuItem(data: Omit<MenuItem, 'id'>) {
 export async function updateMenuItem(id: string, data: Partial<MenuItem>) {
     const payload: any = {};
     if (data.name) payload.name = data.name;
-    if (data.value) payload.value = data.value;
+    if (data.value !== undefined) payload.value = data.value;
+    if (data.priceEach !== undefined) payload.price_each = data.priceEach;
     if (data.isActive !== undefined) payload.is_active = data.isActive;
     if (data.categoryId !== undefined) payload.category_id = data.categoryId;
     if (data.quotaValue !== undefined) payload.quota_value = data.quotaValue;
@@ -608,22 +613,105 @@ export async function getBillingHistory(clientId: string) {
         return [];
     }
 
+    // Fetch reference data once for all orders
+    const [menuItems, vendors, boxTypes] = await Promise.all([
+        getMenuItems(),
+        getVendors(),
+        getBoxTypes()
+    ]);
+
     // Fetch order details separately if order_id exists
     const billingRecords = data || [];
     const recordsWithOrderData = await Promise.all(
         billingRecords.map(async (d: any) => {
             let deliveryDate: string | undefined = undefined;
+            let orderDetails: any = undefined;
             
             if (d.order_id) {
                 const { data: orderData, error: orderError } = await supabase
                     .from('orders')
-                    .select('scheduled_delivery_date, actual_delivery_date')
+                    .select('*')
                     .eq('id', d.order_id)
                     .single();
                 
                 if (!orderError && orderData) {
                     // Prefer actual_delivery_date, fallback to scheduled_delivery_date
                     deliveryDate = orderData.actual_delivery_date || orderData.scheduled_delivery_date || undefined;
+                    
+                    // Build order details based on service type
+                    if (orderData.service_type === 'Food') {
+                        // Fetch vendor selections and items
+                        const { data: vendorSelections } = await supabase
+                            .from('order_vendor_selections')
+                            .select('*')
+                            .eq('order_id', d.order_id);
+
+                        if (vendorSelections && vendorSelections.length > 0) {
+                            const vendorSelectionsWithItems = await Promise.all(
+                                vendorSelections.map(async (vs: any) => {
+                                    const { data: items } = await supabase
+                                        .from('order_items')
+                                        .select('*')
+                                        .eq('vendor_selection_id', vs.id);
+
+                                    const vendor = vendors.find(v => v.id === vs.vendor_id);
+                                    const itemsWithDetails = (items || []).map((item: any) => {
+                                        const menuItem = menuItems.find(mi => mi.id === item.menu_item_id);
+                                        return {
+                                            id: item.id,
+                                            menuItemId: item.menu_item_id,
+                                            menuItemName: menuItem?.name || 'Unknown Item',
+                                            quantity: item.quantity,
+                                            unitValue: parseFloat(item.unit_value),
+                                            totalValue: parseFloat(item.total_value)
+                                        };
+                                    });
+
+                                    return {
+                                        vendorId: vs.vendor_id,
+                                        vendorName: vendor?.name || 'Unknown Vendor',
+                                        items: itemsWithDetails
+                                    };
+                                })
+                            );
+
+                            orderDetails = {
+                                serviceType: orderData.service_type,
+                                vendorSelections: vendorSelectionsWithItems,
+                                totalItems: orderData.total_items,
+                                totalValue: parseFloat(orderData.total_value || 0)
+                            };
+                        }
+                    } else if (orderData.service_type === 'Boxes') {
+                        // Fetch box selection
+                        const { data: boxSelection } = await supabase
+                            .from('order_box_selections')
+                            .select('*')
+                            .eq('order_id', d.order_id)
+                            .maybeSingle();
+
+                        if (boxSelection) {
+                            const vendor = vendors.find(v => v.id === boxSelection.vendor_id);
+                            const boxType = boxTypes.find(bt => bt.id === boxSelection.box_type_id);
+                            
+                            orderDetails = {
+                                serviceType: orderData.service_type,
+                                vendorId: boxSelection.vendor_id,
+                                vendorName: vendor?.name || 'Unknown Vendor',
+                                boxTypeId: boxSelection.box_type_id,
+                                boxTypeName: boxType?.name || 'Unknown Box Type',
+                                boxQuantity: boxSelection.quantity,
+                                totalValue: parseFloat(orderData.total_value || 0)
+                            };
+                        }
+                    } else {
+                        // For other service types, just include basic info
+                        orderDetails = {
+                            serviceType: orderData.service_type,
+                            totalValue: parseFloat(orderData.total_value || 0),
+                            notes: orderData.notes
+                        };
+                    }
                 }
             }
 
@@ -636,8 +724,11 @@ export async function getBillingHistory(clientId: string) {
                 navigator: d.navigator,
                 amount: d.amount,
                 createdAt: d.created_at,
+                date: d.date || new Date(d.created_at).toLocaleDateString(),
+                method: d.method || 'N/A',
                 orderId: d.order_id || undefined,
-                deliveryDate: deliveryDate
+                deliveryDate: deliveryDate,
+                orderDetails: orderDetails
             };
         })
     );

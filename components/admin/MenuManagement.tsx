@@ -18,6 +18,7 @@ export function MenuManagement() {
     const [formData, setFormData] = useState<Partial<MenuItem>>({
         name: '',
         value: 0,
+        priceEach: 0,
         isActive: true,
         minimumOrder: 0
     });
@@ -43,6 +44,7 @@ export function MenuManagement() {
         setFormData({
             name: '',
             value: 0,
+            priceEach: 0,
             isActive: true,
             quotaValue: 1,
             categoryId: '',
@@ -148,6 +150,15 @@ export function MenuManagement() {
                                 />
                             </div>
                             <div className={styles.formGroup} style={{ flex: 1 }}>
+                                <label className="label">Price Each</label>
+                                <input
+                                    type="number"
+                                    className="input"
+                                    value={formData.priceEach ?? ''}
+                                    onChange={e => setFormData({ ...formData, priceEach: Number(e.target.value) || undefined })}
+                                />
+                            </div>
+                            <div className={styles.formGroup} style={{ flex: 1 }}>
                                 <label className="label">Minimum Order Quantity</label>
                                 <input
                                     type="number"
@@ -188,6 +199,7 @@ export function MenuManagement() {
                     <div className={styles.listHeader}>
                         <span style={{ flex: 3 }}>Name</span>
                         <span style={{ flex: 1 }}>Value</span>
+                        <span style={{ flex: 1 }}>Price Each</span>
                         <span style={{ flex: 1 }}>Min Order</span>
                         <span style={{ flex: 1 }}>Status</span>
                         <span style={{ width: '120px', textAlign: 'right' }}>Actions</span>
@@ -196,6 +208,7 @@ export function MenuManagement() {
                         <div key={item.id} className={styles.item}>
                             <span style={{ flex: 3, fontWeight: 500, fontSize: '1.1rem' }}>{item.name}</span>
                             <span style={{ flex: 1, fontSize: '1rem' }}>{item.value}</span>
+                            <span style={{ flex: 1, fontSize: '1rem' }}>{item.priceEach ?? '-'}</span>
                             <span style={{ flex: 1, fontSize: '0.9rem', color: item.minimumOrder && item.minimumOrder > 0 ? 'var(--color-primary)' : 'var(--text-tertiary)' }}>
                                 {item.minimumOrder && item.minimumOrder > 0 ? item.minimumOrder : '-'}
                             </span>

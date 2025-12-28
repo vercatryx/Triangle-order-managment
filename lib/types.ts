@@ -88,6 +88,7 @@ export interface MenuItem {
   vendorId: string;
   name: string;
   value: number;
+  priceEach?: number;
   isActive: boolean;
   categoryId?: string | null;
   quotaValue?: number; // How much this item counts towards a quota (default 1)
