@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache';
 import { supabase } from './supabase';
 import { ClientStatus, Vendor, MenuItem, BoxType, AppSettings, Navigator, ClientProfile, DeliveryRecord, ItemCategory, BoxQuota } from './types';
 import { randomUUID } from 'crypto';
+import { getSession } from './session';
 
 // --- HELPERS ---
 function handleError(error: any) {
@@ -81,7 +82,8 @@ export async function getVendors() {
         serviceType: v.service_type,
         deliveryDays: v.delivery_days || [],
         allowsMultipleDeliveries: v.delivery_frequency === 'Multiple',
-        isActive: v.is_active
+        isActive: v.is_active,
+        minimumOrder: v.minimum_order ?? 0
     }));
 }
 
@@ -91,7 +93,8 @@ export async function addVendor(data: Omit<Vendor, 'id'>) {
         service_type: data.serviceType,
         delivery_days: data.deliveryDays,
         delivery_frequency: data.allowsMultipleDeliveries ? 'Multiple' : 'Once',
-        is_active: data.isActive
+        is_active: data.isActive,
+        minimum_order: data.minimumOrder ?? 0
     };
 
     const { data: res, error } = await supabase.from('vendors').insert([payload]).select().single();
@@ -109,6 +112,7 @@ export async function updateVendor(id: string, data: Partial<Vendor>) {
         payload.delivery_frequency = data.allowsMultipleDeliveries ? 'Multiple' : 'Once';
     }
     if (data.isActive !== undefined) payload.is_active = data.isActive;
+    if (data.minimumOrder !== undefined) payload.minimum_order = data.minimumOrder;
 
     const { error } = await supabase.from('vendors').update(payload).eq('id', id);
     handleError(error);
@@ -532,12 +536,19 @@ export async function updateDeliveryProof(id: string, proofUrl: string) {
     revalidatePath('/clients');
 }
 
-export async function recordClientChange(clientId: string, summary: string, who: string = 'Admin') {
+export async function recordClientChange(clientId: string, summary: string, who?: string) {
+    // Get current user from session if who is not provided
+    let userName = who;
+    if (!userName || userName === 'Admin') {
+        const session = await getSession();
+        userName = session?.name || 'Admin';
+    }
+
     const { error } = await supabase
         .from('order_history')
         .insert([{
             client_id: clientId,
-            who: who,
+            who: userName,
             summary: summary,
             timestamp: new Date().toISOString()
         }]);
@@ -856,6 +867,12 @@ export async function syncCurrentOrderToUpcoming(clientId: string, client: Clien
         // Box value calculation can be added if needed
     }
 
+    // Get current user from session for updated_by
+    const session = await getSession();
+    const currentUserName = session?.name || 'Admin';
+    // Use session user name if updatedBy is not provided or is 'Admin'
+    const updatedBy = (orderConfig.updatedBy && orderConfig.updatedBy !== 'Admin') ? orderConfig.updatedBy : currentUserName;
+
     // Upsert upcoming order (update if exists, insert if not)
     const upcomingOrderData: any = {
         client_id: clientId,
@@ -863,7 +880,7 @@ export async function syncCurrentOrderToUpcoming(clientId: string, client: Clien
         case_id: orderConfig.caseId,
         status: 'scheduled',
         last_updated: orderConfig.lastUpdated || new Date().toISOString(),
-        updated_by: orderConfig.updatedBy || 'Admin',
+        updated_by: updatedBy,
         scheduled_delivery_date: scheduledDeliveryDate.toISOString().split('T')[0],
         take_effect_date: takeEffectDate.toISOString().split('T')[0],
         delivery_distribution: orderConfig.deliveryDistribution || null,
