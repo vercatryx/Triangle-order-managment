@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, Fragment, useMemo } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import { ClientProfile, ClientStatus, Navigator, Vendor, MenuItem, BoxType, ServiceType, AppSettings, DeliveryRecord, ItemCategory, BoxQuota } from '@/lib/types';
 import { updateClient, deleteClient, updateDeliveryProof, recordClientChange, getBoxQuotas, syncCurrentOrderToUpcoming } from '@/lib/actions';
@@ -138,9 +138,19 @@ export function ClientProfileDetail({ clientId: propClientId, onClose }: Props) 
         }
     }, [orderConfig.boxTypeId]);
 
+    // Extract dependencies with defaults to ensure consistent array size
+    const caseId = useMemo(() => orderConfig?.caseId ?? null, [orderConfig?.caseId]);
+    const vendorSelections = useMemo(() => orderConfig?.vendorSelections ?? [], [orderConfig?.vendorSelections]);
+    const vendorId = useMemo(() => orderConfig?.vendorId ?? null, [orderConfig?.vendorId]);
+    const boxTypeId = useMemo(() => orderConfig?.boxTypeId ?? null, [orderConfig?.boxTypeId]);
+    const boxQuantity = useMemo(() => orderConfig?.boxQuantity ?? null, [orderConfig?.boxQuantity]);
+    const items = useMemo(() => (orderConfig as any)?.items ?? {}, [(orderConfig as any)?.items]);
+    const itemPrices = useMemo(() => (orderConfig as any)?.itemPrices ?? {}, [(orderConfig as any)?.itemPrices]);
+    const serviceType = useMemo(() => formData?.serviceType ?? null, [formData?.serviceType]);
+
     // Effect: Check and save Service Configuration when form is being edited
     useEffect(() => {
-        if (!client || !orderConfig || !orderConfig.caseId) return;
+        if (!client || !orderConfig || !caseId) return;
 
         // Debounce check to avoid too many calls
         const timeoutId = setTimeout(async () => {
@@ -157,12 +167,14 @@ export function ClientProfileDetail({ clientId: propClientId, onClose }: Props) 
                 } else {
                     // Compare key fields to see if data has changed
                     const configChanged = 
-                        existingUpcomingOrder.caseId !== orderConfig.caseId ||
-                        existingUpcomingOrder.serviceType !== formData.serviceType ||
-                        JSON.stringify(existingUpcomingOrder.vendorSelections || []) !== JSON.stringify(orderConfig.vendorSelections || []) ||
-                        existingUpcomingOrder.vendorId !== orderConfig.vendorId ||
-                        existingUpcomingOrder.boxTypeId !== orderConfig.boxTypeId ||
-                        existingUpcomingOrder.boxQuantity !== orderConfig.boxQuantity;
+                        existingUpcomingOrder.caseId !== caseId ||
+                        existingUpcomingOrder.serviceType !== serviceType ||
+                        JSON.stringify(existingUpcomingOrder.vendorSelections || []) !== JSON.stringify(vendorSelections) ||
+                        existingUpcomingOrder.vendorId !== vendorId ||
+                        existingUpcomingOrder.boxTypeId !== boxTypeId ||
+                        existingUpcomingOrder.boxQuantity !== boxQuantity ||
+                        JSON.stringify(existingUpcomingOrder.items || {}) !== JSON.stringify(items) ||
+                        JSON.stringify((existingUpcomingOrder as any).itemPrices || {}) !== JSON.stringify(itemPrices);
                     
                     if (configChanged) {
                         needsSave = true;
@@ -172,7 +184,7 @@ export function ClientProfileDetail({ clientId: propClientId, onClose }: Props) 
                 if (needsSave) {
                     // Ensure structure is correct
                     const cleanedOrderConfig = { ...orderConfig };
-                    if (formData.serviceType === 'Food') {
+                    if (serviceType === 'Food') {
                         // Remove empty selections or selections with no vendor
                         cleanedOrderConfig.vendorSelections = (cleanedOrderConfig.vendorSelections || [])
                             .filter((s: any) => s.vendorId)
@@ -188,7 +200,7 @@ export function ClientProfileDetail({ clientId: propClientId, onClose }: Props) 
                         ...formData,
                         activeOrder: {
                             ...cleanedOrderConfig,
-                            serviceType: formData.serviceType,
+                            serviceType: serviceType,
                             lastUpdated: new Date().toISOString()
                         }
                     } as ClientProfile;
@@ -203,7 +215,7 @@ export function ClientProfileDetail({ clientId: propClientId, onClose }: Props) 
         }, 500); // 500ms debounce for check
 
         return () => clearTimeout(timeoutId);
-    }, [orderConfig.caseId, orderConfig.vendorSelections, orderConfig.vendorId, orderConfig.boxTypeId, orderConfig.boxQuantity, formData.serviceType, client, clientId]);
+    }, [caseId, vendorSelections, vendorId, boxTypeId, boxQuantity, items, itemPrices, serviceType, client, clientId]);
 
     // Effect: Sync Current Order Request to upcoming_orders table in real-time (debounced)
     useEffect(() => {
@@ -261,6 +273,56 @@ export function ClientProfileDetail({ clientId: propClientId, onClose }: Props) 
             for (const [itemId, qty] of Object.entries(selection.items)) {
                 const item = menuItems.find(i => i.id === itemId);
                 total += (item ? item.value * (qty as number) : 0);
+            }
+        }
+        return total;
+    }
+
+    // Calculate total for a single item (quantity × priceEach)
+    function getItemTotal(itemId: string, quantity: number): number {
+        const item = menuItems.find(i => i.id === itemId);
+        if (!item || item.priceEach === undefined) return 0;
+        return item.priceEach * quantity;
+    }
+
+    // Calculate total for a vendor selection
+    function getVendorSelectionTotal(selection: any): number {
+        if (!selection.items) return 0;
+        let total = 0;
+        for (const [itemId, qty] of Object.entries(selection.items)) {
+            total += getItemTotal(itemId, qty as number);
+        }
+        return total;
+    }
+
+    // Calculate overall total from all vendor selections
+    function getOverallTotal(vendorSelections: any[]): number {
+        if (!vendorSelections || vendorSelections.length === 0) return 0;
+        let total = 0;
+        for (const selection of vendorSelections) {
+            total += getVendorSelectionTotal(selection);
+        }
+        return total;
+    }
+
+    // Calculate total for a single box item (quantity × price)
+    function getBoxItemTotal(itemId: string, quantity: number): number {
+        const itemPrices = orderConfig.itemPrices || {};
+        const price = itemPrices[itemId];
+        if (price === undefined || price === null) return 0;
+        return price * quantity;
+    }
+
+    // Calculate overall box total from all box items
+    function getBoxItemsTotal(): number {
+        const items = orderConfig.items || {};
+        const itemPrices = orderConfig.itemPrices || {};
+        let total = 0;
+        for (const [itemId, qty] of Object.entries(items)) {
+            const quantity = typeof qty === 'number' ? qty : 0;
+            const price = itemPrices[itemId];
+            if (price !== undefined && price !== null && quantity > 0) {
+                total += price * quantity;
             }
         }
         return total;
@@ -530,8 +592,23 @@ export function ClientProfileDetail({ clientId: propClientId, onClose }: Props) 
             currentItems[itemId] = qty;
         } else {
             delete currentItems[itemId];
+            // Also remove price when quantity is removed
+            const currentPrices = { ...(orderConfig.itemPrices || {}) };
+            delete currentPrices[itemId];
+            setOrderConfig({ ...orderConfig, items: currentItems, itemPrices: currentPrices });
+            return;
         }
         setOrderConfig({ ...orderConfig, items: currentItems });
+    }
+
+    function handleBoxItemPriceChange(itemId: string, price: number) {
+        const currentPrices = { ...(orderConfig.itemPrices || {}) };
+        if (price > 0) {
+            currentPrices[itemId] = price;
+        } else {
+            delete currentPrices[itemId];
+        }
+        setOrderConfig({ ...orderConfig, itemPrices: currentPrices });
     }
 
     async function handleDelete() {
@@ -721,7 +798,16 @@ export function ClientProfileDetail({ clientId: propClientId, onClose }: Props) 
         const orderConfigChanges = detectOrderConfigChanges(originalOrderConfig, orderConfig);
         changes.push(...orderConfigChanges);
 
-        const summary = changes.length > 0 ? changes.join(', ') : 'No functional changes detected (re-saved profile)';
+        // Only update and record changes if there are actual changes
+        if (changes.length === 0) {
+            // No changes detected, don't update anything or save to order history
+            setSaving(false);
+            setMessage('No changes detected. Nothing was saved.');
+            setTimeout(() => setMessage(null), 3000);
+            return true;
+        }
+
+        const summary = changes.join(', ');
 
         // Update client profile (without activeOrder - that comes from orders table)
         const updateData: Partial<ClientProfile> = {
@@ -735,7 +821,7 @@ export function ClientProfileDetail({ clientId: propClientId, onClose }: Props) 
         invalidateOrderData(clientId); // Invalidate order history cache after recording change
 
         // Sync Current Order Request to upcoming_orders table
-        // Sync if order config exists and has a caseId, or if there are order config changes
+        // Sync if order config exists and has a caseId
         const hasOrderChanges = orderConfig && orderConfig.caseId;
         if (hasOrderChanges) {
             // Ensure structure is correct
@@ -898,6 +984,20 @@ export function ClientProfileDetail({ clientId: propClientId, onClose }: Props) 
         if (!orderDetails) return null;
 
         if (orderDetails.serviceType === 'Food' && orderDetails.vendorSelections) {
+            // Calculate total from all items instead of using orderDetails.totalValue
+            const calculatedTotal = orderDetails.vendorSelections.reduce((sum: number, vs: any) => {
+                return sum + (vs.items || []).reduce((itemSum: number, item: any) => {
+                    return itemSum + (item.totalValue || 0);
+                }, 0);
+            }, 0);
+            
+            // Calculate total items count
+            const calculatedTotalItems = orderDetails.vendorSelections.reduce((sum: number, vs: any) => {
+                return sum + (vs.items || []).reduce((itemSum: number, item: any) => {
+                    return itemSum + (item.quantity || 0);
+                }, 0);
+            }, 0);
+            
             return (
                 <div style={{ padding: '12px', background: 'var(--bg-surface)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', marginTop: '8px' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: 600, fontSize: '0.9rem', marginBottom: '12px', color: 'var(--text-primary)' }}>
@@ -932,8 +1032,8 @@ export function ClientProfileDetail({ clientId: propClientId, onClose }: Props) 
                         </div>
                     ))}
                     <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '12px', paddingTop: '12px', borderTop: '2px solid var(--border-color)', fontSize: '0.875rem', color: 'var(--text-primary)' }}>
-                        <div><strong>Total Items:</strong> {orderDetails.totalItems || 0}</div>
-                        <div><strong>Total Value:</strong> ${orderDetails.totalValue.toFixed(2)}</div>
+                        <div><strong>Total Items:</strong> {calculatedTotalItems}</div>
+                        <div><strong>Total Value:</strong> ${calculatedTotal.toFixed(2)}</div>
                     </div>
                 </div>
             );
@@ -1184,15 +1284,22 @@ export function ClientProfileDetail({ clientId: propClientId, onClose }: Props) 
                                                                         <div className={styles.menuList}>
                                                                             {getVendorMenuItems(selection.vendorId).map(item => {
                                                                                 const currentQty = selection.items?.[item.id] || 0;
+                                                                                const itemTotal = item.priceEach !== undefined ? getItemTotal(item.id, currentQty) : 0;
                                                                                 return (
                                                                                     <div key={item.id} className={styles.menuItem}>
                                                                                         <div className={styles.itemInfo}>
                                                                                             <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
                                                                                                 <span>{item.name}</span>
                                                                                                 <div style={{ display: 'flex', gap: '12px', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                                                                                                    <span className={styles.itemValue}>Value: {item.value}</span>
                                                                                                     {item.priceEach !== undefined && (
-                                                                                                        <span className={styles.itemValue}>Price Each: {item.priceEach}</span>
+                                                                                                        <>
+                                                                                                            <span className={styles.itemValue}>Price: ${item.priceEach.toFixed(2)}</span>
+                                                                                                            {currentQty > 0 && itemTotal > 0 && (
+                                                                                                                <span className={styles.itemValue} style={{ fontWeight: 600, color: 'var(--text-primary)' }}>
+                                                                                                                    Total: ${itemTotal.toFixed(2)}
+                                                                                                                </span>
+                                                                                                            )}
+                                                                                                        </>
                                                                                                     )}
                                                                                                 </div>
                                                                                             </div>
@@ -1212,6 +1319,29 @@ export function ClientProfileDetail({ clientId: propClientId, onClose }: Props) 
                                                                             })}
                                                                             {getVendorMenuItems(selection.vendorId).length === 0 && <span className={styles.hint}>No active menu items.</span>}
                                                                         </div>
+                                                                        
+                                                                        {/* Vendor Total (Price-based only) */}
+                                                                        {(() => {
+                                                                            const vendorTotal = getVendorSelectionTotal(selection);
+                                                                            if (vendorTotal > 0) {
+                                                                                return (
+                                                                                    <div style={{
+                                                                                        marginTop: 'var(--spacing-md)',
+                                                                                        padding: '0.75rem',
+                                                                                        backgroundColor: 'var(--bg-surface)',
+                                                                                        borderRadius: 'var(--radius-sm)',
+                                                                                        border: '1px solid var(--border-color)',
+                                                                                        fontSize: '0.9rem',
+                                                                                        textAlign: 'center',
+                                                                                        fontWeight: 600,
+                                                                                        color: 'var(--text-primary)'
+                                                                                    }}>
+                                                                                        Vendor Total (Price): ${vendorTotal.toFixed(2)}
+                                                                                    </div>
+                                                                                );
+                                                                            }
+                                                                            return null;
+                                                                        })()}
                                                                     </>
                                                                 );
                                                             })()}
@@ -1241,6 +1371,29 @@ export function ClientProfileDetail({ clientId: propClientId, onClose }: Props) 
                                                     )}
                                                 </div>
                                             ))}
+
+                                            {/* Overall Total for Current Order Request */}
+                                            {(() => {
+                                                const overallTotal = getOverallTotal(orderConfig.vendorSelections || []);
+                                                if (overallTotal > 0) {
+                                                    return (
+                                                        <div style={{
+                                                            marginTop: 'var(--spacing-lg)',
+                                                            padding: '1rem',
+                                                            backgroundColor: 'var(--color-primary-bg)',
+                                                            borderRadius: 'var(--radius-md)',
+                                                            border: '2px solid var(--color-primary)',
+                                                            fontSize: '1rem',
+                                                            textAlign: 'center',
+                                                            fontWeight: 700,
+                                                            color: 'var(--color-primary)'
+                                                        }}>
+                                                            Overall Total: ${overallTotal.toFixed(2)}
+                                                        </div>
+                                                    );
+                                                }
+                                                return null;
+                                            })()}
 
                                             <button className={styles.addVendorBtn} onClick={addVendorBlock}>
                                                 <Plus size={14} /> Add Vendor
@@ -1348,25 +1501,80 @@ export function ClientProfileDetail({ clientId: propClientId, onClose }: Props) 
                                                                 </span>
                                                             </div>
 
-                                                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
-                                                                {availableItems.map(item => (
-                                                                    <div key={item.id} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', background: 'var(--bg-app)', padding: '4px 8px', borderRadius: '4px', border: '1px solid var(--border-color)' }}>
-                                                                        <span style={{ fontSize: '0.8rem' }}>{item.name} <span style={{ color: 'var(--text-tertiary)' }}>({item.quotaValue || 1})</span></span>
-                                                                        <input
-                                                                            type="number"
-                                                                            min="0"
-                                                                            style={{ width: '40px', padding: '2px', fontSize: '0.8rem', textAlign: 'center' }}
-                                                                            value={selectedItems[item.id] || ''}
-                                                                            placeholder="0"
-                                                                            onChange={e => handleBoxItemChange(item.id, Number(e.target.value))}
-                                                                        />
-                                                                    </div>
-                                                                ))}
+                                                            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                                                                {availableItems.map(item => {
+                                                                    const selectedItems = orderConfig.items || {};
+                                                                    const itemPrices = orderConfig.itemPrices || {};
+                                                                    const currentQty = selectedItems[item.id] || 0;
+                                                                    const currentPrice = itemPrices[item.id];
+                                                                    const itemTotal = currentPrice !== undefined && currentPrice !== null && currentQty > 0 ? getBoxItemTotal(item.id, currentQty) : 0;
+                                                                    
+                                                                    return (
+                                                                        <div key={item.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem', background: 'var(--bg-app)', padding: '6px 10px', borderRadius: '4px', border: '1px solid var(--border-color)' }}>
+                                                                            <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', flex: 1 }}>
+                                                                                <span style={{ fontSize: '0.85rem', fontWeight: 500 }}>{item.name} <span style={{ color: 'var(--text-tertiary)', fontWeight: 400 }}>({item.quotaValue || 1})</span></span>
+                                                                                {currentQty > 0 && itemTotal > 0 && (
+                                                                                    <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', fontWeight: 600 }}>
+                                                                                        Total: ${itemTotal.toFixed(2)}
+                                                                                    </span>
+                                                                                )}
+                                                                            </div>
+                                                                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                                                                <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                                                                                    <label style={{ fontSize: '0.7rem', color: 'var(--text-tertiary)' }}>Price</label>
+                                                                                    <input
+                                                                                        type="number"
+                                                                                        min="0"
+                                                                                        step="0.01"
+                                                                                        style={{ width: '60px', padding: '4px', fontSize: '0.8rem', textAlign: 'center' }}
+                                                                                        value={currentPrice !== undefined && currentPrice !== null ? currentPrice : ''}
+                                                                                        placeholder="$0.00"
+                                                                                        onChange={e => handleBoxItemPriceChange(item.id, parseFloat(e.target.value) || 0)}
+                                                                                    />
+                                                                                </div>
+                                                                                <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                                                                                    <label style={{ fontSize: '0.7rem', color: 'var(--text-tertiary)' }}>Qty</label>
+                                                                                    <input
+                                                                                        type="number"
+                                                                                        min="0"
+                                                                                        style={{ width: '50px', padding: '4px', fontSize: '0.8rem', textAlign: 'center' }}
+                                                                                        value={currentQty || ''}
+                                                                                        placeholder="0"
+                                                                                        onChange={e => handleBoxItemChange(item.id, Number(e.target.value) || 0)}
+                                                                                    />
+                                                                                </div>
+                                                                            </div>
+                                                                        </div>
+                                                                    );
+                                                                })}
                                                                 {availableItems.length === 0 && <span style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)' }}>No items available.</span>}
                                                             </div>
                                                         </div>
                                                     );
                                                 })}
+                                                
+                                                {/* Overall Box Total */}
+                                                {(() => {
+                                                    const boxTotal = getBoxItemsTotal();
+                                                    if (boxTotal > 0) {
+                                                        return (
+                                                            <div style={{
+                                                                marginTop: 'var(--spacing-md)',
+                                                                padding: '1rem',
+                                                                backgroundColor: 'var(--color-primary-bg)',
+                                                                borderRadius: 'var(--radius-md)',
+                                                                border: '2px solid var(--color-primary)',
+                                                                fontSize: '1rem',
+                                                                textAlign: 'center',
+                                                                fontWeight: 700,
+                                                                color: 'var(--color-primary)'
+                                                            }}>
+                                                                Box Total: ${boxTotal.toFixed(2)}
+                                                            </div>
+                                                        );
+                                                    }
+                                                    return null;
+                                                })()}
                                             </div>
                                         )}
                                     </div>
@@ -1400,6 +1608,7 @@ export function ClientProfileDetail({ clientId: propClientId, onClose }: Props) 
                                                         const vendorName = vendor?.name || 'Unknown Vendor';
                                                         const nextDelivery = getNextDeliveryDate(vendorSelection.vendorId);
                                                         const items = vendorSelection.items || {};
+                                                        const vendorTotal = getVendorSelectionTotal(vendorSelection);
 
                                                         return (
                                                             <div key={idx} style={{ padding: 'var(--spacing-sm)', backgroundColor: 'var(--bg-surface)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)' }}>
@@ -1421,14 +1630,37 @@ export function ClientProfileDetail({ clientId: propClientId, onClose }: Props) 
                                                                             const itemName = item?.name || 'Unknown Item';
                                                                             const qty = Number(quantity) || 0;
                                                                             if (qty === 0) return null;
+                                                                            const itemTotal = getItemTotal(itemId, qty);
+                                                                            const itemPrice = item?.priceEach;
 
                                                                             return (
                                                                                 <div key={itemId} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.85rem', padding: '4px 8px', backgroundColor: 'var(--bg-app)', borderRadius: '4px' }}>
-                                                                                    <span>{itemName}</span>
-                                                                                    <span style={{ fontWeight: 500, color: 'var(--text-secondary)' }}>Qty: {qty}</span>
+                                                                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                                                                                        <span>{itemName}</span>
+                                                                                        {itemPrice !== undefined && (
+                                                                                            <span style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)' }}>
+                                                                                                ${itemPrice.toFixed(2)} each
+                                                                                            </span>
+                                                                                        )}
+                                                                                    </div>
+                                                                                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '2px' }}>
+                                                                                        <span style={{ fontWeight: 500, color: 'var(--text-secondary)' }}>Qty: {qty}</span>
+                                                                                        {itemTotal > 0 && (
+                                                                                            <span style={{ fontWeight: 600, color: 'var(--text-primary)', fontSize: '0.875rem' }}>
+                                                                                                ${itemTotal.toFixed(2)}
+                                                                                            </span>
+                                                                                        )}
+                                                                                    </div>
                                                                                 </div>
                                                                             );
                                                                         })}
+                                                                        {/* Vendor Total */}
+                                                                        {vendorTotal > 0 && (
+                                                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.9rem', padding: '8px', marginTop: '4px', backgroundColor: 'var(--bg-app)', borderRadius: '4px', borderTop: '1px solid var(--border-color)', fontWeight: 600 }}>
+                                                                                <span>Total ({vendorName}):</span>
+                                                                                <span style={{ color: 'var(--color-primary)', fontSize: '0.95rem' }}>${vendorTotal.toFixed(2)}</span>
+                                                                            </div>
+                                                                        )}
                                                                     </div>
                                                                 ) : (
                                                                     <div style={{ fontSize: '0.85rem', color: 'var(--text-tertiary)', fontStyle: 'italic', padding: '4px' }}>
@@ -1438,6 +1670,29 @@ export function ClientProfileDetail({ clientId: propClientId, onClose }: Props) 
                                                             </div>
                                                         );
                                                     })}
+                                                    
+                                                    {/* Overall Total for This Week's Order */}
+                                                    {(() => {
+                                                        const overallTotal = getOverallTotal(order.vendorSelections || []);
+                                                        if (overallTotal > 0) {
+                                                            return (
+                                                                <div style={{
+                                                                    marginTop: 'var(--spacing-lg)',
+                                                                    padding: '1rem',
+                                                                    backgroundColor: 'var(--color-primary-bg)',
+                                                                    borderRadius: 'var(--radius-md)',
+                                                                    border: '2px solid var(--color-primary)',
+                                                                    fontSize: '1rem',
+                                                                    textAlign: 'center',
+                                                                    fontWeight: 700,
+                                                                    color: 'var(--color-primary)'
+                                                                }}>
+                                                                    Overall Total: ${overallTotal.toFixed(2)}
+                                                                </div>
+                                                            );
+                                                        }
+                                                        return null;
+                                                    })()}
                                                 </div>
                                             )}
 
@@ -1450,6 +1705,8 @@ export function ClientProfileDetail({ clientId: propClientId, onClose }: Props) 
                                                         const vendorName = vendor?.name || 'Unknown Vendor';
                                                         const boxName = box?.name || 'Unknown Box';
                                                         const nextDelivery = boxVendorId ? getNextDeliveryDate(boxVendorId) : null;
+                                                        const boxItems = (order as any).items || {};
+                                                        const boxItemPrices = (order as any).itemPrices || {};
 
                                                         return (
                                                             <>
@@ -1461,9 +1718,64 @@ export function ClientProfileDetail({ clientId: propClientId, onClose }: Props) 
                                                                         </div>
                                                                     )}
                                                                 </div>
-                                                                <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                                                                <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: 'var(--spacing-sm)' }}>
                                                                     {boxName} × {order.boxQuantity || 1}
                                                                 </div>
+                                                                
+                                                                {/* Box Items List */}
+                                                                {Object.keys(boxItems).length > 0 ? (
+                                                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginTop: 'var(--spacing-sm)' }}>
+                                                                        {Object.entries(boxItems).map(([itemId, quantity]) => {
+                                                                            const item = menuItems.find(m => m.id === itemId);
+                                                                            const itemName = item?.name || 'Unknown Item';
+                                                                            const qty = Number(quantity) || 0;
+                                                                            if (qty === 0) return null;
+                                                                            const itemPrice = boxItemPrices[itemId];
+                                                                            const itemTotal = itemPrice !== undefined && itemPrice !== null ? itemPrice * qty : 0;
+
+                                                                            return (
+                                                                                <div key={itemId} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.85rem', padding: '4px 8px', backgroundColor: 'var(--bg-app)', borderRadius: '4px' }}>
+                                                                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                                                                                        <span>{itemName}</span>
+                                                                                        {itemPrice !== undefined && itemPrice !== null && (
+                                                                                            <span style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)' }}>
+                                                                                                ${itemPrice.toFixed(2)} each
+                                                                                            </span>
+                                                                                        )}
+                                                                                    </div>
+                                                                                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '2px' }}>
+                                                                                        <span style={{ fontWeight: 500, color: 'var(--text-secondary)' }}>Qty: {qty}</span>
+                                                                                        {itemTotal > 0 && (
+                                                                                            <span style={{ fontWeight: 600, color: 'var(--text-primary)', fontSize: '0.875rem' }}>
+                                                                                                ${itemTotal.toFixed(2)}
+                                                                                            </span>
+                                                                                        )}
+                                                                                    </div>
+                                                                                </div>
+                                                                            );
+                                                                        })}
+                                                                        {/* Box Total */}
+                                                                        {(() => {
+                                                                            const boxTotal = Object.entries(boxItems).reduce((sum, [itemId, qty]) => {
+                                                                                const quantity = typeof qty === 'number' ? qty : 0;
+                                                                                const price = boxItemPrices[itemId];
+                                                                                if (price !== undefined && price !== null && quantity > 0) {
+                                                                                    return sum + (price * quantity);
+                                                                                }
+                                                                                return sum;
+                                                                            }, 0);
+                                                                            if (boxTotal > 0) {
+                                                                                return (
+                                                                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.9rem', padding: '8px', marginTop: '4px', backgroundColor: 'var(--bg-app)', borderRadius: '4px', borderTop: '1px solid var(--border-color)', fontWeight: 600 }}>
+                                                                                        <span>Box Total:</span>
+                                                                                        <span style={{ color: 'var(--color-primary)', fontSize: '0.95rem' }}>${boxTotal.toFixed(2)}</span>
+                                                                                    </div>
+                                                                                );
+                                                                            }
+                                                                            return null;
+                                                                        })()}
+                                                                    </div>
+                                                                ) : null}
                                                             </>
                                                         );
                                                     })()}
@@ -1578,173 +1890,133 @@ export function ClientProfileDetail({ clientId: propClientId, onClose }: Props) 
                             ) : (
                                 <div className={styles.animateFadeIn}>
                                     {billingHistory.length > 0 ? (
-                                        <>
-                                            {/* Show current billing record (most recent) */}
-                                            <div className={styles.item} style={{ flexDirection: 'column', alignItems: 'flex-start', gap: '12px', padding: '16px', borderBottom: '1px solid var(--border-color)', backgroundColor: 'var(--bg-surface-hover)' }}>
-                                                <div style={{ display: 'flex', justifyContent: 'space-between', width: '100%', alignItems: 'center' }}>
-                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                                        <CreditCard size={16} color="var(--color-primary)" />
-                                                        <span style={{ fontWeight: 600, fontSize: '0.95rem' }}>Current Billing Record</span>
-                                                    </div>
-                                                    <span className="badge" style={{
-                                                        backgroundColor: billingHistory[0].status === 'request sent' ? 'var(--color-warning)' :
-                                                            billingHistory[0].status === 'success' ? 'var(--color-success)' :
-                                                            billingHistory[0].status === 'failed' ? 'var(--color-danger)' :
-                                                            'var(--color-secondary)'
-                                                    }}>
-                                                        {billingHistory[0].status === 'request sent' ? 'REQUEST SENT' : billingHistory[0].status.toUpperCase()}
-                                                    </span>
-                                                </div>
-                                                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '12px', width: '100%' }}>
-                                                    <div>
-                                                        <div style={{ color: 'var(--text-secondary)', fontSize: '0.75rem', marginBottom: '4px' }}>Amount</div>
-                                                        <div style={{ fontWeight: 600, fontSize: '1.1rem', color: 'var(--text-primary)' }}>
-                                                            ${parseFloat(billingHistory[0].amount?.toString() || '0').toFixed(2)}
-                                                        </div>
-                                                    </div>
-                                                    <div>
-                                                        <div style={{ color: 'var(--text-secondary)', fontSize: '0.75rem', marginBottom: '4px' }}>Date</div>
-                                                        <div style={{ fontSize: '0.9rem', color: 'var(--text-primary)' }}>
-                                                            {new Date(billingHistory[0].createdAt).toLocaleDateString('en-US', {
-                                                                month: 'short',
-                                                                day: 'numeric',
-                                                                year: 'numeric'
-                                                            })}
-                                                        </div>
-                                                    </div>
-                                                    <div>
-                                                        <div style={{ color: 'var(--text-secondary)', fontSize: '0.75rem', marginBottom: '4px' }}>Navigator</div>
-                                                        <div style={{ fontSize: '0.9rem', color: 'var(--text-primary)' }}>{billingHistory[0].navigator || 'Unassigned'}</div>
-                                                    </div>
-                                                    <div>
-                                                        <div style={{ color: 'var(--text-secondary)', fontSize: '0.75rem', marginBottom: '4px' }}>Client</div>
-                                                        <div style={{ fontSize: '0.9rem', color: 'var(--text-primary)' }}>{billingHistory[0].clientName || 'Unknown'}</div>
-                                                    </div>
-                                                    {billingHistory[0].orderId && (
-                                                        <div>
-                                                            <div style={{ color: 'var(--text-secondary)', fontSize: '0.75rem', marginBottom: '4px' }}>Order ID</div>
-                                                            <div style={{ fontSize: '0.9rem', color: 'var(--text-primary)', fontFamily: 'monospace' }}>
-                                                                {billingHistory[0].orderId.slice(0, 8)}...
-                                                            </div>
-                                                        </div>
-                                                    )}
-                                                    {billingHistory[0].deliveryDate && (
-                                                        <div>
-                                                            <div style={{ color: 'var(--text-secondary)', fontSize: '0.75rem', marginBottom: '4px' }}>Delivery Date</div>
-                                                            <div style={{ fontSize: '0.9rem', color: 'var(--text-primary)' }}>
-                                                                {new Date(billingHistory[0].deliveryDate).toLocaleDateString('en-US', {
-                                                                    month: 'short',
-                                                                    day: 'numeric',
-                                                                    year: 'numeric'
-                                                                })}
-                                                            </div>
-                                                        </div>
-                                                    )}
-                                                </div>
-                                                {billingHistory[0].remarks && (
-                                                    <div style={{ width: '100%', marginTop: '8px', paddingTop: '12px', borderTop: '1px solid var(--border-color)' }}>
-                                                        <div style={{ color: 'var(--text-secondary)', fontSize: '0.75rem', marginBottom: '4px' }}>Remarks</div>
-                                                        <div style={{ color: 'var(--text-primary)', fontSize: '0.875rem', lineHeight: '1.5' }}>
-                                                            {billingHistory[0].remarks}
-                                                        </div>
-                                                    </div>
-                                                )}
-                                                {billingHistory[0].orderDetails && (
-                                                    <div style={{ width: '100%', marginTop: '12px', paddingTop: '12px', borderTop: '1px solid var(--border-color)' }}>
-                                                        <button
-                                                            onClick={() => toggleBillingRow(billingHistory[0].id)}
-                                                            style={{
-                                                                display: 'flex',
-                                                                alignItems: 'center',
-                                                                gap: '0.5rem',
-                                                                background: 'none',
-                                                                border: 'none',
-                                                                color: 'var(--color-primary)',
-                                                                cursor: 'pointer',
-                                                                fontSize: '0.875rem',
-                                                                padding: '4px 0'
-                                                            }}
-                                                        >
-                                                            {expandedBillingRows.has(billingHistory[0].id) ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-                                                            {expandedBillingRows.has(billingHistory[0].id) ? 'Hide' : 'View'} Order Details
-                                                        </button>
-                                                        {expandedBillingRows.has(billingHistory[0].id) && renderOrderDetails(billingHistory[0].orderDetails)}
-                                                    </div>
-                                                )}
-                                            </div>
-                                            
-                                            {/* Show all billing history if there are more records */}
-                                            {billingHistory.length > 1 && (
-                                                <>
-                                                    <div style={{ marginTop: '16px', marginBottom: '8px', padding: '8px 0', borderTop: '2px solid var(--border-color)' }}>
-                                                        <span style={{ fontWeight: 600, fontSize: '0.9rem', color: 'var(--text-secondary)' }}>All Billing Records</span>
-                                                    </div>
-                                                    {billingHistory.slice(1).map((record, idx) => (
-                                                        <div key={record.id || idx} className={styles.item} style={{ flexDirection: 'column', alignItems: 'flex-start', gap: '8px', padding: '12px', borderBottom: '1px solid var(--border-color)' }}>
-                                                            <div style={{ display: 'flex', justifyContent: 'space-between', width: '100%', alignItems: 'center' }}>
-                                                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                                                    <span style={{ fontWeight: 500 }}>{new Date(record.createdAt).toLocaleDateString()}</span>
-                                                                </div>
-                                                                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                                                                    <span style={{ fontWeight: 600 }}>${parseFloat(record.amount?.toString() || '0').toFixed(2)}</span>
-                                                                    <span className="badge" style={{
-                                                                        backgroundColor: record.status === 'request sent' ? 'var(--color-warning)' :
-                                                                            record.status === 'success' ? 'var(--color-success)' :
-                                                                            record.status === 'failed' ? 'var(--color-danger)' :
-                                                                            'var(--color-secondary)'
-                                                                    }}>
-                                                                        {record.status === 'request sent' ? 'REQUEST SENT' : record.status.toUpperCase()}
-                                                                    </span>
-                                                                </div>
-                                                            </div>
-                                                            <div style={{ display: 'flex', gap: '16px', fontSize: '0.85rem', color: 'var(--text-secondary)', marginTop: '4px' }}>
-                                                                {record.orderId && (
-                                                                    <div>
-                                                                        <span style={{ fontWeight: 500 }}>Order ID: </span>
-                                                                        <span style={{ fontFamily: 'monospace' }}>{record.orderId.slice(0, 8)}...</span>
-                                                                    </div>
+                                        <div style={{ overflowX: 'auto' }}>
+                                            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.9rem' }}>
+                                                <thead>
+                                                    <tr style={{ background: 'var(--bg-surface-hover)', borderBottom: '2px solid var(--border-color)' }}>
+                                                        <th style={{ textAlign: 'left', padding: '12px', fontWeight: 600, color: 'var(--text-secondary)', fontSize: '0.875rem' }}>Date</th>
+                                                        <th style={{ textAlign: 'left', padding: '12px', fontWeight: 600, color: 'var(--text-secondary)', fontSize: '0.875rem' }}>Amount</th>
+                                                        <th style={{ textAlign: 'left', padding: '12px', fontWeight: 600, color: 'var(--text-secondary)', fontSize: '0.875rem' }}>Status</th>
+                                                        <th style={{ textAlign: 'left', padding: '12px', fontWeight: 600, color: 'var(--text-secondary)', fontSize: '0.875rem' }}>Navigator</th>
+                                                        <th style={{ textAlign: 'left', padding: '12px', fontWeight: 600, color: 'var(--text-secondary)', fontSize: '0.875rem' }}>Remarks</th>
+                                                        <th style={{ textAlign: 'center', padding: '12px', fontWeight: 600, color: 'var(--text-secondary)', fontSize: '0.875rem', width: '80px' }}>Details</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    {billingHistory.map((record) => {
+                                                        const isExpanded = expandedBillingRows.has(record.id);
+                                                        const hasOrderDetails = !!record.orderDetails;
+                                                        const date = record.createdAt ? new Date(record.createdAt).toLocaleDateString('en-US', {
+                                                            month: 'short',
+                                                            day: 'numeric',
+                                                            year: 'numeric'
+                                                        }) : 'N/A';
+                                                        
+                                                        return (
+                                                            <Fragment key={record.id}>
+                                                                <tr 
+                                                                    onClick={() => hasOrderDetails && toggleBillingRow(record.id)}
+                                                                    style={{
+                                                                        cursor: hasOrderDetails ? 'pointer' : 'default',
+                                                                        borderBottom: '1px solid var(--border-color)',
+                                                                        transition: 'background-color 0.2s'
+                                                                    }}
+                                                                    onMouseEnter={(e) => {
+                                                                        if (hasOrderDetails) {
+                                                                            e.currentTarget.style.backgroundColor = 'var(--bg-surface-hover)';
+                                                                        }
+                                                                    }}
+                                                                    onMouseLeave={(e) => {
+                                                                        e.currentTarget.style.backgroundColor = '';
+                                                                    }}
+                                                                >
+                                                                    <td style={{ padding: '12px', color: 'var(--text-primary)' }}>{date}</td>
+                                                                    <td style={{ padding: '12px', color: 'var(--text-primary)', fontWeight: 600 }}>
+                                                                        ${parseFloat(record.amount?.toString() || '0').toFixed(2)}
+                                                                    </td>
+                                                                    <td style={{ padding: '12px' }}>
+                                                                        <span className="badge" style={{
+                                                                            backgroundColor: record.status === 'request sent' ? 'var(--color-warning)' :
+                                                                                record.status === 'success' ? 'var(--color-success)' :
+                                                                                record.status === 'failed' ? 'var(--color-danger)' :
+                                                                                'var(--color-secondary)',
+                                                                            fontSize: '0.75rem',
+                                                                            padding: '4px 8px',
+                                                                            borderRadius: '4px',
+                                                                            fontWeight: 600
+                                                                        }}>
+                                                                            {record.status === 'request sent' ? 'REQUEST SENT' : record.status.toUpperCase()}
+                                                                        </span>
+                                                                    </td>
+                                                                    <td style={{ padding: '12px', color: 'var(--text-secondary)', fontSize: '0.875rem' }}>
+                                                                        {record.navigator || 'Unassigned'}
+                                                                    </td>
+                                                                    <td style={{ padding: '12px', color: 'var(--text-secondary)', fontSize: '0.875rem', maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                                                        {record.remarks || '-'}
+                                                                    </td>
+                                                                    <td style={{ padding: '12px', textAlign: 'center' }}>
+                                                                        {hasOrderDetails ? (
+                                                                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', color: 'var(--color-primary)' }}>
+                                                                                {isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                                                                            </div>
+                                                                        ) : (
+                                                                            <span style={{ color: 'var(--text-tertiary)', fontSize: '0.75rem' }}>-</span>
+                                                                        )}
+                                                                    </td>
+                                                                </tr>
+                                                                {isExpanded && hasOrderDetails && (
+                                                                    <tr>
+                                                                        <td colSpan={6} style={{ padding: '0', background: 'var(--bg-surface-hover)' }}>
+                                                                            <div style={{ padding: '16px', borderTop: '2px solid var(--border-color)' }}>
+                                                                                <div style={{ marginBottom: '16px', paddingBottom: '12px', borderBottom: '1px solid var(--border-color)' }}>
+                                                                                    <h4 style={{ fontSize: '0.95rem', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                                                                        <CreditCard size={16} />
+                                                                                        Billing Details
+                                                                                    </h4>
+                                                                                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '12px', fontSize: '0.875rem' }}>
+                                                                                        <div>
+                                                                                            <div style={{ color: 'var(--text-secondary)', fontSize: '0.75rem', marginBottom: '4px' }}>Client</div>
+                                                                                            <div style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{record.clientName || 'Unknown'}</div>
+                                                                                        </div>
+                                                                                        {record.orderId && (
+                                                                                            <div>
+                                                                                                <div style={{ color: 'var(--text-secondary)', fontSize: '0.75rem', marginBottom: '4px' }}>Order ID</div>
+                                                                                                <div style={{ color: 'var(--text-primary)', fontFamily: 'monospace', fontSize: '0.8125rem' }}>
+                                                                                                    {record.orderId.slice(0, 8)}...
+                                                                                                </div>
+                                                                                            </div>
+                                                                                        )}
+                                                                                        {record.deliveryDate && (
+                                                                                            <div>
+                                                                                                <div style={{ color: 'var(--text-secondary)', fontSize: '0.75rem', marginBottom: '4px' }}>Delivery Date</div>
+                                                                                                <div style={{ color: 'var(--text-primary)' }}>
+                                                                                                    {new Date(record.deliveryDate).toLocaleDateString('en-US', {
+                                                                                                        month: 'short',
+                                                                                                        day: 'numeric',
+                                                                                                        year: 'numeric'
+                                                                                                    })}
+                                                                                                </div>
+                                                                                            </div>
+                                                                                        )}
+                                                                                        {record.remarks && (
+                                                                                            <div style={{ gridColumn: '1 / -1' }}>
+                                                                                                <div style={{ color: 'var(--text-secondary)', fontSize: '0.75rem', marginBottom: '4px' }}>Remarks</div>
+                                                                                                <div style={{ color: 'var(--text-primary)' }}>{record.remarks}</div>
+                                                                                            </div>
+                                                                                        )}
+                                                                                    </div>
+                                                                                </div>
+                                                                                {renderOrderDetails(record.orderDetails)}
+                                                                            </div>
+                                                                        </td>
+                                                                    </tr>
                                                                 )}
-                                                                {record.deliveryDate && (
-                                                                    <div>
-                                                                        <span style={{ fontWeight: 500 }}>Delivery Date: </span>
-                                                                        <span>{new Date(record.deliveryDate).toLocaleDateString('en-US', {
-                                                                            month: 'short',
-                                                                            day: 'numeric',
-                                                                            year: 'numeric'
-                                                                        })}</span>
-                                                                    </div>
-                                                                )}
-                                                            </div>
-                                                            {record.remarks && (
-                                                                <div style={{ color: 'var(--text-secondary)', fontSize: '0.875rem' }}>{record.remarks}</div>
-                                                            )}
-                                                            {record.orderDetails && (
-                                                                <div style={{ width: '100%', marginTop: '8px', paddingTop: '8px', borderTop: '1px solid var(--border-color)' }}>
-                                                                    <button
-                                                                        onClick={() => toggleBillingRow(record.id)}
-                                                                        style={{
-                                                                            display: 'flex',
-                                                                            alignItems: 'center',
-                                                                            gap: '0.5rem',
-                                                                            background: 'none',
-                                                                            border: 'none',
-                                                                            color: 'var(--color-primary)',
-                                                                            cursor: 'pointer',
-                                                                            fontSize: '0.875rem',
-                                                                            padding: '4px 0'
-                                                                        }}
-                                                                    >
-                                                                        {expandedBillingRows.has(record.id) ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-                                                                        {expandedBillingRows.has(record.id) ? 'Hide' : 'View'} Order Details
-                                                                    </button>
-                                                                    {expandedBillingRows.has(record.id) && renderOrderDetails(record.orderDetails)}
-                                                                </div>
-                                                            )}
-                                                        </div>
-                                                    ))}
-                                                </>
-                                            )}
-                                        </>
+                                                            </Fragment>
+                                                        );
+                                                    })}
+                                                </tbody>
+                                            </table>
+                                        </div>
                                     ) : (
                                         <div className={styles.empty}>No billing records found.</div>
                                     )}

@@ -690,7 +690,9 @@ export async function GET(request: NextRequest) {
                                             order_id: newOrder.id,
                                             box_type_id: bs.box_type_id,
                                             vendor_id: bs.vendor_id,
-                                            quantity: bs.quantity
+                                            quantity: bs.quantity,
+                                            unit_value: bs.unit_value || 0,
+                                            total_value: bs.total_value || 0
                                         });
 
                                         if (bsError) {
@@ -891,7 +893,7 @@ export async function GET(request: NextRequest) {
 
                                 // Calculate totals for this vendor's box selection
                                 const boxType = boxTypes.find(b => b.id === vendorDetail.boxTypeId);
-                                const boxValue = boxType?.value || 0;
+                                const boxValue = boxType?.priceEach || 0;
                                 const boxQuantity = vendorDetail.quantity || 0;
                                 const totalValue = boxValue * boxQuantity;
 
@@ -978,6 +980,10 @@ export async function GET(request: NextRequest) {
 
         // Combine precheck errors with processing errors
         const allErrors = [...precheckResults.errors, ...errors];
+
+        // Trigger local DB sync in background after processing orders
+        const { triggerSyncInBackground } = await import('@/lib/local-db');
+        triggerSyncInBackground();
 
         return NextResponse.json({
             success: true,

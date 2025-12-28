@@ -41,6 +41,8 @@ export interface OrderConfiguration {
   // For Boxes (still typically single vendor per box type, but keeping flexible)
   boxTypeId?: string;
   boxQuantity?: number;
+  items?: { [itemId: string]: number }; // itemId -> quantity (for box contents)
+  itemPrices?: { [itemId: string]: number }; // itemId -> price (for box item pricing)
 
   // Delivery Schedule Configuration
   deliveryDistribution?: { [dayOfWeek: string]: number }; // e.g. "Monday": 5
@@ -107,6 +109,7 @@ export interface BoxType {
   name: string;
   vendorId?: string | null; // Single vendor ownership
   isActive: boolean;
+  priceEach?: number; // Price per box unit
   quotas?: BoxQuota[];
 }
 

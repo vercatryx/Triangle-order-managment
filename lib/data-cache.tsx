@@ -72,16 +72,16 @@ export function DataCacheProvider({ children }: { children: React.ReactNode }) {
         fetchFn: () => Promise<T>,
         duration: number = CACHE_DURATION.REFERENCE_DATA
     ): Promise<T> => {
-        const cached = referenceCacheRef.current[key];
+        const cached = referenceCacheRef.current[key] as CacheEntry<T> | undefined;
         
         // Return cached data if still fresh
         if (!isStale(cached, duration)) {
-            return cached!.data as T;
+            return cached!.data;
         }
         
         // Fetch fresh data
         const data = await fetchFn();
-        referenceCacheRef.current[key] = { data, timestamp: Date.now() };
+        (referenceCacheRef.current[key] as any) = { data, timestamp: Date.now() };
         setCacheVersion(v => v + 1); // Trigger re-render if needed
         return data;
     }, []);
@@ -217,11 +217,11 @@ export function DataCacheProvider({ children }: { children: React.ReactNode }) {
             };
             
             keys.forEach(key => {
-                const cached = referenceCacheRef.current[key];
+                const cached = referenceCacheRef.current[key] as any;
                 if (isStale(cached, CACHE_DURATION.REFERENCE_DATA * 1.5)) {
                     // If cache is getting stale, refresh in background
-                    refreshFns[key]().then(data => {
-                        referenceCacheRef.current[key] = { data, timestamp: Date.now() };
+                    refreshFns[key]().then((data: any) => {
+                        (referenceCacheRef.current[key] as any) = { data, timestamp: Date.now() };
                         setCacheVersion(v => v + 1);
                     }).catch(console.error);
                 }
