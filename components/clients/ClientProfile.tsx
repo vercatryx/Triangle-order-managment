@@ -308,7 +308,12 @@ export function ClientProfileDetail({ clientId: propClientId, onClose }: Props) 
     // Calculate total for a single box item (quantity × price)
     function getBoxItemTotal(itemId: string, quantity: number): number {
         const itemPrices = orderConfig.itemPrices || {};
-        const price = itemPrices[itemId];
+        let price = itemPrices[itemId];
+        // Fallback to menu item's priceEach if no custom price is set
+        if (price === undefined || price === null) {
+            const item = menuItems.find(i => i.id === itemId);
+            price = item?.priceEach;
+        }
         if (price === undefined || price === null) return 0;
         return price * quantity;
     }
@@ -320,7 +325,12 @@ export function ClientProfileDetail({ clientId: propClientId, onClose }: Props) 
         let total = 0;
         for (const [itemId, qty] of Object.entries(items)) {
             const quantity = typeof qty === 'number' ? qty : 0;
-            const price = itemPrices[itemId];
+            let price = itemPrices[itemId];
+            // Fallback to menu item's priceEach if no custom price is set
+            if (price === undefined || price === null) {
+                const item = menuItems.find(i => i.id === itemId);
+                price = item?.priceEach;
+            }
             if (price !== undefined && price !== null && quantity > 0) {
                 total += price * quantity;
             }
@@ -511,6 +521,22 @@ export function ClientProfileDetail({ clientId: propClientId, onClose }: Props) 
         const summary: string[] = [];
         let allValid = true;
         const selectedItems = orderConfig.items || {};
+        const itemPrices = orderConfig.itemPrices || {};
+
+        // Validate that items with quantity have prices set in admin config
+        Object.entries(selectedItems).forEach(([itemId, qty]) => {
+            const quantity = qty as number;
+            if (quantity > 0) {
+                const item = menuItems.find(i => i.id === itemId);
+                const hasPrice = item?.priceEach !== undefined && item?.priceEach !== null && item.priceEach > 0;
+                
+                if (!hasPrice) {
+                    const itemName = item?.name || 'Unknown Item';
+                    allValid = false;
+                    summary.push(`${itemName}: Price must be set in admin config when quantity is set.`);
+                }
+            }
+        });
 
         activeBoxQuotas.forEach(quota => {
             const category = categories.find(c => c.id === quota.categoryId);
@@ -588,27 +614,23 @@ export function ClientProfileDetail({ clientId: propClientId, onClose }: Props) 
 
     function handleBoxItemChange(itemId: string, qty: number) {
         const currentItems = { ...(orderConfig.items || {}) };
+        const currentPrices = { ...(orderConfig.itemPrices || {}) };
+        
         if (qty > 0) {
             currentItems[itemId] = qty;
+            // Always set price from menu item's priceEach (readonly from admin config)
+            const item = menuItems.find(i => i.id === itemId);
+            if (item && item.priceEach !== undefined && item.priceEach !== null) {
+                currentPrices[itemId] = item.priceEach;
+            }
         } else {
             delete currentItems[itemId];
             // Also remove price when quantity is removed
-            const currentPrices = { ...(orderConfig.itemPrices || {}) };
             delete currentPrices[itemId];
             setOrderConfig({ ...orderConfig, items: currentItems, itemPrices: currentPrices });
             return;
         }
-        setOrderConfig({ ...orderConfig, items: currentItems });
-    }
-
-    function handleBoxItemPriceChange(itemId: string, price: number) {
-        const currentPrices = { ...(orderConfig.itemPrices || {}) };
-        if (price > 0) {
-            currentPrices[itemId] = price;
-        } else {
-            delete currentPrices[itemId];
-        }
-        setOrderConfig({ ...orderConfig, itemPrices: currentPrices });
+        setOrderConfig({ ...orderConfig, items: currentItems, itemPrices: currentPrices });
     }
 
     async function handleDelete() {
@@ -1504,15 +1526,30 @@ export function ClientProfileDetail({ clientId: propClientId, onClose }: Props) 
                                                             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
                                                                 {availableItems.map(item => {
                                                                     const selectedItems = orderConfig.items || {};
-                                                                    const itemPrices = orderConfig.itemPrices || {};
                                                                     const currentQty = selectedItems[item.id] || 0;
-                                                                    const currentPrice = itemPrices[item.id];
-                                                                    const itemTotal = currentPrice !== undefined && currentPrice !== null && currentQty > 0 ? getBoxItemTotal(item.id, currentQty) : 0;
+                                                                    // Always use menu item's priceEach (readonly from admin config)
+                                                                    const itemPrice = item.priceEach !== undefined && item.priceEach !== null ? item.priceEach : 0;
+                                                                    const itemTotal = itemPrice > 0 && currentQty > 0 ? itemPrice * currentQty : 0;
+                                                                    const hasQtyButNoPrice = currentQty > 0 && itemPrice === 0;
                                                                     
                                                                     return (
-                                                                        <div key={item.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem', background: 'var(--bg-app)', padding: '6px 10px', borderRadius: '4px', border: '1px solid var(--border-color)' }}>
+                                                                        <div key={item.id} style={{ 
+                                                                            display: 'flex', 
+                                                                            alignItems: 'center', 
+                                                                            justifyContent: 'space-between', 
+                                                                            gap: '0.5rem', 
+                                                                            background: hasQtyButNoPrice ? 'rgba(239, 68, 68, 0.1)' : 'var(--bg-app)', 
+                                                                            padding: '6px 10px', 
+                                                                            borderRadius: '4px', 
+                                                                            border: hasQtyButNoPrice ? '1px solid rgba(239, 68, 68, 0.5)' : '1px solid var(--border-color)' 
+                                                                        }}>
                                                                             <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', flex: 1 }}>
                                                                                 <span style={{ fontSize: '0.85rem', fontWeight: 500 }}>{item.name} <span style={{ color: 'var(--text-tertiary)', fontWeight: 400 }}>({item.quotaValue || 1})</span></span>
+                                                                                {hasQtyButNoPrice && (
+                                                                                    <span style={{ fontSize: '0.7rem', color: '#ef4444', fontWeight: 500 }}>
+                                                                                        ⚠ Price not set in admin config
+                                                                                    </span>
+                                                                                )}
                                                                                 {currentQty > 0 && itemTotal > 0 && (
                                                                                     <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', fontWeight: 600 }}>
                                                                                         Total: ${itemTotal.toFixed(2)}
@@ -1520,17 +1557,17 @@ export function ClientProfileDetail({ clientId: propClientId, onClose }: Props) 
                                                                                 )}
                                                                             </div>
                                                                             <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                                                                                <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                                                                                <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', alignItems: 'flex-end' }}>
                                                                                     <label style={{ fontSize: '0.7rem', color: 'var(--text-tertiary)' }}>Price</label>
-                                                                                    <input
-                                                                                        type="number"
-                                                                                        min="0"
-                                                                                        step="0.01"
-                                                                                        style={{ width: '60px', padding: '4px', fontSize: '0.8rem', textAlign: 'center' }}
-                                                                                        value={currentPrice !== undefined && currentPrice !== null ? currentPrice : ''}
-                                                                                        placeholder="$0.00"
-                                                                                        onChange={e => handleBoxItemPriceChange(item.id, parseFloat(e.target.value) || 0)}
-                                                                                    />
+                                                                                    <span style={{ 
+                                                                                        fontSize: '0.85rem', 
+                                                                                        fontWeight: 500, 
+                                                                                        color: hasQtyButNoPrice ? '#ef4444' : 'var(--text-primary)',
+                                                                                        minWidth: '60px',
+                                                                                        textAlign: 'right'
+                                                                                    }}>
+                                                                                        {itemPrice > 0 ? `$${itemPrice.toFixed(2)}` : 'N/A'}
+                                                                                    </span>
                                                                                 </div>
                                                                                 <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
                                                                                     <label style={{ fontSize: '0.7rem', color: 'var(--text-tertiary)' }}>Qty</label>

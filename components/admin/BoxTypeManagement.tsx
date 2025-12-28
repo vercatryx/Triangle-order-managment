@@ -29,6 +29,7 @@ export function BoxTypeManagement() {
     // Inline Item Creation
     const [newItemName, setNewItemName] = useState('');
     const [newItemQuotaValue, setNewItemQuotaValue] = useState(1);
+    const [newItemPrice, setNewItemPrice] = useState<number>(0);
     const [addingItemForCategory, setAddingItemForCategory] = useState<string | null>(null);
 
     // Editing States
@@ -37,6 +38,12 @@ export function BoxTypeManagement() {
 
     const [editingCategoryId, setEditingCategoryId] = useState<string | null>(null);
     const [tempCategoryName, setTempCategoryName] = useState('');
+
+    // Item Editing States
+    const [editingItemId, setEditingItemId] = useState<string | null>(null);
+    const [tempItemName, setTempItemName] = useState('');
+    const [tempItemQuotaValue, setTempItemQuotaValue] = useState<number>(1);
+    const [tempItemPrice, setTempItemPrice] = useState<number>(0);
 
     useEffect(() => {
         loadData();
@@ -123,7 +130,8 @@ export function BoxTypeManagement() {
             value: 0, // Default value for box items
             isActive: true,
             categoryId: categoryId,
-            quotaValue: newItemQuotaValue
+            quotaValue: newItemQuotaValue,
+            priceEach: newItemPrice > 0 ? newItemPrice : undefined
         });
         invalidateReferenceData(); // Invalidate cache after menu item creation
 
@@ -131,6 +139,7 @@ export function BoxTypeManagement() {
         setMenuItems(mData);
         setNewItemName('');
         setNewItemQuotaValue(1);
+        setNewItemPrice(0);
         setAddingItemForCategory(null);
     }
 
@@ -141,6 +150,35 @@ export function BoxTypeManagement() {
             const mData = await getMenuItems();
             setMenuItems(mData);
         }
+    }
+
+    function handleEditItem(item: MenuItem) {
+        setEditingItemId(item.id);
+        setTempItemName(item.name);
+        setTempItemQuotaValue(item.quotaValue || 1);
+        setTempItemPrice(item.priceEach || 0);
+    }
+
+    function handleCancelEditItem() {
+        setEditingItemId(null);
+        setTempItemName('');
+        setTempItemQuotaValue(1);
+        setTempItemPrice(0);
+    }
+
+    async function handleSaveEditItem() {
+        if (!editingItemId) return;
+
+        await updateMenuItem(editingItemId, {
+            name: tempItemName,
+            quotaValue: tempItemQuotaValue,
+            priceEach: tempItemPrice > 0 ? tempItemPrice : undefined
+        });
+        invalidateReferenceData(); // Invalidate cache after menu item update
+
+        const mData = await getMenuItems();
+        setMenuItems(mData);
+        handleCancelEditItem();
     }
 
     async function handleDeleteQuota(id: string) {
@@ -287,13 +325,64 @@ export function BoxTypeManagement() {
                                         <div style={{ padding: '0.5rem', background: 'var(--bg-app)', borderRadius: '4px' }}>
                                             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', marginBottom: '0.5rem' }}>
                                                 {menuItems.filter(i => i.categoryId === q.categoryId && i.vendorId === selectedVendorId).map(item => (
-                                                    <div key={item.id} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', background: 'var(--bg-surface)', padding: '2px 6px', borderRadius: '4px', border: '1px solid var(--border-color)', fontSize: '0.8rem' }}>
-                                                        <span>{item.name}</span>
-                                                        <span style={{ color: 'var(--text-tertiary)' }}>(x{item.quotaValue || 1})</span>
-                                                        <button onClick={() => handleDeleteItem(item.id)} style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: 'var(--text-tertiary)', padding: 0 }}>
-                                                            <X size={12} />
-                                                        </button>
-                                                    </div>
+                                                    editingItemId === item.id ? (
+                                                        <div key={item.id} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', background: 'var(--bg-surface)', padding: '4px 8px', borderRadius: '4px', border: '2px solid var(--color-primary)', fontSize: '0.8rem', flexWrap: 'wrap' }}>
+                                                            <input
+                                                                className="input"
+                                                                value={tempItemName}
+                                                                onChange={e => setTempItemName(e.target.value)}
+                                                                style={{ padding: '2px 6px', fontSize: '0.8rem', height: '24px', minWidth: '100px', flex: '1 1 120px' }}
+                                                                placeholder="Item Name"
+                                                            />
+                                                            <input
+                                                                type="number"
+                                                                className="input"
+                                                                value={tempItemQuotaValue}
+                                                                onChange={e => setTempItemQuotaValue(Number(e.target.value))}
+                                                                style={{ padding: '2px 6px', fontSize: '0.8rem', width: '50px', height: '24px' }}
+                                                                min="1"
+                                                                placeholder="Quota"
+                                                            />
+                                                            <input
+                                                                type="number"
+                                                                className="input"
+                                                                value={tempItemPrice || ''}
+                                                                onChange={e => setTempItemPrice(parseFloat(e.target.value) || 0)}
+                                                                style={{ padding: '2px 6px', fontSize: '0.8rem', width: '70px', height: '24px' }}
+                                                                min="0"
+                                                                step="0.01"
+                                                                placeholder="Price"
+                                                            />
+                                                            <button
+                                                                onClick={handleSaveEditItem}
+                                                                style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: 'var(--color-success)', padding: 0 }}
+                                                                title="Save"
+                                                            >
+                                                                <Check size={14} />
+                                                            </button>
+                                                            <button
+                                                                onClick={handleCancelEditItem}
+                                                                style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: 'var(--text-secondary)', padding: 0 }}
+                                                                title="Cancel"
+                                                            >
+                                                                <X size={14} />
+                                                            </button>
+                                                        </div>
+                                                    ) : (
+                                                        <div key={item.id} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', background: 'var(--bg-surface)', padding: '2px 6px', borderRadius: '4px', border: '1px solid var(--border-color)', fontSize: '0.8rem' }}>
+                                                            <span>{item.name}</span>
+                                                            <span style={{ color: 'var(--text-tertiary)' }}>(x{item.quotaValue || 1})</span>
+                                                            {item.priceEach !== undefined && item.priceEach !== null && (
+                                                                <span style={{ color: 'var(--color-primary)', fontWeight: 500 }}>${item.priceEach.toFixed(2)}</span>
+                                                            )}
+                                                            <button onClick={() => handleEditItem(item)} style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: 'var(--text-primary)', padding: 0 }} title="Edit Item">
+                                                                <Edit2 size={12} />
+                                                            </button>
+                                                            <button onClick={() => handleDeleteItem(item.id)} style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: 'var(--text-tertiary)', padding: 0 }} title="Delete Item">
+                                                                <X size={12} />
+                                                            </button>
+                                                        </div>
+                                                    )
                                                 ))}
                                                 {menuItems.filter(i => i.categoryId === q.categoryId && i.vendorId === selectedVendorId).length === 0 && (
                                                     <span style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)', fontStyle: 'italic' }}>No items in this category yet.</span>
@@ -301,26 +390,42 @@ export function BoxTypeManagement() {
                                             </div>
 
                                             {addingItemForCategory === q.categoryId ? (
-                                                <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginTop: '0.5rem' }}>
+                                                <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginTop: '0.5rem', flexWrap: 'wrap' }}>
                                                     <input
                                                         placeholder="Item Name (e.g. Apple)"
                                                         className="input"
                                                         autoFocus
-                                                        style={{ padding: '2px 6px', fontSize: '0.8rem', height: '24px' }}
+                                                        style={{ padding: '2px 6px', fontSize: '0.8rem', height: '24px', flex: '1 1 150px', minWidth: '120px' }}
                                                         value={newItemName}
                                                         onChange={e => setNewItemName(e.target.value)}
                                                         onKeyDown={e => e.key === 'Enter' && handleAddItem(q.categoryId)}
                                                     />
                                                     <input
                                                         type="number"
-                                                        placeholder="Val"
+                                                        placeholder="Quota"
                                                         className="input"
-                                                        style={{ padding: '2px 6px', fontSize: '0.8rem', width: '50px', height: '24px' }}
+                                                        style={{ padding: '2px 6px', fontSize: '0.8rem', width: '60px', height: '24px' }}
                                                         value={newItemQuotaValue}
                                                         onChange={e => setNewItemQuotaValue(Number(e.target.value))}
+                                                        min="1"
+                                                    />
+                                                    <input
+                                                        type="number"
+                                                        placeholder="Price"
+                                                        className="input"
+                                                        style={{ padding: '2px 6px', fontSize: '0.8rem', width: '70px', height: '24px' }}
+                                                        value={newItemPrice || ''}
+                                                        onChange={e => setNewItemPrice(parseFloat(e.target.value) || 0)}
+                                                        min="0"
+                                                        step="0.01"
                                                     />
                                                     <button className="btn btn-primary" style={{ padding: '2px 8px', height: '24px', fontSize: '0.75rem' }} onClick={() => handleAddItem(q.categoryId)}>Add</button>
-                                                    <button className="btn btn-secondary" style={{ padding: '2px 8px', height: '24px', fontSize: '0.75rem' }} onClick={() => setAddingItemForCategory(null)}>Cancel</button>
+                                                    <button className="btn btn-secondary" style={{ padding: '2px 8px', height: '24px', fontSize: '0.75rem' }} onClick={() => {
+                                                        setAddingItemForCategory(null);
+                                                        setNewItemName('');
+                                                        setNewItemQuotaValue(1);
+                                                        setNewItemPrice(0);
+                                                    }}>Cancel</button>
                                                 </div>
                                             ) : (
                                                 <button
@@ -330,6 +435,7 @@ export function BoxTypeManagement() {
                                                         setAddingItemForCategory(q.categoryId);
                                                         setNewItemName('');
                                                         setNewItemQuotaValue(1);
+                                                        setNewItemPrice(0);
                                                     }}
                                                 >
                                                     <Plus size={12} /> Add Item
