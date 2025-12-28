@@ -2,11 +2,13 @@
 
 import { useState, useEffect } from 'react';
 import { BoxType, Vendor, BoxQuota, ItemCategory, MenuItem } from '@/lib/types';
-import { getVendors, getBoxTypes, addBoxType, updateBoxType, deleteBoxType, getBoxQuotas, addBoxQuota, updateBoxQuota, deleteBoxQuota, getCategories, addCategory, updateCategory, getMenuItems, addMenuItem, updateMenuItem, deleteMenuItem } from '@/lib/actions';
+import { addBoxType, updateBoxType, deleteBoxType, getBoxQuotas, addBoxQuota, updateBoxQuota, deleteBoxQuota, addCategory, updateCategory, addMenuItem, updateMenuItem, deleteMenuItem } from '@/lib/actions';
+import { useDataCache } from '@/lib/data-cache';
 import { Plus, Edit2, Trash2, X, Check, Package, Scale, Save } from 'lucide-react';
 import styles from './BoxTypeManagement.module.css';
 
 export function BoxTypeManagement() {
+    const { getVendors, getCategories, getMenuItems, getBoxTypes, invalidateReferenceData } = useDataCache();
     const [vendors, setVendors] = useState<Vendor[]>([]);
     const [categories, setCategories] = useState<ItemCategory[]>([]);
     const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
@@ -74,6 +76,7 @@ export function BoxTypeManagement() {
                 isActive: true,
                 vendorId: vendorId
             });
+            invalidateReferenceData(); // Invalidate cache after box creation
             box = newBox as BoxType;
         }
 
@@ -101,6 +104,7 @@ export function BoxTypeManagement() {
     async function handleQuickAddCategory() {
         if (!newCategoryName.trim()) return;
         const newCat = await addCategory(newCategoryName);
+        invalidateReferenceData(); // Invalidate cache after category creation
 
         // Refresh categories
         const cData = await getCategories();
@@ -121,6 +125,7 @@ export function BoxTypeManagement() {
             categoryId: categoryId,
             quotaValue: newItemQuotaValue
         });
+        invalidateReferenceData(); // Invalidate cache after menu item creation
 
         const mData = await getMenuItems();
         setMenuItems(mData);
@@ -132,6 +137,7 @@ export function BoxTypeManagement() {
     async function handleDeleteItem(id: string) {
         if (confirm('Remove this item?')) {
             await deleteMenuItem(id);
+            invalidateReferenceData(); // Invalidate cache after menu item deletion
             const mData = await getMenuItems();
             setMenuItems(mData);
         }
@@ -168,6 +174,7 @@ export function BoxTypeManagement() {
             // Note: This updates the category GLOBALLY for all boxes/items
             await updateCategory(quota.categoryId, tempCategoryName);
         }
+        invalidateReferenceData(); // Invalidate cache after quota/category update
 
         // 3. Refresh
         const qData = await getBoxQuotas(activeBoxId);

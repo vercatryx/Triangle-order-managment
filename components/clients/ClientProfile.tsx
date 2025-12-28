@@ -3,7 +3,8 @@
 import { useState, useEffect } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import { ClientProfile, ClientStatus, Navigator, Vendor, MenuItem, BoxType, ServiceType, AppSettings, DeliveryRecord, ItemCategory, BoxQuota } from '@/lib/types';
-import { getClient, updateClient, deleteClient, getStatuses, getNavigators, getVendors, getMenuItems, getBoxTypes, getSettings, getClientHistory, updateDeliveryProof, recordClientChange, getOrderHistory, getCategories, getBoxQuotas, getClients, syncCurrentOrderToUpcoming, getBillingHistory, getActiveOrderForClient, getUpcomingOrderForClient } from '@/lib/actions';
+import { updateClient, deleteClient, getClientHistory, updateDeliveryProof, recordClientChange, getOrderHistory, getBoxQuotas, syncCurrentOrderToUpcoming, getBillingHistory, getActiveOrderForClient, getUpcomingOrderForClient } from '@/lib/actions';
+import { getClient, getStatuses, getNavigators, getVendors, getMenuItems, getBoxTypes, getSettings, getCategories, getClients, invalidateClientData, invalidateReferenceData } from '@/lib/cached-data';
 import { Save, ArrowLeft, Truck, Package, AlertTriangle, Upload, Trash2, Plus, Check, ClipboardList, History, CreditCard, Calendar } from 'lucide-react';
 import styles from './ClientProfile.module.css';
 import { OrderHistoryItem } from './OrderHistoryItem';
@@ -183,8 +184,7 @@ export function ClientProfileDetail({ clientId: propClientId, onClose }: Props) 
                         activeOrder: {
                             ...cleanedOrderConfig,
                             serviceType: formData.serviceType,
-                            lastUpdated: new Date().toISOString(),
-                            updatedBy: 'Admin'
+                            lastUpdated: new Date().toISOString()
                         }
                     } as ClientProfile;
 
@@ -225,8 +225,7 @@ export function ClientProfileDetail({ clientId: propClientId, onClose }: Props) 
                     activeOrder: {
                         ...cleanedOrderConfig,
                         serviceType: formData.serviceType,
-                        lastUpdated: new Date().toISOString(),
-                        updatedBy: 'Admin'
+                        lastUpdated: new Date().toISOString()
                     }
                 } as ClientProfile;
 
@@ -477,22 +476,30 @@ export function ClientProfileDetail({ clientId: propClientId, onClose }: Props) 
                 };
             }
 
-            // Validate minimum order requirements
+            // Validate minimum order requirements (vendor-based, not item-based)
             const minimumOrderErrors: string[] = [];
             if (orderConfig.vendorSelections) {
                 orderConfig.vendorSelections.forEach((selection: any, blockIndex: number) => {
-                    if (!selection.items) return;
+                    if (!selection.items || !selection.vendorId) return;
+                    
+                    const vendor = vendors.find(v => v.id === selection.vendorId);
+                    if (!vendor) return;
+                    
+                    // Calculate total quantity of all items from this vendor
+                    let totalVendorQuantity = 0;
                     Object.entries(selection.items).forEach(([itemId, qty]) => {
-                        const item = menuItems.find(i => i.id === itemId);
                         const quantity = qty as number;
-                        // Only validate minimum if quantity > 0 (if they're actually ordering the item)
-                        if (item && item.minimumOrder && item.minimumOrder > 0 && quantity > 0 && quantity < item.minimumOrder) {
-                            const vendor = vendors.find(v => v.id === selection.vendorId);
-                            minimumOrderErrors.push(
-                                `"${item.name}"${vendor ? ` (${vendor.name})` : ''}: Minimum order is ${item.minimumOrder}, but only ${quantity} is ordered.`
-                            );
+                        if (quantity > 0) {
+                            totalVendorQuantity += quantity;
                         }
                     });
+                    
+                    // Only validate minimum if vendor has a minimum order requirement and total quantity > 0
+                    if (vendor.minimumOrder && vendor.minimumOrder > 0 && totalVendorQuantity > 0 && totalVendorQuantity < vendor.minimumOrder) {
+                        minimumOrderErrors.push(
+                            `${vendor.name}: Minimum order is ${vendor.minimumOrder} items, but only ${totalVendorQuantity} items are ordered.`
+                        );
+                    }
                 });
             }
             if (minimumOrderErrors.length > 0) {
@@ -525,6 +532,8 @@ export function ClientProfileDetail({ clientId: propClientId, onClose }: Props) 
 
         setSaving(true);
         await deleteClient(clientId);
+        invalidateClientData(clientId); // Invalidate cache for this client
+        invalidateClientData(); // Also invalidate client list cache
         setSaving(false);
 
         if (onClose) {
@@ -581,7 +590,9 @@ export function ClientProfileDetail({ clientId: propClientId, onClose }: Props) 
         };
 
         await updateClient(clientId, updateData);
-        await recordClientChange(clientId, summary, 'Admin');
+        invalidateClientData(clientId); // Invalidate cache for this client
+        invalidateClientData(); // Also invalidate client list cache
+        await recordClientChange(clientId, summary);
 
         // Sync Current Order Request to upcoming_orders table
         if (hasOrderChanges) {
@@ -604,8 +615,7 @@ export function ClientProfileDetail({ clientId: propClientId, onClose }: Props) 
                 activeOrder: {
                     ...cleanedOrderConfig,
                     serviceType: formData.serviceType,
-                    lastUpdated: new Date().toISOString(),
-                    updatedBy: 'Admin'
+                    lastUpdated: new Date().toISOString()
                 }
             } as ClientProfile;
 
@@ -900,47 +910,76 @@ export function ClientProfileDetail({ clientId: propClientId, onClose }: Props) 
 
                                                     {selection.vendorId && (
                                                         <>
-                                                            <div className={styles.menuList}>
-                                                                {getVendorMenuItems(selection.vendorId).map(item => {
-                                                                    const currentQty = selection.items?.[item.id] || 0;
-                                                                    const minOrder = item.minimumOrder || 0;
-                                                                    const isBelowMinimum = minOrder > 0 && currentQty > 0 && currentQty < minOrder;
-                                                                    return (
-                                                                        <div key={item.id} className={styles.menuItem}>
-                                                                            <div className={styles.itemInfo}>
-                                                                                <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                                                                                    <span>{item.name}</span>
-                                                                                    <div style={{ display: 'flex', gap: '12px', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                                                                                        <span className={styles.itemValue}>Value: {item.value}</span>
-                                                                                        {minOrder > 0 && (
-                                                                                            <span style={{ 
-                                                                                                color: isBelowMinimum ? 'var(--color-danger)' : 'var(--color-primary)',
-                                                                                                fontWeight: 500 
-                                                                                            }}>
-                                                                                                Min: {minOrder}
-                                                                                            </span>
-                                                                                        )}
+                                                            {(() => {
+                                                                const vendor = vendors.find(v => v.id === selection.vendorId);
+                                                                // Calculate total quantity of all items from this vendor
+                                                                let totalVendorQuantity = 0;
+                                                                if (selection.items) {
+                                                                    Object.values(selection.items).forEach((qty: any) => {
+                                                                        const quantity = qty as number;
+                                                                        if (quantity > 0) {
+                                                                            totalVendorQuantity += quantity;
+                                                                        }
+                                                                    });
+                                                                }
+                                                                const vendorMinOrder = vendor?.minimumOrder || 0;
+                                                                const isBelowVendorMinimum = vendorMinOrder > 0 && totalVendorQuantity > 0 && totalVendorQuantity < vendorMinOrder;
+                                                                
+                                                                return (
+                                                                    <>
+                                                                        {/* Vendor Minimum Order Display */}
+                                                                        {vendorMinOrder > 0 && (
+                                                                            <div style={{
+                                                                                marginBottom: 'var(--spacing-md)',
+                                                                                padding: '0.75rem',
+                                                                                backgroundColor: isBelowVendorMinimum ? 'var(--color-danger-bg)' : 'var(--bg-surface-hover)',
+                                                                                borderRadius: 'var(--radius-sm)',
+                                                                                border: `1px solid ${isBelowVendorMinimum ? 'var(--color-danger)' : 'var(--border-color)'}`,
+                                                                                fontSize: '0.9rem',
+                                                                                textAlign: 'center'
+                                                                            }}>
+                                                                                <strong style={{ color: isBelowVendorMinimum ? 'var(--color-danger)' : 'var(--text-primary)' }}>
+                                                                                    Total Items: {totalVendorQuantity} / Minimum: {vendorMinOrder}
+                                                                                </strong>
+                                                                                {isBelowVendorMinimum && (
+                                                                                    <div style={{ marginTop: '0.25rem', fontSize: '0.85rem', color: 'var(--color-danger)' }}>
+                                                                                        Minimum order requirement not met
                                                                                     </div>
-                                                                                </div>
+                                                                                )}
                                                                             </div>
-                                                                            <div className={styles.quantityControl}>
-                                                                                <input
-                                                                                    type="number"
-                                                                                    className={styles.qtyInput}
-                                                                                    min={minOrder > 0 ? minOrder : 0}
-                                                                                    value={selection.items?.[item.id] || ''}
-                                                                                    placeholder={minOrder > 0 ? minOrder.toString() : "0"}
-                                                                                    onChange={e => updateItemQuantity(index, item.id, parseInt(e.target.value) || 0)}
-                                                                                    style={{
-                                                                                        borderColor: isBelowMinimum ? 'var(--color-danger)' : undefined
-                                                                                    }}
-                                                                                />
-                                                                            </div>
+                                                                        )}
+                                                                        
+                                                                        <div className={styles.menuList}>
+                                                                            {getVendorMenuItems(selection.vendorId).map(item => {
+                                                                                const currentQty = selection.items?.[item.id] || 0;
+                                                                                return (
+                                                                                    <div key={item.id} className={styles.menuItem}>
+                                                                                        <div className={styles.itemInfo}>
+                                                                                            <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                                                                                                <span>{item.name}</span>
+                                                                                                <div style={{ display: 'flex', gap: '12px', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                                                                                                    <span className={styles.itemValue}>Value: {item.value}</span>
+                                                                                                </div>
+                                                                                            </div>
+                                                                                        </div>
+                                                                                        <div className={styles.quantityControl}>
+                                                                                            <input
+                                                                                                type="number"
+                                                                                                className={styles.qtyInput}
+                                                                                                min={0}
+                                                                                                value={selection.items?.[item.id] || ''}
+                                                                                                placeholder="0"
+                                                                                                onChange={e => updateItemQuantity(index, item.id, parseInt(e.target.value) || 0)}
+                                                                                            />
+                                                                                        </div>
+                                                                                    </div>
+                                                                                );
+                                                                            })}
+                                                                            {getVendorMenuItems(selection.vendorId).length === 0 && <span className={styles.hint}>No active menu items.</span>}
                                                                         </div>
-                                                                    );
-                                                                })}
-                                                                {getVendorMenuItems(selection.vendorId).length === 0 && <span className={styles.hint}>No active menu items.</span>}
-                                                            </div>
+                                                                    </>
+                                                                );
+                                                            })()}
 
                                                             {/* Next Delivery Date for this vendor */}
                                                             {(() => {

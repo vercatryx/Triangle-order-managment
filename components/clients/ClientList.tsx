@@ -4,7 +4,8 @@ import { ClientProfileDetail } from './ClientProfile';
 
 import { useState, useEffect } from 'react';
 import { ClientProfile, ClientStatus, Navigator, Vendor, BoxType } from '@/lib/types';
-import { getClients, getStatuses, getNavigators, addClient, getVendors, getBoxTypes } from '@/lib/actions';
+import { addClient } from '@/lib/actions';
+import { getClients, getStatuses, getNavigators, getVendors, getBoxTypes, invalidateClientData } from '@/lib/cached-data';
 import { Plus, Search, ChevronRight, CheckSquare, Square, StickyNote, Package, Calendar } from 'lucide-react';
 import styles from './ClientList.module.css';
 import { useRouter } from 'next/navigation';
@@ -96,6 +97,7 @@ export function ClientList() {
         });
 
         if (newClient) {
+            invalidateClientData(); // Invalidate cache
             setIsCreating(false);
             setNewClientName(''); // Reset
             await loadData(); // Refresh list
@@ -417,6 +419,7 @@ export function ClientList() {
                             clientId={selectedClientId}
                             onClose={() => {
                                 setSelectedClientId(null);
+                                invalidateClientData(); // Invalidate cache on close
                                 loadData(); // Refresh data on close in case of changes
                             }}
                         />
