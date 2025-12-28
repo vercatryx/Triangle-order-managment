@@ -2,13 +2,15 @@
 
 import { useState, useEffect } from 'react';
 import { AppSettings } from '@/lib/types';
-import { getSettings, updateSettings, generateDeliveriesForDate } from '@/lib/actions';
+import { updateSettings, generateDeliveriesForDate } from '@/lib/actions';
+import { useDataCache } from '@/lib/data-cache';
 import { Save, Truck } from 'lucide-react';
 import styles from './GlobalSettings.module.css';
 
 const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 
 export function GlobalSettings() {
+    const { getSettings, invalidateReferenceData } = useDataCache();
     const [settings, setSettings] = useState<AppSettings>({
         weeklyCutoffDay: 'Friday',
         weeklyCutoffTime: '17:00'
@@ -28,6 +30,7 @@ export function GlobalSettings() {
     async function handleSave() {
         setSaving(true);
         await updateSettings(settings); // Assume it returns void or updated settings
+        invalidateReferenceData(); // Invalidate cache after settings update
         setSaving(false);
         setMessage('Settings saved successfully!');
         setTimeout(() => setMessage(null), 3000);

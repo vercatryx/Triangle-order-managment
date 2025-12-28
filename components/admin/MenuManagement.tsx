@@ -2,11 +2,13 @@
 
 import { useState, useEffect } from 'react';
 import { MenuItem, Vendor } from '@/lib/types';
-import { getVendors, getMenuItems, addMenuItem, updateMenuItem, deleteMenuItem } from '@/lib/actions';
+import { addMenuItem, updateMenuItem, deleteMenuItem } from '@/lib/actions';
+import { useDataCache } from '@/lib/data-cache';
 import { Plus, Edit2, Trash2, X, Check, Utensils } from 'lucide-react';
 import styles from './MenuManagement.module.css';
 
 export function MenuManagement() {
+    const { getVendors, getMenuItems, invalidateReferenceData } = useDataCache();
     const [vendors, setVendors] = useState<Vendor[]>([]);
     const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
     const [selectedVendorId, setSelectedVendorId] = useState<string>('');
@@ -69,6 +71,7 @@ export function MenuManagement() {
             } as Omit<MenuItem, 'id'>);
         }
 
+        invalidateReferenceData(); // Invalidate cache after update/add
         // Refresh items
         const mData = await getMenuItems();
         setMenuItems(mData);
@@ -78,6 +81,7 @@ export function MenuManagement() {
     async function handleDelete(id: string) {
         if (confirm('Delete this menu item?')) {
             await deleteMenuItem(id);
+            invalidateReferenceData(); // Invalidate cache after delete
             const mData = await getMenuItems();
             setMenuItems(mData);
         }
