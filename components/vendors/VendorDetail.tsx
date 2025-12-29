@@ -4,8 +4,8 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { Vendor, ClientProfile, MenuItem, BoxType } from '@/lib/types';
 import { getVendors, getClients, getMenuItems, getBoxTypes } from '@/lib/cached-data';
-import { getOrdersByVendor } from '@/lib/actions';
-import { ArrowLeft, Truck, Calendar, Package, CheckCircle, XCircle, Clock, User, DollarSign, ShoppingCart, Download, ChevronDown, ChevronUp, FileText } from 'lucide-react';
+import { getOrdersByVendor, isOrderUnderVendor, updateOrderDeliveryProof } from '@/lib/actions';
+import { ArrowLeft, Truck, Calendar, Package, CheckCircle, XCircle, Clock, User, DollarSign, ShoppingCart, Download, ChevronDown, ChevronUp, FileText, Upload } from 'lucide-react';
 import styles from './VendorDetail.module.css';
 
 interface Props {
@@ -251,7 +251,7 @@ export function VendorDetail({ vendorId }: Props) {
             order.updated_by || '',
             order.notes || '',
             order.delivery_distribution ? JSON.stringify(order.delivery_distribution) : '',
-            '' // Blank delivery_proof_url column
+            order.delivery_proof_url || '' // Include delivery_proof_url if available
         ]);
 
         // Combine headers and rows
@@ -271,6 +271,132 @@ export function VendorDetail({ vendorId }: Props) {
         link.click();
         document.body.removeChild(link);
         URL.revokeObjectURL(url);
+    }
+
+    function parseCSVRow(row: string): string[] {
+        const result: string[] = [];
+        let current = '';
+        let inQuotes = false;
+
+        for (let i = 0; i < row.length; i++) {
+            const char = row[i];
+            const nextChar = row[i + 1];
+
+            if (char === '"') {
+                if (inQuotes && nextChar === '"') {
+                    current += '"';
+                    i++; // Skip next quote
+                } else {
+                    inQuotes = !inQuotes;
+                }
+            } else if (char === ',' && !inQuotes) {
+                result.push(current);
+                current = '';
+            } else {
+                current += char;
+            }
+        }
+        result.push(current); // Push last field
+        return result;
+    }
+
+    async function handleCSVImport(event: React.ChangeEvent<HTMLInputElement>) {
+        const file = event.target.files?.[0];
+        if (!file) return;
+
+        // Reset input
+        event.target.value = '';
+
+        if (!file.name.endsWith('.csv')) {
+            alert('Please select a CSV file');
+            return;
+        }
+
+        try {
+            const text = await file.text();
+            const lines = text.split(/\r?\n/).filter(line => line.trim());
+            
+            if (lines.length < 2) {
+                alert('CSV file must have at least a header row and one data row');
+                return;
+            }
+
+            // Parse header row
+            const headers = parseCSVRow(lines[0]);
+            const orderIdIndex = headers.findIndex(h => h.toLowerCase() === 'order id');
+            const deliveryProofUrlIndex = headers.findIndex(h => h.toLowerCase() === 'delivery_proof_url');
+
+            if (orderIdIndex === -1) {
+                alert('CSV file must contain an "Order ID" column');
+                return;
+            }
+
+            if (deliveryProofUrlIndex === -1) {
+                alert('CSV file must contain a "delivery_proof_url" column');
+                return;
+            }
+
+            // Process each data row
+            let successCount = 0;
+            let errorCount = 0;
+            const errors: string[] = [];
+
+            for (let i = 1; i < lines.length; i++) {
+                const row = parseCSVRow(lines[i]);
+                const orderId = row[orderIdIndex]?.trim();
+                const deliveryProofUrl = row[deliveryProofUrlIndex]?.trim();
+
+                if (!orderId) {
+                    errorCount++;
+                    errors.push(`Row ${i + 1}: Missing Order ID`);
+                    continue;
+                }
+
+                if (!deliveryProofUrl) {
+                    errorCount++;
+                    errors.push(`Row ${i + 1} (Order ${orderId}): Missing delivery_proof_url`);
+                    continue;
+                }
+
+                // Check if order belongs to this vendor
+                const belongsToVendor = await isOrderUnderVendor(orderId, vendorId);
+                if (!belongsToVendor) {
+                    errorCount++;
+                    errors.push(`Row ${i + 1} (Order ${orderId}): Order does not belong to this vendor`);
+                    continue;
+                }
+
+                // Update order with delivery proof URL and set status to completed (delivered)
+                const result = await updateOrderDeliveryProof(orderId, deliveryProofUrl);
+                if (result.success) {
+                    successCount++;
+                } else {
+                    errorCount++;
+                    errors.push(`Row ${i + 1} (Order ${orderId}): ${result.error || 'Failed to update order'}`);
+                }
+            }
+
+            // Show results
+            let message = `Import completed!\n\nSuccessfully processed: ${successCount} order(s)`;
+            if (errorCount > 0) {
+                message += `\nErrors: ${errorCount} order(s)`;
+                if (errors.length > 0) {
+                    message += `\n\nErrors:\n${errors.slice(0, 10).join('\n')}`;
+                    if (errors.length > 10) {
+                        message += `\n... and ${errors.length - 10} more error(s)`;
+                    }
+                }
+            }
+            alert(message);
+
+            // Reload orders to reflect changes
+            if (successCount > 0) {
+                await loadData();
+            }
+        } catch (error: any) {
+            console.error('Error importing CSV:', error);
+            alert(`Error importing CSV: ${error.message || 'Unknown error'}`);
+        }
     }
 
     if (isLoading) {
@@ -314,9 +440,20 @@ export function VendorDetail({ vendorId }: Props) {
                         {vendor.name}
                     </h1>
                     {orders.length > 0 && (
-                        <button className="btn btn-secondary" onClick={exportOrdersToCSV} style={{ marginLeft: '1rem' }}>
-                            <Download size={16} /> Export Orders CSV
-                        </button>
+                        <div style={{ display: 'flex', gap: '0.5rem', marginLeft: '1rem' }}>
+                            <button className="btn btn-secondary" onClick={exportOrdersToCSV}>
+                                <Download size={16} /> Export CSV
+                            </button>
+                            <label className="btn btn-secondary" style={{ cursor: 'pointer' }}>
+                                <Upload size={16} /> Import CSV
+                                <input
+                                    type="file"
+                                    accept=".csv"
+                                    onChange={handleCSVImport}
+                                    style={{ display: 'none' }}
+                                />
+                            </label>
+                        </div>
                     )}
                 </div>
             </div>

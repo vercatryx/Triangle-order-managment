@@ -145,6 +145,23 @@ export interface BillingRecord {
   deliveryDate?: string; // Delivery date from the associated order (actual_delivery_date or scheduled_delivery_date)
 }
 
+export interface CompletedOrderWithDeliveryProof {
+  id: string;
+  clientId: string;
+  serviceType: ServiceType;
+  caseId?: string;
+  status: string;
+  scheduledDeliveryDate?: string;
+  actualDeliveryDate?: string;
+  deliveryProofUrl: string;
+  totalValue?: number;
+  totalItems?: number;
+  notes?: string;
+  createdAt: string;
+  lastUpdated: string;
+  updatedBy: string;
+}
+
 export interface DatabaseSchema {
   clients: ClientProfile[];
   statuses: ClientStatus[];

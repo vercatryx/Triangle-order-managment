@@ -628,6 +628,41 @@ export async function getOrderHistory(clientId: string) {
     }));
 }
 
+export async function getCompletedOrdersWithDeliveryProof(clientId: string) {
+    if (!clientId) return [];
+
+    const { data, error } = await supabase
+        .from('orders')
+        .select('*')
+        .eq('client_id', clientId)
+        .eq('status', 'completed')
+        .not('delivery_proof_url', 'is', null)
+        .neq('delivery_proof_url', '')
+        .order('created_at', { ascending: false });
+
+    if (error) {
+        console.error('Error fetching completed orders with delivery proof:', error);
+        return [];
+    }
+
+    return (data || []).map((d: any) => ({
+        id: d.id,
+        clientId: d.client_id,
+        serviceType: d.service_type,
+        caseId: d.case_id,
+        status: d.status,
+        scheduledDeliveryDate: d.scheduled_delivery_date,
+        actualDeliveryDate: d.actual_delivery_date,
+        deliveryProofUrl: d.delivery_proof_url,
+        totalValue: d.total_value,
+        totalItems: d.total_items,
+        notes: d.notes,
+        createdAt: d.created_at,
+        lastUpdated: d.last_updated,
+        updatedBy: d.updated_by
+    }));
+}
+
 export async function getBillingHistory(clientId: string) {
     if (!clientId) return [];
 
@@ -1494,7 +1529,8 @@ export async function getOrdersByVendor(vendorId: string) {
                         delivery_distribution,
                         total_value,
                         total_items,
-                        notes
+                        notes,
+                        delivery_proof_url
                     )
                 `)
                 .eq('vendor_id', vendorId),
@@ -1519,7 +1555,8 @@ export async function getOrdersByVendor(vendorId: string) {
                         delivery_distribution,
                         total_value,
                         total_items,
-                        notes
+                        notes,
+                        delivery_proof_url
                     )
                 `)
                 .eq('vendor_id', vendorId)
@@ -1701,5 +1738,67 @@ export async function getOrdersByVendor(vendorId: string) {
     } catch (err) {
         console.error('Error in getOrdersByVendor:', err);
         return [];
+    }
+}
+
+/**
+ * Check if an order belongs to a specific vendor
+ * Returns true if the order is associated with the vendor, false otherwise
+ */
+export async function isOrderUnderVendor(orderId: string, vendorId: string): Promise<boolean> {
+    try {
+        // Check in order_vendor_selections (Food orders)
+        const { data: foodOrder } = await supabase
+            .from('order_vendor_selections')
+            .select('id')
+            .eq('order_id', orderId)
+            .eq('vendor_id', vendorId)
+            .single();
+
+        if (foodOrder) return true;
+
+        // Check in order_box_selections (Box orders)
+        const { data: boxOrder } = await supabase
+            .from('order_box_selections')
+            .select('id')
+            .eq('order_id', orderId)
+            .eq('vendor_id', vendorId)
+            .single();
+
+        return !!boxOrder;
+    } catch (err) {
+        console.error('Error checking order vendor:', err);
+        return false;
+    }
+}
+
+/**
+ * Update order with delivery proof URL and set status to completed (delivered)
+ */
+export async function updateOrderDeliveryProof(orderId: string, deliveryProofUrl: string, updatedBy?: string): Promise<{ success: boolean; error?: string }> {
+    try {
+        const session = await getSession();
+        const updatedByValue = updatedBy || session?.email || 'System';
+
+        const { error } = await supabase
+            .from('orders')
+            .update({
+                delivery_proof_url: deliveryProofUrl,
+                status: 'completed',
+                last_updated: new Date().toISOString(),
+                updated_by: updatedByValue
+            })
+            .eq('id', orderId);
+
+        if (error) {
+            console.error('Error updating order:', error);
+            return { success: false, error: error.message };
+        }
+
+        revalidatePath('/vendors');
+        return { success: true };
+    } catch (err: any) {
+        console.error('Error in updateOrderDeliveryProof:', err);
+        return { success: false, error: err.message || 'Unknown error' };
     }
 }

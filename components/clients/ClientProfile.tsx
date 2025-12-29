@@ -2,10 +2,10 @@
 
 import { useState, useEffect, Fragment, useMemo } from 'react';
 import { useRouter, useParams } from 'next/navigation';
-import { ClientProfile, ClientStatus, Navigator, Vendor, MenuItem, BoxType, ServiceType, AppSettings, DeliveryRecord, ItemCategory, BoxQuota } from '@/lib/types';
+import { ClientProfile, ClientStatus, Navigator, Vendor, MenuItem, BoxType, ServiceType, AppSettings, DeliveryRecord, ItemCategory, BoxQuota, CompletedOrderWithDeliveryProof } from '@/lib/types';
 import { updateClient, deleteClient, updateDeliveryProof, recordClientChange, getBoxQuotas, syncCurrentOrderToUpcoming } from '@/lib/actions';
-import { getClient, getStatuses, getNavigators, getVendors, getMenuItems, getBoxTypes, getSettings, getCategories, getClients, invalidateClientData, invalidateReferenceData, getActiveOrderForClient, getUpcomingOrderForClient, getOrderHistory, getClientHistory, getBillingHistory, invalidateOrderData } from '@/lib/cached-data';
-import { Save, ArrowLeft, Truck, Package, AlertTriangle, Upload, Trash2, Plus, Check, ClipboardList, History, CreditCard, Calendar, ChevronDown, ChevronUp, ShoppingCart } from 'lucide-react';
+import { getClient, getStatuses, getNavigators, getVendors, getMenuItems, getBoxTypes, getSettings, getCategories, getClients, invalidateClientData, invalidateReferenceData, getActiveOrderForClient, getUpcomingOrderForClient, getOrderHistory, getClientHistory, getBillingHistory, getCompletedOrdersWithDeliveryProof, invalidateOrderData } from '@/lib/cached-data';
+import { Save, ArrowLeft, Truck, Package, AlertTriangle, Upload, Trash2, Plus, Check, ClipboardList, History, CreditCard, Calendar, ChevronDown, ChevronUp, ShoppingCart, Image } from 'lucide-react';
 import styles from './ClientProfile.module.css';
 import { OrderHistoryItem } from './OrderHistoryItem';
 
@@ -33,6 +33,7 @@ export function ClientProfileDetail({ clientId: propClientId, onClose }: Props) 
     const [history, setHistory] = useState<DeliveryRecord[]>([]);
     const [orderHistory, setOrderHistory] = useState<any[]>([]);
     const [billingHistory, setBillingHistory] = useState<any[]>([]);
+    const [completedOrdersWithDeliveryProof, setCompletedOrdersWithDeliveryProof] = useState<CompletedOrderWithDeliveryProof[]>([]);
     const [activeHistoryTab, setActiveHistoryTab] = useState<'deliveries' | 'audit' | 'billing'>('deliveries');
     const [allClients, setAllClients] = useState<ClientProfile[]>([]);
     const [expandedBillingRows, setExpandedBillingRows] = useState<Set<string>>(new Set());
@@ -97,14 +98,16 @@ export function ClientProfileDetail({ clientId: propClientId, onClose }: Props) 
             setOrderConfig(configToSet);
             setOriginalOrderConfig(JSON.parse(JSON.stringify(configToSet))); // Deep copy for comparison
 
-            const [h, oh, bh] = await Promise.all([
+            const [h, oh, bh, completedOrders] = await Promise.all([
                 getClientHistory(clientId),
                 getOrderHistory(clientId),
-                getBillingHistory(clientId)
+                getBillingHistory(clientId),
+                getCompletedOrdersWithDeliveryProof(clientId)
             ]);
             setHistory(h);
             setOrderHistory(oh);
             setBillingHistory(bh);
+            setCompletedOrdersWithDeliveryProof(completedOrders);
         }
         setStatuses(s);
         setNavigators(n);
@@ -1858,46 +1861,122 @@ export function ClientProfileDetail({ clientId: propClientId, onClose }: Props) 
 
                         <div className={styles.historyList}>
                             {activeHistoryTab === 'deliveries' ? (
-                                <>
-                                    {history.map(record => (
-                                        <div key={record.id} className={styles.item} style={{ flexDirection: 'column', alignItems: 'flex-start', gap: '8px', padding: '12px', borderBottom: '1px solid var(--border-color)' }}>
-                                            <div style={{ display: 'flex', justifyContent: 'space-between', width: '100%' }}>
-                                                <span style={{ fontWeight: 500 }}>{new Date(record.deliveryDate).toLocaleDateString()}</span>
-                                                <span className="badge">{record.serviceType}</span>
-                                            </div>
-                                            <div style={{ color: 'var(--text-secondary)', fontSize: '0.875rem' }}>{record.itemsSummary}</div>
-
-                                            <div style={{ width: '100%', marginTop: '8px', paddingTop: '8px' }}>
-                                                {record.proofOfDeliveryImage ? (
-                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                                        <Check size={16} color="var(--color-success)" />
-                                                        <a href={record.proofOfDeliveryImage} target="_blank" style={{ color: 'var(--color-primary)', fontSize: '0.875rem' }}>
-                                                            Proof Uploaded
-                                                        </a>
-                                                    </div>
-                                                ) : (
-                                                    <div style={{ display: 'flex', gap: '8px', width: '100%' }}>
-                                                        <input
-                                                            placeholder="Paste Proof URL & Enter..."
-                                                            className="input"
-                                                            style={{ fontSize: '0.8rem', padding: '4px 8px' }}
-                                                            onKeyDown={async (e) => {
-                                                                if (e.key === 'Enter') {
-                                                                    await updateDeliveryProof(record.id, (e.target as HTMLInputElement).value);
-                                                                    invalidateOrderData(clientId); // Invalidate order cache after update
-                                                                    // reload
-                                                                    const h = await getClientHistory(clientId);
-                                                                    setHistory(h);
-                                                                }
-                                                            }}
-                                                        />
-                                                    </div>
-                                                )}
-                                            </div>
+                                <div className={styles.animateFadeIn}>
+                                    {completedOrdersWithDeliveryProof.length > 0 ? (
+                                        <div style={{ overflowX: 'auto' }}>
+                                            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.9rem' }}>
+                                                <thead>
+                                                    <tr style={{ background: 'var(--bg-surface-hover)', borderBottom: '2px solid var(--border-color)' }}>
+                                                        <th style={{ textAlign: 'left', padding: '12px', fontWeight: 600, color: 'var(--text-secondary)', fontSize: '0.875rem' }}>Order Date</th>
+                                                        <th style={{ textAlign: 'left', padding: '12px', fontWeight: 600, color: 'var(--text-secondary)', fontSize: '0.875rem' }}>Delivery Date</th>
+                                                        <th style={{ textAlign: 'left', padding: '12px', fontWeight: 600, color: 'var(--text-secondary)', fontSize: '0.875rem' }}>Service Type</th>
+                                                        <th style={{ textAlign: 'left', padding: '12px', fontWeight: 600, color: 'var(--text-secondary)', fontSize: '0.875rem' }}>Total Value</th>
+                                                        <th style={{ textAlign: 'left', padding: '12px', fontWeight: 600, color: 'var(--text-secondary)', fontSize: '0.875rem' }}>Total Items</th>
+                                                        <th style={{ textAlign: 'center', padding: '12px', fontWeight: 600, color: 'var(--text-secondary)', fontSize: '0.875rem', width: '200px' }}>Delivery Proof</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    {completedOrdersWithDeliveryProof.map((order) => {
+                                                        const deliveryDate = order.actualDeliveryDate || order.scheduledDeliveryDate;
+                                                        const orderDate = order.createdAt ? new Date(order.createdAt).toLocaleDateString('en-US', {
+                                                            month: 'short',
+                                                            day: 'numeric',
+                                                            year: 'numeric'
+                                                        }) : 'N/A';
+                                                        const formattedDeliveryDate = deliveryDate ? new Date(deliveryDate).toLocaleDateString('en-US', {
+                                                            month: 'short',
+                                                            day: 'numeric',
+                                                            year: 'numeric'
+                                                        }) : 'N/A';
+                                                        
+                                                        return (
+                                                            <tr 
+                                                                key={order.id}
+                                                                style={{
+                                                                    borderBottom: '1px solid var(--border-color)',
+                                                                    transition: 'background-color 0.2s'
+                                                                }}
+                                                                onMouseEnter={(e) => {
+                                                                    e.currentTarget.style.backgroundColor = 'var(--bg-surface-hover)';
+                                                                }}
+                                                                onMouseLeave={(e) => {
+                                                                    e.currentTarget.style.backgroundColor = '';
+                                                                }}
+                                                            >
+                                                                <td style={{ padding: '12px', color: 'var(--text-primary)' }}>{orderDate}</td>
+                                                                <td style={{ padding: '12px', color: 'var(--text-primary)' }}>{formattedDeliveryDate}</td>
+                                                                <td style={{ padding: '12px' }}>
+                                                                    <span className="badge" style={{
+                                                                        fontSize: '0.75rem',
+                                                                        padding: '4px 8px',
+                                                                        borderRadius: '4px',
+                                                                        fontWeight: 600,
+                                                                        backgroundColor: 'var(--color-secondary)',
+                                                                        color: 'white'
+                                                                    }}>
+                                                                        {order.serviceType}
+                                                                    </span>
+                                                                </td>
+                                                                <td style={{ padding: '12px', color: 'var(--text-primary)', fontWeight: 600 }}>
+                                                                    ${parseFloat((order.totalValue || 0).toString()).toFixed(2)}
+                                                                </td>
+                                                                <td style={{ padding: '12px', color: 'var(--text-primary)' }}>
+                                                                    {order.totalItems || 0}
+                                                                </td>
+                                                                <td style={{ padding: '12px', textAlign: 'center' }}>
+                                                                    {order.deliveryProofUrl ? (
+                                                                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
+                                                                            <a 
+                                                                                href={order.deliveryProofUrl} 
+                                                                                target="_blank" 
+                                                                                rel="noopener noreferrer"
+                                                                                style={{ 
+                                                                                    display: 'inline-block',
+                                                                                    color: 'var(--color-primary)', 
+                                                                                    fontSize: '0.875rem',
+                                                                                    textDecoration: 'none'
+                                                                                }}
+                                                                                onMouseEnter={(e) => {
+                                                                                    e.currentTarget.style.textDecoration = 'underline';
+                                                                                }}
+                                                                                onMouseLeave={(e) => {
+                                                                                    e.currentTarget.style.textDecoration = 'none';
+                                                                                }}
+                                                                            >
+                                                                                <Image size={16} style={{ marginRight: '4px', verticalAlign: 'middle' }} />
+                                                                                View Image
+                                                                            </a>
+                                                                            <img 
+                                                                                src={order.deliveryProofUrl} 
+                                                                                alt="Delivery proof" 
+                                                                                style={{
+                                                                                    maxWidth: '150px',
+                                                                                    maxHeight: '100px',
+                                                                                    objectFit: 'contain',
+                                                                                    border: '1px solid var(--border-color)',
+                                                                                    borderRadius: '4px',
+                                                                                    cursor: 'pointer'
+                                                                                }}
+                                                                                onClick={() => window.open(order.deliveryProofUrl, '_blank')}
+                                                                                onError={(e) => {
+                                                                                    (e.target as HTMLImageElement).style.display = 'none';
+                                                                                }}
+                                                                            />
+                                                                        </div>
+                                                                    ) : (
+                                                                        <span style={{ color: 'var(--text-tertiary)', fontSize: '0.75rem' }}>-</span>
+                                                                    )}
+                                                                </td>
+                                                            </tr>
+                                                        );
+                                                    })}
+                                                </tbody>
+                                            </table>
                                         </div>
-                                    ))}
-                                    {history.length === 0 && <div className={styles.empty}>No deliveries recorded yet.</div>}
-                                </>
+                                    ) : (
+                                        <div className={styles.empty}>No completed orders with delivery proof found.</div>
+                                    )}
+                                </div>
                             ) : activeHistoryTab === 'audit' ? (
                                 <div className={styles.animateFadeIn}>
                                     {orderHistory.map((log, idx) => (
