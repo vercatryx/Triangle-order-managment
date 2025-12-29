@@ -260,17 +260,18 @@ export async function getActiveOrderForClientLocal(clientId: string) {
         const startOfWeekISO = startOfWeek.toISOString();
         const endOfWeekISO = endOfWeek.toISOString();
 
-        // Try to get order with scheduled_delivery_date in current week first
-        let order = db.orders.find(o => 
+        // Try to get all orders with scheduled_delivery_date in current week
+        // Now supports multiple orders per client (one per delivery day)
+        let orders = db.orders.filter(o => 
             o.client_id === clientId &&
             ['pending', 'confirmed', 'processing'].includes(o.status) &&
             o.scheduled_delivery_date >= startOfWeekStr &&
             o.scheduled_delivery_date <= endOfWeekStr
         );
 
-        // If no order found, try by created_at or last_updated
-        if (!order) {
-            order = db.orders.find(o => {
+        // If no orders found, try by created_at or last_updated
+        if (orders.length === 0) {
+            orders = db.orders.filter(o => {
                 if (o.client_id !== clientId || !['pending', 'confirmed', 'processing'].includes(o.status)) {
                     return false;
                 }
@@ -281,84 +282,143 @@ export async function getActiveOrderForClientLocal(clientId: string) {
             });
         }
 
-        if (!order) {
+        // If no orders found in orders table, check upcoming_orders as fallback
+        // This handles cases where orders haven't been processed yet
+        if (orders.length === 0) {
+            const upcomingOrders = db.upcomingOrders.filter(o => 
+                o.client_id === clientId &&
+                o.status === 'scheduled'
+            );
+            
+            if (upcomingOrders.length > 0) {
+                // Convert upcoming orders to order format for display
+                orders = upcomingOrders.map((uo: any) => ({
+                    id: uo.id,
+                    client_id: uo.client_id,
+                    service_type: uo.service_type,
+                    case_id: uo.case_id,
+                    status: 'scheduled', // Use 'scheduled' status for upcoming orders
+                    last_updated: uo.last_updated,
+                    updated_by: uo.updated_by,
+                    scheduled_delivery_date: uo.scheduled_delivery_date,
+                    created_at: uo.created_at,
+                    delivery_distribution: uo.delivery_distribution,
+                    total_value: uo.total_value,
+                    total_items: uo.total_items,
+                    notes: uo.notes,
+                    delivery_day: uo.delivery_day, // Include delivery_day if present
+                    is_upcoming: true // Flag to indicate this is from upcoming_orders
+                }));
+            }
+        }
+        
+        if (orders.length === 0) {
             return null;
         }
+        
+        // Sort by created_at descending
+        orders.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
 
         // Fetch reference data (these should already be cached)
         const menuItems = await getMenuItems();
         const vendors = await getVendors();
         const boxTypes = await getBoxTypes();
 
-        // Build order configuration object
-        const orderConfig: any = {
-            id: order.id,
-            serviceType: order.service_type,
-            caseId: order.case_id,
-            status: order.status,
-            lastUpdated: order.last_updated,
-            updatedBy: order.updated_by,
-            scheduledDeliveryDate: order.scheduled_delivery_date,
-            createdAt: order.created_at,
-            deliveryDistribution: order.delivery_distribution,
-            totalValue: order.total_value,
-            totalItems: order.total_items,
-            notes: order.notes
-        };
+        // Process all orders
+        const processOrder = (order: any) => {
+            // Build order configuration object
+            const orderConfig: any = {
+                id: order.id,
+                serviceType: order.service_type,
+                caseId: order.case_id,
+                status: order.status,
+                lastUpdated: order.last_updated,
+                updatedBy: order.updated_by,
+                scheduledDeliveryDate: order.scheduled_delivery_date,
+                createdAt: order.created_at,
+                deliveryDistribution: order.delivery_distribution,
+                totalValue: order.total_value,
+                totalItems: order.total_items,
+                notes: order.notes,
+                deliveryDay: order.delivery_day, // Include delivery_day if present
+                isUpcoming: order.is_upcoming || false // Flag for upcoming orders
+            };
 
-        if (order.service_type === 'Food') {
-            // Get vendor selections for this order
-            const vendorSelections = db.orderVendorSelections.filter(vs => vs.order_id === order.id);
-            
-            if (vendorSelections.length > 0) {
-                orderConfig.vendorSelections = [];
-                for (const vs of vendorSelections) {
-                    // Get items for this vendor selection
-                    const items = db.orderItems.filter(item => item.vendor_selection_id === vs.id);
-                    const itemsMap: any = {};
-                    for (const item of items) {
-                        itemsMap[item.menu_item_id] = item.quantity;
+            // Determine which tables to query based on whether this is an upcoming order
+            const vendorSelections = order.is_upcoming
+                ? db.upcomingOrderVendorSelections.filter(vs => vs.upcoming_order_id === order.id)
+                : db.orderVendorSelections.filter(vs => vs.order_id === order.id);
+
+            if (order.service_type === 'Food') {
+                // Get vendor selections for this order
+                
+                if (vendorSelections.length > 0) {
+                    orderConfig.vendorSelections = [];
+                    for (const vs of vendorSelections) {
+                        // Get items for this vendor selection
+                        const items = order.is_upcoming
+                            ? db.upcomingOrderItems.filter(item => item.upcoming_vendor_selection_id === vs.id)
+                            : db.orderItems.filter(item => item.vendor_selection_id === vs.id);
+                        const itemsMap: any = {};
+                        for (const item of items) {
+                            itemsMap[item.menu_item_id] = item.quantity;
+                        }
+
+                        orderConfig.vendorSelections.push({
+                            vendorId: vs.vendor_id,
+                            items: itemsMap
+                        });
                     }
-
-                    orderConfig.vendorSelections.push({
-                        vendorId: vs.vendor_id,
-                        items: itemsMap
-                    });
+                } else {
+                    orderConfig.vendorSelections = [];
                 }
-            } else {
-                orderConfig.vendorSelections = [];
-            }
-        } else if (order.service_type === 'Boxes') {
-            // Get box selection for this order
-            const boxSelection = db.orderBoxSelections.find(bs => bs.order_id === order.id);
-            if (boxSelection) {
-                orderConfig.vendorId = boxSelection.vendor_id;
-                orderConfig.boxTypeId = boxSelection.box_type_id;
-                orderConfig.boxQuantity = boxSelection.quantity;
-                // Load box items - handle both old format (itemId -> quantity) and new format (itemId -> { quantity, price })
-                const itemsRaw = boxSelection.items || {};
-                const items: any = {};
-                const itemPrices: any = {};
-                for (const [itemId, value] of Object.entries(itemsRaw)) {
-                    if (typeof value === 'number') {
-                        // Old format: just quantity
-                        items[itemId] = value;
-                    } else if (value && typeof value === 'object' && 'quantity' in value) {
-                        // New format: { quantity, price? }
-                        items[itemId] = (value as any).quantity;
-                        if ('price' in value && (value as any).price !== undefined && (value as any).price !== null) {
-                            itemPrices[itemId] = (value as any).price;
+            } else if (order.service_type === 'Boxes') {
+                // Get box selection for this order
+                const boxSelection = order.is_upcoming
+                    ? db.upcomingOrderBoxSelections.find(bs => bs.upcoming_order_id === order.id)
+                    : db.orderBoxSelections.find(bs => bs.order_id === order.id);
+                if (boxSelection) {
+                    orderConfig.vendorId = boxSelection.vendor_id;
+                    orderConfig.boxTypeId = boxSelection.box_type_id;
+                    orderConfig.boxQuantity = boxSelection.quantity;
+                    // Load box items - handle both old format (itemId -> quantity) and new format (itemId -> { quantity, price })
+                    const itemsRaw = boxSelection.items || {};
+                    const items: any = {};
+                    const itemPrices: any = {};
+                    for (const [itemId, value] of Object.entries(itemsRaw)) {
+                        if (typeof value === 'number') {
+                            // Old format: just quantity
+                            items[itemId] = value;
+                        } else if (value && typeof value === 'object' && 'quantity' in value) {
+                            // New format: { quantity, price? }
+                            items[itemId] = (value as any).quantity;
+                            if ('price' in value && (value as any).price !== undefined && (value as any).price !== null) {
+                                itemPrices[itemId] = (value as any).price;
+                            }
                         }
                     }
-                }
-                orderConfig.items = items;
-                if (Object.keys(itemPrices).length > 0) {
-                    orderConfig.itemPrices = itemPrices;
+                    orderConfig.items = items;
+                    if (Object.keys(itemPrices).length > 0) {
+                        orderConfig.itemPrices = itemPrices;
+                    }
                 }
             }
-        }
+            
+            return orderConfig;
+        };
 
-        return orderConfig;
+        const processedOrders = orders.map(processOrder);
+        
+        // If only one order, return it in the old format for backward compatibility
+        if (processedOrders.length === 1) {
+            return processedOrders[0];
+        }
+        
+        // If multiple orders, return them as an object with multiple flag
+        return {
+            multiple: true,
+            orders: processedOrders
+        };
     } catch (error) {
         console.error('Error in getActiveOrderForClientLocal:', error);
         return null;
@@ -377,7 +437,7 @@ export async function getUpcomingOrderForClientLocal(clientId: string) {
         
         const db = await readLocalDB();
 
-        // Get the most recent scheduled upcoming order for this client
+        // Get all scheduled upcoming orders for this client
         const upcomingOrders = db.upcomingOrders
             .filter(o => o.client_id === clientId && o.status === 'scheduled')
             .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
@@ -386,80 +446,148 @@ export async function getUpcomingOrderForClientLocal(clientId: string) {
             return null;
         }
 
-        const data = upcomingOrders[0];
-
         // Fetch reference data (these should already be cached)
         const menuItems = await getMenuItems();
         const vendors = await getVendors();
         const boxTypes = await getBoxTypes();
 
-        // Build order configuration object
-        const orderConfig: any = {
-            id: data.id,
-            serviceType: data.service_type,
-            caseId: data.case_id,
-            status: data.status,
-            lastUpdated: data.last_updated,
-            updatedBy: data.updated_by,
-            scheduledDeliveryDate: data.scheduled_delivery_date,
-            takeEffectDate: data.take_effect_date,
-            deliveryDistribution: data.delivery_distribution,
-            totalValue: data.total_value,
-            totalItems: data.total_items,
-            notes: data.notes
-        };
+        // If there's only one order and it doesn't have a delivery_day, return it in the old format for backward compatibility
+        if (upcomingOrders.length === 1 && !upcomingOrders[0].delivery_day) {
+            const data = upcomingOrders[0];
+            const orderConfig: any = {
+                id: data.id,
+                serviceType: data.service_type,
+                caseId: data.case_id,
+                status: data.status,
+                lastUpdated: data.last_updated,
+                updatedBy: data.updated_by,
+                scheduledDeliveryDate: data.scheduled_delivery_date,
+                takeEffectDate: data.take_effect_date,
+                deliveryDistribution: data.delivery_distribution,
+                totalValue: data.total_value,
+                totalItems: data.total_items,
+                notes: data.notes
+            };
 
-        if (data.service_type === 'Food') {
-            // Get vendor selections for this upcoming order
-            const vendorSelections = db.upcomingOrderVendorSelections.filter(vs => vs.upcoming_order_id === data.id);
-            
-            if (vendorSelections.length > 0) {
-                orderConfig.vendorSelections = [];
-                for (const vs of vendorSelections) {
-                    // Get items for this vendor selection
-                    const items = db.upcomingOrderItems.filter(item => item.vendor_selection_id === vs.id);
-                    const itemsMap: any = {};
-                    for (const item of items) {
-                        itemsMap[item.menu_item_id] = item.quantity;
+            if (data.service_type === 'Food') {
+                const vendorSelections = db.upcomingOrderVendorSelections.filter(vs => vs.upcoming_order_id === data.id);
+                if (vendorSelections.length > 0) {
+                    orderConfig.vendorSelections = [];
+                    for (const vs of vendorSelections) {
+                        const items = db.upcomingOrderItems.filter(item => item.vendor_selection_id === vs.id);
+                        const itemsMap: any = {};
+                        for (const item of items) {
+                            itemsMap[item.menu_item_id] = item.quantity;
+                        }
+                        orderConfig.vendorSelections.push({
+                            vendorId: vs.vendor_id,
+                            items: itemsMap
+                        });
                     }
-
-                    orderConfig.vendorSelections.push({
-                        vendorId: vs.vendor_id,
-                        items: itemsMap
-                    });
                 }
-            }
-        } else if (data.service_type === 'Boxes') {
-            // Get box selection for this upcoming order
-            const boxSelection = db.upcomingOrderBoxSelections.find(bs => bs.upcoming_order_id === data.id);
-            if (boxSelection) {
-                orderConfig.vendorId = boxSelection.vendor_id;
-                orderConfig.boxTypeId = boxSelection.box_type_id;
-                orderConfig.boxQuantity = boxSelection.quantity;
-                // Load box items - handle both old format (itemId -> quantity) and new format (itemId -> { quantity, price })
-                const itemsRaw = boxSelection.items || {};
-                const items: any = {};
-                const itemPrices: any = {};
-                for (const [itemId, value] of Object.entries(itemsRaw)) {
-                    if (typeof value === 'number') {
-                        // Old format: just quantity
-                        items[itemId] = value;
-                    } else if (value && typeof value === 'object' && 'quantity' in value) {
-                        // New format: { quantity, price? }
-                        items[itemId] = (value as any).quantity;
-                        if ('price' in value && (value as any).price !== undefined && (value as any).price !== null) {
-                            itemPrices[itemId] = (value as any).price;
+            } else if (data.service_type === 'Boxes') {
+                const boxSelection = db.upcomingOrderBoxSelections.find(bs => bs.upcoming_order_id === data.id);
+                if (boxSelection) {
+                    orderConfig.vendorId = boxSelection.vendor_id;
+                    orderConfig.boxTypeId = boxSelection.box_type_id;
+                    orderConfig.boxQuantity = boxSelection.quantity;
+                    const itemsRaw = boxSelection.items || {};
+                    const items: any = {};
+                    const itemPrices: any = {};
+                    for (const [itemId, value] of Object.entries(itemsRaw)) {
+                        if (typeof value === 'number') {
+                            items[itemId] = value;
+                        } else if (value && typeof value === 'object' && 'quantity' in value) {
+                            items[itemId] = (value as any).quantity;
+                            if ('price' in value && (value as any).price !== undefined && (value as any).price !== null) {
+                                itemPrices[itemId] = (value as any).price;
+                            }
                         }
                     }
-                }
-                orderConfig.items = items;
-                if (Object.keys(itemPrices).length > 0) {
-                    orderConfig.itemPrices = itemPrices;
+                    orderConfig.items = items;
+                    if (Object.keys(itemPrices).length > 0) {
+                        orderConfig.itemPrices = itemPrices;
+                    }
                 }
             }
+            return orderConfig;
         }
 
-        return orderConfig;
+        // New format: return orders grouped by delivery day
+        // Structure: { [deliveryDay]: OrderConfiguration }
+        const ordersByDeliveryDay: any = {};
+
+        for (const data of upcomingOrders) {
+            const deliveryDay = data.delivery_day || 'default';
+            
+            const orderConfig: any = {
+                id: data.id,
+                serviceType: data.service_type,
+                caseId: data.case_id,
+                status: data.status,
+                lastUpdated: data.last_updated,
+                updatedBy: data.updated_by,
+                scheduledDeliveryDate: data.scheduled_delivery_date,
+                takeEffectDate: data.take_effect_date,
+                deliveryDistribution: data.delivery_distribution,
+                totalValue: data.total_value,
+                totalItems: data.total_items,
+                notes: data.notes,
+                deliveryDay: deliveryDay
+            };
+
+            if (data.service_type === 'Food') {
+                const vendorSelections = db.upcomingOrderVendorSelections.filter(vs => vs.upcoming_order_id === data.id);
+                if (vendorSelections.length > 0) {
+                    orderConfig.vendorSelections = [];
+                    for (const vs of vendorSelections) {
+                        const items = db.upcomingOrderItems.filter(item => item.vendor_selection_id === vs.id);
+                        const itemsMap: any = {};
+                        for (const item of items) {
+                            itemsMap[item.menu_item_id] = item.quantity;
+                        }
+                        orderConfig.vendorSelections.push({
+                            vendorId: vs.vendor_id,
+                            items: itemsMap
+                        });
+                    }
+                }
+            } else if (data.service_type === 'Boxes') {
+                const boxSelection = db.upcomingOrderBoxSelections.find(bs => bs.upcoming_order_id === data.id);
+                if (boxSelection) {
+                    orderConfig.vendorId = boxSelection.vendor_id;
+                    orderConfig.boxTypeId = boxSelection.box_type_id;
+                    orderConfig.boxQuantity = boxSelection.quantity;
+                    const itemsRaw = boxSelection.items || {};
+                    const items: any = {};
+                    const itemPrices: any = {};
+                    for (const [itemId, value] of Object.entries(itemsRaw)) {
+                        if (typeof value === 'number') {
+                            items[itemId] = value;
+                        } else if (value && typeof value === 'object' && 'quantity' in value) {
+                            items[itemId] = (value as any).quantity;
+                            if ('price' in value && (value as any).price !== undefined && (value as any).price !== null) {
+                                itemPrices[itemId] = (value as any).price;
+                            }
+                        }
+                    }
+                    orderConfig.items = items;
+                    if (Object.keys(itemPrices).length > 0) {
+                        orderConfig.itemPrices = itemPrices;
+                    }
+                }
+            }
+
+            ordersByDeliveryDay[deliveryDay] = orderConfig;
+        }
+
+        // If only one delivery day, return it directly for backward compatibility
+        const deliveryDays = Object.keys(ordersByDeliveryDay);
+        if (deliveryDays.length === 1 && deliveryDays[0] === 'default') {
+            return ordersByDeliveryDay['default'];
+        }
+
+        return ordersByDeliveryDay;
     } catch (error) {
         console.error('Error in getUpcomingOrderForClientLocal:', error);
         return null;

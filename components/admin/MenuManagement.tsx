@@ -19,8 +19,7 @@ export function MenuManagement() {
         name: '',
         value: 0,
         priceEach: 0,
-        isActive: true,
-        minimumOrder: 0
+        isActive: true
     });
 
     useEffect(() => {
@@ -157,19 +156,6 @@ export function MenuManagement() {
                                     onChange={e => setFormData({ ...formData, priceEach: Number(e.target.value) || undefined })}
                                 />
                             </div>
-                            <div className={styles.formGroup} style={{ flex: 1 }}>
-                                <label className="label">Minimum Order Quantity</label>
-                                <input
-                                    type="number"
-                                    className="input"
-                                    min="0"
-                                    value={formData.minimumOrder ?? 0}
-                                    onChange={e => setFormData({ ...formData, minimumOrder: Number(e.target.value) })}
-                                />
-                                <small style={{ color: 'var(--text-tertiary)', fontSize: '0.75rem', marginTop: '4px', display: 'block' }}>
-                                    Minimum quantity required when ordering this product (0 = no minimum)
-                                </small>
-                            </div>
                         </div>
 
                         <div className={styles.formGroup}>
@@ -199,7 +185,6 @@ export function MenuManagement() {
                         <span style={{ flex: 3 }}>Name</span>
                         <span style={{ flex: 1 }}>Value</span>
                         <span style={{ flex: 1 }}>Price Each</span>
-                        <span style={{ flex: 1 }}>Min Order</span>
                         <span style={{ flex: 1 }}>Status</span>
                         <span style={{ width: '120px', textAlign: 'right' }}>Actions</span>
                     </div>
@@ -208,9 +193,6 @@ export function MenuManagement() {
                             <span style={{ flex: 3, fontWeight: 500, fontSize: '1.1rem' }}>{item.name}</span>
                             <span style={{ flex: 1, fontSize: '1rem' }}>{item.value}</span>
                             <span style={{ flex: 1, fontSize: '1rem' }}>{item.priceEach ?? '-'}</span>
-                            <span style={{ flex: 1, fontSize: '0.9rem', color: item.minimumOrder && item.minimumOrder > 0 ? 'var(--color-primary)' : 'var(--text-tertiary)' }}>
-                                {item.minimumOrder && item.minimumOrder > 0 ? item.minimumOrder : '-'}
-                            </span>
                             <span style={{ flex: 1 }}>
                                 {item.isActive ? <span className="badge" style={{ color: 'var(--color-success)', background: 'rgba(34, 197, 94, 0.1)', fontSize: '0.9rem', padding: '4px 12px' }}>Active</span> : <span className="badge" style={{ fontSize: '0.9rem', padding: '4px 12px' }}>Inactive</span>}
                             </span>

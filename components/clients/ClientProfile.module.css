@@ -19,7 +19,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    padding: var(--spacing-md);
+    padding: var(--spacing-sm);
 }
 
 .modalContent {
@@ -35,18 +35,18 @@
     border: 1px solid var(--border-color);
     display: flex;
     flex-direction: column;
-    padding: var(--spacing-xl);
+    padding: var(--spacing-xs);
 }
 
 /* Global Overrides for this Modal */
 .modalContent :global(.label) {
     font-size: 1.1rem;
-    margin-bottom: 0.5rem;
+    margin-bottom: 0.25rem;
 }
 
 .modalContent :global(.input) {
     font-size: 1.1rem;
-    padding: 0.75rem 1rem;
+    padding: 0.5rem 0.75rem;
 }
 
 .modalContent :global(.btn) {
@@ -54,7 +54,70 @@
     padding: 0.75rem 1.25rem;
 }
 
-/* If not in modal, fallback to normal container behavior? We can handle that in JS or separate class */
+/* Reduce padding for cards inside modal */
+.modalContent .card {
+    padding: var(--spacing-xs);
+    margin-bottom: var(--spacing-xs);
+}
+
+/* Reduce header spacing in modal */
+.modalContent .header {
+    margin-bottom: var(--spacing-sm);
+}
+
+/* Reduce form group spacing in modal */
+.modalContent .formGroup {
+    margin-bottom: 0.5rem;
+}
+
+/* Reduce section title spacing in modal */
+.modalContent .sectionTitle {
+    margin-bottom: var(--spacing-xs);
+    padding-bottom: 0.25rem;
+}
+
+/* Reduce grid gap in modal */
+.modalContent .grid {
+    gap: var(--spacing-xs);
+}
+
+/* When component is in modal, reduce all padding */
+.inModal {
+    padding: 0 !important;
+    max-width: 100% !important;
+    margin: 0 !important;
+    width: 100% !important;
+}
+
+.inModal .card {
+    padding: var(--spacing-xs) !important;
+    margin-bottom: var(--spacing-xs) !important;
+}
+
+.inModal .formGroup {
+    margin-bottom: 0.5rem !important;
+}
+
+.inModal .sectionTitle {
+    margin-bottom: var(--spacing-xs) !important;
+    padding-bottom: 0.25rem !important;
+}
+
+.inModal .grid {
+    gap: var(--spacing-xs) !important;
+}
+
+.inModal .header {
+    margin-bottom: var(--spacing-sm) !important;
+}
+
+.inModal :global(.label) {
+    margin-bottom: 0.25rem !important;
+}
+
+.inModal :global(.input) {
+    padding: 0.5rem 0.75rem !important;
+}
 
 .header {
     display: flex;
@@ -112,7 +175,7 @@
 .grid {
     display: flex;
     flex-direction: column;
-    gap: var(--spacing-lg);
+    gap: var(--spacing-xs);
     max-width: 800px;
     margin: 0 auto;
     width: 100%;
@@ -128,21 +191,21 @@
     background-color: var(--bg-surface);
     border: 1px solid var(--border-color);
     border-radius: var(--radius-md);
-    padding: var(--spacing-lg);
-    margin-bottom: var(--spacing-lg);
+    padding: var(--spacing-xs);
+    margin-bottom: var(--spacing-xs);
 }
 
 .sectionTitle {
-    margin-bottom: var(--spacing-lg);
+    margin-bottom: var(--spacing-xs);
     font-size: 1.4rem;
     font-weight: 600;
     color: var(--text-primary);
     border-bottom: 1px solid var(--border-color);
-    padding-bottom: 0.5rem;
+    padding-bottom: 0.25rem;
 }
 
 .formGroup {
-    margin-bottom: var(--spacing-md);
+    margin-bottom: 0.5rem;
 }
 
 .row {
@@ -455,6 +518,37 @@
     margin: 0 auto;
 }
 
+/* Loading Indicator Styles */
+.loadingContainer {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: var(--spacing-xl);
+    gap: var(--spacing-md);
+}
+
+.spinner {
+    width: 40px;
+    height: 40px;
+    border: 3px solid var(--border-color);
+    border-top-color: var(--color-primary);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+.loadingText {
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+    margin: 0;
+}
+
 .header {
     display: flex;
     justify-content: space-between;
@@ -511,7 +605,7 @@
 .grid {
     display: flex;
     flex-direction: column;
-    gap: var(--spacing-lg);
+    gap: var(--spacing-xs);
     max-width: 800px;
     margin: 0 auto;
     width: 100%;
@@ -526,20 +620,20 @@
     background-color: var(--bg-surface);
     border: 1px solid var(--border-color);
     border-radius: var(--radius-md);
-    padding: var(--spacing-lg);
+    padding: var(--spacing-xs);
 }
 
 .sectionTitle {
-    margin-bottom: var(--spacing-lg);
+    margin-bottom: var(--spacing-xs);
     font-size: 1.1rem;
     font-weight: 600;
     color: var(--text-primary);
     border-bottom: 1px solid var(--border-color);
-    padding-bottom: 0.5rem;
+    padding-bottom: 0.25rem;
 }
 
 .formGroup {
-    margin-bottom: var(--spacing-md);
+    margin-bottom: 0.5rem;
 }
 
 .row {

@@ -79,7 +79,7 @@ export interface Vendor {
   deliveryDays: string[]; // e.g. ["Monday", "Thursday"]
   allowsMultipleDeliveries: boolean;
   serviceType: ServiceType; // Vendor usually specializes in Food OR Boxes? Or both? Assuming one for simplicity mostly.
-  minimumOrder?: number; // Minimum total order quantity required for this vendor (default 0, meaning no minimum)
+  minimumMeals?: number; // Minimum meals/value required when ordering from this vendor (default 0, meaning no minimum)
 }
 
 export interface ItemCategory {

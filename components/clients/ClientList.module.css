@@ -209,6 +209,16 @@
     border: 1px solid var(--border-color);
     display: flex;
     flex-direction: column;
+    padding: var(--spacing-xs);
+}
+
+/* Label and input overrides for modal */
+.profileCard :global(.label) {
+    margin-bottom: 0.25rem !important;
+}
+
+.profileCard :global(.input) {
+    padding: 0.5rem 0.75rem !important;
 }
 
 .clientRowNotAllowed {

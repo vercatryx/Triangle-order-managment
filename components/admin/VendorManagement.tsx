@@ -24,7 +24,7 @@ export function VendorManagement() {
         deliveryDays: [],
         allowsMultipleDeliveries: false,
         serviceType: 'Food',
-        minimumOrder: 0
+        minimumMeals: 0
     });
     const [multiCreateInput, setMultiCreateInput] = useState(''); // New state
 
@@ -46,7 +46,7 @@ export function VendorManagement() {
             deliveryDays: [],
             allowsMultipleDeliveries: false,
             serviceType: 'Food',
-            minimumOrder: 0
+            minimumMeals: 0
         });
         setIsCreating(false);
         setIsMultiCreating(false);
@@ -253,17 +253,17 @@ export function VendorManagement() {
                     </div>
 
                     <div className={styles.formGroup}>
-                        <label className="label">Minimum Order Quantity</label>
+                        <label className="label">Minimum Meals Required</label>
                         <input
                             type="number"
                             className="input"
                             min="0"
-                            value={formData.minimumOrder ?? 0}
-                            onChange={e => setFormData({ ...formData, minimumOrder: Number(e.target.value) || 0 })}
+                            value={formData.minimumMeals ?? 0}
+                            onChange={e => setFormData({ ...formData, minimumMeals: Number(e.target.value) || 0 })}
                             placeholder="0"
                         />
                         <p className={styles.hint} style={{ marginTop: '0.25rem' }}>
-                            Minimum total quantity of items required when ordering from this vendor (0 = no minimum)
+                            Minimum number of meals required when ordering from this vendor. Clients must order at least this many meals from this vendor. (0 = no minimum)
                         </p>
                     </div>
 
@@ -287,7 +287,7 @@ export function VendorManagement() {
                             <th>Status</th>
                             <th>Days</th>
                             <th>Frequency</th>
-                            <th>Min Order</th>
+                            <th>Min Meals</th>
                             <th style={{ textAlign: 'right' }}>Actions</th>
                         </tr>
                     </thead>
@@ -299,7 +299,7 @@ export function VendorManagement() {
                                 <td>{vendor.isActive ? <span style={{ color: 'var(--color-success)' }}>Active</span> : <span style={{ color: 'var(--text-tertiary)' }}>Inactive</span>}</td>
                                 <td>{vendor.deliveryDays.join(', ')}</td>
                                 <td>{vendor.allowsMultipleDeliveries ? 'Multiple' : 'Once'}</td>
-                                <td>{vendor.minimumOrder && vendor.minimumOrder > 0 ? vendor.minimumOrder : '-'}</td>
+                                <td>{vendor.minimumMeals && vendor.minimumMeals > 0 ? vendor.minimumMeals : '-'}</td>
                                 <td style={{ textAlign: 'right' }}>
                                     <div className={styles.actions}>
                                         <button className={styles.iconBtn} onClick={() => handleEditInit(vendor)}>
