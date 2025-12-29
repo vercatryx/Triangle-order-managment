@@ -2,13 +2,14 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Users, Truck, Utensils, Box as BoxIcon, Settings, LayoutDashboard, ChevronLeft, ChevronRight, LogOut } from 'lucide-react';
+import { Users, Truck, Utensils, Box as BoxIcon, Settings, LayoutDashboard, ChevronLeft, ChevronRight, LogOut, Store } from 'lucide-react';
 import styles from './Sidebar.module.css';
 import { logout } from '@/lib/auth-actions';
 import { useState } from 'react';
 
 const navItems = [
     { label: 'Client Dashboard', href: '/clients', icon: Users },
+    { label: 'Vendors', href: '/vendors', icon: Store },
     { label: 'Admin Control', href: '/admin', icon: Settings },
 ];
 

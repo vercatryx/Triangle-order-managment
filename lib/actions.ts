@@ -1462,3 +1462,244 @@ export async function getUpcomingOrderForClient(clientId: string) {
         return null;
     }
 }
+
+/**
+ * Get all orders for a specific vendor
+ * Returns orders from both orders and upcoming_orders tables
+ */
+export async function getOrdersByVendor(vendorId: string) {
+    if (!vendorId) return [];
+
+    try {
+        // Get orders from orders table (Food orders via order_vendor_selections, Box orders via order_box_selections)
+        const [foodOrdersResult, boxOrdersResult] = await Promise.all([
+            // Food orders - get via order_vendor_selections
+            supabase
+                .from('order_vendor_selections')
+                .select(`
+                    id,
+                    order_id,
+                    vendor_id,
+                    orders (
+                        id,
+                        client_id,
+                        service_type,
+                        case_id,
+                        status,
+                        last_updated,
+                        updated_by,
+                        created_at,
+                        scheduled_delivery_date,
+                        actual_delivery_date,
+                        delivery_distribution,
+                        total_value,
+                        total_items,
+                        notes
+                    )
+                `)
+                .eq('vendor_id', vendorId),
+            // Box orders - get via order_box_selections
+            supabase
+                .from('order_box_selections')
+                .select(`
+                    id,
+                    order_id,
+                    vendor_id,
+                    orders (
+                        id,
+                        client_id,
+                        service_type,
+                        case_id,
+                        status,
+                        last_updated,
+                        updated_by,
+                        created_at,
+                        scheduled_delivery_date,
+                        actual_delivery_date,
+                        delivery_distribution,
+                        total_value,
+                        total_items,
+                        notes
+                    )
+                `)
+                .eq('vendor_id', vendorId)
+        ]);
+
+        const orders: any[] = [];
+
+        // Check for errors
+        if (foodOrdersResult.error) {
+            console.error('Error fetching food orders:', foodOrdersResult.error);
+        }
+        if (boxOrdersResult.error) {
+            console.error('Error fetching box orders:', boxOrdersResult.error);
+        }
+
+        // Process Food orders and fetch items
+        if (foodOrdersResult.data) {
+            for (const vs of foodOrdersResult.data) {
+                if (vs.orders) {
+                    const order = Array.isArray(vs.orders) ? vs.orders[0] : vs.orders;
+                    if (order) {
+                        // Fetch items for this vendor selection
+                        const { data: items } = await supabase
+                            .from('order_items')
+                            .select('*')
+                            .eq('vendor_selection_id', vs.id);
+
+                        orders.push({
+                            ...order,
+                            orderType: 'completed',
+                            vendorSelectionId: vs.id,
+                            items: items || []
+                        });
+                    }
+                }
+            }
+        }
+
+        // Process Box orders and fetch box selection details
+        if (boxOrdersResult.data) {
+            for (const bs of boxOrdersResult.data) {
+                if (bs.orders) {
+                    const order = Array.isArray(bs.orders) ? bs.orders[0] : bs.orders;
+                    if (order) {
+                        // Get box selection details including items
+                        const { data: boxSelection } = await supabase
+                            .from('order_box_selections')
+                            .select('*')
+                            .eq('id', bs.id)
+                            .single();
+
+                        orders.push({
+                            ...order,
+                            orderType: 'completed',
+                            boxSelectionId: bs.id,
+                            boxSelection: boxSelection || null,
+                            items: boxSelection?.items || {}
+                        });
+                    }
+                }
+            }
+        }
+
+        // Get upcoming orders
+        const upcomingFoodOrdersResult = await supabase
+            .from('upcoming_order_vendor_selections')
+            .select(`
+                id,
+                upcoming_order_id,
+                vendor_id,
+                upcoming_orders (
+                    id,
+                    client_id,
+                    service_type,
+                    case_id,
+                    status,
+                    last_updated,
+                    updated_by,
+                    created_at,
+                    scheduled_delivery_date,
+                    delivery_distribution,
+                    total_value,
+                    total_items,
+                    notes,
+                    take_effect_date
+                )
+            `)
+            .eq('vendor_id', vendorId);
+
+        const upcomingBoxOrdersResult = await supabase
+            .from('upcoming_order_box_selections')
+            .select(`
+                id,
+                upcoming_order_id,
+                vendor_id,
+                upcoming_orders (
+                    id,
+                    client_id,
+                    service_type,
+                    case_id,
+                    status,
+                    last_updated,
+                    updated_by,
+                    created_at,
+                    scheduled_delivery_date,
+                    delivery_distribution,
+                    total_value,
+                    total_items,
+                    notes,
+                    take_effect_date
+                )
+            `)
+            .eq('vendor_id', vendorId);
+
+        // Process upcoming Food orders and fetch items
+        if (upcomingFoodOrdersResult.data) {
+            for (const vs of upcomingFoodOrdersResult.data) {
+                if (vs.upcoming_orders) {
+                    const order = Array.isArray(vs.upcoming_orders) ? vs.upcoming_orders[0] : vs.upcoming_orders;
+                    if (order) {
+                        // Fetch items for this upcoming vendor selection
+                        const { data: items } = await supabase
+                            .from('upcoming_order_items')
+                            .select('*')
+                            .eq('vendor_selection_id', vs.id);
+
+                        orders.push({
+                            ...order,
+                            orderType: 'upcoming',
+                            vendorSelectionId: vs.id,
+                            items: items || []
+                        });
+                    }
+                }
+            }
+        }
+
+        // Check for upcoming order errors
+        if (upcomingFoodOrdersResult.error) {
+            console.error('Error fetching upcoming food orders:', upcomingFoodOrdersResult.error);
+        }
+        if (upcomingBoxOrdersResult.error) {
+            console.error('Error fetching upcoming box orders:', upcomingBoxOrdersResult.error);
+        }
+
+        // Process upcoming Box orders and fetch box selection details
+        if (upcomingBoxOrdersResult.data) {
+            for (const bs of upcomingBoxOrdersResult.data) {
+                if (bs.upcoming_orders) {
+                    const order = Array.isArray(bs.upcoming_orders) ? bs.upcoming_orders[0] : bs.upcoming_orders;
+                    if (order) {
+                        // Get upcoming box selection details including items
+                        const { data: boxSelection } = await supabase
+                            .from('upcoming_order_box_selections')
+                            .select('*')
+                            .eq('id', bs.id)
+                            .single();
+
+                        orders.push({
+                            ...order,
+                            orderType: 'upcoming',
+                            boxSelectionId: bs.id,
+                            boxSelection: boxSelection || null,
+                            items: boxSelection?.items || {}
+                        });
+                    }
+                }
+            }
+        }
+
+        // Sort by created_at descending (most recent first)
+        orders.sort((a, b) => {
+            const dateA = new Date(a.created_at || 0).getTime();
+            const dateB = new Date(b.created_at || 0).getTime();
+            return dateB - dateA;
+        });
+
+        return orders;
+    } catch (err) {
+        console.error('Error in getOrdersByVendor:', err);
+        return [];
+    }
+}

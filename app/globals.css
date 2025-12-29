@@ -149,6 +149,18 @@ a {
   color: var(--text-primary);
 }
 
+.badge-success {
+  background-color: rgba(34, 197, 94, 0.2);
+  color: var(--color-success);
+  border: 1px solid rgba(34, 197, 94, 0.3);
+}
+
+.badge-info {
+  background-color: rgba(59, 130, 246, 0.2);
+  color: var(--color-primary);
+  border: 1px solid rgba(59, 130, 246, 0.3);
+}
+
 /* Animations */
 @keyframes fadeIn {
   from { opacity: 0; transform: translateY(5px); }
