@@ -5,6 +5,7 @@ import { ClientProfileDetail } from './ClientProfile';
 import { useState, useEffect, useRef } from 'react';
 import { ClientProfile, ClientStatus, Navigator, Vendor, BoxType, ClientFullDetails, MenuItem } from '@/lib/types';
 import { getClientsPaginated, getClientFullDetails, getStatuses, getNavigators, addClient, getVendors, getBoxTypes, getMenuItems } from '@/lib/actions';
+import { invalidateClientData } from '@/lib/cached-data';
 import { Plus, Search, ChevronRight, CheckSquare, Square, StickyNote, Package } from 'lucide-react';
 import styles from './ClientList.module.css';
 import { useRouter } from 'next/navigation';
@@ -171,6 +172,7 @@ export function ClientList() {
         });
 
         if (newClient) {
+            invalidateClientData(); // Invalidate cache
             setIsCreating(false);
             setNewClientName(''); // Reset
             // Refresh logic: for simplicity, confirm and maybe add to top? 
@@ -489,20 +491,15 @@ export function ClientList() {
                             initialData={detailsCache[selectedClientId]}
                             onClose={() => {
                                 setSelectedClientId(null);
-                                // We might want to refresh only this client in the list?
-                                // For now, let's just let it be. If they edit, cache might be stale, 
-                                // but we re-fetch effectively on mount of ClientProfile anyway if initialData is stale?
-                                // Actually, I passed initialData only. If they edit and close, 
-                                // valid logic dictates we should maybe invalidate the cache for this ID.
+                                // Clear the cached details for this client
                                 setDetailsCache(prev => {
                                     const next = { ...prev };
                                     delete next[selectedClientId];
                                     return next;
                                 });
-                                // We also should probably update the list row if things changed (like name).
-                                // Implementing full re-fetch of list or just this item is tricky without prop drilling.
-                                // For MVP, we can re-fetch page 1 or just leave it.
-                                // Let's just invalidate cache so next open is fresh.
+                                // Invalidate cache and refresh data on close in case of changes
+                                invalidateClientData();
+                                loadInitialData();
                             }}
                         />
                     </div>

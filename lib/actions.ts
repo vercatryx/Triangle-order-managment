@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache';
 import { supabase } from './supabase';
 import { ClientStatus, Vendor, MenuItem, BoxType, AppSettings, Navigator, ClientProfile, DeliveryRecord, ItemCategory, BoxQuota } from './types';
 import { randomUUID } from 'crypto';
+import { getSession } from './session';
 
 // --- HELPERS ---
 function handleError(error: any) {
@@ -82,7 +83,7 @@ export async function getVendors() {
         deliveryDays: v.delivery_days || [],
         allowsMultipleDeliveries: v.delivery_frequency === 'Multiple',
         isActive: v.is_active,
-        minimumMeals: v.minimum_meals ?? 0
+        minimumOrder: v.minimum_order ?? 0
     }));
 }
 
@@ -92,13 +93,9 @@ export async function addVendor(data: Omit<Vendor, 'id'>) {
         service_type: data.serviceType,
         delivery_days: data.deliveryDays,
         delivery_frequency: data.allowsMultipleDeliveries ? 'Multiple' : 'Once',
-        is_active: data.isActive
+        is_active: data.isActive,
+        minimum_order: data.minimumOrder ?? 0
     };
-    
-    // Only include minimum_meals for Food vendors
-    if (data.serviceType === 'Food' && data.minimumMeals !== undefined) {
-        payload.minimum_meals = data.minimumMeals;
-    }
 
     const { data: res, error } = await supabase.from('vendors').insert([payload]).select().single();
     handleError(error);
@@ -115,14 +112,7 @@ export async function updateVendor(id: string, data: Partial<Vendor>) {
         payload.delivery_frequency = data.allowsMultipleDeliveries ? 'Multiple' : 'Once';
     }
     if (data.isActive !== undefined) payload.is_active = data.isActive;
-    
-    // Handle minimum_meals - only for Food vendors, allow setting to 0 or undefined to clear
-    if (data.serviceType === 'Food' && data.minimumMeals !== undefined) {
-        payload.minimum_meals = data.minimumMeals;
-    } else if (data.minimumMeals !== undefined) {
-        // If changing from Food to non-Food, clear minimum_meals
-        payload.minimum_meals = 0;
-    }
+    if (data.minimumOrder !== undefined) payload.minimum_order = data.minimumOrder;
 
     const { error } = await supabase.from('vendors').update(payload).eq('id', id);
     handleError(error);
@@ -145,6 +135,7 @@ export async function getMenuItems() {
         vendorId: i.vendor_id,
         name: i.name,
         value: i.value,
+        priceEach: i.price_each ?? undefined,
         isActive: i.is_active,
         categoryId: i.category_id,
         quotaValue: i.quota_value,
@@ -153,7 +144,7 @@ export async function getMenuItems() {
 }
 
 export async function addMenuItem(data: Omit<MenuItem, 'id'>) {
-    const payload = {
+    const payload: any = {
         vendor_id: data.vendorId,
         name: data.name,
         value: data.value,
@@ -162,6 +153,9 @@ export async function addMenuItem(data: Omit<MenuItem, 'id'>) {
         quota_value: data.quotaValue,
         minimum_order: data.minimumOrder ?? 0
     };
+    if (data.priceEach !== undefined) {
+        payload.price_each = data.priceEach;
+    }
     const { data: res, error } = await supabase.from('menu_items').insert([payload]).select().single();
     handleError(error);
     revalidatePath('/admin');
@@ -171,7 +165,8 @@ export async function addMenuItem(data: Omit<MenuItem, 'id'>) {
 export async function updateMenuItem(id: string, data: Partial<MenuItem>) {
     const payload: any = {};
     if (data.name) payload.name = data.name;
-    if (data.value) payload.value = data.value;
+    if (data.value !== undefined) payload.value = data.value;
+    if (data.priceEach !== undefined) payload.price_each = data.priceEach;
     if (data.isActive !== undefined) payload.is_active = data.isActive;
     if (data.categoryId !== undefined) payload.category_id = data.categoryId;
     if (data.quotaValue !== undefined) payload.quota_value = data.quotaValue;
@@ -264,12 +259,21 @@ export async function getBoxTypes() {
         id: b.id,
         name: b.name,
         isActive: b.is_active,
-        vendorId: b.vendor_id || null
+        vendorId: b.vendor_id || null,
+        priceEach: b.price_each ?? undefined
     }));
 }
 
 export async function addBoxType(data: Omit<BoxType, 'id'>) {
-    const { data: res, error } = await supabase.from('box_types').insert([{ name: data.name, is_active: data.isActive, vendor_id: data.vendorId || null }]).select().single();
+    const payload: any = {
+        name: data.name,
+        is_active: data.isActive,
+        vendor_id: data.vendorId || null
+    };
+    if (data.priceEach !== undefined) {
+        payload.price_each = data.priceEach;
+    }
+    const { data: res, error } = await supabase.from('box_types').insert([payload]).select().single();
     handleError(error);
     revalidatePath('/admin');
     return { ...data, id: res.id };
@@ -280,6 +284,7 @@ export async function updateBoxType(id: string, data: Partial<BoxType>) {
     if (data.name) payload.name = data.name;
     if (data.isActive !== undefined) payload.is_active = data.isActive;
     if (data.vendorId !== undefined) payload.vendor_id = data.vendorId;
+    if (data.priceEach !== undefined) payload.price_each = data.priceEach;
 
     const { error } = await supabase.from('box_types').update(payload).eq('id', id);
     handleError(error);
@@ -422,6 +427,11 @@ export async function addClient(data: Omit<ClientProfile, 'id' | 'createdAt' | '
         }
 
         revalidatePath('/clients');
+        
+        // Trigger local DB sync in background after mutation
+        const { triggerSyncInBackground } = await import('./local-db');
+        triggerSyncInBackground();
+        
         return newClient;
     }
 }
@@ -446,6 +456,20 @@ export async function updateClient(id: string, data: Partial<ClientProfile>) {
 
     const { error } = await supabase.from('clients').update(payload).eq('id', id);
     handleError(error);
+    
+    // If activeOrder was updated, sync to upcoming_orders
+    if (data.activeOrder) {
+        const updatedClient = await getClient(id);
+        if (updatedClient) {
+            await syncCurrentOrderToUpcoming(id, updatedClient);
+        }
+    } else {
+        // Trigger local DB sync in background even if activeOrder wasn't updated
+        // (other changes might affect orders indirectly)
+        const { triggerSyncInBackground } = await import('./local-db');
+        triggerSyncInBackground();
+    }
+    
     revalidatePath('/clients');
     revalidatePath(`/clients/${id}`);
 }
@@ -546,12 +570,19 @@ export async function updateDeliveryProof(id: string, proofUrl: string) {
     revalidatePath('/clients');
 }
 
-export async function recordClientChange(clientId: string, summary: string, who: string = 'Admin') {
+export async function recordClientChange(clientId: string, summary: string, who?: string) {
+    // Get current user from session if who is not provided
+    let userName = who;
+    if (!userName || userName === 'Admin') {
+        const session = await getSession();
+        userName = session?.name || 'Admin';
+    }
+
     const { error } = await supabase
         .from('order_history')
         .insert([{
             client_id: clientId,
-            who: who,
+            who: userName,
             summary: summary,
             timestamp: new Date().toISOString()
         }]);
@@ -611,25 +642,133 @@ export async function getBillingHistory(clientId: string) {
         return [];
     }
 
+    // Fetch reference data once for all orders
+    const [menuItems, vendors, boxTypes] = await Promise.all([
+        getMenuItems(),
+        getVendors(),
+        getBoxTypes()
+    ]);
+
     // Fetch order details separately if order_id exists
     const billingRecords = data || [];
     const recordsWithOrderData = await Promise.all(
         billingRecords.map(async (d: any) => {
             let deliveryDate: string | undefined = undefined;
-
+            let orderDetails: any = undefined;
+            
             if (d.order_id) {
                 const { data: orderData, error: orderError } = await supabase
                     .from('orders')
-                    .select('scheduled_delivery_date, actual_delivery_date')
+                    .select('*')
                     .eq('id', d.order_id)
                     .single();
 
                 if (!orderError && orderData) {
                     // Prefer actual_delivery_date, fallback to scheduled_delivery_date
                     deliveryDate = orderData.actual_delivery_date || orderData.scheduled_delivery_date || undefined;
+                    
+                    // Build order details based on service type
+                    if (orderData.service_type === 'Food') {
+                        // Fetch vendor selections and items
+                        const { data: vendorSelections } = await supabase
+                            .from('order_vendor_selections')
+                            .select('*')
+                            .eq('order_id', d.order_id);
+
+                        if (vendorSelections && vendorSelections.length > 0) {
+                            const vendorSelectionsWithItems = await Promise.all(
+                                vendorSelections.map(async (vs: any) => {
+                                    const { data: items } = await supabase
+                                        .from('order_items')
+                                        .select('*')
+                                        .eq('vendor_selection_id', vs.id);
+
+                                    const vendor = vendors.find(v => v.id === vs.vendor_id);
+                                    const itemsWithDetails = (items || []).map((item: any) => {
+                                        const menuItem = menuItems.find(mi => mi.id === item.menu_item_id);
+                                        // Use priceEach if available, otherwise fall back to stored unit_value
+                                        const itemPrice = menuItem?.priceEach ?? parseFloat(item.unit_value);
+                                        const quantity = item.quantity;
+                                        const itemTotal = itemPrice * quantity;
+                                        return {
+                                            id: item.id,
+                                            menuItemId: item.menu_item_id,
+                                            menuItemName: menuItem?.name || 'Unknown Item',
+                                            quantity: quantity,
+                                            unitValue: itemPrice,
+                                            totalValue: itemTotal
+                                        };
+                                    });
+
+                                    return {
+                                        vendorId: vs.vendor_id,
+                                        vendorName: vendor?.name || 'Unknown Vendor',
+                                        items: itemsWithDetails
+                                    };
+                                })
+                            );
+
+                            orderDetails = {
+                                serviceType: orderData.service_type,
+                                vendorSelections: vendorSelectionsWithItems,
+                                totalItems: orderData.total_items,
+                                totalValue: parseFloat(orderData.total_value || 0)
+                            };
+                        }
+                    } else if (orderData.service_type === 'Boxes') {
+                        // Fetch box selection
+                        const { data: boxSelection } = await supabase
+                            .from('order_box_selections')
+                            .select('*')
+                            .eq('order_id', d.order_id)
+                            .maybeSingle();
+
+                        if (boxSelection) {
+                            const vendor = vendors.find(v => v.id === boxSelection.vendor_id);
+                            const boxType = boxTypes.find(bt => bt.id === boxSelection.box_type_id);
+                            // Prefer stored total_value from box selection, fallback to order total_value
+                            const boxTotalValue = boxSelection.total_value 
+                                ? parseFloat(boxSelection.total_value) 
+                                : parseFloat(orderData.total_value || 0);
+                            
+                            orderDetails = {
+                                serviceType: orderData.service_type,
+                                vendorId: boxSelection.vendor_id,
+                                vendorName: vendor?.name || 'Unknown Vendor',
+                                boxTypeId: boxSelection.box_type_id,
+                                boxTypeName: boxType?.name || 'Unknown Box Type',
+                                boxQuantity: boxSelection.quantity,
+                                totalValue: boxTotalValue
+                            };
+                        }
+                    } else {
+                        // For other service types, just include basic info
+                        orderDetails = {
+                            serviceType: orderData.service_type,
+                            totalValue: parseFloat(orderData.total_value || 0),
+                            notes: orderData.notes
+                        };
+                    }
                 }
             }
 
+            // Calculate amount from order items if order details exist
+            let calculatedAmount = d.amount; // Default to stored amount
+            
+            if (orderDetails) {
+                if (orderDetails.serviceType === 'Food' && orderDetails.vendorSelections) {
+                    // Sum all item totalValues from all vendor selections
+                    calculatedAmount = orderDetails.vendorSelections.reduce((sum: number, vs: any) => {
+                        return sum + (vs.items || []).reduce((itemSum: number, item: any) => {
+                            return itemSum + (item.totalValue || 0);
+                        }, 0);
+                    }, 0);
+                } else if (orderDetails.totalValue !== undefined) {
+                    // For Boxes and other service types, use the totalValue
+                    calculatedAmount = orderDetails.totalValue;
+                }
+            }
+            
             return {
                 id: d.id,
                 clientId: d.client_id,
@@ -637,10 +776,13 @@ export async function getBillingHistory(clientId: string) {
                 status: d.status,
                 remarks: d.remarks,
                 navigator: d.navigator,
-                amount: d.amount,
+                amount: calculatedAmount,
                 createdAt: d.created_at,
+                date: d.date || new Date(d.created_at).toLocaleDateString(),
+                method: d.method || 'N/A',
                 orderId: d.order_id || undefined,
-                deliveryDate: deliveryDate
+                deliveryDate: deliveryDate,
+                orderDetails: orderDetails
             };
         })
     );
@@ -659,22 +801,77 @@ export async function getAllBillingRecords() {
         return [];
     }
 
+    // Fetch reference data once for all orders
+    const [menuItems, vendors, boxTypes] = await Promise.all([
+        getMenuItems(),
+        getVendors(),
+        getBoxTypes()
+    ]);
+
     // Fetch order details separately if order_id exists
     const billingRecords = data || [];
     const recordsWithOrderData = await Promise.all(
         billingRecords.map(async (d: any) => {
             let deliveryDate: string | undefined = undefined;
+<<<<<<< HEAD
 
+=======
+            let calculatedAmount = d.amount; // Default to stored amount
+            
+>>>>>>> origin/main
             if (d.order_id) {
                 const { data: orderData, error: orderError } = await supabase
                     .from('orders')
-                    .select('scheduled_delivery_date, actual_delivery_date')
+                    .select('*')
                     .eq('id', d.order_id)
                     .single();
 
                 if (!orderError && orderData) {
                     // Prefer actual_delivery_date, fallback to scheduled_delivery_date
                     deliveryDate = orderData.actual_delivery_date || orderData.scheduled_delivery_date || undefined;
+                    
+                    // Calculate amount from order items
+                    if (orderData.service_type === 'Food') {
+                        // Fetch vendor selections and items
+                        const { data: vendorSelections } = await supabase
+                            .from('order_vendor_selections')
+                            .select('*')
+                            .eq('order_id', d.order_id);
+
+                        if (vendorSelections && vendorSelections.length > 0) {
+                            const vendorAmounts = await Promise.all(
+                                vendorSelections.map(async (vs: any) => {
+                                    const { data: items } = await supabase
+                                        .from('order_items')
+                                        .select('*')
+                                        .eq('vendor_selection_id', vs.id);
+
+                                    return (items || []).reduce((sum: number, item: any) => {
+                                        const menuItem = menuItems.find(mi => mi.id === item.menu_item_id);
+                                        const itemPrice = menuItem?.priceEach ?? parseFloat(item.unit_value);
+                                        return sum + (itemPrice * item.quantity);
+                                    }, 0);
+                                })
+                            );
+                            calculatedAmount = vendorAmounts.reduce((sum: number, val: number) => sum + val, 0);
+                        }
+                    } else if (orderData.service_type === 'Boxes') {
+                        // Fetch box selection and use stored total_value if available
+                        const { data: boxSelection } = await supabase
+                            .from('order_box_selections')
+                            .select('*')
+                            .eq('order_id', d.order_id)
+                            .maybeSingle();
+                        
+                        if (boxSelection && boxSelection.total_value) {
+                            calculatedAmount = parseFloat(boxSelection.total_value);
+                        } else {
+                            calculatedAmount = parseFloat(orderData.total_value || 0);
+                        }
+                    } else {
+                        // For other service types, use the order's total_value
+                        calculatedAmount = parseFloat(orderData.total_value || 0);
+                    }
                 }
             }
 
@@ -685,7 +882,7 @@ export async function getAllBillingRecords() {
                 status: d.status,
                 remarks: d.remarks,
                 navigator: d.navigator,
-                amount: d.amount,
+                amount: calculatedAmount,
                 createdAt: d.created_at,
                 orderId: d.order_id || undefined,
                 deliveryDate: deliveryDate
@@ -817,27 +1014,36 @@ export async function syncCurrentOrderToUpcoming(clientId: string, client: Clien
                 }
             }
         }
-    } else if (orderConfig.serviceType === 'Boxes' && (orderConfig as any).vendorId) {
-        takeEffectDate = calculateTakeEffectDate((orderConfig as any).vendorId, vendors);
-        // For Box orders, scheduled_delivery_date is also the first delivery date
-        const vendor = vendors.find(v => v.id === (orderConfig as any).vendorId);
-        if (vendor && vendor.deliveryDays) {
-            const today = new Date();
-            today.setHours(0, 0, 0, 0);
-            const dayNameToNumber: { [key: string]: number } = {
-                'Sunday': 0, 'Monday': 1, 'Tuesday': 2, 'Wednesday': 3,
-                'Thursday': 4, 'Friday': 5, 'Saturday': 6
-            };
-            const deliveryDayNumbers = vendor.deliveryDays
-                .map((day: string) => dayNameToNumber[day])
-                .filter((num: number | undefined): num is number => num !== undefined);
-
-            for (let i = 0; i <= 14; i++) {
-                const checkDate = new Date(today);
-                checkDate.setDate(today.getDate() + i);
-                if (deliveryDayNumbers.includes(checkDate.getDay())) {
-                    scheduledDeliveryDate = checkDate;
-                    break;
+    } else if (orderConfig.serviceType === 'Boxes' && orderConfig.boxTypeId) {
+        // For Boxes orders, get vendorId from orderConfig or from boxType
+        let boxVendorId = (orderConfig as any).vendorId;
+        if (!boxVendorId && orderConfig.boxTypeId) {
+            const boxType = boxTypes.find(bt => bt.id === orderConfig.boxTypeId);
+            boxVendorId = boxType?.vendorId || null;
+        }
+        
+        if (boxVendorId) {
+            takeEffectDate = calculateTakeEffectDate(boxVendorId, vendors);
+            // For Box orders, scheduled_delivery_date is also the first delivery date
+            const vendor = vendors.find(v => v.id === boxVendorId);
+            if (vendor && vendor.deliveryDays) {
+                const today = new Date();
+                today.setHours(0, 0, 0, 0);
+                const dayNameToNumber: { [key: string]: number } = {
+                    'Sunday': 0, 'Monday': 1, 'Tuesday': 2, 'Wednesday': 3,
+                    'Thursday': 4, 'Friday': 5, 'Saturday': 6
+                };
+                const deliveryDayNumbers = vendor.deliveryDays
+                    .map((day: string) => dayNameToNumber[day])
+                    .filter((num: number | undefined): num is number => num !== undefined);
+                
+                for (let i = 0; i <= 14; i++) {
+                    const checkDate = new Date(today);
+                    checkDate.setDate(today.getDate() + i);
+                    if (deliveryDayNumbers.includes(checkDate.getDay())) {
+                        scheduledDeliveryDate = checkDate;
+                        break;
+                    }
                 }
             }
         }
@@ -865,10 +1071,35 @@ export async function syncCurrentOrderToUpcoming(clientId: string, client: Clien
                 }
             }
         }
-    } else if (orderConfig.serviceType === 'Boxes') {
+    } else if (orderConfig.serviceType === 'Boxes' && orderConfig.boxTypeId) {
         totalItems = orderConfig.boxQuantity || 0;
-        // Box value calculation can be added if needed
+        // Calculate total from box item prices if available
+        const items = (orderConfig as any).items || {};
+        const itemPrices = (orderConfig as any).itemPrices || {};
+        let boxItemsTotal = 0;
+        for (const [itemId, qty] of Object.entries(items)) {
+            const quantity = typeof qty === 'number' ? qty : 0;
+            const price = itemPrices[itemId];
+            if (price !== undefined && price !== null && quantity > 0) {
+                boxItemsTotal += price * quantity;
+            }
+        }
+        // Use box items total if available, otherwise fall back to box type price
+        if (boxItemsTotal > 0) {
+            totalValue = boxItemsTotal;
+        } else {
+            const boxType = boxTypes.find(bt => bt.id === orderConfig.boxTypeId);
+            if (boxType && boxType.priceEach) {
+                totalValue = boxType.priceEach * totalItems;
+            }
+        }
     }
+
+    // Get current user from session for updated_by
+    const session = await getSession();
+    const currentUserName = session?.name || 'Admin';
+    // Use session user name if updatedBy is not provided or is 'Admin'
+    const updatedBy = (orderConfig.updatedBy && orderConfig.updatedBy !== 'Admin') ? orderConfig.updatedBy : currentUserName;
 
     // Upsert upcoming order (update if exists, insert if not)
     const upcomingOrderData: any = {
@@ -877,7 +1108,7 @@ export async function syncCurrentOrderToUpcoming(clientId: string, client: Clien
         case_id: orderConfig.caseId,
         status: 'scheduled',
         last_updated: orderConfig.lastUpdated || new Date().toISOString(),
-        updated_by: orderConfig.updatedBy || 'Admin',
+        updated_by: updatedBy,
         scheduled_delivery_date: scheduledDeliveryDate.toISOString().split('T')[0],
         take_effect_date: takeEffectDate.toISOString().split('T')[0],
         delivery_distribution: orderConfig.deliveryDistribution || null,
@@ -963,48 +1194,52 @@ export async function syncCurrentOrderToUpcoming(clientId: string, client: Clien
             }
         }
     } else if (orderConfig.serviceType === 'Boxes' && orderConfig.boxTypeId) {
-        // Insert box selection
-        const { data: boxSelection, error: boxSelectionError } = await supabase.from('upcoming_order_box_selections').insert({
-            upcoming_order_id: upcomingOrderId,
-            box_type_id: orderConfig.boxTypeId,
-            vendor_id: (orderConfig as any).vendorId || null,
-            quantity: orderConfig.boxQuantity || 1
-        }).select().single();
-
-        // Save box items if they exist
-        if (boxSelection && orderConfig.items && Object.keys(orderConfig.items).length > 0) {
-            // For boxes, we need a vendor_selection to store items
-            // Create a vendor_selection for the box vendor
-            const boxVendorId = (orderConfig as any).vendorId;
-            if (boxVendorId) {
-                const { data: vendorSelection, error: vsError } = await supabase
-                    .from('upcoming_order_vendor_selections')
-                    .insert({
-                        upcoming_order_id: upcomingOrderId,
-                        vendor_id: boxVendorId
-                    })
-                    .select()
-                    .single();
-
-                if (vendorSelection && !vsError) {
-                    // Insert box items
-                    for (const [itemId, qty] of Object.entries(orderConfig.items)) {
-                        const item = menuItems.find(i => i.id === itemId);
-                        const quantity = qty as number;
-                        if (item && quantity > 0) {
-                            await supabase.from('upcoming_order_items').insert({
-                                upcoming_order_id: upcomingOrderId,
-                                vendor_selection_id: vendorSelection.id,
-                                menu_item_id: itemId,
-                                quantity: quantity,
-                                unit_value: item.value,
-                                total_value: item.value * quantity
-                            });
-                        }
-                    }
+        // Insert box selection with prices
+        const boxType = boxTypes.find(bt => bt.id === orderConfig.boxTypeId);
+        const quantity = orderConfig.boxQuantity || 1;
+        const unitValue = boxType?.priceEach || 0;
+        const totalValueForBox = unitValue * quantity;
+        
+        // Get vendorId from orderConfig or from boxType
+        const boxVendorId = (orderConfig as any).vendorId || boxType?.vendorId || null;
+        
+        // Get box items and prices from orderConfig
+        // Store items in format: { [itemId]: { quantity: number, price?: number } }
+        const boxItemsRaw = (orderConfig as any).items || {};
+        const boxItemPrices = (orderConfig as any).itemPrices || {};
+        const boxItems: any = {};
+        for (const [itemId, qty] of Object.entries(boxItemsRaw)) {
+            const price = boxItemPrices[itemId];
+            if (price !== undefined && price !== null) {
+                boxItems[itemId] = { quantity: qty, price: price };
+            } else {
+                // Backward compatibility: store as number if no price
+                boxItems[itemId] = qty;
+            }
+        }
+        
+        // Calculate total from item prices if available
+        let calculatedTotal = totalValueForBox;
+        if (Object.keys(boxItemPrices).length > 0) {
+            calculatedTotal = 0;
+            for (const [itemId, qty] of Object.entries(boxItemsRaw)) {
+                const quantity = typeof qty === 'number' ? qty : 0;
+                const price = boxItemPrices[itemId];
+                if (price !== undefined && price !== null && quantity > 0) {
+                    calculatedTotal += price * quantity;
                 }
             }
         }
+        
+        await supabase.from('upcoming_order_box_selections').insert({
+            upcoming_order_id: upcomingOrderId,
+            box_type_id: orderConfig.boxTypeId,
+            vendor_id: boxVendorId,
+            quantity: quantity,
+            unit_value: unitValue,
+            total_value: calculatedTotal,
+            items: boxItems
+        });
     }
 
     // Check if there's an upcoming_order with scheduled_delivery_date matching take_effect_date
@@ -1043,6 +1278,10 @@ export async function syncCurrentOrderToUpcoming(clientId: string, client: Clien
             }
         }
     }
+    
+    // Trigger local DB sync in background after mutation
+    const { triggerSyncInBackground } = await import('./local-db');
+    triggerSyncInBackground();
 }
 
 /**
@@ -1154,7 +1393,10 @@ export async function processUpcomingOrders() {
                         order_id: newOrder.id,
                         box_type_id: bs.box_type_id,
                         vendor_id: bs.vendor_id,
-                        quantity: bs.quantity
+                        quantity: bs.quantity,
+                        unit_value: bs.unit_value || 0,
+                        total_value: bs.total_value || 0,
+                        items: bs.items || {}
                     });
                 }
             }
@@ -1176,6 +1418,11 @@ export async function processUpcomingOrders() {
     }
 
     revalidatePath('/clients');
+    
+    // Trigger local DB sync in background after mutation
+    const { triggerSyncInBackground } = await import('./local-db');
+    triggerSyncInBackground();
+    
     return { processed: processedCount, errors };
 }
 
@@ -1183,11 +1430,13 @@ export async function processUpcomingOrders() {
  * Get active order from orders table for a client
  * This is used for "This Week's Order" display
  * Returns orders with scheduled_delivery_date in the current week, or orders created/updated this week
+ * Now uses local database for fast access
  */
 export async function getActiveOrderForClient(clientId: string) {
     if (!clientId) return null;
 
     try {
+<<<<<<< HEAD
         // Calculate current week range (Sunday to Saturday)
         const today = new Date();
         today.setHours(0, 0, 0, 0);
@@ -1375,6 +1624,11 @@ export async function getActiveOrderForClient(clientId: string) {
         }
 
         return orderConfig;
+=======
+        // Use local database for fast access
+        const { getActiveOrderForClientLocal } = await import('./local-db');
+        return await getActiveOrderForClientLocal(clientId);
+>>>>>>> origin/main
     } catch (err) {
         console.error('Error in getActiveOrderForClient:', err);
         return null;
@@ -1385,23 +1639,23 @@ export async function getActiveOrderForClient(clientId: string) {
  * Get upcoming order from upcoming_orders table for a client
  * This is used for "Current Order Request" form
  */
+/**
+ * Get upcoming order from upcoming_orders table for a client
+ * This is used for "Current Order Request" form
+ * Now uses local database for fast access
+ */
 export async function getUpcomingOrderForClient(clientId: string) {
     if (!clientId) return null;
 
-    // Fetch the upcoming order for this client
-    const { data, error } = await supabase
-        .from('upcoming_orders')
-        .select('*')
-        .eq('client_id', clientId)
-        .eq('status', 'scheduled')
-        .order('created_at', { ascending: false })
-        .limit(1)
-        .single();
-
-    if (error || !data) {
-        // No upcoming order found
+    try {
+        // Use local database for fast access
+        const { getUpcomingOrderForClientLocal } = await import('./local-db');
+        return await getUpcomingOrderForClientLocal(clientId);
+    } catch (err) {
+        console.error('Error in getUpcomingOrderForClient:', err);
         return null;
     }
+<<<<<<< HEAD
 
     // Fetch related data
     const menuItems = await getMenuItems();
@@ -1530,4 +1784,6 @@ export async function getClientFullDetails(clientId: string) {
         console.error('Error fetching full client details:', error);
         return null;
     }
+=======
+>>>>>>> origin/main
 }

@@ -2,11 +2,13 @@
 
 import { useState, useEffect } from 'react';
 import { MenuItem, Vendor } from '@/lib/types';
-import { getVendors, getMenuItems, addMenuItem, updateMenuItem, deleteMenuItem } from '@/lib/actions';
+import { addMenuItem, updateMenuItem, deleteMenuItem } from '@/lib/actions';
+import { useDataCache } from '@/lib/data-cache';
 import { Plus, Edit2, Trash2, X, Check, Utensils } from 'lucide-react';
 import styles from './MenuManagement.module.css';
 
 export function MenuManagement() {
+    const { getVendors, getMenuItems, invalidateReferenceData } = useDataCache();
     const [vendors, setVendors] = useState<Vendor[]>([]);
     const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
     const [selectedVendorId, setSelectedVendorId] = useState<string>('');
@@ -16,7 +18,9 @@ export function MenuManagement() {
     const [formData, setFormData] = useState<Partial<MenuItem>>({
         name: '',
         value: 0,
-        isActive: true
+        priceEach: 0,
+        isActive: true,
+        minimumOrder: 0
     });
 
     useEffect(() => {
@@ -40,6 +44,7 @@ export function MenuManagement() {
         setFormData({
             name: '',
             value: 0,
+            priceEach: 0,
             isActive: true,
             quotaValue: 1,
             categoryId: ''
@@ -67,6 +72,7 @@ export function MenuManagement() {
             } as Omit<MenuItem, 'id'>);
         }
 
+        invalidateReferenceData(); // Invalidate cache after update/add
         // Refresh items
         const mData = await getMenuItems();
         setMenuItems(mData);
@@ -76,6 +82,7 @@ export function MenuManagement() {
     async function handleDelete(id: string) {
         if (confirm('Delete this menu item?')) {
             await deleteMenuItem(id);
+            invalidateReferenceData(); // Invalidate cache after delete
             const mData = await getMenuItems();
             setMenuItems(mData);
         }
@@ -141,6 +148,28 @@ export function MenuManagement() {
                                     onChange={e => setFormData({ ...formData, value: Number(e.target.value) })}
                                 />
                             </div>
+                            <div className={styles.formGroup} style={{ flex: 1 }}>
+                                <label className="label">Price Each</label>
+                                <input
+                                    type="number"
+                                    className="input"
+                                    value={formData.priceEach ?? ''}
+                                    onChange={e => setFormData({ ...formData, priceEach: Number(e.target.value) || undefined })}
+                                />
+                            </div>
+                            <div className={styles.formGroup} style={{ flex: 1 }}>
+                                <label className="label">Minimum Order Quantity</label>
+                                <input
+                                    type="number"
+                                    className="input"
+                                    min="0"
+                                    value={formData.minimumOrder ?? 0}
+                                    onChange={e => setFormData({ ...formData, minimumOrder: Number(e.target.value) })}
+                                />
+                                <small style={{ color: 'var(--text-tertiary)', fontSize: '0.75rem', marginTop: '4px', display: 'block' }}>
+                                    Minimum quantity required when ordering this product (0 = no minimum)
+                                </small>
+                            </div>
                         </div>
 
                         <div className={styles.formGroup}>
@@ -169,6 +198,8 @@ export function MenuManagement() {
                     <div className={styles.listHeader}>
                         <span style={{ flex: 3 }}>Name</span>
                         <span style={{ flex: 1 }}>Value</span>
+                        <span style={{ flex: 1 }}>Price Each</span>
+                        <span style={{ flex: 1 }}>Min Order</span>
                         <span style={{ flex: 1 }}>Status</span>
                         <span style={{ width: '120px', textAlign: 'right' }}>Actions</span>
                     </div>
@@ -176,6 +207,10 @@ export function MenuManagement() {
                         <div key={item.id} className={styles.item}>
                             <span style={{ flex: 3, fontWeight: 500, fontSize: '1.1rem' }}>{item.name}</span>
                             <span style={{ flex: 1, fontSize: '1rem' }}>{item.value}</span>
+                            <span style={{ flex: 1, fontSize: '1rem' }}>{item.priceEach ?? '-'}</span>
+                            <span style={{ flex: 1, fontSize: '0.9rem', color: item.minimumOrder && item.minimumOrder > 0 ? 'var(--color-primary)' : 'var(--text-tertiary)' }}>
+                                {item.minimumOrder && item.minimumOrder > 0 ? item.minimumOrder : '-'}
+                            </span>
                             <span style={{ flex: 1 }}>
                                 {item.isActive ? <span className="badge" style={{ color: 'var(--color-success)', background: 'rgba(34, 197, 94, 0.1)', fontSize: '0.9rem', padding: '4px 12px' }}>Active</span> : <span className="badge" style={{ fontSize: '0.9rem', padding: '4px 12px' }}>Inactive</span>}
                             </span>

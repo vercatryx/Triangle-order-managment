@@ -2,11 +2,13 @@
 
 import { useState, useEffect } from 'react';
 import { Navigator } from '@/lib/types';
-import { getNavigators, addNavigator, updateNavigator, deleteNavigator } from '@/lib/actions';
+import { addNavigator, updateNavigator, deleteNavigator } from '@/lib/actions';
+import { useDataCache } from '@/lib/data-cache';
 import { Plus, Edit2, Trash2, X, Check, Users } from 'lucide-react';
 import styles from './NavigatorManagement.module.css';
 
 export function NavigatorManagement() {
+    const { getNavigators, invalidateReferenceData } = useDataCache();
     const [navigators, setNavigators] = useState<Navigator[]>([]);
     const [isCreating, setIsCreating] = useState(false);
     const [isMultiCreating, setIsMultiCreating] = useState(false);
@@ -52,6 +54,7 @@ export function NavigatorManagement() {
             await addNavigator(formData as Omit<Navigator, 'id'>);
         }
 
+        invalidateReferenceData(); // Invalidate cache after update/add
         await loadData();
         resetForm();
     }
@@ -65,6 +68,7 @@ export function NavigatorManagement() {
             isActive: true
         })));
 
+        invalidateReferenceData(); // Invalidate cache after multi-create
         await loadData();
         resetForm();
     }
@@ -72,6 +76,7 @@ export function NavigatorManagement() {
     async function handleDelete(id: string) {
         if (confirm('Delete this navigator?')) {
             await deleteNavigator(id);
+            invalidateReferenceData(); // Invalidate cache after delete
             await loadData();
         }
     }

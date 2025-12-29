@@ -2,11 +2,13 @@
 
 import { useState, useEffect } from 'react';
 import { ClientStatus } from '@/lib/types';
-import { getStatuses, addStatus, deleteStatus, updateStatus } from '@/lib/actions';
+import { addStatus, deleteStatus, updateStatus } from '@/lib/actions';
+import { useDataCache } from '@/lib/data-cache';
 import { Trash2, Plus, Edit2, X, Check, Truck } from 'lucide-react';
 import styles from './StatusManagement.module.css';
 
 export function StatusManagement() {
+    const { getStatuses, invalidateReferenceData } = useDataCache();
     const [statuses, setStatuses] = useState<ClientStatus[]>([]);
     const [newStatusName, setNewStatusName] = useState('');
     const [editingId, setEditingId] = useState<string | null>(null);
@@ -26,6 +28,7 @@ export function StatusManagement() {
     async function handleAdd() {
         if (!newStatusName.trim()) return;
         const status = await addStatus(newStatusName);
+        invalidateReferenceData(); // Invalidate cache after add
         setStatuses([...statuses, status]);
         setNewStatusName('');
     }
@@ -33,6 +36,7 @@ export function StatusManagement() {
     async function handleDelete(id: string) {
         if (confirm('Are you sure you want to delete this status?')) {
             await deleteStatus(id);
+            invalidateReferenceData(); // Invalidate cache after delete
             setStatuses(statuses.filter(s => s.id !== id));
         }
     }
@@ -51,6 +55,7 @@ export function StatusManagement() {
         if (!editingName.trim()) return;
         const updated = await updateStatus(id, { name: editingName });
         if (updated) {
+            invalidateReferenceData(); // Invalidate cache after update
             setStatuses(statuses.map(s => s.id === id ? updated : s));
             setEditingId(null);
         }
@@ -59,6 +64,7 @@ export function StatusManagement() {
     async function toggleDeliveriesAllowed(status: ClientStatus) {
         const updated = await updateStatus(status.id, { deliveriesAllowed: !status.deliveriesAllowed });
         if (updated) {
+            invalidateReferenceData(); // Invalidate cache after update
             setStatuses(statuses.map(s => s.id === status.id ? updated : s));
         }
     }

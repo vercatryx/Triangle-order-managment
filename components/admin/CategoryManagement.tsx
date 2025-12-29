@@ -2,11 +2,13 @@
 
 import { useState, useEffect } from 'react';
 import { ItemCategory } from '@/lib/types';
-import { getCategories, addCategory, deleteCategory } from '@/lib/actions';
+import { addCategory, deleteCategory } from '@/lib/actions';
+import { useDataCache } from '@/lib/data-cache';
 import { Plus, Trash2, Tag } from 'lucide-react';
 import styles from './BoxTypeManagement.module.css'; // Reusing styles for now as they are similar
 
 export function CategoryManagement() {
+    const { getCategories, invalidateReferenceData } = useDataCache();
     const [categories, setCategories] = useState<ItemCategory[]>([]);
     const [newItemName, setNewItemName] = useState('');
     const [isCreating, setIsCreating] = useState(false);
@@ -23,6 +25,7 @@ export function CategoryManagement() {
     async function handleAdd() {
         if (!newItemName.trim()) return;
         await addCategory(newItemName);
+        invalidateReferenceData(); // Invalidate cache after add
         setNewItemName('');
         setIsCreating(false);
         loadData();
@@ -31,6 +34,7 @@ export function CategoryManagement() {
     async function handleDelete(id: string) {
         if (confirm('Delete this category?')) {
             await deleteCategory(id);
+            invalidateReferenceData(); // Invalidate cache after delete
             loadData();
         }
     }

@@ -2,7 +2,8 @@
 
 import { useState, useEffect } from 'react';
 import { Vendor, ServiceType } from '@/lib/types';
-import { getVendors, addVendor, updateVendor, deleteVendor } from '@/lib/actions';
+import { addVendor, updateVendor, deleteVendor } from '@/lib/actions';
+import { useDataCache } from '@/lib/data-cache';
 import { Plus, Edit2, Trash2, X, Check, Truck } from 'lucide-react';
 import styles from './VendorManagement.module.css';
 
@@ -10,6 +11,7 @@ const DAYS_OF_WEEK = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'S
 const SERVICE_TYPES: ServiceType[] = ['Food', 'Boxes']; // Only managing relevant vendors here
 
 export function VendorManagement() {
+    const { getVendors, invalidateReferenceData } = useDataCache();
     const [vendors, setVendors] = useState<Vendor[]>([]);
     const [isCreating, setIsCreating] = useState(false);
     const [isMultiCreating, setIsMultiCreating] = useState(false); // New state
@@ -20,7 +22,7 @@ export function VendorManagement() {
         deliveryDays: [],
         allowsMultipleDeliveries: false,
         serviceType: 'Food',
-        minimumMeals: 0
+        minimumOrder: 0
     });
     const [multiCreateInput, setMultiCreateInput] = useState(''); // New state
 
@@ -40,7 +42,7 @@ export function VendorManagement() {
             deliveryDays: [],
             allowsMultipleDeliveries: false,
             serviceType: 'Food',
-            minimumMeals: 0
+            minimumOrder: 0
         });
         setIsCreating(false);
         setIsMultiCreating(false);
@@ -67,6 +69,7 @@ export function VendorManagement() {
         } else {
             await addVendor(formData as Omit<Vendor, 'id'>);
         }
+        invalidateReferenceData(); // Invalidate cache after update/add
         await loadVendors();
         resetForm();
     }
@@ -84,6 +87,7 @@ export function VendorManagement() {
             allowsMultipleDeliveries: false
         })));
 
+        invalidateReferenceData(); // Invalidate cache after multi-create
         await loadVendors();
         resetForm();
     }
@@ -91,6 +95,7 @@ export function VendorManagement() {
     async function handleDelete(id: string) {
         if (confirm('Delete this vendor?')) {
             await deleteVendor(id);
+            invalidateReferenceData(); // Invalidate cache after delete
             await loadVendors();
         }
     }
@@ -215,22 +220,20 @@ export function VendorManagement() {
                         </label>
                     </div>
 
-                    {formData.serviceType === 'Food' && (
-                        <div className={styles.formGroup}>
-                            <label className="label">Minimum Meals Required</label>
-                            <input
-                                type="number"
-                                className="input"
-                                min="0"
-                                value={formData.minimumMeals ?? 0}
-                                onChange={e => setFormData({ ...formData, minimumMeals: parseInt(e.target.value) || 0 })}
-                                placeholder="0"
-                            />
-                            <p className={styles.hint} style={{ marginTop: '0.5rem', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                                Minimum number of meals required when ordering from this vendor. Set to 0 for no minimum.
-                            </p>
-                        </div>
-                    )}
+                    <div className={styles.formGroup}>
+                        <label className="label">Minimum Order Quantity</label>
+                        <input
+                            type="number"
+                            className="input"
+                            min="0"
+                            value={formData.minimumOrder ?? 0}
+                            onChange={e => setFormData({ ...formData, minimumOrder: Number(e.target.value) || 0 })}
+                            placeholder="0"
+                        />
+                        <p className={styles.hint} style={{ marginTop: '0.25rem' }}>
+                            Minimum total quantity of items required when ordering from this vendor (0 = no minimum)
+                        </p>
+                    </div>
 
                     <div className={styles.formActions}>
                         <button className="btn btn-primary" onClick={handleSubmit}>
@@ -252,7 +255,7 @@ export function VendorManagement() {
                             <th>Status</th>
                             <th>Days</th>
                             <th>Frequency</th>
-                            <th>Min Meals</th>
+                            <th>Min Order</th>
                             <th style={{ textAlign: 'right' }}>Actions</th>
                         </tr>
                     </thead>
@@ -264,7 +267,7 @@ export function VendorManagement() {
                                 <td>{vendor.isActive ? <span style={{ color: 'var(--color-success)' }}>Active</span> : <span style={{ color: 'var(--text-tertiary)' }}>Inactive</span>}</td>
                                 <td>{vendor.deliveryDays.join(', ')}</td>
                                 <td>{vendor.allowsMultipleDeliveries ? 'Multiple' : 'Once'}</td>
-                                <td>{vendor.serviceType === 'Food' ? (vendor.minimumMeals || 0) : '-'}</td>
+                                <td>{vendor.minimumOrder && vendor.minimumOrder > 0 ? vendor.minimumOrder : '-'}</td>
                                 <td style={{ textAlign: 'right' }}>
                                     <div className={styles.actions}>
                                         <button className={styles.iconBtn} onClick={() => handleEditInit(vendor)}>
