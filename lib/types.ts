@@ -73,6 +73,8 @@ export interface ClientStatus {
 export interface Vendor {
   id: string;
   name: string;
+  email?: string | null;
+  password?: string | null; // Hashed password, optional and typically not returned in queries
   isActive: boolean;
   deliveryDays: string[]; // e.g. ["Monday", "Thursday"]
   allowsMultipleDeliveries: boolean;
@@ -143,6 +145,46 @@ export interface BillingRecord {
   createdAt: string;
   orderId?: string;
   deliveryDate?: string; // Delivery date from the associated order (actual_delivery_date or scheduled_delivery_date)
+}
+
+export interface CompletedOrderWithDeliveryProof {
+  id: string;
+  clientId: string;
+  serviceType: ServiceType;
+  caseId?: string;
+  status: string;
+  scheduledDeliveryDate?: string;
+  actualDeliveryDate?: string;
+  deliveryProofUrl: string;
+  totalValue?: number;
+  totalItems?: number;
+  notes?: string;
+  createdAt: string;
+  lastUpdated: string;
+  updatedBy: string;
+  orderDetails?: {
+    serviceType: ServiceType;
+    vendorSelections?: {
+      vendorId: string;
+      vendorName: string;
+      items: {
+        id: string;
+        menuItemId: string;
+        menuItemName: string;
+        quantity: number;
+        unitValue: number;
+        totalValue: number;
+      }[];
+    }[];
+    vendorId?: string;
+    vendorName?: string;
+    boxTypeId?: string;
+    boxTypeName?: string;
+    boxQuantity?: number;
+    totalItems?: number;
+    totalValue: number;
+    notes?: string;
+  };
 }
 
 export interface DatabaseSchema {

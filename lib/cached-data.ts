@@ -20,9 +20,10 @@ import {
     getClientHistory as serverGetClientHistory,
     getBillingHistory as serverGetBillingHistory,
     getUpcomingOrderForClient as serverGetUpcomingOrderForClient,
+    getCompletedOrdersWithDeliveryProof as serverGetCompletedOrdersWithDeliveryProof,
 } from './actions';
 
-import { ClientProfile, ClientStatus, Navigator, Vendor, MenuItem, BoxType, AppSettings, ItemCategory, DeliveryRecord } from './types';
+import { ClientProfile, ClientStatus, Navigator, Vendor, MenuItem, BoxType, AppSettings, ItemCategory, DeliveryRecord, CompletedOrderWithDeliveryProof } from './types';
 
 // Cache entry with timestamp
 interface CacheEntry<T> {
@@ -48,6 +49,7 @@ const upcomingOrderCache: Map<string, CacheEntry<any>> = new Map();
 const orderHistoryCache: Map<string, CacheEntry<any[]>> = new Map();
 const deliveryHistoryCache: Map<string, CacheEntry<DeliveryRecord[]>> = new Map();
 const billingHistoryCache: Map<string, CacheEntry<any[]>> = new Map();
+const completedOrdersWithDeliveryProofCache: Map<string, CacheEntry<CompletedOrderWithDeliveryProof[]>> = new Map();
 
 // Helper to check if cache entry is stale
 function isStale<T>(entry: CacheEntry<T> | undefined, duration: number): boolean {
@@ -239,6 +241,16 @@ export async function getBillingHistory(clientId: string): Promise<any[]> {
     return data;
 }
 
+export async function getCompletedOrdersWithDeliveryProof(clientId: string): Promise<CompletedOrderWithDeliveryProof[]> {
+    const cached = completedOrdersWithDeliveryProofCache.get(clientId);
+    if (!isStale(cached, CACHE_DURATION.ORDER_DATA)) {
+        return cached!.data;
+    }
+    const data = await serverGetCompletedOrdersWithDeliveryProof(clientId);
+    completedOrdersWithDeliveryProofCache.set(clientId, { data, timestamp: Date.now() });
+    return data;
+}
+
 // Invalidate order-related caches for a specific client
 export function invalidateOrderData(clientId: string) {
     activeOrderCache.delete(clientId);
@@ -246,5 +258,6 @@ export function invalidateOrderData(clientId: string) {
     orderHistoryCache.delete(clientId);
     deliveryHistoryCache.delete(clientId);
     billingHistoryCache.delete(clientId);
+    completedOrdersWithDeliveryProofCache.delete(clientId);
 }
 
