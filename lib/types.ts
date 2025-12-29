@@ -73,6 +73,8 @@ export interface ClientStatus {
 export interface Vendor {
   id: string;
   name: string;
+  email?: string | null;
+  password?: string | null; // Hashed password, optional and typically not returned in queries
   isActive: boolean;
   deliveryDays: string[]; // e.g. ["Monday", "Thursday"]
   allowsMultipleDeliveries: boolean;

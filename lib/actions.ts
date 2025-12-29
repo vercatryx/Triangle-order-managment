@@ -5,6 +5,7 @@ import { supabase } from './supabase';
 import { ClientStatus, Vendor, MenuItem, BoxType, AppSettings, Navigator, ClientProfile, DeliveryRecord, ItemCategory, BoxQuota } from './types';
 import { randomUUID } from 'crypto';
 import { getSession } from './session';
+import { hashPassword } from './password';
 
 // --- HELPERS ---
 function handleError(error: any) {
@@ -79,6 +80,7 @@ export async function getVendors() {
     return data.map((v: any) => ({
         id: v.id,
         name: v.name,
+        email: v.email || null,
         serviceType: v.service_type,
         deliveryDays: v.delivery_days || [],
         allowsMultipleDeliveries: v.delivery_frequency === 'Multiple',
@@ -88,7 +90,7 @@ export async function getVendors() {
 }
 
 export async function addVendor(data: Omit<Vendor, 'id'>) {
-    const payload = {
+    const payload: any = {
         name: data.name,
         service_type: data.serviceType,
         delivery_days: data.deliveryDays,
@@ -96,6 +98,16 @@ export async function addVendor(data: Omit<Vendor, 'id'>) {
         is_active: data.isActive,
         minimum_order: data.minimumOrder ?? 0
     };
+
+    // Add email if provided
+    if (data.email !== undefined) {
+        payload.email = data.email || null;
+    }
+
+    // Hash password if provided
+    if (data.password && data.password.trim() !== '') {
+        payload.password = await hashPassword(data.password);
+    }
 
     const { data: res, error } = await supabase.from('vendors').insert([payload]).select().single();
     handleError(error);
@@ -113,6 +125,16 @@ export async function updateVendor(id: string, data: Partial<Vendor>) {
     }
     if (data.isActive !== undefined) payload.is_active = data.isActive;
     if (data.minimumOrder !== undefined) payload.minimum_order = data.minimumOrder;
+    
+    // Handle email update
+    if (data.email !== undefined) {
+        payload.email = data.email || null;
+    }
+    
+    // Handle password update (only if provided and not empty)
+    if (data.password !== undefined && data.password !== null && data.password.trim() !== '') {
+        payload.password = await hashPassword(data.password);
+    }
 
     const { error } = await supabase.from('vendors').update(payload).eq('id', id);
     handleError(error);

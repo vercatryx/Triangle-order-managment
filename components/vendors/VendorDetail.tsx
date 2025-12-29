@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { Vendor, ClientProfile, MenuItem, BoxType } from '@/lib/types';
 import { getVendors, getClients, getMenuItems, getBoxTypes } from '@/lib/cached-data';
 import { getOrdersByVendor, isOrderUnderVendor, updateOrderDeliveryProof, orderHasDeliveryProof } from '@/lib/actions';
-import { ArrowLeft, Truck, Calendar, Package, CheckCircle, XCircle, Clock, User, DollarSign, ShoppingCart, Download, ChevronDown, ChevronUp, FileText, Upload } from 'lucide-react';
+import { ArrowLeft, Truck, Calendar, Package, CheckCircle, XCircle, Clock, User, DollarSign, ShoppingCart, Download, ChevronDown, ChevronUp, FileText, Upload, X, AlertCircle } from 'lucide-react';
 import styles from './VendorDetail.module.css';
 
 interface Props {
@@ -21,6 +21,29 @@ export function VendorDetail({ vendorId }: Props) {
     const [boxTypes, setBoxTypes] = useState<BoxType[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const [expandedOrders, setExpandedOrders] = useState<Set<string>>(new Set());
+    
+    // CSV Import Progress State
+    const [importProgress, setImportProgress] = useState<{
+        isImporting: boolean;
+        currentRow: number;
+        totalRows: number;
+        successCount: number;
+        errorCount: number;
+        skippedCount: number;
+        currentStatus: string;
+        errors: string[];
+        skipped: string[];
+    }>({
+        isImporting: false,
+        currentRow: 0,
+        totalRows: 0,
+        successCount: 0,
+        errorCount: 0,
+        skippedCount: 0,
+        currentStatus: '',
+        errors: [],
+        skipped: []
+    });
 
     useEffect(() => {
         loadData();
@@ -336,6 +359,21 @@ export function VendorDetail({ vendorId }: Props) {
                 return;
             }
 
+            const totalRows = lines.length - 1; // Exclude header row
+
+            // Initialize progress state
+            setImportProgress({
+                isImporting: true,
+                currentRow: 0,
+                totalRows: totalRows,
+                successCount: 0,
+                errorCount: 0,
+                skippedCount: 0,
+                currentStatus: 'Starting import...',
+                errors: [],
+                skipped: []
+            });
+
             // Process each data row
             let successCount = 0;
             let errorCount = 0;
@@ -348,65 +386,103 @@ export function VendorDetail({ vendorId }: Props) {
                 const orderId = row[orderIdIndex]?.trim();
                 const deliveryProofUrl = row[deliveryProofUrlIndex]?.trim();
 
+                // Update progress - current row
+                setImportProgress(prev => ({
+                    ...prev,
+                    currentRow: i,
+                    currentStatus: `Processing row ${i} of ${totalRows}...`
+                }));
+
                 if (!orderId) {
                     errorCount++;
-                    errors.push(`Row ${i + 1}: Missing Order ID`);
+                    const errorMsg = `Row ${i + 1}: Missing Order ID`;
+                    errors.push(errorMsg);
+                    setImportProgress(prev => ({
+                        ...prev,
+                        errorCount,
+                        errors: [...prev.errors, errorMsg]
+                    }));
                     continue;
                 }
 
                 if (!deliveryProofUrl) {
                     errorCount++;
-                    errors.push(`Row ${i + 1} (Order ${orderId}): Missing delivery_proof_url`);
+                    const errorMsg = `Row ${i + 1} (Order ${orderId}): Missing delivery_proof_url`;
+                    errors.push(errorMsg);
+                    setImportProgress(prev => ({
+                        ...prev,
+                        errorCount,
+                        errors: [...prev.errors, errorMsg]
+                    }));
                     continue;
                 }
 
                 // Check if order belongs to this vendor
+                setImportProgress(prev => ({
+                    ...prev,
+                    currentStatus: `Row ${i}: Verifying order ${orderId}...`
+                }));
                 const belongsToVendor = await isOrderUnderVendor(orderId, vendorId);
                 if (!belongsToVendor) {
                     errorCount++;
-                    errors.push(`Row ${i + 1} (Order ${orderId}): Order does not belong to this vendor`);
+                    const errorMsg = `Row ${i + 1} (Order ${orderId}): Order does not belong to this vendor`;
+                    errors.push(errorMsg);
+                    setImportProgress(prev => ({
+                        ...prev,
+                        errorCount,
+                        errors: [...prev.errors, errorMsg]
+                    }));
                     continue;
                 }
 
                 // Check if order already has a delivery proof URL (skip if it does)
+                setImportProgress(prev => ({
+                    ...prev,
+                    currentStatus: `Row ${i}: Checking order ${orderId}...`
+                }));
                 const alreadyHasProof = await orderHasDeliveryProof(orderId);
                 if (alreadyHasProof) {
                     skippedCount++;
-                    skipped.push(`Row ${i + 1} (Order ${orderId}): Already has delivery proof URL, skipping`);
+                    const skippedMsg = `Row ${i + 1} (Order ${orderId}): Already has delivery proof URL, skipping`;
+                    skipped.push(skippedMsg);
+                    setImportProgress(prev => ({
+                        ...prev,
+                        skippedCount,
+                        skipped: [...prev.skipped, skippedMsg]
+                    }));
                     continue;
                 }
 
                 // Update order with delivery proof URL and set status to completed (delivered)
+                setImportProgress(prev => ({
+                    ...prev,
+                    currentStatus: `Row ${i}: Updating order ${orderId}...`
+                }));
                 const result = await updateOrderDeliveryProof(orderId, deliveryProofUrl);
                 if (result.success) {
                     successCount++;
+                    setImportProgress(prev => ({
+                        ...prev,
+                        successCount
+                    }));
                 } else {
                     errorCount++;
-                    errors.push(`Row ${i + 1} (Order ${orderId}): ${result.error || 'Failed to update order'}`);
+                    const errorMsg = `Row ${i + 1} (Order ${orderId}): ${result.error || 'Failed to update order'}`;
+                    errors.push(errorMsg);
+                    setImportProgress(prev => ({
+                        ...prev,
+                        errorCount,
+                        errors: [...prev.errors, errorMsg]
+                    }));
                 }
             }
 
-            // Show results
-            let message = `Import completed!\n\nSuccessfully processed: ${successCount} order(s)`;
-            if (skippedCount > 0) {
-                message += `\nSkipped (already processed): ${skippedCount} order(s)`;
-            }
-            if (errorCount > 0) {
-                message += `\nErrors: ${errorCount} order(s)`;
-                if (errors.length > 0) {
-                    message += `\n\nErrors:\n${errors.slice(0, 10).join('\n')}`;
-                    if (errors.length > 10) {
-                        message += `\n... and ${errors.length - 10} more error(s)`;
-                    }
-                }
-            }
-            if (skippedCount > 0 && skipped.length > 0) {
-                message += `\n\nSkipped:\n${skipped.slice(0, 10).join('\n')}`;
-                if (skipped.length > 10) {
-                    message += `\n... and ${skipped.length - 10} more skipped order(s)`;
-                }
-            }
-            alert(message);
+            // Mark import as complete
+            setImportProgress(prev => ({
+                ...prev,
+                isImporting: false,
+                currentStatus: 'Import completed!'
+            }));
 
             // Reload orders to reflect changes
             if (successCount > 0) {
@@ -414,8 +490,26 @@ export function VendorDetail({ vendorId }: Props) {
             }
         } catch (error: any) {
             console.error('Error importing CSV:', error);
-            alert(`Error importing CSV: ${error.message || 'Unknown error'}`);
+            setImportProgress(prev => ({
+                ...prev,
+                isImporting: false,
+                currentStatus: `Error: ${error.message || 'Unknown error'}`
+            }));
         }
+    }
+
+    function closeImportProgress() {
+        setImportProgress({
+            isImporting: false,
+            currentRow: 0,
+            totalRows: 0,
+            successCount: 0,
+            errorCount: 0,
+            skippedCount: 0,
+            currentStatus: '',
+            errors: [],
+            skipped: []
+        });
     }
 
     if (isLoading) {
@@ -675,6 +769,124 @@ export function VendorDetail({ vendorId }: Props) {
                     </div>
                 )}
             </div>
+
+            {/* CSV Import Progress Modal */}
+            {importProgress.isImporting || importProgress.totalRows > 0 ? (
+                <div className={styles.importModalOverlay}>
+                    <div className={styles.importModal}>
+                        <div className={styles.importModalHeader}>
+                            <h3>CSV Import Progress</h3>
+                            {!importProgress.isImporting && (
+                                <button 
+                                    className={styles.closeButton}
+                                    onClick={closeImportProgress}
+                                    aria-label="Close"
+                                >
+                                    <X size={20} />
+                                </button>
+                            )}
+                        </div>
+                        
+                        <div className={styles.importModalContent}>
+                            {/* Progress Bar */}
+                            <div className={styles.progressSection}>
+                                <div className={styles.progressBarContainer}>
+                                    <div 
+                                        className={styles.progressBar}
+                                        style={{ 
+                                            width: `${importProgress.totalRows > 0 
+                                                ? (importProgress.currentRow / importProgress.totalRows) * 100 
+                                                : 0}%` 
+                                        }}
+                                    />
+                                </div>
+                                <div className={styles.progressText}>
+                                    {importProgress.currentRow} of {importProgress.totalRows} rows processed
+                                    {importProgress.totalRows > 0 && (
+                                        <span className={styles.progressPercentage}>
+                                            ({Math.round((importProgress.currentRow / importProgress.totalRows) * 100)}%)
+                                        </span>
+                                    )}
+                                </div>
+                            </div>
+
+                            {/* Status Message */}
+                            <div className={styles.statusMessage}>
+                                {importProgress.isImporting ? (
+                                    <div className={styles.statusLoading}>
+                                        <div className="spinner" style={{ width: '16px', height: '16px', marginRight: '8px' }}></div>
+                                        {importProgress.currentStatus}
+                                    </div>
+                                ) : (
+                                    <div className={styles.statusComplete}>
+                                        <CheckCircle size={16} style={{ marginRight: '8px', color: 'var(--color-success)' }} />
+                                        {importProgress.currentStatus}
+                                    </div>
+                                )}
+                            </div>
+
+                            {/* Statistics */}
+                            <div className={styles.importStats}>
+                                <div className={styles.statItem}>
+                                    <CheckCircle size={16} style={{ color: 'var(--color-success)', marginRight: '6px' }} />
+                                    <span className={styles.statLabel}>Success:</span>
+                                    <span className={styles.statValue}>{importProgress.successCount}</span>
+                                </div>
+                                <div className={styles.statItem}>
+                                    <AlertCircle size={16} style={{ color: 'var(--color-warning)', marginRight: '6px' }} />
+                                    <span className={styles.statLabel}>Skipped:</span>
+                                    <span className={styles.statValue}>{importProgress.skippedCount}</span>
+                                </div>
+                                <div className={styles.statItem}>
+                                    <XCircle size={16} style={{ color: 'var(--color-danger)', marginRight: '6px' }} />
+                                    <span className={styles.statLabel}>Errors:</span>
+                                    <span className={styles.statValue}>{importProgress.errorCount}</span>
+                                </div>
+                            </div>
+
+                            {/* Errors List */}
+                            {importProgress.errors.length > 0 && (
+                                <div className={styles.errorsSection}>
+                                    <h4 className={styles.errorsTitle}>
+                                        <AlertCircle size={16} style={{ marginRight: '8px' }} />
+                                        Errors ({importProgress.errors.length})
+                                    </h4>
+                                    <div className={styles.errorsList}>
+                                        {importProgress.errors.slice(0, 10).map((error, idx) => (
+                                            <div key={idx} className={styles.errorItem}>{error}</div>
+                                        ))}
+                                        {importProgress.errors.length > 10 && (
+                                            <div className={styles.errorItem}>
+                                                ... and {importProgress.errors.length - 10} more error(s)
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* Skipped List */}
+                            {importProgress.skipped.length > 0 && (
+                                <div className={styles.skippedSection}>
+                                    <h4 className={styles.skippedTitle}>
+                                        <Clock size={16} style={{ marginRight: '8px' }} />
+                                        Skipped ({importProgress.skipped.length})
+                                    </h4>
+                                    <div className={styles.skippedList}>
+                                        {importProgress.skipped.slice(0, 10).map((skip, idx) => (
+                                            <div key={idx} className={styles.skippedItem}>{skip}</div>
+                                        ))}
+                                        {importProgress.skipped.length > 10 && (
+                                            <div className={styles.skippedItem}>
+                                                ... and {importProgress.skipped.length - 10} more skipped order(s)
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            ) : null}
         </div>
     );
 }

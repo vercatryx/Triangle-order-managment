@@ -18,6 +18,8 @@ export function VendorManagement() {
     const [editingId, setEditingId] = useState<string | null>(null);
     const [formData, setFormData] = useState<Partial<Vendor>>({
         name: '',
+        email: '',
+        password: '',
         isActive: true,
         deliveryDays: [],
         allowsMultipleDeliveries: false,
@@ -38,6 +40,8 @@ export function VendorManagement() {
     function resetForm() {
         setFormData({
             name: '',
+            email: '',
+            password: '',
             isActive: true,
             deliveryDays: [],
             allowsMultipleDeliveries: false,
@@ -51,7 +55,10 @@ export function VendorManagement() {
     }
 
     function handleEditInit(vendor: Vendor) {
-        setFormData({ ...vendor });
+        setFormData({ 
+            ...vendor,
+            password: '' // Don't populate password field for security
+        });
         setEditingId(vendor.id);
         setIsCreating(false);
     }
@@ -165,6 +172,31 @@ export function VendorManagement() {
                             value={formData.name}
                             onChange={e => setFormData({ ...formData, name: e.target.value })}
                         />
+                    </div>
+                    <div className={styles.formGroup}>
+                        <label className="label">Email</label>
+                        <input
+                            type="email"
+                            className="input"
+                            value={formData.email || ''}
+                            onChange={e => setFormData({ ...formData, email: e.target.value })}
+                            placeholder="vendor@example.com"
+                        />
+                    </div>
+                    <div className={styles.formGroup}>
+                        <label className="label">Password</label>
+                        <input
+                            type="password"
+                            className="input"
+                            value={formData.password || ''}
+                            onChange={e => setFormData({ ...formData, password: e.target.value })}
+                            placeholder={editingId ? "Leave blank to keep current password" : "Enter password"}
+                        />
+                        {editingId && (
+                            <p className={styles.hint} style={{ marginTop: '0.25rem' }}>
+                                Leave blank to keep the current password unchanged
+                            </p>
+                        )}
                     </div>
                     {/* ... (Existing form fields for Type, Status, Days, Frequency) ... */}
                     <div className={styles.row}>
