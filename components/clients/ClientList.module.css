@@ -201,7 +201,7 @@
     z-index: 101;
     background-color: var(--bg-app);
     width: 95%;
-    max-width: 1400px;
+    max-width: 1000px;
     height: 90vh;
     border-radius: var(--radius-lg);
     box-shadow: var(--shadow-xl);
@@ -210,8 +210,10 @@
     display: flex;
     flex-direction: column;
 }
+
 .clientRowNotAllowed {
-    background-color: rgba(239, 68, 68, 0.1); /* light red */
+    background-color: rgba(239, 68, 68, 0.1);
+    /* light red */
 }
 
 .clientRowNotAllowed:hover {

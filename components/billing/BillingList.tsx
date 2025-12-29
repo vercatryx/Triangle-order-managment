@@ -64,15 +64,15 @@ export function BillingList() {
                         </button>
                         <button
                             className={styles.viewBtn}
-                            onClick={() => router.push('/clients?view=ineligible')}
+                            onClick={() => router.push('/clients?view=eligible')}
                         >
-                            Ineligible
+                            Eligible
                         </button>
                         <button
                             className={styles.viewBtn}
-                            onClick={() => router.push('/clients?view=history')}
+                            onClick={() => router.push('/clients?view=ineligible')}
                         >
-                            History
+                            Ineligible
                         </button>
                         <button
                             className={`${styles.viewBtn} ${styles.viewBtnActive}`}
@@ -134,8 +134,8 @@ export function BillingList() {
                             <span className={
                                 record.status === 'success' ? styles.statusSuccess :
                                     record.status === 'failed' ? styles.statusFailed :
-                                    record.status === 'request sent' ? styles.statusPending :
-                                        styles.statusPending
+                                        record.status === 'request sent' ? styles.statusPending :
+                                            styles.statusPending
                             }>
                                 {record.status === 'request sent' ? 'REQUEST SENT' : record.status.toUpperCase()}
                             </span>

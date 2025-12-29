@@ -41,6 +41,8 @@ export interface OrderConfiguration {
   // For Boxes (still typically single vendor per box type, but keeping flexible)
   boxTypeId?: string;
   boxQuantity?: number;
+  // Items in the box (for counts)
+  items?: { [itemId: string]: number };
 
   // Delivery Schedule Configuration
   deliveryDistribution?: { [dayOfWeek: string]: number }; // e.g. "Monday": 5
@@ -75,6 +77,7 @@ export interface Vendor {
   deliveryDays: string[]; // e.g. ["Monday", "Thursday"]
   allowsMultipleDeliveries: boolean;
   serviceType: ServiceType; // Vendor usually specializes in Food OR Boxes? Or both? Assuming one for simplicity mostly.
+  minimumMeals?: number; // Minimum number of meals required for Food vendors (default 0, meaning no minimum)
 }
 
 export interface ItemCategory {
@@ -151,4 +154,13 @@ export interface DatabaseSchema {
   orderHistory: OrderHistoryLog[];
   billingHistory: BillingRecord[];
   settings: AppSettings;
+}
+
+export interface ClientFullDetails {
+  client: ClientProfile;
+  history: DeliveryRecord[];
+  orderHistory: OrderHistoryLog[];
+  billingHistory: BillingRecord[];
+  activeOrder: any; // Using any to match existing usage in ClientProfile, but ideally typed
+  upcomingOrder: any;
 }

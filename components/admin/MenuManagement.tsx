@@ -16,8 +16,7 @@ export function MenuManagement() {
     const [formData, setFormData] = useState<Partial<MenuItem>>({
         name: '',
         value: 0,
-        isActive: true,
-        minimumOrder: 0
+        isActive: true
     });
 
     useEffect(() => {
@@ -43,8 +42,7 @@ export function MenuManagement() {
             value: 0,
             isActive: true,
             quotaValue: 1,
-            categoryId: '',
-            minimumOrder: 0
+            categoryId: ''
         });
         setIsCreating(false);
         setEditingId(null);
@@ -143,19 +141,6 @@ export function MenuManagement() {
                                     onChange={e => setFormData({ ...formData, value: Number(e.target.value) })}
                                 />
                             </div>
-                            <div className={styles.formGroup} style={{ flex: 1 }}>
-                                <label className="label">Minimum Order Quantity</label>
-                                <input
-                                    type="number"
-                                    className="input"
-                                    min="0"
-                                    value={formData.minimumOrder ?? 0}
-                                    onChange={e => setFormData({ ...formData, minimumOrder: Number(e.target.value) })}
-                                />
-                                <small style={{ color: 'var(--text-tertiary)', fontSize: '0.75rem', marginTop: '4px', display: 'block' }}>
-                                    Minimum quantity required when ordering this product (0 = no minimum)
-                                </small>
-                            </div>
                         </div>
 
                         <div className={styles.formGroup}>
@@ -184,7 +169,6 @@ export function MenuManagement() {
                     <div className={styles.listHeader}>
                         <span style={{ flex: 3 }}>Name</span>
                         <span style={{ flex: 1 }}>Value</span>
-                        <span style={{ flex: 1 }}>Min Order</span>
                         <span style={{ flex: 1 }}>Status</span>
                         <span style={{ width: '120px', textAlign: 'right' }}>Actions</span>
                     </div>
@@ -192,9 +176,6 @@ export function MenuManagement() {
                         <div key={item.id} className={styles.item}>
                             <span style={{ flex: 3, fontWeight: 500, fontSize: '1.1rem' }}>{item.name}</span>
                             <span style={{ flex: 1, fontSize: '1rem' }}>{item.value}</span>
-                            <span style={{ flex: 1, fontSize: '0.9rem', color: item.minimumOrder && item.minimumOrder > 0 ? 'var(--color-primary)' : 'var(--text-tertiary)' }}>
-                                {item.minimumOrder && item.minimumOrder > 0 ? item.minimumOrder : '-'}
-                            </span>
                             <span style={{ flex: 1 }}>
                                 {item.isActive ? <span className="badge" style={{ color: 'var(--color-success)', background: 'rgba(34, 197, 94, 0.1)', fontSize: '0.9rem', padding: '4px 12px' }}>Active</span> : <span className="badge" style={{ fontSize: '0.9rem', padding: '4px 12px' }}>Inactive</span>}
                             </span>

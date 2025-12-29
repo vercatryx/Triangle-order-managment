@@ -19,7 +19,8 @@ export function VendorManagement() {
         isActive: true,
         deliveryDays: [],
         allowsMultipleDeliveries: false,
-        serviceType: 'Food'
+        serviceType: 'Food',
+        minimumMeals: 0
     });
     const [multiCreateInput, setMultiCreateInput] = useState(''); // New state
 
@@ -38,7 +39,8 @@ export function VendorManagement() {
             isActive: true,
             deliveryDays: [],
             allowsMultipleDeliveries: false,
-            serviceType: 'Food'
+            serviceType: 'Food',
+            minimumMeals: 0
         });
         setIsCreating(false);
         setIsMultiCreating(false);
@@ -213,6 +215,23 @@ export function VendorManagement() {
                         </label>
                     </div>
 
+                    {formData.serviceType === 'Food' && (
+                        <div className={styles.formGroup}>
+                            <label className="label">Minimum Meals Required</label>
+                            <input
+                                type="number"
+                                className="input"
+                                min="0"
+                                value={formData.minimumMeals ?? 0}
+                                onChange={e => setFormData({ ...formData, minimumMeals: parseInt(e.target.value) || 0 })}
+                                placeholder="0"
+                            />
+                            <p className={styles.hint} style={{ marginTop: '0.5rem', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                                Minimum number of meals required when ordering from this vendor. Set to 0 for no minimum.
+                            </p>
+                        </div>
+                    )}
+
                     <div className={styles.formActions}>
                         <button className="btn btn-primary" onClick={handleSubmit}>
                             <Check size={16} /> Save Vendor
@@ -233,6 +252,7 @@ export function VendorManagement() {
                             <th>Status</th>
                             <th>Days</th>
                             <th>Frequency</th>
+                            <th>Min Meals</th>
                             <th style={{ textAlign: 'right' }}>Actions</th>
                         </tr>
                     </thead>
@@ -244,6 +264,7 @@ export function VendorManagement() {
                                 <td>{vendor.isActive ? <span style={{ color: 'var(--color-success)' }}>Active</span> : <span style={{ color: 'var(--text-tertiary)' }}>Inactive</span>}</td>
                                 <td>{vendor.deliveryDays.join(', ')}</td>
                                 <td>{vendor.allowsMultipleDeliveries ? 'Multiple' : 'Once'}</td>
+                                <td>{vendor.serviceType === 'Food' ? (vendor.minimumMeals || 0) : '-'}</td>
                                 <td style={{ textAlign: 'right' }}>
                                     <div className={styles.actions}>
                                         <button className={styles.iconBtn} onClick={() => handleEditInit(vendor)}>
