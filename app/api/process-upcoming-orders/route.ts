@@ -2,13 +2,16 @@ import { NextRequest, NextResponse } from 'next/server';
 import { processUpcomingOrders } from '@/lib/actions';
 
 /**
- * API Route: Process upcoming orders that have reached their take effect date
+ * API Route: Process upcoming orders that have been delivered with proof
  * 
  * POST /api/process-upcoming-orders
  * 
- * This endpoint should be called daily (via cron job or scheduled task)
- * to automatically move upcoming orders to the orders table when their
- * take_effect_date is reached.
+ * This endpoint processes upcoming orders from the upcoming_orders table that:
+ * - Have status = 'delivered'
+ * - Have a delivery_proof_url (not null and not empty)
+ * 
+ * These orders are moved to the orders table with status 'completed' and
+ * the delivery_proof_url is copied to the orders table.
  * 
  * Returns a summary of processed orders and any errors encountered.
  */
@@ -19,6 +22,7 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({
             success: true,
             processed: result.processed,
+            billingRecordsCreated: result.billingRecordsCreated || 0,
             errors: result.errors,
             processedAt: new Date().toISOString()
         }, { status: 200 });
@@ -43,9 +47,10 @@ export async function GET(request: NextRequest) {
         return NextResponse.json({
             success: true,
             processed: result.processed,
+            billingRecordsCreated: result.billingRecordsCreated || 0,
             errors: result.errors,
             processedAt: new Date().toISOString(),
-            message: `Processed ${result.processed} upcoming order(s)`
+            message: `Processed ${result.processed} upcoming order(s) and created ${result.billingRecordsCreated || 0} billing record(s)`
         }, { status: 200 });
 
     } catch (error: any) {

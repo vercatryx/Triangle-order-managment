@@ -1436,20 +1436,18 @@ export async function syncCurrentOrderToUpcoming(clientId: string, client: Clien
 }
 
 /**
- * Process upcoming orders that have reached their take effect date
+ * Process upcoming orders that have 'delivered' status and delivery_proof_url
  * Moves them from upcoming_orders to orders table
+ * Only processes orders that have been marked as delivered with delivery proof
  */
 export async function processUpcomingOrders() {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const todayStr = today.toISOString().split('T')[0];
-
-    // Find all upcoming orders where take_effect_date <= today and status is 'scheduled'
+    // Find all upcoming orders with 'delivered' status and delivery_proof_url
     const { data: upcomingOrders, error: fetchError } = await supabase
         .from('upcoming_orders')
         .select('*')
-        .eq('status', 'scheduled')
-        .lte('take_effect_date', todayStr);
+        .eq('status', 'delivered')
+        .not('delivery_proof_url', 'is', null)
+        .neq('delivery_proof_url', '');
 
     if (fetchError) {
         console.error('Error fetching upcoming orders:', fetchError);
@@ -1463,22 +1461,44 @@ export async function processUpcomingOrders() {
     const menuItems = await getMenuItems();
     const errors: string[] = [];
     let processedCount = 0;
+    let billingRecordsCount = 0;
 
     for (const upcomingOrder of upcomingOrders) {
         try {
+            // Fetch client information
+            const client = await getClient(upcomingOrder.client_id);
+            if (!client) {
+                errors.push(`Client not found for upcoming order ${upcomingOrder.id}`);
+                continue;
+            }
+
+            // Get navigator name
+            let navigatorName = 'Unassigned';
+            if (client.navigatorId) {
+                const { data: navigator } = await supabase
+                    .from('navigators')
+                    .select('name')
+                    .eq('id', client.navigatorId)
+                    .single();
+                if (navigator) {
+                    navigatorName = navigator.name;
+                }
+            }
+
             // Create order in orders table
             const orderData: any = {
                 client_id: upcomingOrder.client_id,
                 service_type: upcomingOrder.service_type,
                 case_id: upcomingOrder.case_id,
-                status: 'pending',
+                status: 'completed', // Mark as completed since it's already delivered
                 last_updated: new Date().toISOString(),
                 updated_by: upcomingOrder.updated_by,
                 scheduled_delivery_date: upcomingOrder.scheduled_delivery_date,
                 delivery_distribution: upcomingOrder.delivery_distribution,
                 total_value: upcomingOrder.total_value,
                 total_items: upcomingOrder.total_items,
-                notes: upcomingOrder.notes
+                notes: upcomingOrder.notes,
+                delivery_proof_url: upcomingOrder.delivery_proof_url // Copy delivery proof URL
             };
 
             const { data: newOrder, error: orderError } = await supabase
@@ -1552,6 +1572,30 @@ export async function processUpcomingOrders() {
                 }
             }
 
+            // Create billing record for this order
+            const billingAmount = parseFloat(upcomingOrder.total_value?.toString() || '0');
+            const billingRemarks = `Upcoming Order #${newOrder.id.substring(0, 8)} - ${upcomingOrder.service_type} service${upcomingOrder.case_id ? ` (Case: ${upcomingOrder.case_id})` : ''}`;
+
+            const { data: billingRecord, error: billingError } = await supabase
+                .from('billing_records')
+                .insert({
+                    client_id: upcomingOrder.client_id,
+                    client_name: client.fullName,
+                    status: 'request sent',
+                    remarks: billingRemarks,
+                    navigator: navigatorName,
+                    amount: billingAmount,
+                    order_id: newOrder.id
+                })
+                .select()
+                .single();
+
+            if (billingError) {
+                errors.push(`Failed to create billing record for upcoming order ${upcomingOrder.id}: ${billingError.message}`);
+            } else if (billingRecord) {
+                billingRecordsCount++;
+            }
+
             // Update upcoming order status
             await supabase
                 .from('upcoming_orders')
@@ -1574,7 +1618,11 @@ export async function processUpcomingOrders() {
     const { triggerSyncInBackground } = await import('./local-db');
     triggerSyncInBackground();
     
-    return { processed: processedCount, errors };
+    return { 
+        processed: processedCount, 
+        billingRecordsCreated: billingRecordsCount,
+        errors 
+    };
 }
 
 /**
