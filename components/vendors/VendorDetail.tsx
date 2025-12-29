@@ -21,6 +21,7 @@ export function VendorDetail({ vendorId }: Props) {
     const [boxTypes, setBoxTypes] = useState<BoxType[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const [expandedOrders, setExpandedOrders] = useState<Set<string>>(new Set());
+    const [activeTab, setActiveTab] = useState<'all' | 'upcoming' | 'completed'>('all');
     
     // CSV Import Progress State
     const [importProgress, setImportProgress] = useState<{
@@ -641,29 +642,66 @@ export function VendorDetail({ vendorId }: Props) {
 
             {/* Orders Section */}
             <div className={styles.ordersSection}>
-                <h2 className={styles.sectionTitle}>Orders</h2>
-                
-                {orders.length === 0 ? (
-                    <div className={styles.emptyState}>
-                        <Package size={48} style={{ color: 'var(--text-tertiary)', marginBottom: '1rem' }} />
-                        <p>No orders found for this vendor</p>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 'var(--spacing-lg)' }}>
+                    <h2 className={styles.sectionTitle}>Orders</h2>
+                    <div className={styles.tabs}>
+                        <button
+                            className={`${styles.tab} ${activeTab === 'all' ? styles.tabActive : ''}`}
+                            onClick={() => setActiveTab('all')}
+                        >
+                            All Orders ({orders.length})
+                        </button>
+                        <button
+                            className={`${styles.tab} ${activeTab === 'upcoming' ? styles.tabActive : ''}`}
+                            onClick={() => setActiveTab('upcoming')}
+                        >
+                            <Clock size={14} style={{ marginRight: '4px', verticalAlign: 'middle' }} />
+                            Upcoming ({upcomingOrders.length})
+                        </button>
+                        <button
+                            className={`${styles.tab} ${activeTab === 'completed' ? styles.tabActive : ''}`}
+                            onClick={() => setActiveTab('completed')}
+                        >
+                            Completed ({completedOrders.length})
+                        </button>
                     </div>
-                ) : (
-                    <div className={styles.ordersList}>
-                        <div className={styles.ordersHeader}>
-                            <span style={{ width: '40px', flex: 'none' }}></span>
-                            <span style={{ minWidth: '120px', flex: 0.8 }}>Type</span>
-                            <span style={{ minWidth: '200px', flex: 2 }}>Client</span>
-                            <span style={{ minWidth: '120px', flex: 1 }}>Case ID</span>
-                            <span style={{ minWidth: '120px', flex: 1 }}>Status</span>
-                            <span style={{ minWidth: '150px', flex: 1.2 }}>Scheduled Date</span>
-                            <span style={{ minWidth: '150px', flex: 1.2 }}>Actual Date</span>
-                            <span style={{ minWidth: '100px', flex: 1 }}>Items</span>
-                            <span style={{ minWidth: '120px', flex: 1 }}>Total Value</span>
-                            <span style={{ minWidth: '150px', flex: 1.2 }}>Updated By</span>
-                            <span style={{ minWidth: '150px', flex: 1.2 }}>Created</span>
+                </div>
+                
+                {(() => {
+                    let filteredOrders = orders;
+                    if (activeTab === 'completed') {
+                        filteredOrders = completedOrders;
+                    } else if (activeTab === 'upcoming') {
+                        filteredOrders = upcomingOrders;
+                    }
+                    
+                    return filteredOrders.length === 0 ? (
+                        <div className={styles.emptyState}>
+                            <Package size={48} style={{ color: 'var(--text-tertiary)', marginBottom: '1rem' }} />
+                            <p>
+                                {activeTab === 'all' 
+                                    ? 'No orders found for this vendor'
+                                    : activeTab === 'completed'
+                                    ? 'No completed orders found'
+                                    : 'No upcoming orders found'}
+                            </p>
                         </div>
-                        {orders.map((order) => {
+                    ) : (
+                        <div className={styles.ordersList}>
+                            <div className={styles.ordersHeader}>
+                                <span style={{ width: '40px', flex: 'none' }}></span>
+                                <span style={{ minWidth: '120px', flex: 0.8 }}>Type</span>
+                                <span style={{ minWidth: '200px', flex: 2 }}>Client</span>
+                                <span style={{ minWidth: '120px', flex: 1 }}>Case ID</span>
+                                <span style={{ minWidth: '120px', flex: 1 }}>Status</span>
+                                <span style={{ minWidth: '150px', flex: 1.2 }}>Scheduled Date</span>
+                                <span style={{ minWidth: '150px', flex: 1.2 }}>Actual Date</span>
+                                <span style={{ minWidth: '100px', flex: 1 }}>Items</span>
+                                <span style={{ minWidth: '120px', flex: 1 }}>Total Value</span>
+                                <span style={{ minWidth: '150px', flex: 1.2 }}>Updated By</span>
+                                <span style={{ minWidth: '150px', flex: 1.2 }}>Created</span>
+                            </div>
+                            {filteredOrders.map((order) => {
                             const orderKey = `${order.orderType}-${order.id}`;
                             const isExpanded = expandedOrders.has(orderKey);
 
@@ -766,8 +804,9 @@ export function VendorDetail({ vendorId }: Props) {
                                 </div>
                             );
                         })}
-                    </div>
-                )}
+                        </div>
+                    );
+                })()}
             </div>
 
             {/* CSV Import Progress Modal */}
