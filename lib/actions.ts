@@ -420,12 +420,12 @@ export async function getClientsPaginated(page: number = 1, pageSize: number = 2
         .select('*', { count: 'exact' })
         .order('created_at', { ascending: false })
         .range((page - 1) * pageSize, page * pageSize - 1);
-    
+
     if (error) {
         console.error('Error fetching paginated clients:', error);
         return { clients: [], total: 0 };
     }
-    
+
     return {
         clients: data.map(mapClientFromDB),
         total: count || 0

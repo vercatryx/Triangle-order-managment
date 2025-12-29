@@ -1019,7 +1019,7 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
     const renderOrderDetails = (orderDetails: any) => {
         if (!orderDetails) return null;
 
-                                    if (orderDetails.serviceType === 'Food' && orderDetails.vendorSelections) {
+        if (orderDetails.serviceType === 'Food' && orderDetails.vendorSelections) {
             // Calculate total from all items instead of using orderDetails.totalValue
             const calculatedTotal = orderDetails.vendorSelections.reduce((sum: number, vs: any) => {
                 return sum + (vs.items || []).reduce((itemSum: number, item: any) => {
@@ -1034,380 +1034,380 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                 }, 0);
             }, 0);
 
-                                    return (
-                                    <div style={{ padding: '12px', background: 'var(--bg-surface)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', marginTop: '8px' }}>
-                                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: 600, fontSize: '0.9rem', marginBottom: '12px', color: 'var(--text-primary)' }}>
-                                            <ShoppingCart size={16} />
-                                            <span>Order Items</span>
-                                        </div>
-                                        {orderDetails.vendorSelections.map((vs: any, idx: number) => (
-                                            <div key={idx} style={{ marginBottom: '12px', padding: '8px', background: 'var(--bg-surface-hover)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)' }}>
-                                                <div style={{ fontWeight: 500, marginBottom: '8px', paddingBottom: '8px', borderBottom: '1px solid var(--border-color)', fontSize: '0.875rem' }}>
-                                                    <strong>Vendor:</strong> {vs.vendorName}
-                                                </div>
-                                                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8125rem' }}>
-                                                    <thead>
-                                                        <tr style={{ background: 'var(--bg-surface)' }}>
-                                                            <th style={{ textAlign: 'left', padding: '6px 8px', fontWeight: 600, color: 'var(--text-secondary)', fontSize: '0.75rem', borderBottom: '1px solid var(--border-color)' }}>Item</th>
-                                                            <th style={{ textAlign: 'left', padding: '6px 8px', fontWeight: 600, color: 'var(--text-secondary)', fontSize: '0.75rem', borderBottom: '1px solid var(--border-color)' }}>Quantity</th>
-                                                            <th style={{ textAlign: 'left', padding: '6px 8px', fontWeight: 600, color: 'var(--text-secondary)', fontSize: '0.75rem', borderBottom: '1px solid var(--border-color)' }}>Unit Value</th>
-                                                            <th style={{ textAlign: 'left', padding: '6px 8px', fontWeight: 600, color: 'var(--text-secondary)', fontSize: '0.75rem', borderBottom: '1px solid var(--border-color)' }}>Total</th>
-                                                        </tr>
-                                                    </thead>
-                                                    <tbody>
-                                                        {vs.items.map((item: any, itemIdx: number) => (
-                                                            <tr key={itemIdx} style={{ borderBottom: '1px solid var(--border-color)' }}>
-                                                                <td style={{ padding: '6px 8px', color: 'var(--text-primary)' }}>{item.menuItemName}</td>
-                                                                <td style={{ padding: '6px 8px', color: 'var(--text-primary)' }}>{item.quantity}</td>
-                                                                <td style={{ padding: '6px 8px', color: 'var(--text-primary)' }}>${item.unitValue.toFixed(2)}</td>
-                                                                <td style={{ padding: '6px 8px', color: 'var(--text-primary)' }}>${item.totalValue.toFixed(2)}</td>
-                                                            </tr>
-                                                        ))}
-                                                    </tbody>
-                                                </table>
-                                            </div>
-                                        ))}
-                                        <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '12px', paddingTop: '12px', borderTop: '2px solid var(--border-color)', fontSize: '0.875rem', color: 'var(--text-primary)' }}>
-                                            <div><strong>Total Items:</strong> {calculatedTotalItems}</div>
-                                            <div><strong>Total Value:</strong> ${calculatedTotal.toFixed(2)}</div>
-                                        </div>
-                                    </div>
-                                    );
+            return (
+                <div style={{ padding: '12px', background: 'var(--bg-surface)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', marginTop: '8px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: 600, fontSize: '0.9rem', marginBottom: '12px', color: 'var(--text-primary)' }}>
+                        <ShoppingCart size={16} />
+                        <span>Order Items</span>
+                    </div>
+                    {orderDetails.vendorSelections.map((vs: any, idx: number) => (
+                        <div key={idx} style={{ marginBottom: '12px', padding: '8px', background: 'var(--bg-surface-hover)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)' }}>
+                            <div style={{ fontWeight: 500, marginBottom: '8px', paddingBottom: '8px', borderBottom: '1px solid var(--border-color)', fontSize: '0.875rem' }}>
+                                <strong>Vendor:</strong> {vs.vendorName}
+                            </div>
+                            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8125rem' }}>
+                                <thead>
+                                    <tr style={{ background: 'var(--bg-surface)' }}>
+                                        <th style={{ textAlign: 'left', padding: '6px 8px', fontWeight: 600, color: 'var(--text-secondary)', fontSize: '0.75rem', borderBottom: '1px solid var(--border-color)' }}>Item</th>
+                                        <th style={{ textAlign: 'left', padding: '6px 8px', fontWeight: 600, color: 'var(--text-secondary)', fontSize: '0.75rem', borderBottom: '1px solid var(--border-color)' }}>Quantity</th>
+                                        <th style={{ textAlign: 'left', padding: '6px 8px', fontWeight: 600, color: 'var(--text-secondary)', fontSize: '0.75rem', borderBottom: '1px solid var(--border-color)' }}>Unit Value</th>
+                                        <th style={{ textAlign: 'left', padding: '6px 8px', fontWeight: 600, color: 'var(--text-secondary)', fontSize: '0.75rem', borderBottom: '1px solid var(--border-color)' }}>Total</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {vs.items.map((item: any, itemIdx: number) => (
+                                        <tr key={itemIdx} style={{ borderBottom: '1px solid var(--border-color)' }}>
+                                            <td style={{ padding: '6px 8px', color: 'var(--text-primary)' }}>{item.menuItemName}</td>
+                                            <td style={{ padding: '6px 8px', color: 'var(--text-primary)' }}>{item.quantity}</td>
+                                            <td style={{ padding: '6px 8px', color: 'var(--text-primary)' }}>${item.unitValue.toFixed(2)}</td>
+                                            <td style={{ padding: '6px 8px', color: 'var(--text-primary)' }}>${item.totalValue.toFixed(2)}</td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    ))}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '12px', paddingTop: '12px', borderTop: '2px solid var(--border-color)', fontSize: '0.875rem', color: 'var(--text-primary)' }}>
+                        <div><strong>Total Items:</strong> {calculatedTotalItems}</div>
+                        <div><strong>Total Value:</strong> ${calculatedTotal.toFixed(2)}</div>
+                    </div>
+                </div>
+            );
         } else if (orderDetails.serviceType === 'Boxes') {
             return (
-                                    <div style={{ padding: '12px', background: 'var(--bg-surface)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', marginTop: '8px' }}>
-                                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: 600, fontSize: '0.9rem', marginBottom: '12px', color: 'var(--text-primary)' }}>
-                                            <Package size={16} />
-                                            <span>Box Order Details</span>
-                                        </div>
-                                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '12px', fontSize: '0.875rem', color: 'var(--text-primary)' }}>
-                                            <div><strong>Vendor:</strong> {orderDetails.vendorName}</div>
-                                            <div><strong>Box Type:</strong> {orderDetails.boxTypeName}</div>
-                                            <div><strong>Quantity:</strong> {orderDetails.boxQuantity}</div>
-                                            <div><strong>Total Value:</strong> ${orderDetails.totalValue.toFixed(2)}</div>
-                                        </div>
-                                    </div>
-                                    );
+                <div style={{ padding: '12px', background: 'var(--bg-surface)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', marginTop: '8px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: 600, fontSize: '0.9rem', marginBottom: '12px', color: 'var(--text-primary)' }}>
+                        <Package size={16} />
+                        <span>Box Order Details</span>
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '12px', fontSize: '0.875rem', color: 'var(--text-primary)' }}>
+                        <div><strong>Vendor:</strong> {orderDetails.vendorName}</div>
+                        <div><strong>Box Type:</strong> {orderDetails.boxTypeName}</div>
+                        <div><strong>Quantity:</strong> {orderDetails.boxQuantity}</div>
+                        <div><strong>Total Value:</strong> ${orderDetails.totalValue.toFixed(2)}</div>
+                    </div>
+                </div>
+            );
         } else {
             return (
-                                    <div style={{ padding: '12px', background: 'var(--bg-surface)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', marginTop: '8px' }}>
-                                        <div style={{ fontWeight: 600, fontSize: '0.9rem', marginBottom: '12px', color: 'var(--text-primary)' }}>
-                                            <span>Order Details</span>
-                                        </div>
-                                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '12px', fontSize: '0.875rem', color: 'var(--text-primary)' }}>
-                                            <div><strong>Service Type:</strong> {orderDetails.serviceType}</div>
-                                            {orderDetails.totalValue && (
-                                                <div><strong>Total Value:</strong> ${orderDetails.totalValue.toFixed(2)}</div>
-                                            )}
-                                            {orderDetails.notes && (
-                                                <div><strong>Notes:</strong> {orderDetails.notes}</div>
-                                            )}
-                                        </div>
-                                    </div>
-                                    );
+                <div style={{ padding: '12px', background: 'var(--bg-surface)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', marginTop: '8px' }}>
+                    <div style={{ fontWeight: 600, fontSize: '0.9rem', marginBottom: '12px', color: 'var(--text-primary)' }}>
+                        <span>Order Details</span>
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '12px', fontSize: '0.875rem', color: 'var(--text-primary)' }}>
+                        <div><strong>Service Type:</strong> {orderDetails.serviceType}</div>
+                        {orderDetails.totalValue && (
+                            <div><strong>Total Value:</strong> ${orderDetails.totalValue.toFixed(2)}</div>
+                        )}
+                        {orderDetails.notes && (
+                            <div><strong>Notes:</strong> {orderDetails.notes}</div>
+                        )}
+                    </div>
+                </div>
+            );
         }
     };
 
-                                    const content = (
-                                    <div className={onClose ? '' : styles.container}>
-                                        <header className={styles.header}>
-                                            <button className={styles.backBtn} onClick={handleBack}>
-                                                <ArrowLeft size={20} /> {onClose ? 'Close' : 'Back to List'}
-                                            </button>
-                                            <button className="btn btn-secondary" onClick={() => router.push(`/clients/${clientId}/billing`)} style={{ marginRight: '8px' }}>
-                                                <CreditCard size={16} /> Billing
-                                            </button>
-                                            {!onClose && (
-                                                <button className="btn btn-primary" onClick={handleSave} disabled={saving}>
-                                                    <Save size={16} /> Save Changes
-                                                </button>
-                                            )}
-                                        </header>
+    const content = (
+        <div className={onClose ? '' : styles.container}>
+            <header className={styles.header}>
+                <button className={styles.backBtn} onClick={handleBack}>
+                    <ArrowLeft size={20} /> {onClose ? 'Close' : 'Back to List'}
+                </button>
+                <button className="btn btn-secondary" onClick={() => router.push(`/clients/${clientId}/billing`)} style={{ marginRight: '8px' }}>
+                    <CreditCard size={16} /> Billing
+                </button>
+                {!onClose && (
+                    <button className="btn btn-primary" onClick={handleSave} disabled={saving}>
+                        <Save size={16} /> Save Changes
+                    </button>
+                )}
+            </header>
 
-                                <div className={styles.grid}>
-                                    <div className={styles.column}>
-                                        <section className={styles.card}>
-                                            <h3 className={styles.sectionTitle}>Client Details</h3>
+            <div className={styles.grid}>
+                <div className={styles.column}>
+                    <section className={styles.card}>
+                        <h3 className={styles.sectionTitle}>Client Details</h3>
 
-                                            <div className={styles.formGroup}>
-                                                <label className="label">Full Name</label>
-                                                <input className="input" value={formData.fullName} onChange={e => setFormData({ ...formData, fullName: e.target.value })} />
+                        <div className={styles.formGroup}>
+                            <label className="label">Full Name</label>
+                            <input className="input" value={formData.fullName} onChange={e => setFormData({ ...formData, fullName: e.target.value })} />
+                        </div>
+
+                        <div className={styles.formGroup}>
+                            <label className="label">Status</label>
+                            <select className="input" value={formData.statusId} onChange={e => setFormData({ ...formData, statusId: e.target.value })}>
+                                {statuses.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                            </select>
+                        </div>
+
+                        <div className={styles.formGroup}>
+                            <label className="label">Assigned Navigator</label>
+                            <select className="input" value={formData.navigatorId} onChange={e => setFormData({ ...formData, navigatorId: e.target.value })}>
+                                <option value="">Unassigned</option>
+                                {navigators.map(n => <option key={n.id} value={n.id}>{n.name}</option>)}
+                            </select>
+                        </div>
+
+                        <div className={styles.formGroup}>
+                            <label className="label">Address</label>
+                            <input className="input" value={formData.address} onChange={e => setFormData({ ...formData, address: e.target.value })} />
+                        </div>
+
+                        <div className={styles.formGroup}>
+                            <label className="label">Phone</label>
+                            <input className="input" value={formData.phoneNumber} onChange={e => setFormData({ ...formData, phoneNumber: e.target.value })} />
+                            <div style={{ height: '1rem' }} /> {/* Spacer */}
+                            <label className="label">Email</label>
+                            <input className="input" value={formData.email || ''} onChange={e => setFormData({ ...formData, email: e.target.value })} />
+                        </div>
+
+                        <div className={styles.formGroup}>
+                            <label className="label">General Notes</label>
+                            <textarea className="input" style={{ height: '100px' }} value={formData.notes} onChange={e => setFormData({ ...formData, notes: e.target.value })} />
+                        </div>
+
+                        <div className={styles.checkboxTitle}>Screening</div>
+                        <div className={styles.row}>
+                            <label className={styles.checkboxLabel}>
+                                <input type="checkbox" checked={formData.screeningTookPlace} onChange={e => setFormData({ ...formData, screeningTookPlace: e.target.checked })} />
+                                Took Place
+                            </label>
+                            <label className={styles.checkboxLabel}>
+                                <input type="checkbox" checked={formData.screeningSigned} onChange={e => setFormData({ ...formData, screeningSigned: e.target.checked })} />
+                                Signed
+                            </label>
+                        </div>
+                    </section>
+                </div>
+
+                <div className={styles.column}>
+                    <section className={styles.card}>
+                        <h3 className={styles.sectionTitle}>Service Configuration</h3>
+
+                        <div className={styles.formGroup}>
+                            <label className="label">Service Type</label>
+                            <div className={styles.serviceTypes}>
+                                {SERVICE_TYPES.map(type => (
+                                    <button
+                                        key={type}
+                                        className={`${styles.serviceBtn} ${formData.serviceType === type ? styles.activeService : ''}`}
+                                        onClick={() => handleServiceChange(type)}
+                                    >
+                                        {type}
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+
+
+
+                        <div className={styles.formGroup}>
+                            <label className="label">Case ID (Required)</label>
+                            <input
+                                className="input"
+                                value={orderConfig.caseId || ''}
+                                placeholder="Enter Case ID to enable configuration..."
+                                onChange={e => setOrderConfig({ ...orderConfig, caseId: e.target.value })}
+                            />
+                        </div>
+
+                        {!orderConfig.caseId && (
+                            <div className={styles.alert} style={{ marginTop: '16px', backgroundColor: 'var(--bg-surface-hover)' }}>
+                                <AlertTriangle size={16} />
+                                Please enter a Case ID to configure the service.
+                            </div>
+                        )}
+
+                        {orderConfig.caseId && (
+                            <>
+                                {formData.serviceType === 'Food' && (
+                                    <div className="animate-fade-in">
+                                        <div className={styles.formGroup}>
+                                            <label className="label">Approved Meals Per Week</label>
+                                            <input
+                                                type="number"
+                                                className="input"
+                                                value={formData.approvedMealsPerWeek || 0}
+                                                onChange={e => setFormData({ ...formData, approvedMealsPerWeek: Number(e.target.value) })}
+                                            />
+                                        </div>
+
+                                        <div className={styles.divider} />
+
+                                        <div className={styles.orderHeader}>
+                                            <h4>Current Order Request</h4>
+                                            <div style={{ display: 'flex', gap: '0.5rem', flexDirection: 'column', alignItems: 'flex-end' }}>
+                                                <div className={styles.budget} style={{
+                                                    color: getTotalMealCount() > (formData.approvedMealsPerWeek || 0) ? 'var(--color-danger)' : 'inherit',
+                                                    backgroundColor: getTotalMealCount() > (formData.approvedMealsPerWeek || 0) ? 'rgba(239, 68, 68, 0.1)' : 'var(--bg-surface-hover)'
+                                                }}>
+                                                    Meals: {getTotalMealCount()} / {formData.approvedMealsPerWeek || 0}
+                                                </div>
+                                                <div className={styles.budget} style={{
+                                                    color: getCurrentOrderTotalValue() > (formData.approvedMealsPerWeek || 0) ? 'var(--color-danger)' : 'inherit',
+                                                    backgroundColor: getCurrentOrderTotalValue() > (formData.approvedMealsPerWeek || 0) ? 'rgba(239, 68, 68, 0.1)' : 'var(--bg-surface-hover)'
+                                                }}>
+                                                    Value: {getCurrentOrderTotalValue()} / {formData.approvedMealsPerWeek || 0}
+                                                </div>
                                             </div>
+                                        </div>
 
-                                            <div className={styles.formGroup}>
-                                                <label className="label">Status</label>
-                                                <select className="input" value={formData.statusId} onChange={e => setFormData({ ...formData, statusId: e.target.value })}>
-                                                    {statuses.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-                                                </select>
-                                            </div>
+                                        {isCutoffPassed() && <div className={styles.alert}><AlertTriangle size={16} /> Cutoff passed. Changes will apply to next cycle.</div>}
 
-                                            <div className={styles.formGroup}>
-                                                <label className="label">Assigned Navigator</label>
-                                                <select className="input" value={formData.navigatorId} onChange={e => setFormData({ ...formData, navigatorId: e.target.value })}>
-                                                    <option value="">Unassigned</option>
-                                                    {navigators.map(n => <option key={n.id} value={n.id}>{n.name}</option>)}
-                                                </select>
-                                            </div>
-
-                                            <div className={styles.formGroup}>
-                                                <label className="label">Address</label>
-                                                <input className="input" value={formData.address} onChange={e => setFormData({ ...formData, address: e.target.value })} />
-                                            </div>
-
-                                            <div className={styles.formGroup}>
-                                                <label className="label">Phone</label>
-                                                <input className="input" value={formData.phoneNumber} onChange={e => setFormData({ ...formData, phoneNumber: e.target.value })} />
-                                                <div style={{ height: '1rem' }} /> {/* Spacer */}
-                                                <label className="label">Email</label>
-                                                <input className="input" value={formData.email || ''} onChange={e => setFormData({ ...formData, email: e.target.value })} />
-                                            </div>
-
-                                            <div className={styles.formGroup}>
-                                                <label className="label">General Notes</label>
-                                                <textarea className="input" style={{ height: '100px' }} value={formData.notes} onChange={e => setFormData({ ...formData, notes: e.target.value })} />
-                                            </div>
-
-                                            <div className={styles.checkboxTitle}>Screening</div>
-                                            <div className={styles.row}>
-                                                <label className={styles.checkboxLabel}>
-                                                    <input type="checkbox" checked={formData.screeningTookPlace} onChange={e => setFormData({ ...formData, screeningTookPlace: e.target.checked })} />
-                                                    Took Place
-                                                </label>
-                                                <label className={styles.checkboxLabel}>
-                                                    <input type="checkbox" checked={formData.screeningSigned} onChange={e => setFormData({ ...formData, screeningSigned: e.target.checked })} />
-                                                    Signed
-                                                </label>
-                                            </div>
-                                        </section>
-                                    </div>
-
-                                    <div className={styles.column}>
-                                        <section className={styles.card}>
-                                            <h3 className={styles.sectionTitle}>Service Configuration</h3>
-
-                                            <div className={styles.formGroup}>
-                                                <label className="label">Service Type</label>
-                                                <div className={styles.serviceTypes}>
-                                                    {SERVICE_TYPES.map(type => (
-                                                        <button
-                                                            key={type}
-                                                            className={`${styles.serviceBtn} ${formData.serviceType === type ? styles.activeService : ''}`}
-                                                            onClick={() => handleServiceChange(type)}
+                                        {/* Multi-Vendor Configuration */}
+                                        <div className={styles.vendorsList}>
+                                            {(orderConfig.vendorSelections || []).map((selection: any, index: number) => (
+                                                <div key={index} className={styles.vendorBlock}>
+                                                    <div className={styles.vendorHeader}>
+                                                        <select
+                                                            className="input"
+                                                            value={selection.vendorId}
+                                                            onChange={e => updateVendorSelection(index, 'vendorId', e.target.value)}
                                                         >
-                                                            {type}
+                                                            <option value="">Select Vendor...</option>
+                                                            {vendors.filter(v => v.serviceType === 'Food' && v.isActive).map(v => (
+                                                                <option key={v.id} value={v.id} disabled={orderConfig.vendorSelections.some((s: any, i: number) => i !== index && s.vendorId === v.id)}>
+                                                                    {v.name}
+                                                                </option>
+                                                            ))}
+                                                        </select>
+                                                        <button className={`${styles.iconBtn} ${styles.danger}`} onClick={() => removeVendorBlock(index)} title="Remove Vendor">
+                                                            <Trash2 size={16} />
                                                         </button>
-                                                    ))}
-                                                </div>
-                                            </div>
-
-
-
-                                            <div className={styles.formGroup}>
-                                                <label className="label">Case ID (Required)</label>
-                                                <input
-                                                    className="input"
-                                                    value={orderConfig.caseId || ''}
-                                                    placeholder="Enter Case ID to enable configuration..."
-                                                    onChange={e => setOrderConfig({ ...orderConfig, caseId: e.target.value })}
-                                                />
-                                            </div>
-
-                                            {!orderConfig.caseId && (
-                                                <div className={styles.alert} style={{ marginTop: '16px', backgroundColor: 'var(--bg-surface-hover)' }}>
-                                                    <AlertTriangle size={16} />
-                                                    Please enter a Case ID to configure the service.
-                                                </div>
-                                            )}
-
-                                            {orderConfig.caseId && (
-                                                <>
-                                                    {formData.serviceType === 'Food' && (
-                                                        <div className="animate-fade-in">
-                                                            <div className={styles.formGroup}>
-                                                                <label className="label">Approved Meals Per Week</label>
-                                                                <input
-                                                                    type="number"
-                                                                    className="input"
-                                                                    value={formData.approvedMealsPerWeek || 0}
-                                                                    onChange={e => setFormData({ ...formData, approvedMealsPerWeek: Number(e.target.value) })}
-                                                                />
-                                                            </div>
-
-                                                            <div className={styles.divider} />
-
-                                                            <div className={styles.orderHeader}>
-                                                                <h4>Current Order Request</h4>
-                                                                <div style={{ display: 'flex', gap: '0.5rem', flexDirection: 'column', alignItems: 'flex-end' }}>
-                                                                    <div className={styles.budget} style={{
-                                                                        color: getTotalMealCount() > (formData.approvedMealsPerWeek || 0) ? 'var(--color-danger)' : 'inherit',
-                                                                        backgroundColor: getTotalMealCount() > (formData.approvedMealsPerWeek || 0) ? 'rgba(239, 68, 68, 0.1)' : 'var(--bg-surface-hover)'
-                                                                    }}>
-                                                                        Meals: {getTotalMealCount()} / {formData.approvedMealsPerWeek || 0}
-                                                                    </div>
-                                                                    <div className={styles.budget} style={{
-                                                                        color: getCurrentOrderTotalValue() > (formData.approvedMealsPerWeek || 0) ? 'var(--color-danger)' : 'inherit',
-                                                                        backgroundColor: getCurrentOrderTotalValue() > (formData.approvedMealsPerWeek || 0) ? 'rgba(239, 68, 68, 0.1)' : 'var(--bg-surface-hover)'
-                                                                    }}>
-                                                                        Value: {getCurrentOrderTotalValue()} / {formData.approvedMealsPerWeek || 0}
-                                                                    </div>
-                                                                </div>
-                                                            </div>
-
-                                                            {isCutoffPassed() && <div className={styles.alert}><AlertTriangle size={16} /> Cutoff passed. Changes will apply to next cycle.</div>}
-
-                                                            {/* Multi-Vendor Configuration */}
-                                                            <div className={styles.vendorsList}>
-                                                                {(orderConfig.vendorSelections || []).map((selection: any, index: number) => (
-                                                                    <div key={index} className={styles.vendorBlock}>
-                                                                        <div className={styles.vendorHeader}>
-                                                                            <select
-                                                                                className="input"
-                                                                                value={selection.vendorId}
-                                                                                onChange={e => updateVendorSelection(index, 'vendorId', e.target.value)}
-                                                                            >
-                                                                                <option value="">Select Vendor...</option>
-                                                                                {vendors.filter(v => v.serviceType === 'Food' && v.isActive).map(v => (
-                                                                                    <option key={v.id} value={v.id} disabled={orderConfig.vendorSelections.some((s: any, i: number) => i !== index && s.vendorId === v.id)}>
-                                                                                        {v.name}
-                                                                                    </option>
-                                                                                ))}
-                                                                            </select>
-                                                                            <button className={`${styles.iconBtn} ${styles.danger}`} onClick={() => removeVendorBlock(index)} title="Remove Vendor">
-                                                                                <Trash2 size={16} />
-                                                                            </button>
-                                                                        </div>
+                                                    </div>
 
                                                     {selection.vendorId && (
-                                                    <>
-                                                        {(() => {
-                                                            const vendor = vendors.find(v => v.id === selection.vendorId);
-                                                            // Calculate total quantity of all items from this vendor
-                                                            let totalVendorQuantity = 0;
-                                                            if (selection.items) {
-                                                                Object.values(selection.items).forEach((qty: any) => {
-                                                                    const quantity = qty as number;
-                                                                    if (quantity > 0) {
-                                                                        totalVendorQuantity += quantity;
-                                                                    }
-                                                                });
-                                                            }
-                                                            const vendorMinOrder = vendor?.minimumOrder || 0;
-                                                            const isBelowVendorMinimum = vendorMinOrder > 0 && totalVendorQuantity > 0 && totalVendorQuantity < vendorMinOrder;
+                                                        <>
+                                                            {(() => {
+                                                                const vendor = vendors.find(v => v.id === selection.vendorId);
+                                                                // Calculate total quantity of all items from this vendor
+                                                                let totalVendorQuantity = 0;
+                                                                if (selection.items) {
+                                                                    Object.values(selection.items).forEach((qty: any) => {
+                                                                        const quantity = qty as number;
+                                                                        if (quantity > 0) {
+                                                                            totalVendorQuantity += quantity;
+                                                                        }
+                                                                    });
+                                                                }
+                                                                const vendorMinOrder = vendor?.minimumOrder || 0;
+                                                                const isBelowVendorMinimum = vendorMinOrder > 0 && totalVendorQuantity > 0 && totalVendorQuantity < vendorMinOrder;
 
-                                                            return (
-                                                                <>
-                                                                    {/* Vendor Minimum Order Display */}
-                                                                    {vendorMinOrder > 0 && (
-                                                                        <div style={{
-                                                                            marginBottom: 'var(--spacing-md)',
-                                                                            padding: '0.75rem',
-                                                                            backgroundColor: isBelowVendorMinimum ? 'var(--color-danger-bg)' : 'var(--bg-surface-hover)',
-                                                                            borderRadius: 'var(--radius-sm)',
-                                                                            border: `1px solid ${isBelowVendorMinimum ? 'var(--color-danger)' : 'var(--border-color)'}`,
-                                                                            fontSize: '0.9rem',
-                                                                            textAlign: 'center'
-                                                                        }}>
-                                                                            <strong style={{ color: isBelowVendorMinimum ? 'var(--color-danger)' : 'var(--text-primary)' }}>
-                                                                                Total Items: {totalVendorQuantity} / Minimum: {vendorMinOrder}
-                                                                            </strong>
-                                                                            {isBelowVendorMinimum && (
-                                                                                <div style={{ marginTop: '0.25rem', fontSize: '0.85rem', color: 'var(--color-danger)' }}>
-                                                                                    Minimum order requirement not met
-                                                                                </div>
-                                                                            )}
-                                                                        </div>
-                                                                    )}
+                                                                return (
+                                                                    <>
+                                                                        {/* Vendor Minimum Order Display */}
+                                                                        {vendorMinOrder > 0 && (
+                                                                            <div style={{
+                                                                                marginBottom: 'var(--spacing-md)',
+                                                                                padding: '0.75rem',
+                                                                                backgroundColor: isBelowVendorMinimum ? 'var(--color-danger-bg)' : 'var(--bg-surface-hover)',
+                                                                                borderRadius: 'var(--radius-sm)',
+                                                                                border: `1px solid ${isBelowVendorMinimum ? 'var(--color-danger)' : 'var(--border-color)'}`,
+                                                                                fontSize: '0.9rem',
+                                                                                textAlign: 'center'
+                                                                            }}>
+                                                                                <strong style={{ color: isBelowVendorMinimum ? 'var(--color-danger)' : 'var(--text-primary)' }}>
+                                                                                    Total Items: {totalVendorQuantity} / Minimum: {vendorMinOrder}
+                                                                                </strong>
+                                                                                {isBelowVendorMinimum && (
+                                                                                    <div style={{ marginTop: '0.25rem', fontSize: '0.85rem', color: 'var(--color-danger)' }}>
+                                                                                        Minimum order requirement not met
+                                                                                    </div>
+                                                                                )}
+                                                                            </div>
+                                                                        )}
 
-                                                                    <div className={styles.menuList}>
-                                                                        {getVendorMenuItems(selection.vendorId).map(item => {
-                                                                            const currentQty = selection.items?.[item.id] || 0;
-                                                                            const itemTotal = item.priceEach !== undefined ? getItemTotal(item.id, currentQty) : 0;
-                                                                            return (
-                                                                                <div key={item.id} className={styles.menuItem}>
-                                                                                    <div className={styles.itemInfo}>
-                                                                                        <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                                                                                            <span>{item.name}</span>
-                                                                                            <div style={{ display: 'flex', gap: '12px', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                                                                                                {item.priceEach !== undefined && (
-                                                                                                    <>
-                                                                                                        <span className={styles.itemValue}>Price: ${item.priceEach.toFixed(2)}</span>
-                                                                                                        {currentQty > 0 && itemTotal > 0 && (
-                                                                                                            <span className={styles.itemValue} style={{ fontWeight: 600, color: 'var(--text-primary)' }}>
-                                                                                                                Total: ${itemTotal.toFixed(2)}
-                                                                                                            </span>
-                                                                                                        )}
-                                                                                                    </>
-                                                                                                )}
+                                                                        <div className={styles.menuList}>
+                                                                            {getVendorMenuItems(selection.vendorId).map(item => {
+                                                                                const currentQty = selection.items?.[item.id] || 0;
+                                                                                const itemTotal = item.priceEach !== undefined ? getItemTotal(item.id, currentQty) : 0;
+                                                                                return (
+                                                                                    <div key={item.id} className={styles.menuItem}>
+                                                                                        <div className={styles.itemInfo}>
+                                                                                            <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                                                                                                <span>{item.name}</span>
+                                                                                                <div style={{ display: 'flex', gap: '12px', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                                                                                                    {item.priceEach !== undefined && (
+                                                                                                        <>
+                                                                                                            <span className={styles.itemValue}>Price: ${item.priceEach.toFixed(2)}</span>
+                                                                                                            {currentQty > 0 && itemTotal > 0 && (
+                                                                                                                <span className={styles.itemValue} style={{ fontWeight: 600, color: 'var(--text-primary)' }}>
+                                                                                                                    Total: ${itemTotal.toFixed(2)}
+                                                                                                                </span>
+                                                                                                            )}
+                                                                                                        </>
+                                                                                                    )}
+                                                                                                </div>
                                                                                             </div>
                                                                                         </div>
+                                                                                        <div className={styles.quantityControl}>
+                                                                                            <input
+                                                                                                type="number"
+                                                                                                className={styles.qtyInput}
+                                                                                                min={0}
+                                                                                                value={selection.items?.[item.id] || ''}
+                                                                                                placeholder="0"
+                                                                                                onChange={e => updateItemQuantity(index, item.id, parseInt(e.target.value) || 0)}
+                                                                                            />
+                                                                                        </div>
                                                                                     </div>
-                                                                                    <div className={styles.quantityControl}>
-                                                                                        <input
-                                                                                            type="number"
-                                                                                            className={styles.qtyInput}
-                                                                                            min={0}
-                                                                                            value={selection.items?.[item.id] || ''}
-                                                                                            placeholder="0"
-                                                                                            onChange={e => updateItemQuantity(index, item.id, parseInt(e.target.value) || 0)}
-                                                                                        />
+                                                                                );
+                                                                            })}
+                                                                            {getVendorMenuItems(selection.vendorId).length === 0 && <span className={styles.hint}>No active menu items.</span>}
+                                                                        </div>
+
+                                                                        {/* Vendor Total (Price-based only) */}
+                                                                        {(() => {
+                                                                            const vendorTotal = getVendorSelectionTotal(selection);
+                                                                            if (vendorTotal > 0) {
+                                                                                return (
+                                                                                    <div style={{
+                                                                                        marginTop: 'var(--spacing-md)',
+                                                                                        padding: '0.75rem',
+                                                                                        backgroundColor: 'var(--bg-surface)',
+                                                                                        borderRadius: 'var(--radius-sm)',
+                                                                                        border: '1px solid var(--border-color)',
+                                                                                        fontSize: '0.9rem',
+                                                                                        textAlign: 'center',
+                                                                                        fontWeight: 600,
+                                                                                        color: 'var(--text-primary)'
+                                                                                    }}>
+                                                                                        Vendor Total (Price): ${vendorTotal.toFixed(2)}
                                                                                     </div>
-                                                                                </div>
-                                                                            );
-                                                                        })}
-                                                                        {getVendorMenuItems(selection.vendorId).length === 0 && <span className={styles.hint}>No active menu items.</span>}
-                                                                    </div>
-
-                                                                    {/* Vendor Total (Price-based only) */}
-                                                                    {(() => {
-                                                                        const vendorTotal = getVendorSelectionTotal(selection);
-                                                                        if (vendorTotal > 0) {
-                                                                            return (
-                                                                                <div style={{
-                                                                                    marginTop: 'var(--spacing-md)',
-                                                                                    padding: '0.75rem',
-                                                                                    backgroundColor: 'var(--bg-surface)',
-                                                                                    borderRadius: 'var(--radius-sm)',
-                                                                                    border: '1px solid var(--border-color)',
-                                                                                    fontSize: '0.9rem',
-                                                                                    textAlign: 'center',
-                                                                                    fontWeight: 600,
-                                                                                    color: 'var(--text-primary)'
-                                                                                }}>
-                                                                                    Vendor Total (Price): ${vendorTotal.toFixed(2)}
-                                                                                </div>
-                                                                            );
-                                                                        }
-                                                                        return null;
-                                                                    })()}
-                                                                </>
-                                                            );
-                                                        })()}
-
-                                                        {/* Next Delivery Date for this vendor */}
-                                                        {(() => {
-                                                            const nextDeliveryDate = getNextDeliveryDateForVendor(selection.vendorId);
-                                                            if (nextDeliveryDate) {
-                                                                return (
-                                                                    <div style={{
-                                                                        marginTop: 'var(--spacing-md)',
-                                                                        padding: '0.75rem',
-                                                                        backgroundColor: 'var(--bg-surface-hover)',
-                                                                        borderRadius: 'var(--radius-sm)',
-                                                                        border: '1px solid var(--border-color)',
-                                                                        fontSize: '0.85rem',
-                                                                        color: 'var(--text-secondary)',
-                                                                        textAlign: 'center'
-                                                                    }}>
-                                                                        <strong style={{ color: 'var(--text-primary)' }}>Take Effect Date:</strong> {nextDeliveryDate}
-                                                                    </div>
+                                                                                );
+                                                                            }
+                                                                            return null;
+                                                                        })()}
+                                                                    </>
                                                                 );
-                                                            }
-                                                            return null;
-                                                        })()}
-                                                    </>
-                                                )}
-                                            </div>
-                                        ))}
+                                                            })()}
+
+                                                            {/* Next Delivery Date for this vendor */}
+                                                            {(() => {
+                                                                const nextDeliveryDate = getNextDeliveryDateForVendor(selection.vendorId);
+                                                                if (nextDeliveryDate) {
+                                                                    return (
+                                                                        <div style={{
+                                                                            marginTop: 'var(--spacing-md)',
+                                                                            padding: '0.75rem',
+                                                                            backgroundColor: 'var(--bg-surface-hover)',
+                                                                            borderRadius: 'var(--radius-sm)',
+                                                                            border: '1px solid var(--border-color)',
+                                                                            fontSize: '0.85rem',
+                                                                            color: 'var(--text-secondary)',
+                                                                            textAlign: 'center'
+                                                                        }}>
+                                                                            <strong style={{ color: 'var(--text-primary)' }}>Take Effect Date:</strong> {nextDeliveryDate}
+                                                                        </div>
+                                                                    );
+                                                                }
+                                                                return null;
+                                                            })()}
+                                                        </>
+                                                    )}
+                                                </div>
+                                            ))}
 
                                             {/* Overall Total for Current Order Request */}
                                             {(() => {
@@ -1437,369 +1437,369 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                                             </button>
                                         </div>
                                     </div>
-                            )}
+                                )}
 
-{
-    formData.serviceType === 'Boxes' && (
-        <div className="animate-fade-in">
-            <div className={styles.formGroup}>
-                <label className="label">Vendor</label>
-                <select
-                    className="input"
-                    value={orderConfig.vendorId || ''}
-                    onChange={e => {
-                        const newVendorId = e.target.value;
-                        setOrderConfig({
-                            ...orderConfig,
-                            vendorId: newVendorId,
-                            boxTypeId: '' // Reset box selection when vendor changes
-                        });
-                    }}
-                >
-                    <option value="">Select Vendor...</option>
-                    {vendors.filter(v => v.serviceType === 'Boxes' && v.isActive).map(v => (
-                        <option key={v.id} value={v.id}>{v.name}</option>
-                    ))}
-                </select>
-            </div>
-
-            {/* Next Delivery Date for this vendor */}
-            {orderConfig.vendorId && (() => {
-                const nextDeliveryDate = getNextDeliveryDateForVendor(orderConfig.vendorId);
-                if (nextDeliveryDate) {
-                    return (
-                        <div style={{
-                            marginTop: 'var(--spacing-md)',
-                            padding: '0.75rem',
-                            backgroundColor: 'var(--bg-surface-hover)',
-                            borderRadius: 'var(--radius-sm)',
-                            border: '1px solid var(--border-color)',
-                            fontSize: '0.85rem',
-                            color: 'var(--text-secondary)',
-                            textAlign: 'center'
-                        }}>
-                            <strong style={{ color: 'var(--text-primary)' }}>Take Effect Date:</strong> {nextDeliveryDate}
-                        </div>
-                    );
-                }
-                return null;
-            })()}
-
-            <div style={{ display: 'none' }}>
-                <label className="label">Quantity</label>
-                <input
-                    type="number"
-                    className="input"
-                    value={orderConfig.boxQuantity || 1}
-                    readOnly
-                    style={{ display: 'none' }}
-                />
-            </div>
-
-            {/* Box Content Selection */}
-            {orderConfig.boxTypeId && activeBoxQuotas.length > 0 && (
-                <div style={{ marginTop: '1rem', borderTop: '1px solid var(--border-color)', paddingTop: '1rem' }}>
-                    <h4 style={{ fontSize: '0.9rem', marginBottom: '0.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                        <Package size={14} /> Box Contents
-                    </h4>
-
-                    {activeBoxQuotas.map(quota => {
-                        const category = categories.find(c => c.id === quota.categoryId);
-                        if (!category) return null;
-
-                        // Filter items for this category and vendor
-                        const availableItems = menuItems.filter(i =>
-                            i.vendorId === orderConfig.vendorId &&
-                            i.isActive &&
-                            i.categoryId === quota.categoryId
-                        );
-
-                        // Calculate current count
-                        let currentCount = 0;
-                        const selectedItems = orderConfig.items || {};
-                        Object.entries(selectedItems).forEach(([itemId, qty]) => {
-                            const item = menuItems.find(i => i.id === itemId);
-                            if (item && item.categoryId === quota.categoryId) {
-                                currentCount += (item.quotaValue || 1) * (qty as number);
-                            }
-                        });
-
-                        const isMet = currentCount === quota.targetValue;
-                        const isOver = currentCount > quota.targetValue;
-
-                        return (
-                            <div key={quota.id} style={{ marginBottom: '1rem', background: 'var(--bg-surface-hover)', padding: '0.75rem', borderRadius: '6px' }}>
-                                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem', fontSize: '0.85rem' }}>
-                                    <span style={{ fontWeight: 600 }}>{category.name}</span>
-                                    <span style={{
-                                        color: isMet ? 'var(--color-success)' : (isOver ? 'var(--color-danger)' : 'var(--color-warning)'),
-                                        fontWeight: 600
-                                    }}>
-                                        {currentCount} / {quota.targetValue}
-                                    </span>
-                                </div>
-
-                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
-                                    {availableItems.map(item => (
-                                        <div key={item.id} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', background: 'var(--bg-app)', padding: '4px 8px', borderRadius: '4px', border: '1px solid var(--border-color)' }}>
-                                            <span style={{ fontSize: '0.8rem' }}>{item.name} <span style={{ color: 'var(--text-tertiary)' }}>({item.quotaValue || 1})</span></span>
-                                            <input
-                                                type="number"
-                                                min="0"
-                                                style={{ width: '40px', padding: '2px', fontSize: '0.8rem', textAlign: 'center' }}
-                                                value={selectedItems[item.id] || ''}
-                                                placeholder="0"
-                                                onChange={e => handleBoxItemChange(item.id, Number(e.target.value))}
-                                            />
-                                        </div>
-                                    ))}
-                                    {availableItems.length === 0 && <span style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)' }}>No items available.</span>}
-                                </div>
-                            </div>
-                        );
-                    })}
-                </div>
-            )}
-        </div>
-    )
-}
-                        </> 
-                    )}
-                </section>
-
-            {/* This Week's Order Panel */}
-            {activeOrder && (
-        <section className={styles.card} style={{ marginTop: 'var(--spacing-lg)' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: 'var(--spacing-md)' }}>
-                <Calendar size={18} />
-                <h3 className={styles.sectionTitle} style={{ marginBottom: 0, borderBottom: 'none', paddingBottom: 0 }}>
-                    This Week's Order
-                </h3>
-            </div>
-            <div>
-                {(() => {
-                    const order = activeOrder;
-                    const isFood = order.serviceType === 'Food';
-                    const isBoxes = order.serviceType === 'Boxes';
-
-                    return (
-                        <div>
-                            {/* Food Order Display - Show vendors first, then items grouped by vendor */}
-                            {isFood && order.vendorSelections && order.vendorSelections.length > 0 && (
-                                <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--spacing-md)' }}>
-                                    {order.vendorSelections.map((vendorSelection: any, idx: number) => {
-                                        const vendor = vendors.find(v => v.id === vendorSelection.vendorId);
-                                        const vendorName = vendor?.name || 'Unknown Vendor';
-                                        const nextDelivery = getNextDeliveryDate(vendorSelection.vendorId);
-                                        const items = vendorSelection.items || {};
-
-                                        return (
-                                            <div key={idx} style={{ padding: 'var(--spacing-md)', backgroundColor: 'var(--bg-surface)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)' }}>
-                                                {/* Vendor Header */}
-                                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--spacing-sm)', paddingBottom: 'var(--spacing-sm)', borderBottom: '1px solid var(--border-color)' }}>
-                                                    <div style={{ fontWeight: 600, fontSize: '1rem', color: 'var(--color-primary)' }}>{vendorName}</div>
-                                                    {nextDelivery && (
-                                                        <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', fontWeight: 500 }}>
-                                                            Next delivery: {nextDelivery.dayOfWeek}, {nextDelivery.date}
-                                                        </div>
-                                                    )}
-                                                </div>
-
-                                                {/* Items List */}
-                                                {Object.keys(items).length > 0 ? (
-                                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                                                        {Object.entries(items).map(([itemId, quantity]) => {
-                                                            const item = menuItems.find(m => m.id === itemId);
-                                                            const itemName = item?.name || 'Unknown Item';
-                                                            const qty = Number(quantity) || 0;
-                                                            if (qty === 0) return null;
-                                                            const itemTotal = getItemTotal(itemId, qty);
-                                                            const itemPrice = item?.priceEach;
-
-                                                            return (
-                                                                <div key={itemId} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.85rem', padding: '4px 8px', backgroundColor: 'var(--bg-app)', borderRadius: '4px' }}>
-                                                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                                                                        <span>{itemName}</span>
-                                                                        {itemPrice !== undefined && (
-                                                                            <span style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)' }}>
-                                                                                ${itemPrice.toFixed(2)} each
-                                                                            </span>
-                                                                        )}
-                                                                    </div>
-                                                                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '2px' }}>
-                                                                        <span style={{ fontWeight: 500, color: 'var(--text-secondary)' }}>Qty: {qty}</span>
-                                                                        {itemTotal > 0 && (
-                                                                            <span style={{ fontWeight: 600, color: 'var(--text-primary)', fontSize: '0.875rem' }}>
-                                                                                ${itemTotal.toFixed(2)}
-                                                                            </span>
-                                                                        )}
-                                                                    </div>
-                                                                </div>
-                                                            );
-                                                        })}
-                                                        {/* Vendor Total */}
-                                                        {(() => {
-                                                            const vendorTotal = getVendorSelectionTotal(vendorSelection);
-                                                            if (vendorTotal > 0) {
-                                                                return (
-                                                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.9rem', padding: '8px', marginTop: '4px', backgroundColor: 'var(--bg-app)', borderRadius: '4px', borderTop: '1px solid var(--border-color)', fontWeight: 600 }}>
-                                                                        <span>Total ({vendorName}):</span>
-                                                                        <span style={{ color: 'var(--color-primary)', fontSize: '0.95rem' }}>${vendorTotal.toFixed(2)}</span>
-                                                                    </div>
-                                                                );
-                                                            }
-                                                            return null;
-                                                        })()}
-                                                    </div>
-                                                ) : (
-                                                    <div style={{ fontSize: '0.85rem', color: 'var(--text-tertiary)', fontStyle: 'italic', padding: '4px' }}>
-                                                        No items selected
-                                                    </div>
-                                                )}
+                                {
+                                    formData.serviceType === 'Boxes' && (
+                                        <div className="animate-fade-in">
+                                            <div className={styles.formGroup}>
+                                                <label className="label">Vendor</label>
+                                                <select
+                                                    className="input"
+                                                    value={orderConfig.vendorId || ''}
+                                                    onChange={e => {
+                                                        const newVendorId = e.target.value;
+                                                        setOrderConfig({
+                                                            ...orderConfig,
+                                                            vendorId: newVendorId,
+                                                            boxTypeId: '' // Reset box selection when vendor changes
+                                                        });
+                                                    }}
+                                                >
+                                                    <option value="">Select Vendor...</option>
+                                                    {vendors.filter(v => v.serviceType === 'Boxes' && v.isActive).map(v => (
+                                                        <option key={v.id} value={v.id}>{v.name}</option>
+                                                    ))}
+                                                </select>
                                             </div>
-                                        );
-                                    })}
 
-                                    {/* Overall Total for This Week's Order */}
-                                    {(() => {
-                                        const overallTotal = getOverallTotal(order.vendorSelections || []);
-                                        if (overallTotal > 0) {
-                                            return (
-                                                <div style={{
-                                                    marginTop: 'var(--spacing-lg)',
-                                                    padding: '1rem',
-                                                    backgroundColor: 'var(--color-primary-bg)',
-                                                    borderRadius: 'var(--radius-md)',
-                                                    border: '2px solid var(--color-primary)',
-                                                    fontSize: '1rem',
-                                                    textAlign: 'center',
-                                                    fontWeight: 700,
-                                                    color: 'var(--color-primary)'
-                                                }}>
-                                                    Overall Total: ${overallTotal.toFixed(2)}
-                                                </div>
-                                            );
-                                        }
-                                        return null;
-                                    })()}
-                                </div>
-                            )}
-
-                            {/* Overall Box Total */}
-                            {(() => {
-                                const boxTotal = getBoxItemsTotal();
-                                if (boxTotal > 0) {
-                                    return (
-                                        <div style={{
-                                            marginTop: 'var(--spacing-md)',
-                                            padding: '1rem',
-                                            backgroundColor: 'var(--color-primary-bg)',
-                                            borderRadius: 'var(--radius-md)',
-                                            border: '2px solid var(--color-primary)',
-                                            fontSize: '1rem',
-                                            textAlign: 'center',
-                                            fontWeight: 700,
-                                            color: 'var(--color-primary)'
-                                        }}>
-                                            Box Total: ${boxTotal.toFixed(2)}
-                                        </div>
-                                    );
-                                }
-                                return null;
-                            })()}
-
-                            {/* Boxes Order Display - Show vendor, box type, and all items */}
-                            {isBoxes && order.boxTypeId && (
-                                <div style={{ padding: 'var(--spacing-md)', backgroundColor: 'var(--bg-surface)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)' }}>
-            {(() => {
-                const box = boxTypes.find(b => b.id === order.boxTypeId);
-                const boxVendorId = box?.vendorId;
-                const vendor = boxVendorId ? vendors.find(v => v.id === boxVendorId) : null;
-                const vendorName = vendor?.name || 'Unknown Vendor';
-                const boxName = box?.name || 'Unknown Box';
-                const nextDelivery = boxVendorId ? getNextDeliveryDate(boxVendorId) : null;
-                const items = order.items || {};
-
-                return (
-                    <>
-                        {/* Vendor and Box Type Header */}
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--spacing-sm)', paddingBottom: 'var(--spacing-sm)', borderBottom: '1px solid var(--border-color)' }}>
-                            <div>
-                                <div style={{ fontWeight: 600, fontSize: '1rem', color: 'var(--color-primary)' }}>{vendorName}</div>
-                                <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginTop: '2px' }}>
-                                    {boxName} × {order.boxQuantity || 1}
-                                </div>
-                            </div>
-                            {nextDelivery && (
-                                <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', fontWeight: 500 }}>
-                                    Next delivery: {nextDelivery.dayOfWeek}, {nextDelivery.date}
-                                </div>
-                            )}
-                        </div>
-
-                                                {/* Items List */}
-                                                {Object.keys(items).length > 0 ? (
-                                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginTop: 'var(--spacing-sm)' }}>
-                                                        <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', fontWeight: 600, marginBottom: '4px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                                                            Box Contents:
+                                            {/* Next Delivery Date for this vendor */}
+                                            {orderConfig.vendorId && (() => {
+                                                const nextDeliveryDate = getNextDeliveryDateForVendor(orderConfig.vendorId);
+                                                if (nextDeliveryDate) {
+                                                    return (
+                                                        <div style={{
+                                                            marginTop: 'var(--spacing-md)',
+                                                            padding: '0.75rem',
+                                                            backgroundColor: 'var(--bg-surface-hover)',
+                                                            borderRadius: 'var(--radius-sm)',
+                                                            border: '1px solid var(--border-color)',
+                                                            fontSize: '0.85rem',
+                                                            color: 'var(--text-secondary)',
+                                                            textAlign: 'center'
+                                                        }}>
+                                                            <strong style={{ color: 'var(--text-primary)' }}>Take Effect Date:</strong> {nextDeliveryDate}
                                                         </div>
-                                                        {Object.entries(items).map(([itemId, quantity]) => {
-                                                            const item = menuItems.find(m => m.id === itemId);
-                                                            const itemName = item?.name || 'Unknown Item';
-                                                            const qty = Number(quantity) || 0;
-                                                            if (qty === 0) return null;
-                                                            const boxItemPrices = (order as any).itemPrices || {};
-                                                            const itemPrice = boxItemPrices[itemId];
-                                                            const itemTotal = itemPrice !== undefined && itemPrice !== null ? itemPrice * qty : 0;
+                                                    );
+                                                }
+                                                return null;
+                                            })()}
 
+                                            <div style={{ display: 'none' }}>
+                                                <label className="label">Quantity</label>
+                                                <input
+                                                    type="number"
+                                                    className="input"
+                                                    value={orderConfig.boxQuantity || 1}
+                                                    readOnly
+                                                    style={{ display: 'none' }}
+                                                />
+                                            </div>
+
+                                            {/* Box Content Selection */}
+                                            {orderConfig.boxTypeId && activeBoxQuotas.length > 0 && (
+                                                <div style={{ marginTop: '1rem', borderTop: '1px solid var(--border-color)', paddingTop: '1rem' }}>
+                                                    <h4 style={{ fontSize: '0.9rem', marginBottom: '0.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                                        <Package size={14} /> Box Contents
+                                                    </h4>
+
+                                                    {activeBoxQuotas.map(quota => {
+                                                        const category = categories.find(c => c.id === quota.categoryId);
+                                                        if (!category) return null;
+
+                                                        // Filter items for this category and vendor
+                                                        const availableItems = menuItems.filter(i =>
+                                                            i.vendorId === orderConfig.vendorId &&
+                                                            i.isActive &&
+                                                            i.categoryId === quota.categoryId
+                                                        );
+
+                                                        // Calculate current count
+                                                        let currentCount = 0;
+                                                        const selectedItems = orderConfig.items || {};
+                                                        Object.entries(selectedItems).forEach(([itemId, qty]) => {
+                                                            const item = menuItems.find(i => i.id === itemId);
+                                                            if (item && item.categoryId === quota.categoryId) {
+                                                                currentCount += (item.quotaValue || 1) * (qty as number);
+                                                            }
+                                                        });
+
+                                                        const isMet = currentCount === quota.targetValue;
+                                                        const isOver = currentCount > quota.targetValue;
+
+                                                        return (
+                                                            <div key={quota.id} style={{ marginBottom: '1rem', background: 'var(--bg-surface-hover)', padding: '0.75rem', borderRadius: '6px' }}>
+                                                                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem', fontSize: '0.85rem' }}>
+                                                                    <span style={{ fontWeight: 600 }}>{category.name}</span>
+                                                                    <span style={{
+                                                                        color: isMet ? 'var(--color-success)' : (isOver ? 'var(--color-danger)' : 'var(--color-warning)'),
+                                                                        fontWeight: 600
+                                                                    }}>
+                                                                        {currentCount} / {quota.targetValue}
+                                                                    </span>
+                                                                </div>
+
+                                                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
+                                                                    {availableItems.map(item => (
+                                                                        <div key={item.id} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', background: 'var(--bg-app)', padding: '4px 8px', borderRadius: '4px', border: '1px solid var(--border-color)' }}>
+                                                                            <span style={{ fontSize: '0.8rem' }}>{item.name} <span style={{ color: 'var(--text-tertiary)' }}>({item.quotaValue || 1})</span></span>
+                                                                            <input
+                                                                                type="number"
+                                                                                min="0"
+                                                                                style={{ width: '40px', padding: '2px', fontSize: '0.8rem', textAlign: 'center' }}
+                                                                                value={selectedItems[item.id] || ''}
+                                                                                placeholder="0"
+                                                                                onChange={e => handleBoxItemChange(item.id, Number(e.target.value))}
+                                                                            />
+                                                                        </div>
+                                                                    ))}
+                                                                    {availableItems.length === 0 && <span style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)' }}>No items available.</span>}
+                                                                </div>
+                                                            </div>
+                                                        );
+                                                    })}
+                                                </div>
+                                            )}
+                                        </div>
+                                    )
+                                }
+                            </>
+                        )}
+                    </section>
+
+                    {/* This Week's Order Panel */}
+                    {activeOrder && (
+                        <section className={styles.card} style={{ marginTop: 'var(--spacing-lg)' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: 'var(--spacing-md)' }}>
+                                <Calendar size={18} />
+                                <h3 className={styles.sectionTitle} style={{ marginBottom: 0, borderBottom: 'none', paddingBottom: 0 }}>
+                                    This Week's Order
+                                </h3>
+                            </div>
+                            <div>
+                                {(() => {
+                                    const order = activeOrder;
+                                    const isFood = order.serviceType === 'Food';
+                                    const isBoxes = order.serviceType === 'Boxes';
+
+                                    return (
+                                        <div>
+                                            {/* Food Order Display - Show vendors first, then items grouped by vendor */}
+                                            {isFood && order.vendorSelections && order.vendorSelections.length > 0 && (
+                                                <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--spacing-md)' }}>
+                                                    {order.vendorSelections.map((vendorSelection: any, idx: number) => {
+                                                        const vendor = vendors.find(v => v.id === vendorSelection.vendorId);
+                                                        const vendorName = vendor?.name || 'Unknown Vendor';
+                                                        const nextDelivery = getNextDeliveryDate(vendorSelection.vendorId);
+                                                        const items = vendorSelection.items || {};
+
+                                                        return (
+                                                            <div key={idx} style={{ padding: 'var(--spacing-md)', backgroundColor: 'var(--bg-surface)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)' }}>
+                                                                {/* Vendor Header */}
+                                                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--spacing-sm)', paddingBottom: 'var(--spacing-sm)', borderBottom: '1px solid var(--border-color)' }}>
+                                                                    <div style={{ fontWeight: 600, fontSize: '1rem', color: 'var(--color-primary)' }}>{vendorName}</div>
+                                                                    {nextDelivery && (
+                                                                        <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', fontWeight: 500 }}>
+                                                                            Next delivery: {nextDelivery.dayOfWeek}, {nextDelivery.date}
+                                                                        </div>
+                                                                    )}
+                                                                </div>
+
+                                                                {/* Items List */}
+                                                                {Object.keys(items).length > 0 ? (
+                                                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                                                                        {Object.entries(items).map(([itemId, quantity]) => {
+                                                                            const item = menuItems.find(m => m.id === itemId);
+                                                                            const itemName = item?.name || 'Unknown Item';
+                                                                            const qty = Number(quantity) || 0;
+                                                                            if (qty === 0) return null;
+                                                                            const itemTotal = getItemTotal(itemId, qty);
+                                                                            const itemPrice = item?.priceEach;
+
+                                                                            return (
+                                                                                <div key={itemId} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.85rem', padding: '4px 8px', backgroundColor: 'var(--bg-app)', borderRadius: '4px' }}>
+                                                                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                                                                                        <span>{itemName}</span>
+                                                                                        {itemPrice !== undefined && (
+                                                                                            <span style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)' }}>
+                                                                                                ${itemPrice.toFixed(2)} each
+                                                                                            </span>
+                                                                                        )}
+                                                                                    </div>
+                                                                                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '2px' }}>
+                                                                                        <span style={{ fontWeight: 500, color: 'var(--text-secondary)' }}>Qty: {qty}</span>
+                                                                                        {itemTotal > 0 && (
+                                                                                            <span style={{ fontWeight: 600, color: 'var(--text-primary)', fontSize: '0.875rem' }}>
+                                                                                                ${itemTotal.toFixed(2)}
+                                                                                            </span>
+                                                                                        )}
+                                                                                    </div>
+                                                                                </div>
+                                                                            );
+                                                                        })}
+                                                                        {/* Vendor Total */}
+                                                                        {(() => {
+                                                                            const vendorTotal = getVendorSelectionTotal(vendorSelection);
+                                                                            if (vendorTotal > 0) {
+                                                                                return (
+                                                                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.9rem', padding: '8px', marginTop: '4px', backgroundColor: 'var(--bg-app)', borderRadius: '4px', borderTop: '1px solid var(--border-color)', fontWeight: 600 }}>
+                                                                                        <span>Total ({vendorName}):</span>
+                                                                                        <span style={{ color: 'var(--color-primary)', fontSize: '0.95rem' }}>${vendorTotal.toFixed(2)}</span>
+                                                                                    </div>
+                                                                                );
+                                                                            }
+                                                                            return null;
+                                                                        })()}
+                                                                    </div>
+                                                                ) : (
+                                                                    <div style={{ fontSize: '0.85rem', color: 'var(--text-tertiary)', fontStyle: 'italic', padding: '4px' }}>
+                                                                        No items selected
+                                                                    </div>
+                                                                )}
+                                                            </div>
+                                                        );
+                                                    })}
+
+                                                    {/* Overall Total for This Week's Order */}
+                                                    {(() => {
+                                                        const overallTotal = getOverallTotal(order.vendorSelections || []);
+                                                        if (overallTotal > 0) {
                                                             return (
-                                                                <div key={itemId} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.85rem', padding: '4px 8px', backgroundColor: 'var(--bg-app)', borderRadius: '4px' }}>
-                                                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                                                                        <span>{itemName}</span>
-                                                                        {itemPrice !== undefined && itemPrice !== null && (
-                                                                            <span style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)' }}>
-                                                                                ${itemPrice.toFixed(2)} each
-                                                                            </span>
-                                                                        )}
-                                                                    </div>
-                                                                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '2px' }}>
-                                                                        <span style={{ fontWeight: 500, color: 'var(--text-secondary)' }}>Qty: {qty}</span>
-                                                                        {itemTotal > 0 && (
-                                                                            <span style={{ fontWeight: 600, color: 'var(--text-primary)', fontSize: '0.875rem' }}>
-                                                                                ${itemTotal.toFixed(2)}
-                                                                            </span>
-                                                                        )}
-                                                                    </div>
+                                                                <div style={{
+                                                                    marginTop: 'var(--spacing-lg)',
+                                                                    padding: '1rem',
+                                                                    backgroundColor: 'var(--color-primary-bg)',
+                                                                    borderRadius: 'var(--radius-md)',
+                                                                    border: '2px solid var(--color-primary)',
+                                                                    fontSize: '1rem',
+                                                                    textAlign: 'center',
+                                                                    fontWeight: 700,
+                                                                    color: 'var(--color-primary)'
+                                                                }}>
+                                                                    Overall Total: ${overallTotal.toFixed(2)}
                                                                 </div>
                                                             );
-                                                        })}
-                                                        {/* Box Total */}
-                                                        {(() => {
-                                                            const boxTotal = Object.entries(items).reduce((sum, [itemId, qty]) => {
-                                                                const quantity = typeof qty === 'number' ? qty : 0;
-                                                                const price = (order as any).itemPrices?.[itemId];
-                                                                if (price !== undefined && price !== null && quantity > 0) {
-                                                                    return sum + (price * quantity);
-                                                                }
-                                                                return sum;
-                                                            }, 0);
-                                                            if (boxTotal > 0) {
-                                                                return (
-                                                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.9rem', padding: '8px', marginTop: '4px', backgroundColor: 'var(--bg-app)', borderRadius: '4px', borderTop: '1px solid var(--border-color)', fontWeight: 600 }}>
-                                                                        <span>Box Total:</span>
-                                                                        <span style={{ color: 'var(--color-primary)', fontSize: '0.95rem' }}>${boxTotal.toFixed(2)}</span>
-                                                                    </div>
-                                                                );
-                                                            }
-                                                            return null;
-                                                        })()}
-                                                    </div>
-                                                ) : null}
-                                                    </>
-                                                );
+                                                        }
+                                                        return null;
+                                                    })()}
+                                                </div>
+                                            )}
+
+                                            {/* Overall Box Total */}
+                                            {(() => {
+                                                const boxTotal = getBoxItemsTotal();
+                                                if (boxTotal > 0) {
+                                                    return (
+                                                        <div style={{
+                                                            marginTop: 'var(--spacing-md)',
+                                                            padding: '1rem',
+                                                            backgroundColor: 'var(--color-primary-bg)',
+                                                            borderRadius: 'var(--radius-md)',
+                                                            border: '2px solid var(--color-primary)',
+                                                            fontSize: '1rem',
+                                                            textAlign: 'center',
+                                                            fontWeight: 700,
+                                                            color: 'var(--color-primary)'
+                                                        }}>
+                                                            Box Total: ${boxTotal.toFixed(2)}
+                                                        </div>
+                                                    );
+                                                }
+                                                return null;
                                             })()}
-                                        </div>
-                                    )}
+
+                                            {/* Boxes Order Display - Show vendor, box type, and all items */}
+                                            {isBoxes && order.boxTypeId && (
+                                                <div style={{ padding: 'var(--spacing-md)', backgroundColor: 'var(--bg-surface)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)' }}>
+                                                    {(() => {
+                                                        const box = boxTypes.find(b => b.id === order.boxTypeId);
+                                                        const boxVendorId = box?.vendorId;
+                                                        const vendor = boxVendorId ? vendors.find(v => v.id === boxVendorId) : null;
+                                                        const vendorName = vendor?.name || 'Unknown Vendor';
+                                                        const boxName = box?.name || 'Unknown Box';
+                                                        const nextDelivery = boxVendorId ? getNextDeliveryDate(boxVendorId) : null;
+                                                        const items = order.items || {};
+
+                                                        return (
+                                                            <>
+                                                                {/* Vendor and Box Type Header */}
+                                                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--spacing-sm)', paddingBottom: 'var(--spacing-sm)', borderBottom: '1px solid var(--border-color)' }}>
+                                                                    <div>
+                                                                        <div style={{ fontWeight: 600, fontSize: '1rem', color: 'var(--color-primary)' }}>{vendorName}</div>
+                                                                        <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginTop: '2px' }}>
+                                                                            {boxName} × {order.boxQuantity || 1}
+                                                                        </div>
+                                                                    </div>
+                                                                    {nextDelivery && (
+                                                                        <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', fontWeight: 500 }}>
+                                                                            Next delivery: {nextDelivery.dayOfWeek}, {nextDelivery.date}
+                                                                        </div>
+                                                                    )}
+                                                                </div>
+
+                                                                {/* Items List */}
+                                                                {Object.keys(items).length > 0 ? (
+                                                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginTop: 'var(--spacing-sm)' }}>
+                                                                        <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', fontWeight: 600, marginBottom: '4px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                                                                            Box Contents:
+                                                                        </div>
+                                                                        {Object.entries(items).map(([itemId, quantity]) => {
+                                                                            const item = menuItems.find(m => m.id === itemId);
+                                                                            const itemName = item?.name || 'Unknown Item';
+                                                                            const qty = Number(quantity) || 0;
+                                                                            if (qty === 0) return null;
+                                                                            const boxItemPrices = (order as any).itemPrices || {};
+                                                                            const itemPrice = boxItemPrices[itemId];
+                                                                            const itemTotal = itemPrice !== undefined && itemPrice !== null ? itemPrice * qty : 0;
+
+                                                                            return (
+                                                                                <div key={itemId} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.85rem', padding: '4px 8px', backgroundColor: 'var(--bg-app)', borderRadius: '4px' }}>
+                                                                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                                                                                        <span>{itemName}</span>
+                                                                                        {itemPrice !== undefined && itemPrice !== null && (
+                                                                                            <span style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)' }}>
+                                                                                                ${itemPrice.toFixed(2)} each
+                                                                                            </span>
+                                                                                        )}
+                                                                                    </div>
+                                                                                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '2px' }}>
+                                                                                        <span style={{ fontWeight: 500, color: 'var(--text-secondary)' }}>Qty: {qty}</span>
+                                                                                        {itemTotal > 0 && (
+                                                                                            <span style={{ fontWeight: 600, color: 'var(--text-primary)', fontSize: '0.875rem' }}>
+                                                                                                ${itemTotal.toFixed(2)}
+                                                                                            </span>
+                                                                                        )}
+                                                                                    </div>
+                                                                                </div>
+                                                                            );
+                                                                        })}
+                                                                        {/* Box Total */}
+                                                                        {(() => {
+                                                                            const boxTotal = Object.entries(items).reduce((sum, [itemId, qty]) => {
+                                                                                const quantity = typeof qty === 'number' ? qty : 0;
+                                                                                const price = (order as any).itemPrices?.[itemId];
+                                                                                if (price !== undefined && price !== null && quantity > 0) {
+                                                                                    return sum + (price * quantity);
+                                                                                }
+                                                                                return sum;
+                                                                            }, 0);
+                                                                            if (boxTotal > 0) {
+                                                                                return (
+                                                                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.9rem', padding: '8px', marginTop: '4px', backgroundColor: 'var(--bg-app)', borderRadius: '4px', borderTop: '1px solid var(--border-color)', fontWeight: 600 }}>
+                                                                                        <span>Box Total:</span>
+                                                                                        <span style={{ color: 'var(--color-primary)', fontSize: '0.95rem' }}>${boxTotal.toFixed(2)}</span>
+                                                                                    </div>
+                                                                                );
+                                                                            }
+                                                                            return null;
+                                                                        })()}
+                                                                    </div>
+                                                                ) : null}
+                                                            </>
+                                                        );
+                                                    })()}
+                                                </div>
+                                            )}
 
                                             {!isFood && !isBoxes && (
                                                 <div style={{ fontSize: '0.85rem', color: 'var(--text-tertiary)', fontStyle: 'italic', padding: '4px' }}>
@@ -1867,11 +1867,11 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                                                             day: 'numeric',
                                                             year: 'numeric'
                                                         }) : 'N/A';
-                                                        
+
                                                         // Format order items summary
                                                         const formatOrderItems = () => {
                                                             if (!order.orderDetails) return 'N/A';
-                                                            
+
                                                             if (order.orderDetails.serviceType === 'Food' && order.orderDetails.vendorSelections) {
                                                                 const items: string[] = [];
                                                                 order.orderDetails.vendorSelections.forEach((vs: any) => {
@@ -1885,9 +1885,9 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                                                             }
                                                             return 'N/A';
                                                         };
-                                                        
+
                                                         return (
-                                                            <tr 
+                                                            <tr
                                                                 key={order.id}
                                                                 style={{
                                                                     borderBottom: '1px solid var(--border-color)',
@@ -1921,9 +1921,9 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                                                                     ${parseFloat((order.totalValue || 0).toString()).toFixed(2)}
                                                                 </td>
                                                                 <td style={{ padding: '12px', color: 'var(--text-secondary)', fontSize: '0.875rem', maxWidth: '300px' }}>
-                                                                    <div style={{ 
-                                                                        overflow: 'hidden', 
-                                                                        textOverflow: 'ellipsis', 
+                                                                    <div style={{
+                                                                        overflow: 'hidden',
+                                                                        textOverflow: 'ellipsis',
                                                                         whiteSpace: 'nowrap',
                                                                         cursor: 'default'
                                                                     }} title={formatOrderItems()}>
@@ -1933,13 +1933,13 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                                                                 <td style={{ padding: '12px', textAlign: 'center' }}>
                                                                     {order.deliveryProofUrl ? (
                                                                         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
-                                                                            <a 
-                                                                                href={order.deliveryProofUrl} 
-                                                                                target="_blank" 
+                                                                            <a
+                                                                                href={order.deliveryProofUrl}
+                                                                                target="_blank"
                                                                                 rel="noopener noreferrer"
-                                                                                style={{ 
+                                                                                style={{
                                                                                     display: 'inline-block',
-                                                                                    color: 'var(--color-primary)', 
+                                                                                    color: 'var(--color-primary)',
                                                                                     fontSize: '0.875rem',
                                                                                     textDecoration: 'none'
                                                                                 }}
@@ -1953,9 +1953,9 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                                                                                 <Image size={16} style={{ marginRight: '4px', verticalAlign: 'middle' }} />
                                                                                 View Image
                                                                             </a>
-                                                                            <img 
-                                                                                src={order.deliveryProofUrl} 
-                                                                                alt="Delivery proof" 
+                                                                            <img
+                                                                                src={order.deliveryProofUrl}
+                                                                                alt="Delivery proof"
                                                                                 style={{
                                                                                     maxWidth: '150px',
                                                                                     maxHeight: '100px',
@@ -2034,10 +2034,10 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                                                             day: 'numeric',
                                                             year: 'numeric'
                                                         }) : 'N/A';
-                                                        
+
                                                         return (
                                                             <Fragment key={record.id}>
-                                                                <tr 
+                                                                <tr
                                                                     onClick={() => hasOrderDetails && toggleBillingRow(record.id)}
                                                                     style={{
                                                                         cursor: hasOrderDetails ? 'pointer' : 'default',
@@ -2061,8 +2061,8 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                                                                         <span className="badge" style={{
                                                                             backgroundColor: record.status === 'request sent' ? 'var(--color-warning)' :
                                                                                 record.status === 'success' ? 'var(--color-success)' :
-                                                                                record.status === 'failed' ? 'var(--color-danger)' :
-                                                                                'var(--color-secondary)',
+                                                                                    record.status === 'failed' ? 'var(--color-danger)' :
+                                                                                        'var(--color-secondary)',
                                                                             fontSize: '0.75rem',
                                                                             padding: '4px 8px',
                                                                             borderRadius: '4px',
@@ -2219,43 +2219,43 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
     }
 
     return (
-    <>
-        {content}
-        {validationError.show && (
-            <div className={styles.modalOverlay} style={{ zIndex: 200 }}>
-                <div className={styles.modalContent} style={{ maxWidth: '400px', height: 'auto', padding: '24px' }} onClick={e => e.stopPropagation()}>
-                    <h2 style={{ fontSize: '1.25rem', fontWeight: 600, marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--color-danger)' }}>
-                        <AlertTriangle size={24} />
-                        Cannot Save Order
-                    </h2>
-                    <p style={{ marginBottom: '16px', color: 'var(--text-secondary)' }}>
-                        The current order configuration is invalid and cannot be saved.
-                    </p>
-                    <div style={{ background: 'var(--bg-surface-hover)', padding: '12px', borderRadius: '8px', marginBottom: '24px' }}>
-                        <ul style={{ listStyle: 'disc', paddingLeft: '20px', margin: 0 }}>
-                            {validationError.messages.map((msg, i) => (
-                                <li key={i} style={{ marginBottom: '4px', color: 'var(--text-primary)' }}>{msg}</li>
-                            ))}
-                        </ul>
-                    </div>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                        <button
-                            className="btn btn-primary"
-                            onClick={() => setValidationError({ show: false, messages: [] })}
-                        >
-                            Return to Editing
-                        </button>
-                        <button
-                            className="btn"
-                            style={{ background: 'none', border: '1px solid var(--border-color)', color: 'var(--text-secondary)' }}
-                            onClick={handleDiscardChanges}
-                        >
-                            Discard Changes & Exit
-                        </button>
+        <>
+            {content}
+            {validationError.show && (
+                <div className={styles.modalOverlay} style={{ zIndex: 200 }}>
+                    <div className={styles.modalContent} style={{ maxWidth: '400px', height: 'auto', padding: '24px' }} onClick={e => e.stopPropagation()}>
+                        <h2 style={{ fontSize: '1.25rem', fontWeight: 600, marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--color-danger)' }}>
+                            <AlertTriangle size={24} />
+                            Cannot Save Order
+                        </h2>
+                        <p style={{ marginBottom: '16px', color: 'var(--text-secondary)' }}>
+                            The current order configuration is invalid and cannot be saved.
+                        </p>
+                        <div style={{ background: 'var(--bg-surface-hover)', padding: '12px', borderRadius: '8px', marginBottom: '24px' }}>
+                            <ul style={{ listStyle: 'disc', paddingLeft: '20px', margin: 0 }}>
+                                {validationError.messages.map((msg, i) => (
+                                    <li key={i} style={{ marginBottom: '4px', color: 'var(--text-primary)' }}>{msg}</li>
+                                ))}
+                            </ul>
+                        </div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                            <button
+                                className="btn btn-primary"
+                                onClick={() => setValidationError({ show: false, messages: [] })}
+                            >
+                                Return to Editing
+                            </button>
+                            <button
+                                className="btn"
+                                style={{ background: 'none', border: '1px solid var(--border-color)', color: 'var(--text-secondary)' }}
+                                onClick={handleDiscardChanges}
+                            >
+                                Discard Changes & Exit
+                            </button>
+                        </div>
                     </div>
                 </div>
-            </div>
-        )}
-    </>
-);
+            )}
+        </>
+    );
 }
