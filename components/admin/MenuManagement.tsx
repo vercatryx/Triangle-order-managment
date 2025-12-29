@@ -47,8 +47,7 @@ export function MenuManagement() {
             priceEach: 0,
             isActive: true,
             quotaValue: 1,
-            categoryId: '',
-            minimumOrder: 0
+            categoryId: ''
         });
         setIsCreating(false);
         setEditingId(null);

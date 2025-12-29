@@ -125,12 +125,12 @@ export async function updateVendor(id: string, data: Partial<Vendor>) {
     }
     if (data.isActive !== undefined) payload.is_active = data.isActive;
     if (data.minimumOrder !== undefined) payload.minimum_order = data.minimumOrder;
-    
+
     // Handle email update
     if (data.email !== undefined) {
         payload.email = data.email || null;
     }
-    
+
     // Handle password update (only if provided and not empty)
     if (data.password !== undefined && data.password !== null && data.password.trim() !== '') {
         payload.password = await hashPassword(data.password);
@@ -442,18 +442,18 @@ export async function addClient(data: Omit<ClientProfile, 'id' | 'createdAt' | '
 
     if (res) {
         const newClient = mapClientFromDB(res);
-        
+
         // Sync to upcoming_orders if activeOrder exists
         if (newClient.activeOrder && newClient.activeOrder.caseId) {
             await syncCurrentOrderToUpcoming(newClient.id, newClient);
         }
 
         revalidatePath('/clients');
-        
+
         // Trigger local DB sync in background after mutation
         const { triggerSyncInBackground } = await import('./local-db');
         triggerSyncInBackground();
-        
+
         return newClient;
     }
 }
@@ -478,7 +478,7 @@ export async function updateClient(id: string, data: Partial<ClientProfile>) {
 
     const { error } = await supabase.from('clients').update(payload).eq('id', id);
     handleError(error);
-    
+
     // If activeOrder was updated, sync to upcoming_orders
     if (data.activeOrder) {
         const updatedClient = await getClient(id);
@@ -491,7 +491,7 @@ export async function updateClient(id: string, data: Partial<ClientProfile>) {
         const { triggerSyncInBackground } = await import('./local-db');
         triggerSyncInBackground();
     }
-    
+
     revalidatePath('/clients');
     revalidatePath(`/clients/${id}`);
 }
@@ -737,10 +737,10 @@ export async function getCompletedOrdersWithDeliveryProof(clientId: string) {
                 if (boxSelection) {
                     const vendor = vendors.find(v => v.id === boxSelection.vendor_id);
                     const boxType = boxTypes.find(bt => bt.id === boxSelection.box_type_id);
-                    const boxTotalValue = boxSelection.total_value 
-                        ? parseFloat(boxSelection.total_value) 
+                    const boxTotalValue = boxSelection.total_value
+                        ? parseFloat(boxSelection.total_value)
                         : parseFloat(d.total_value || 0);
-                    
+
                     orderDetails = {
                         serviceType: d.service_type,
                         vendorId: boxSelection.vendor_id,
@@ -810,18 +810,18 @@ export async function getBillingHistory(clientId: string) {
         billingRecords.map(async (d: any) => {
             let deliveryDate: string | undefined = undefined;
             let orderDetails: any = undefined;
-            
+
             if (d.order_id) {
                 const { data: orderData, error: orderError } = await supabase
                     .from('orders')
                     .select('*')
                     .eq('id', d.order_id)
                     .single();
-                
+
                 if (!orderError && orderData) {
                     // Prefer actual_delivery_date, fallback to scheduled_delivery_date
                     deliveryDate = orderData.actual_delivery_date || orderData.scheduled_delivery_date || undefined;
-                    
+
                     // Build order details based on service type
                     if (orderData.service_type === 'Food') {
                         // Fetch vendor selections and items
@@ -882,10 +882,10 @@ export async function getBillingHistory(clientId: string) {
                             const vendor = vendors.find(v => v.id === boxSelection.vendor_id);
                             const boxType = boxTypes.find(bt => bt.id === boxSelection.box_type_id);
                             // Prefer stored total_value from box selection, fallback to order total_value
-                            const boxTotalValue = boxSelection.total_value 
-                                ? parseFloat(boxSelection.total_value) 
+                            const boxTotalValue = boxSelection.total_value
+                                ? parseFloat(boxSelection.total_value)
                                 : parseFloat(orderData.total_value || 0);
-                            
+
                             orderDetails = {
                                 serviceType: orderData.service_type,
                                 vendorId: boxSelection.vendor_id,
@@ -909,7 +909,7 @@ export async function getBillingHistory(clientId: string) {
 
             // Calculate amount from order items if order details exist
             let calculatedAmount = d.amount; // Default to stored amount
-            
+
             if (orderDetails) {
                 if (orderDetails.serviceType === 'Food' && orderDetails.vendorSelections) {
                     // Sum all item totalValues from all vendor selections
@@ -923,7 +923,7 @@ export async function getBillingHistory(clientId: string) {
                     calculatedAmount = orderDetails.totalValue;
                 }
             }
-            
+
             return {
                 id: d.id,
                 clientId: d.client_id,
@@ -969,18 +969,18 @@ export async function getAllBillingRecords() {
         billingRecords.map(async (d: any) => {
             let deliveryDate: string | undefined = undefined;
             let calculatedAmount = d.amount; // Default to stored amount
-            
+
             if (d.order_id) {
                 const { data: orderData, error: orderError } = await supabase
                     .from('orders')
                     .select('*')
                     .eq('id', d.order_id)
                     .single();
-                
+
                 if (!orderError && orderData) {
                     // Prefer actual_delivery_date, fallback to scheduled_delivery_date
                     deliveryDate = orderData.actual_delivery_date || orderData.scheduled_delivery_date || undefined;
-                    
+
                     // Calculate amount from order items
                     if (orderData.service_type === 'Food') {
                         // Fetch vendor selections and items
@@ -1013,7 +1013,7 @@ export async function getAllBillingRecords() {
                             .select('*')
                             .eq('order_id', d.order_id)
                             .maybeSingle();
-                        
+
                         if (boxSelection && boxSelection.total_value) {
                             calculatedAmount = parseFloat(boxSelection.total_value);
                         } else {
@@ -1100,7 +1100,7 @@ function calculateTakeEffectDate(vendorId: string, vendors: Vendor[]): Date | nu
  */
 function calculateEarliestTakeEffectDate(vendorIds: string[], vendors: Vendor[]): Date | null {
     const dates: Date[] = [];
-    
+
     for (const vendorId of vendorIds) {
         const date = calculateTakeEffectDate(vendorId, vendors);
         if (date) dates.push(date);
@@ -1134,7 +1134,7 @@ export async function syncCurrentOrderToUpcoming(clientId: string, client: Clien
         const vendorIds = orderConfig.vendorSelections
             .map((s: any) => s.vendorId)
             .filter((id: string) => id);
-        
+
         if (vendorIds.length > 0) {
             takeEffectDate = calculateEarliestTakeEffectDate(vendorIds, vendors);
             // For Food orders, scheduled_delivery_date can be the first delivery date
@@ -1153,7 +1153,7 @@ export async function syncCurrentOrderToUpcoming(clientId: string, client: Clien
                     const deliveryDayNumbers = vendor.deliveryDays
                         .map((day: string) => dayNameToNumber[day])
                         .filter((num: number | undefined): num is number => num !== undefined);
-                    
+
                     for (let i = 0; i <= 14; i++) {
                         const checkDate = new Date(today);
                         checkDate.setDate(today.getDate() + i);
@@ -1172,7 +1172,7 @@ export async function syncCurrentOrderToUpcoming(clientId: string, client: Clien
             const boxType = boxTypes.find(bt => bt.id === orderConfig.boxTypeId);
             boxVendorId = boxType?.vendorId || null;
         }
-        
+
         if (boxVendorId) {
             takeEffectDate = calculateTakeEffectDate(boxVendorId, vendors);
             // For Box orders, scheduled_delivery_date is also the first delivery date
@@ -1187,7 +1187,7 @@ export async function syncCurrentOrderToUpcoming(clientId: string, client: Clien
                 const deliveryDayNumbers = vendor.deliveryDays
                     .map((day: string) => dayNameToNumber[day])
                     .filter((num: number | undefined): num is number => num !== undefined);
-                
+
                 for (let i = 0; i <= 14; i++) {
                     const checkDate = new Date(today);
                     checkDate.setDate(today.getDate() + i);
@@ -1285,7 +1285,7 @@ export async function syncCurrentOrderToUpcoming(clientId: string, client: Clien
             .eq('id', existing.id)
             .select()
             .single();
-        
+
         if (error) {
             console.error('Error updating upcoming order:', error);
             return;
@@ -1298,7 +1298,7 @@ export async function syncCurrentOrderToUpcoming(clientId: string, client: Clien
             .insert(upcomingOrderData)
             .select()
             .single();
-        
+
         if (error) {
             console.error('Error creating upcoming order:', error);
             return;
@@ -1350,10 +1350,10 @@ export async function syncCurrentOrderToUpcoming(clientId: string, client: Clien
         const quantity = orderConfig.boxQuantity || 1;
         const unitValue = boxType?.priceEach || 0;
         const totalValueForBox = unitValue * quantity;
-        
+
         // Get vendorId from orderConfig or from boxType
         const boxVendorId = (orderConfig as any).vendorId || boxType?.vendorId || null;
-        
+
         // Get box items and prices from orderConfig
         // Store items in format: { [itemId]: { quantity: number, price?: number } }
         const boxItemsRaw = (orderConfig as any).items || {};
@@ -1368,7 +1368,7 @@ export async function syncCurrentOrderToUpcoming(clientId: string, client: Clien
                 boxItems[itemId] = qty;
             }
         }
-        
+
         // Calculate total from item prices if available
         let calculatedTotal = totalValueForBox;
         if (Object.keys(boxItemPrices).length > 0) {
@@ -1381,7 +1381,7 @@ export async function syncCurrentOrderToUpcoming(clientId: string, client: Clien
                 }
             }
         }
-        
+
         await supabase.from('upcoming_order_box_selections').insert({
             upcoming_order_id: upcomingOrderId,
             box_type_id: orderConfig.boxTypeId,
@@ -1398,7 +1398,7 @@ export async function syncCurrentOrderToUpcoming(clientId: string, client: Clien
     // update it to have scheduled_delivery_date = take_effect_date
     const takeEffectDateStr = takeEffectDate.toISOString().split('T')[0];
     const currentScheduledDateStr = scheduledDeliveryDate.toISOString().split('T')[0];
-    
+
     // Check if scheduled_delivery_date already matches take_effect_date
     if (currentScheduledDateStr !== takeEffectDateStr && takeEffectDate) {
         // Check if there's already an upcoming_order with scheduled_delivery_date = take_effect_date
@@ -1429,7 +1429,7 @@ export async function syncCurrentOrderToUpcoming(clientId: string, client: Clien
             }
         }
     }
-    
+
     // Trigger local DB sync in background after mutation
     const { triggerSyncInBackground } = await import('./local-db');
     triggerSyncInBackground();
@@ -1613,15 +1613,15 @@ export async function processUpcomingOrders() {
     }
 
     revalidatePath('/clients');
-    
+
     // Trigger local DB sync in background after mutation
     const { triggerSyncInBackground } = await import('./local-db');
     triggerSyncInBackground();
-    
-    return { 
-        processed: processedCount, 
+
+    return {
+        processed: processedCount,
         billingRecordsCreated: billingRecordsCount,
-        errors 
+        errors
     };
 }
 
@@ -1635,9 +1635,193 @@ export async function getActiveOrderForClient(clientId: string) {
     if (!clientId) return null;
 
     try {
-        // Use local database for fast access
-        const { getActiveOrderForClientLocal } = await import('./local-db');
-        return await getActiveOrderForClientLocal(clientId);
+        // Calculate current week range (Sunday to Saturday)
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const day = today.getDay();
+        const startOfWeek = new Date(today);
+        startOfWeek.setDate(today.getDate() - day);
+        startOfWeek.setHours(0, 0, 0, 0);
+        const endOfWeek = new Date(startOfWeek);
+        endOfWeek.setDate(startOfWeek.getDate() + 6);
+        endOfWeek.setHours(23, 59, 59, 999);
+
+        const startOfWeekStr = startOfWeek.toISOString().split('T')[0];
+        const endOfWeekStr = endOfWeek.toISOString().split('T')[0];
+        const startOfWeekISO = startOfWeek.toISOString();
+        const endOfWeekISO = endOfWeek.toISOString();
+
+        // Try to get order with scheduled_delivery_date in current week first
+        let { data, error } = await supabase
+            .from('orders')
+            .select('*')
+            .eq('client_id', clientId)
+            .in('status', ['pending', 'confirmed', 'processing'])
+            .gte('scheduled_delivery_date', startOfWeekStr)
+            .lte('scheduled_delivery_date', endOfWeekStr)
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+
+        // If no order found with scheduled_delivery_date in current week,
+        // try to get order created or updated this week (fallback)
+        if (!data) {
+            // Log error if it's not just "no rows returned"
+            if (error && error.code !== 'PGRST116') {
+                console.error('Error fetching order by scheduled_delivery_date:', error);
+            }
+
+            // Try fetching by created_at in current week
+            const { data: dataByCreated, error: errorByCreated } = await supabase
+                .from('orders')
+                .select('*')
+                .eq('client_id', clientId)
+                .in('status', ['pending', 'confirmed', 'processing'])
+                .gte('created_at', startOfWeekISO)
+                .lte('created_at', endOfWeekISO)
+                .order('created_at', { ascending: false })
+                .limit(1)
+                .maybeSingle();
+
+            if (errorByCreated && errorByCreated.code !== 'PGRST116') {
+                console.error('Error fetching order by created_at:', errorByCreated);
+            }
+
+            // If still no data, try by last_updated
+            if (!dataByCreated) {
+                const { data: dataByUpdated, error: errorByUpdated } = await supabase
+                    .from('orders')
+                    .select('*')
+                    .eq('client_id', clientId)
+                    .in('status', ['pending', 'confirmed', 'processing'])
+                    .gte('last_updated', startOfWeekISO)
+                    .lte('last_updated', endOfWeekISO)
+                    .order('created_at', { ascending: false })
+                    .limit(1)
+                    .maybeSingle();
+
+                if (errorByUpdated && errorByUpdated.code !== 'PGRST116') {
+                    console.error('Error fetching order by last_updated:', errorByUpdated);
+                }
+
+                data = dataByUpdated;
+            } else {
+                data = dataByCreated;
+            }
+        }
+
+        if (!data) {
+            // No active order found
+            return null;
+        }
+
+        // Fetch related data
+        const menuItems = await getMenuItems();
+        const vendors = await getVendors();
+        const boxTypes = await getBoxTypes();
+
+        // Build order configuration object
+        const orderConfig: any = {
+            id: data.id,
+            serviceType: data.service_type,
+            caseId: data.case_id,
+            status: data.status,
+            lastUpdated: data.last_updated,
+            updatedBy: data.updated_by,
+            scheduledDeliveryDate: data.scheduled_delivery_date,
+            createdAt: data.created_at,
+            deliveryDistribution: data.delivery_distribution,
+            totalValue: data.total_value,
+            totalItems: data.total_items,
+            notes: data.notes
+        };
+
+        if (data.service_type === 'Food') {
+            // Fetch vendor selections and items
+            const { data: vendorSelections, error: vendorSelectionsError } = await supabase
+                .from('order_vendor_selections')
+                .select('*')
+                .eq('order_id', data.id);
+
+            if (vendorSelectionsError) {
+                console.error('Error fetching vendor selections:', vendorSelectionsError);
+            }
+
+            if (vendorSelections && vendorSelections.length > 0) {
+                orderConfig.vendorSelections = [];
+                for (const vs of vendorSelections) {
+                    const { data: items, error: itemsError } = await supabase
+                        .from('order_items')
+                        .select('*')
+                        .eq('vendor_selection_id', vs.id);
+
+                    if (itemsError) {
+                        console.error('Error fetching order items:', itemsError);
+                    }
+
+                    const itemsMap: any = {};
+                    if (items && items.length > 0) {
+                        for (const item of items) {
+                            itemsMap[item.menu_item_id] = item.quantity;
+                        }
+                    }
+
+                    orderConfig.vendorSelections.push({
+                        vendorId: vs.vendor_id,
+                        items: itemsMap
+                    });
+                }
+            } else {
+                // Initialize empty vendor selections if none found
+                orderConfig.vendorSelections = [];
+            }
+        } else if (data.service_type === 'Boxes') {
+            // Fetch box selection
+            const { data: boxSelection, error: boxSelectionError } = await supabase
+                .from('order_box_selections')
+                .select('*')
+                .eq('order_id', data.id)
+                .maybeSingle();
+
+            if (boxSelectionError && boxSelectionError.code !== 'PGRST116') {
+                console.error('Error fetching box selection:', boxSelectionError);
+            }
+
+            if (boxSelection) {
+                orderConfig.vendorId = boxSelection.vendor_id;
+                orderConfig.boxTypeId = boxSelection.box_type_id;
+                orderConfig.boxQuantity = boxSelection.quantity;
+            }
+
+            // Fetch box items from order_items (they're stored linked to a vendor_selection for the box vendor)
+            if (boxSelection && boxSelection.vendor_id) {
+                // Find the vendor_selection for the box vendor in this order
+                const { data: vendorSelection } = await supabase
+                    .from('order_vendor_selections')
+                    .select('id')
+                    .eq('order_id', data.id)
+                    .eq('vendor_id', boxSelection.vendor_id)
+                    .maybeSingle();
+
+                if (vendorSelection) {
+                    // Fetch box items from order_items
+                    const { data: boxItems } = await supabase
+                        .from('order_items')
+                        .select('*')
+                        .eq('vendor_selection_id', vendorSelection.id);
+
+                    if (boxItems && boxItems.length > 0) {
+                        const itemsMap: any = {};
+                        for (const item of boxItems) {
+                            itemsMap[item.menu_item_id] = item.quantity;
+                        }
+                        orderConfig.items = itemsMap;
+                    }
+                }
+            }
+        }
+
+        return orderConfig;
     } catch (err) {
         console.error('Error in getActiveOrderForClient:', err);
         return null;

@@ -199,3 +199,12 @@ export interface DatabaseSchema {
   billingHistory: BillingRecord[];
   settings: AppSettings;
 }
+
+export interface ClientFullDetails {
+  client: ClientProfile;
+  history: DeliveryRecord[];
+  orderHistory: OrderHistoryLog[];
+  billingHistory: BillingRecord[];
+  activeOrder: any; // Using any to match existing usage in ClientProfile, but ideally typed
+  upcomingOrder: any;
+}
