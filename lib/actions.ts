@@ -2,7 +2,7 @@
 
 import { revalidatePath } from 'next/cache';
 import { supabase } from './supabase';
-import { ClientStatus, Vendor, MenuItem, BoxType, AppSettings, Navigator, ClientProfile, DeliveryRecord, ItemCategory, BoxQuota } from './types';
+import { ClientStatus, Vendor, MenuItem, BoxType, AppSettings, Navigator, ClientProfile, DeliveryRecord, ItemCategory, BoxQuota, ClientFullDetails } from './types';
 import { randomUUID } from 'crypto';
 import { getSession } from './session';
 import { hashPassword } from './password';
@@ -414,10 +414,53 @@ export async function getClients() {
     return data.map(mapClientFromDB);
 }
 
+export async function getClientsPaginated(page: number = 1, pageSize: number = 20) {
+    const { data, error, count } = await supabase
+        .from('clients')
+        .select('*', { count: 'exact' })
+        .order('created_at', { ascending: false })
+        .range((page - 1) * pageSize, page * pageSize - 1);
+    
+    if (error) {
+        console.error('Error fetching paginated clients:', error);
+        return { clients: [], total: 0 };
+    }
+    
+    return {
+        clients: data.map(mapClientFromDB),
+        total: count || 0
+    };
+}
+
 export async function getClient(id: string) {
     const { data, error } = await supabase.from('clients').select('*').eq('id', id).single();
     if (error || !data) return undefined;
     return mapClientFromDB(data);
+}
+
+export async function getClientFullDetails(clientId: string) {
+    if (!clientId) return null;
+
+    // Fetch all data in parallel
+    const [client, history, orderHistory, billingHistory, activeOrder, upcomingOrder] = await Promise.all([
+        getClient(clientId),
+        getClientHistory(clientId),
+        getOrderHistory(clientId),
+        getBillingHistory(clientId),
+        getActiveOrderForClient(clientId),
+        getUpcomingOrderForClient(clientId)
+    ]);
+
+    if (!client) return null;
+
+    return {
+        client,
+        history: history || [],
+        orderHistory: orderHistory || [],
+        billingHistory: billingHistory || [],
+        activeOrder: activeOrder || null,
+        upcomingOrder: upcomingOrder || null
+    };
 }
 
 export async function addClient(data: Omit<ClientProfile, 'id' | 'createdAt' | 'updatedAt'>) {

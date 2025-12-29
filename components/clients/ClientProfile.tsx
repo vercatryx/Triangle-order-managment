@@ -391,11 +391,6 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
     function isCutoffPassed() {
         return false; // MVP simplified
     }
->>>>>>> origin/main
-
-    // Check if current client has an active order (This Week's Order)
-    // getActiveOrderForClient already filters for current week orders, so if activeOrder exists, it's valid
-    const hasCurrentWeekOrder = activeOrder !== null;
 
     // Helper functions for displaying order info
     function getOrderSummaryText(client: ClientProfile) {
@@ -948,52 +943,6 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
         }
     }
 
-    // -- Logic Helpers --
-
-    function getVendorMenuItems(vendorId: string) {
-        return menuItems.filter(i => i.vendorId === vendorId && i.isActive);
-    }
-
-    function getCurrentOrderTotalValue() {
-        if (!orderConfig.vendorSelections) return 0;
-        let total = 0;
-        for (const selection of orderConfig.vendorSelections) {
-            if (!selection.items) continue;
-            for (const [itemId, qty] of Object.entries(selection.items)) {
-                const item = menuItems.find(i => i.id === itemId);
-                total += (item ? item.value * (qty as number) : 0);
-            }
-        }
-        return total;
-    }
-
-    // Calculate total for a single item (quantity × priceEach)
-    function getItemTotal(itemId: string, quantity: number): number {
-        const item = menuItems.find(i => i.id === itemId);
-        if (!item || item.priceEach === undefined) return 0;
-        return item.priceEach * quantity;
-    }
-
-    // Calculate total for a vendor selection
-    function getVendorSelectionTotal(selection: any): number {
-        if (!selection.items) return 0;
-        let total = 0;
-        for (const [itemId, qty] of Object.entries(selection.items)) {
-            total += getItemTotal(itemId, qty as number);
-        }
-        return total;
-    }
-
-    // Calculate overall total from all vendor selections
-    function getOverallTotal(vendorSelections: any[]): number {
-        if (!vendorSelections || vendorSelections.length === 0) return 0;
-        let total = 0;
-        for (const selection of vendorSelections) {
-            total += getVendorSelectionTotal(selection);
-        }
-        return total;
-    }
-
     // Calculate total meals (quantity) for a specific vendor
     function getVendorMealCount(vendorId: string, selection: any): number {
         if (!selection || !selection.items) return 0;
@@ -1014,198 +963,45 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
         return total;
     }
 
-    // Calculate total for a single box item (quantity × price)
-    function getBoxItemTotal(itemId: string, quantity: number): number {
-        const itemPrices = orderConfig.itemPrices || {};
-        let price = itemPrices[itemId];
-        // Fallback to menu item's priceEach if no custom price is set
-        if (price === undefined || price === null) {
-            const item = menuItems.find(i => i.id === itemId);
-            price = item?.priceEach;
+    // Handler functions for order configuration
+    function handleServiceChange(newServiceType: ServiceType) {
+        setFormData({ ...formData, serviceType: newServiceType });
+        // Reset order config when service type changes
+        if (newServiceType === 'Food') {
+            setOrderConfig({ vendorSelections: [], caseId: '' });
+        } else if (newServiceType === 'Boxes') {
+            setOrderConfig({ vendorId: '', boxTypeId: '', boxQuantity: 1, items: {}, itemPrices: {}, caseId: '' });
         }
-        if (price === undefined || price === null) return 0;
-        return price * quantity;
     }
 
-    // Calculate overall box total from all box items
-    function getBoxItemsTotal(): number {
-        const items = orderConfig.items || {};
-        const itemPrices = orderConfig.itemPrices || {};
-        let total = 0;
-        for (const [itemId, qty] of Object.entries(items)) {
-            const quantity = typeof qty === 'number' ? qty : 0;
-            let price = itemPrices[itemId];
-            // Fallback to menu item's priceEach if no custom price is set
-            if (price === undefined || price === null) {
-                const item = menuItems.find(i => i.id === itemId);
-                price = item?.priceEach;
+    function updateVendorSelection(index: number, field: string, value: any) {
+        const newSelections = [...(orderConfig.vendorSelections || [])];
+        newSelections[index] = { ...newSelections[index], [field]: value };
+        setOrderConfig({ ...orderConfig, vendorSelections: newSelections });
+    }
+
+    function removeVendorBlock(index: number) {
+        const newSelections = [...(orderConfig.vendorSelections || [])];
+        newSelections.splice(index, 1);
+        setOrderConfig({ ...orderConfig, vendorSelections: newSelections });
+    }
+
+    function updateItemQuantity(vendorIndex: number, itemId: string, quantity: number) {
+        const newSelections = [...(orderConfig.vendorSelections || [])];
+        if (!newSelections[vendorIndex]) return;
+        newSelections[vendorIndex] = {
+            ...newSelections[vendorIndex],
+            items: {
+                ...(newSelections[vendorIndex].items || {}),
+                [itemId]: quantity
             }
-            if (price !== undefined && price !== null && quantity > 0) {
-                total += price * quantity;
-            }
-        }
-        return total;
-    }
-
-    function isCutoffPassed() {
-        return false; // MVP simplified
-    }
-
-    // Check if current client has an active order (This Week's Order)
-    // getActiveOrderForClient already filters for current week orders, so if activeOrder exists, it's valid
-    const hasCurrentWeekOrder = activeOrder !== null;
-
-    // Helper functions for displaying order info
-    function getOrderSummaryText(client: ClientProfile) {
-        if (!client.activeOrder) return '-';
-        const st = client.serviceType;
-        const conf = client.activeOrder;
-
-        let content = '';
-
-        if (st === 'Food') {
-            const limit = client.approvedMealsPerWeek || 0;
-            const vendorsSummary = (conf.vendorSelections || [])
-                .map(v => {
-                    const vendorName = vendors.find(ven => ven.id === v.vendorId)?.name || 'Unknown';
-                    const itemCount = Object.values(v.items || {}).reduce((a: number, b: any) => a + Number(b), 0);
-                    return itemCount > 0 ? `${vendorName} (${itemCount})` : '';
-                }).filter(Boolean).join(', ');
-
-            if (!vendorsSummary) return '';
-            content = `: ${vendorsSummary} [Max ${limit}]`;
-        } else if (st === 'Boxes') {
-            const box = boxTypes.find(b => b.id === conf.boxTypeId);
-            const vendorName = vendors.find(v => v.id === box?.vendorId)?.name || '-';
-
-            const itemDetails = Object.entries(conf.items || {}).map(([id, qty]) => {
-                const item = menuItems.find(i => i.id === id);
-                return item ? `${item.name} x${qty}` : null;
-            }).filter(Boolean).join(', ');
-
-            const itemSuffix = itemDetails ? ` (${itemDetails})` : '';
-            content = `: ${vendorName}${itemSuffix}`;
-        }
-
-        return `${st}${content}`;
-    }
-
-    function getStatusName(id: string) {
-        return statuses.find(s => s.id === id)?.name || 'Unknown';
-    }
-
-    function getNavigatorName(id: string) {
-        return navigators.find(n => n.id === id)?.name || 'Unassigned';
-    }
-
-    // Get the next delivery date for a vendor (first occurrence)
-    function getNextDeliveryDate(vendorId: string): { dayOfWeek: string; date: string } | null {
-        if (!vendorId) {
-            return null;
-        }
-
-        const vendor = vendors.find(v => v.id === vendorId);
-        if (!vendor || !vendor.deliveryDays || vendor.deliveryDays.length === 0) {
-            return null;
-        }
-
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
-
-        const dayNameToNumber: { [key: string]: number } = {
-            'Sunday': 0,
-            'Monday': 1,
-            'Tuesday': 2,
-            'Wednesday': 3,
-            'Thursday': 4,
-            'Friday': 5,
-            'Saturday': 6
         };
-
-        const deliveryDayNumbers = vendor.deliveryDays
-            .map(day => dayNameToNumber[day])
-            .filter(num => num !== undefined) as number[];
-
-        if (deliveryDayNumbers.length === 0) {
-            return null;
-        }
-
-        // Find the next delivery date (start from today, check next 14 days)
-        for (let i = 0; i <= 14; i++) {
-            const checkDate = new Date(today);
-            checkDate.setDate(today.getDate() + i);
-            const dayOfWeek = checkDate.getDay();
-
-            if (deliveryDayNumbers.includes(dayOfWeek)) {
-                return {
-                    dayOfWeek: checkDate.toLocaleDateString('en-US', { weekday: 'long' }),
-                    date: checkDate.toLocaleDateString('en-US', {
-                        month: 'short',
-                        day: 'numeric',
-                        year: 'numeric'
-                    })
-                };
-            }
-        }
-
-        return null;
+        setOrderConfig({ ...orderConfig, vendorSelections: newSelections });
     }
 
-    function getNextDeliveryDateForVendor(vendorId: string): string | null {
-                    if (!vendorId) {
-                        return null;
-                    }
-
-                    const vendor = vendors.find(v => v.id === vendorId);
-                    if (!vendor || !vendor.deliveryDays || vendor.deliveryDays.length === 0) {
-                        return null;
-                    }
-
-                    // Find the next delivery date
-                    const today = new Date();
-                    today.setHours(0, 0, 0, 0); // Reset time to start of day
-
-                    // Map day names to day of week (0 = Sunday, 1 = Monday, etc.)
-                    const dayNameToNumber: { [key: string]: number } = {
-                        'Sunday': 0,
-                        'Monday': 1,
-                        'Tuesday': 2,
-                        'Wednesday': 3,
-                        'Thursday': 4,
-                        'Friday': 5,
-                        'Saturday': 6
-                    };
-
-                    const deliveryDayNumbers = vendor.deliveryDays
-                        .map(day => dayNameToNumber[day])
-                        .filter(num => num !== undefined) as number[];
-
-                    if (deliveryDayNumbers.length === 0) {
-                        return null;
-                    }
-
-                    // Check the next 21 days to find the second (next next) delivery day (start from tomorrow)
-                    let foundCount = 0;
-                    for (let i = 1; i <= 21; i++) {
-                        const checkDate = new Date(today);
-                        checkDate.setDate(today.getDate() + i);
-                        const dayOfWeek = checkDate.getDay();
-
-                        if (deliveryDayNumbers.includes(dayOfWeek)) {
-                            foundCount++;
-                            // Return the second occurrence (next next delivery day)
-                            if (foundCount === 2) {
-                                return checkDate.toLocaleDateString('en-US', {
-                                    weekday: 'long',
-                                    year: 'numeric',
-                                    month: 'long',
-                                    day: 'numeric'
-                                });
-                            }
-                        }
-                    }
-
-                    return null;
+    function addVendorBlock() {
+        const newSelections = [...(orderConfig.vendorSelections || []), { vendorId: '', items: {} }];
+        setOrderConfig({ ...orderConfig, vendorSelections: newSelections });
     }
 
     if (!client) return <div>Loading...</div>;
@@ -1317,7 +1113,6 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                                         <header className={styles.header}>
                                             <button className={styles.backBtn} onClick={handleBack}>
                                                 <ArrowLeft size={20} /> {onClose ? 'Close' : 'Back to List'}
->>>>>>> origin/main
                                             </button>
                                             <button className="btn btn-secondary" onClick={() => router.push(`/clients/${clientId}/billing`)} style={{ marginRight: '8px' }}>
                                                 <CreditCard size={16} /> Billing
@@ -1327,8 +1122,7 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                                                     <Save size={16} /> Save Changes
                                                 </button>
                                             )}
-                                    </div>
-                                </header>
+                                        </header>
 
                                 <div className={styles.grid}>
                                     <div className={styles.column}>
@@ -1483,7 +1277,6 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                                                                             </button>
                                                                         </div>
 
-<<<<<<< HEAD
                                                     {selection.vendorId && (
                                                     <>
                                                         {(() => {
@@ -1643,8 +1436,7 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                                                 <Plus size={14} /> Add Vendor
                                             </button>
                                         </div>
-                                    </div >
-                                </div >
+                                    </div>
                             )}
 
 {
@@ -1771,13 +1563,12 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
         </div>
     )
 }
-                        </>
+                        </> 
                     )}
-                </section >
+                </section>
 
-    {/* This Week's Order Panel */ }
-{
-    activeOrder && (
+            {/* This Week's Order Panel */}
+            {activeOrder && (
         <section className={styles.card} style={{ marginTop: 'var(--spacing-lg)' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: 'var(--spacing-md)' }}>
                 <Calendar size={18} />
@@ -1894,37 +1685,32 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                                 </div>
                             )}
 
-{/* Overall Box Total */ }
-{
-    (() => {
-        const boxTotal = getBoxItemsTotal();
-        if (boxTotal > 0) {
-            return (
-                <div style={{
-                    marginTop: 'var(--spacing-md)',
-                    padding: '1rem',
-                    backgroundColor: 'var(--color-primary-bg)',
-                    borderRadius: 'var(--radius-md)',
-                    border: '2px solid var(--color-primary)',
-                    fontSize: '1rem',
-                    textAlign: 'center',
-                    fontWeight: 700,
-                    color: 'var(--color-primary)'
-                }}>
-                    Box Total: ${boxTotal.toFixed(2)}
-                </div>
-            );
-        }
-        return null;
-    })()
-}
-                                            </div >
-                                        )}
+                            {/* Overall Box Total */}
+                            {(() => {
+                                const boxTotal = getBoxItemsTotal();
+                                if (boxTotal > 0) {
+                                    return (
+                                        <div style={{
+                                            marginTop: 'var(--spacing-md)',
+                                            padding: '1rem',
+                                            backgroundColor: 'var(--color-primary-bg)',
+                                            borderRadius: 'var(--radius-md)',
+                                            border: '2px solid var(--color-primary)',
+                                            fontSize: '1rem',
+                                            textAlign: 'center',
+                                            fontWeight: 700,
+                                            color: 'var(--color-primary)'
+                                        }}>
+                                            Box Total: ${boxTotal.toFixed(2)}
+                                        </div>
+                                    );
+                                }
+                                return null;
+                            })()}
 
-{/* Boxes Order Display - Show vendor, box type, and all items */ }
-{
-    isBoxes && order.boxTypeId && (
-        <div style={{ padding: 'var(--spacing-md)', backgroundColor: 'var(--bg-surface)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)' }}>
+                            {/* Boxes Order Display - Show vendor, box type, and all items */}
+                            {isBoxes && order.boxTypeId && (
+                                <div style={{ padding: 'var(--spacing-md)', backgroundColor: 'var(--bg-surface)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)' }}>
             {(() => {
                 const box = boxTypes.find(b => b.id === order.boxTypeId);
                 const boxVendorId = box?.vendorId;
@@ -2009,92 +1795,11 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                                                         })()}
                                                     </div>
                                                 ) : null}
-
-                                            {isBoxes && order.boxTypeId && (
-                                                <div style={{ padding: 'var(--spacing-sm)', backgroundColor: 'var(--bg-surface)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)' }}>
-                                                    {(() => {
-                                                        const box = boxTypes.find(b => b.id === order.boxTypeId);
-                                                        const boxVendorId = box?.vendorId;
-                                                        const vendor = boxVendorId ? vendors.find(v => v.id === boxVendorId) : null;
-                                                        const vendorName = vendor?.name || 'Unknown Vendor';
-                                                        const boxName = box?.name || 'Unknown Box';
-                                                        const nextDelivery = boxVendorId ? getNextDeliveryDate(boxVendorId) : null;
-                                                        const boxItems = (order as any).items || {};
-                                                        const boxItemPrices = (order as any).itemPrices || {};
-
-                                                        return (
-                                                            <>
-                                                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--spacing-sm)' }}>
-                                                                    <div style={{ fontWeight: 600, fontSize: '0.95rem' }}>{vendorName}</div>
-                                                                    {nextDelivery && (
-                                                                        <div style={{ fontSize: '0.8rem', color: 'var(--color-primary)', fontWeight: 500 }}>
-                                                                            Next delivery date: {nextDelivery.dayOfWeek}, {nextDelivery.date}
-                                                                        </div>
-                                                                    )}
-                                                                </div>
-                                                                <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: 'var(--spacing-sm)' }}>
-                                                                    {boxName} × {order.boxQuantity || 1}
-                                                                </div>
-
-                                                                {/* Box Items List */}
-                                                                {Object.keys(boxItems).length > 0 ? (
-                                                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginTop: 'var(--spacing-sm)' }}>
-                                                                        {Object.entries(boxItems).map(([itemId, quantity]) => {
-                                                                            const item = menuItems.find(m => m.id === itemId);
-                                                                            const itemName = item?.name || 'Unknown Item';
-                                                                            const qty = Number(quantity) || 0;
-                                                                            if (qty === 0) return null;
-                                                                            const itemPrice = boxItemPrices[itemId];
-                                                                            const itemTotal = itemPrice !== undefined && itemPrice !== null ? itemPrice * qty : 0;
-
-                                                                            return (
-                                                                                <div key={itemId} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.85rem', padding: '4px 8px', backgroundColor: 'var(--bg-app)', borderRadius: '4px' }}>
-                                                                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                                                                                        <span>{itemName}</span>
-                                                                                        {itemPrice !== undefined && itemPrice !== null && (
-                                                                                            <span style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)' }}>
-                                                                                                ${itemPrice.toFixed(2)} each
-                                                                                            </span>
-                                                                                        )}
-                                                                                    </div>
-                                                                                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '2px' }}>
-                                                                                        <span style={{ fontWeight: 500, color: 'var(--text-secondary)' }}>Qty: {qty}</span>
-                                                                                        {itemTotal > 0 && (
-                                                                                            <span style={{ fontWeight: 600, color: 'var(--text-primary)', fontSize: '0.875rem' }}>
-                                                                                                ${itemTotal.toFixed(2)}
-                                                                                            </span>
-                                                                                        )}
-                                                                                    </div>
-                                                                                </div>
-                                                                            );
-                                                                        })}
-                                                                        {/* Box Total */}
-                                                                        {(() => {
-                                                                            const boxTotal = Object.entries(boxItems).reduce((sum, [itemId, qty]) => {
-                                                                                const quantity = typeof qty === 'number' ? qty : 0;
-                                                                                const price = boxItemPrices[itemId];
-                                                                                if (price !== undefined && price !== null && quantity > 0) {
-                                                                                    return sum + (price * quantity);
-                                                                                }
-                                                                                return sum;
-                                                                            }, 0);
-                                                                            if (boxTotal > 0) {
-                                                                                return (
-                                                                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.9rem', padding: '8px', marginTop: '4px', backgroundColor: 'var(--bg-app)', borderRadius: '4px', borderTop: '1px solid var(--border-color)', fontWeight: 600 }}>
-                                                                                        <span>Box Total:</span>
-                                                                                        <span style={{ color: 'var(--color-primary)', fontSize: '0.95rem' }}>${boxTotal.toFixed(2)}</span>
-                                                                                    </div>
-                                                                                );
-                                                                            }
-                                                                            return null;
-                                                                        })()}
-                                                                    </div>
-                                                                ) : null}
-                                                            </>
-                                                        );
-                                                    })()}
-                                                </div>
-                                            )}
+                                                    </>
+                                                );
+                                            })()}
+                                        </div>
+                                    )}
 
                                             {!isFood && !isBoxes && (
                                                 <div style={{ fontSize: '0.85rem', color: 'var(--text-tertiary)', fontStyle: 'italic', padding: '4px' }}>
@@ -2104,69 +1809,6 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                                         </div>
                                     );
                                 })()}
-                            </div>
-                        </section>
-                    )}
-
-                    <section className={styles.card} style={{ marginTop: 'var(--spacing-lg)' }}>
-                        <div className={styles.historyHeader}>
-                            <h3 className={styles.sectionTitle}>Order History</h3>
-                            <div className={styles.tabs}>
-                                <button
-                                    className={`${styles.tab} ${activeHistoryTab === 'deliveries' ? styles.activeTab : ''}`}
-                                    onClick={() => setActiveHistoryTab('deliveries')}
-                                >
-                                    <ClipboardList size={14} /> Deliveries
-                                </button>
-                                <button
-                                    className={`${styles.tab} ${activeHistoryTab === 'audit' ? styles.activeTab : ''}`}
-                                    onClick={() => setActiveHistoryTab('audit')}
-                                >
-                                    <History size={14} /> Change Log ({orderHistory.length})
-                                </button>
-                                <button
-                                    className={`${styles.tab} ${activeHistoryTab === 'billing' ? styles.activeTab : ''}`}
-                                    onClick={() => setActiveHistoryTab('billing')}
-                                >
-                                    <CreditCard size={14} /> Billing ({billingHistory.length})
-                                </button>
-                            </div>
->>>>>>> origin/main
-                        </div>
-                        {Object.entries(items).map(([itemId, quantity]) => {
-                            const item = menuItems.find(m => m.id === itemId);
-                            const itemName = item?.name || 'Unknown Item';
-                            const qty = Number(quantity) || 0;
-                            if (qty === 0) return null;
-
-<<<<<<< HEAD
-                            return (
-                                <div key={itemId} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.9rem', padding: '6px 8px', backgroundColor: 'var(--bg-app)', borderRadius: '4px' }}>
-                                    <span>{itemName}</span>
-                                    <span style={{ fontWeight: 500, color: 'var(--text-secondary)' }}>Qty: {qty}</span>
-                                </div>
-                            );
-                        })}
-                </div>
-                ) : (
-                <div style={{ fontSize: '0.85rem', color: 'var(--text-tertiary)', fontStyle: 'italic', padding: '4px', marginTop: 'var(--spacing-sm)' }}>
-                    No items in box
-                </div>
-                                            )}
-            </>
-        );
-    }) ()
-}
-                                                    </div >
-                                                )}
-
-{
-    !isFood && !isBoxes && (
-        <div style={{ fontSize: '0.85rem', color: 'var(--text-tertiary)', fontStyle: 'italic', padding: '4px' }}>
-            No order details available
-        </div>
-    )
-}
                             </div>
                         </section>
                     )}
@@ -2563,75 +2205,20 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                                 </button>
                             </div>
                         </div>
->>>>>>> origin/main
-                    </div >
-                </section >
-                )}
-            </div >
-        </div >
-{
-    onClose && (
-        <div className={styles.bottomAction}>
-            <button className="btn btn-primary" onClick={handleSaveAndClose} style={{ width: '200px' }}>
-                Close
-            </button>
-        </div>
-    )
-        }
-    </div >
-);
-
-if (onClose) {
-    return (
-        <>
-            <div className={styles.modalOverlay} onClick={() => {
-                // Try to save and close when clicking overlay
-                handleSaveAndClose();
-            }}>
-                <div className={styles.modalContent} onClick={e => e.stopPropagation()}>
-                    {content}
-                </div>
-            </div>
-            {validationError.show && (
-                <div className={styles.modalOverlay} style={{ zIndex: 200 }}>
-                    <div className={styles.modalContent} style={{ maxWidth: '400px', height: 'auto', padding: '24px' }} onClick={e => e.stopPropagation()}>
-                        <h2 style={{ fontSize: '1.25rem', fontWeight: 600, marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--color-danger)' }}>
-                            <AlertTriangle size={24} />
-                            Cannot Save Order
-                        </h2>
-                        <p style={{ marginBottom: '16px', color: 'var(--text-secondary)' }}>
-                            The current order configuration is invalid and cannot be saved.
-                        </p>
-                        <div style={{ background: 'var(--bg-surface-hover)', padding: '12px', borderRadius: '8px', marginBottom: '24px' }}>
-                            <ul style={{ listStyle: 'disc', paddingLeft: '20px', margin: 0 }}>
-                                {validationError.messages.map((msg, i) => (
-                                    <li key={i} style={{ marginBottom: '4px', color: 'var(--text-primary)' }}>{msg}</li>
-                                ))}
-                            </ul>
-                        </div>
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                            <button
-                                className="btn btn-primary"
-                                onClick={() => setValidationError({ show: false, messages: [] })}
-                            >
-                                Return to Editing
-                            </button>
-                            <button
-                                className="btn"
-                                style={{ background: 'none', border: '1px solid var(--border-color)', color: 'var(--text-secondary)' }}
-                                onClick={handleDiscardChanges}
-                            >
-                                Discard Changes & Exit
-                            </button>
-                        </div>
                     </div>
-                </div>
-            )}
-        </>
-    );
-}
+                )}
+                {onClose !== undefined && onClose !== null && (
+                    <div className={styles.bottomAction}>
+                        <button className="btn btn-primary" onClick={handleSaveAndClose} style={{ width: '200px' }}>
+                            Close
+                        </button>
+                    </div>
+                )}
+            </>
+        );
+    }
 
-return (
+    return (
     <>
         {content}
         {validationError.show && (
