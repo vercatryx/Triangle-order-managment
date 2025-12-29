@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { Vendor, ClientProfile, MenuItem, BoxType } from '@/lib/types';
 import { getVendors, getClients, getMenuItems, getBoxTypes } from '@/lib/cached-data';
-import { getOrdersByVendor, isOrderUnderVendor, updateOrderDeliveryProof } from '@/lib/actions';
+import { getOrdersByVendor, isOrderUnderVendor, updateOrderDeliveryProof, orderHasDeliveryProof } from '@/lib/actions';
 import { ArrowLeft, Truck, Calendar, Package, CheckCircle, XCircle, Clock, User, DollarSign, ShoppingCart, Download, ChevronDown, ChevronUp, FileText, Upload } from 'lucide-react';
 import styles from './VendorDetail.module.css';
 
@@ -339,7 +339,9 @@ export function VendorDetail({ vendorId }: Props) {
             // Process each data row
             let successCount = 0;
             let errorCount = 0;
+            let skippedCount = 0;
             const errors: string[] = [];
+            const skipped: string[] = [];
 
             for (let i = 1; i < lines.length; i++) {
                 const row = parseCSVRow(lines[i]);
@@ -366,6 +368,14 @@ export function VendorDetail({ vendorId }: Props) {
                     continue;
                 }
 
+                // Check if order already has a delivery proof URL (skip if it does)
+                const alreadyHasProof = await orderHasDeliveryProof(orderId);
+                if (alreadyHasProof) {
+                    skippedCount++;
+                    skipped.push(`Row ${i + 1} (Order ${orderId}): Already has delivery proof URL, skipping`);
+                    continue;
+                }
+
                 // Update order with delivery proof URL and set status to completed (delivered)
                 const result = await updateOrderDeliveryProof(orderId, deliveryProofUrl);
                 if (result.success) {
@@ -378,6 +388,9 @@ export function VendorDetail({ vendorId }: Props) {
 
             // Show results
             let message = `Import completed!\n\nSuccessfully processed: ${successCount} order(s)`;
+            if (skippedCount > 0) {
+                message += `\nSkipped (already processed): ${skippedCount} order(s)`;
+            }
             if (errorCount > 0) {
                 message += `\nErrors: ${errorCount} order(s)`;
                 if (errors.length > 0) {
@@ -385,6 +398,12 @@ export function VendorDetail({ vendorId }: Props) {
                     if (errors.length > 10) {
                         message += `\n... and ${errors.length - 10} more error(s)`;
                     }
+                }
+            }
+            if (skippedCount > 0 && skipped.length > 0) {
+                message += `\n\nSkipped:\n${skipped.slice(0, 10).join('\n')}`;
+                if (skipped.length > 10) {
+                    message += `\n... and ${skipped.length - 10} more skipped order(s)`;
                 }
             }
             alert(message);

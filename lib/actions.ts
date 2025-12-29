@@ -645,22 +645,120 @@ export async function getCompletedOrdersWithDeliveryProof(clientId: string) {
         return [];
     }
 
-    return (data || []).map((d: any) => ({
-        id: d.id,
-        clientId: d.client_id,
-        serviceType: d.service_type,
-        caseId: d.case_id,
-        status: d.status,
-        scheduledDeliveryDate: d.scheduled_delivery_date,
-        actualDeliveryDate: d.actual_delivery_date,
-        deliveryProofUrl: d.delivery_proof_url,
-        totalValue: d.total_value,
-        totalItems: d.total_items,
-        notes: d.notes,
-        createdAt: d.created_at,
-        lastUpdated: d.last_updated,
-        updatedBy: d.updated_by
-    }));
+    // Fetch reference data once for all orders
+    const [menuItems, vendors, boxTypes] = await Promise.all([
+        getMenuItems(),
+        getVendors(),
+        getBoxTypes()
+    ]);
+
+    // Fetch order details for each order
+    const ordersWithDetails = await Promise.all(
+        (data || []).map(async (d: any) => {
+            let orderDetails: any = undefined;
+
+            // Build order details based on service type
+            if (d.service_type === 'Food') {
+                // Fetch vendor selections and items
+                const { data: vendorSelections } = await supabase
+                    .from('order_vendor_selections')
+                    .select('*')
+                    .eq('order_id', d.id);
+
+                if (vendorSelections && vendorSelections.length > 0) {
+                    const vendorSelectionsWithItems = await Promise.all(
+                        vendorSelections.map(async (vs: any) => {
+                            const { data: items } = await supabase
+                                .from('order_items')
+                                .select('*')
+                                .eq('vendor_selection_id', vs.id);
+
+                            const vendor = vendors.find(v => v.id === vs.vendor_id);
+                            const itemsWithDetails = (items || []).map((item: any) => {
+                                const menuItem = menuItems.find(mi => mi.id === item.menu_item_id);
+                                const itemPrice = menuItem?.priceEach ?? parseFloat(item.unit_value);
+                                const quantity = item.quantity;
+                                const itemTotal = itemPrice * quantity;
+                                return {
+                                    id: item.id,
+                                    menuItemId: item.menu_item_id,
+                                    menuItemName: menuItem?.name || 'Unknown Item',
+                                    quantity: quantity,
+                                    unitValue: itemPrice,
+                                    totalValue: itemTotal
+                                };
+                            });
+
+                            return {
+                                vendorId: vs.vendor_id,
+                                vendorName: vendor?.name || 'Unknown Vendor',
+                                items: itemsWithDetails
+                            };
+                        })
+                    );
+
+                    orderDetails = {
+                        serviceType: d.service_type,
+                        vendorSelections: vendorSelectionsWithItems,
+                        totalItems: d.total_items,
+                        totalValue: parseFloat(d.total_value || 0)
+                    };
+                }
+            } else if (d.service_type === 'Boxes') {
+                // Fetch box selection
+                const { data: boxSelection } = await supabase
+                    .from('order_box_selections')
+                    .select('*')
+                    .eq('order_id', d.id)
+                    .maybeSingle();
+
+                if (boxSelection) {
+                    const vendor = vendors.find(v => v.id === boxSelection.vendor_id);
+                    const boxType = boxTypes.find(bt => bt.id === boxSelection.box_type_id);
+                    const boxTotalValue = boxSelection.total_value 
+                        ? parseFloat(boxSelection.total_value) 
+                        : parseFloat(d.total_value || 0);
+                    
+                    orderDetails = {
+                        serviceType: d.service_type,
+                        vendorId: boxSelection.vendor_id,
+                        vendorName: vendor?.name || 'Unknown Vendor',
+                        boxTypeId: boxSelection.box_type_id,
+                        boxTypeName: boxType?.name || 'Unknown Box Type',
+                        boxQuantity: boxSelection.quantity,
+                        totalValue: boxTotalValue
+                    };
+                }
+            } else {
+                // For other service types, just include basic info
+                orderDetails = {
+                    serviceType: d.service_type,
+                    totalValue: parseFloat(d.total_value || 0),
+                    notes: d.notes
+                };
+            }
+
+            return {
+                id: d.id,
+                clientId: d.client_id,
+                serviceType: d.service_type,
+                caseId: d.case_id,
+                status: d.status,
+                scheduledDeliveryDate: d.scheduled_delivery_date,
+                actualDeliveryDate: d.actual_delivery_date,
+                deliveryProofUrl: d.delivery_proof_url,
+                totalValue: d.total_value,
+                totalItems: d.total_items,
+                notes: d.notes,
+                createdAt: d.created_at,
+                lastUpdated: d.last_updated,
+                updatedBy: d.updated_by,
+                orderDetails: orderDetails
+            };
+        })
+    );
+
+    return ordersWithDetails;
 }
 
 export async function getBillingHistory(clientId: string) {
@@ -1768,6 +1866,29 @@ export async function isOrderUnderVendor(orderId: string, vendorId: string): Pro
         return !!boxOrder;
     } catch (err) {
         console.error('Error checking order vendor:', err);
+        return false;
+    }
+}
+
+/**
+ * Check if an order already has a delivery proof URL
+ */
+export async function orderHasDeliveryProof(orderId: string): Promise<boolean> {
+    try {
+        const { data, error } = await supabase
+            .from('orders')
+            .select('delivery_proof_url')
+            .eq('id', orderId)
+            .single();
+
+        if (error || !data) {
+            return false;
+        }
+
+        // Return true if delivery_proof_url exists and is not empty
+        return !!(data.delivery_proof_url && data.delivery_proof_url.trim() !== '');
+    } catch (err) {
+        console.error('Error checking order delivery proof:', err);
         return false;
     }
 }

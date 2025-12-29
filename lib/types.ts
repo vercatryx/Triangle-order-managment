@@ -160,6 +160,29 @@ export interface CompletedOrderWithDeliveryProof {
   createdAt: string;
   lastUpdated: string;
   updatedBy: string;
+  orderDetails?: {
+    serviceType: ServiceType;
+    vendorSelections?: {
+      vendorId: string;
+      vendorName: string;
+      items: {
+        id: string;
+        menuItemId: string;
+        menuItemName: string;
+        quantity: number;
+        unitValue: number;
+        totalValue: number;
+      }[];
+    }[];
+    vendorId?: string;
+    vendorName?: string;
+    boxTypeId?: string;
+    boxTypeName?: string;
+    boxQuantity?: number;
+    totalItems?: number;
+    totalValue: number;
+    notes?: string;
+  };
 }
 
 export interface DatabaseSchema {

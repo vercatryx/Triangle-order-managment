@@ -1867,11 +1867,12 @@ export function ClientProfileDetail({ clientId: propClientId, onClose }: Props) 
                                             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.9rem' }}>
                                                 <thead>
                                                     <tr style={{ background: 'var(--bg-surface-hover)', borderBottom: '2px solid var(--border-color)' }}>
+                                                        <th style={{ textAlign: 'left', padding: '12px', fontWeight: 600, color: 'var(--text-secondary)', fontSize: '0.875rem' }}>Order ID</th>
                                                         <th style={{ textAlign: 'left', padding: '12px', fontWeight: 600, color: 'var(--text-secondary)', fontSize: '0.875rem' }}>Order Date</th>
                                                         <th style={{ textAlign: 'left', padding: '12px', fontWeight: 600, color: 'var(--text-secondary)', fontSize: '0.875rem' }}>Delivery Date</th>
                                                         <th style={{ textAlign: 'left', padding: '12px', fontWeight: 600, color: 'var(--text-secondary)', fontSize: '0.875rem' }}>Service Type</th>
-                                                        <th style={{ textAlign: 'left', padding: '12px', fontWeight: 600, color: 'var(--text-secondary)', fontSize: '0.875rem' }}>Total Value</th>
-                                                        <th style={{ textAlign: 'left', padding: '12px', fontWeight: 600, color: 'var(--text-secondary)', fontSize: '0.875rem' }}>Total Items</th>
+                                                        <th style={{ textAlign: 'left', padding: '12px', fontWeight: 600, color: 'var(--text-secondary)', fontSize: '0.875rem' }}>Total Amount</th>
+                                                        <th style={{ textAlign: 'left', padding: '12px', fontWeight: 600, color: 'var(--text-secondary)', fontSize: '0.875rem' }}>Order Items</th>
                                                         <th style={{ textAlign: 'center', padding: '12px', fontWeight: 600, color: 'var(--text-secondary)', fontSize: '0.875rem', width: '200px' }}>Delivery Proof</th>
                                                     </tr>
                                                 </thead>
@@ -1889,6 +1890,24 @@ export function ClientProfileDetail({ clientId: propClientId, onClose }: Props) 
                                                             year: 'numeric'
                                                         }) : 'N/A';
                                                         
+                                                        // Format order items summary
+                                                        const formatOrderItems = () => {
+                                                            if (!order.orderDetails) return 'N/A';
+                                                            
+                                                            if (order.orderDetails.serviceType === 'Food' && order.orderDetails.vendorSelections) {
+                                                                const items: string[] = [];
+                                                                order.orderDetails.vendorSelections.forEach((vs: any) => {
+                                                                    vs.items.forEach((item: any) => {
+                                                                        items.push(`${item.menuItemName} (x${item.quantity})`);
+                                                                    });
+                                                                });
+                                                                return items.length > 0 ? items.join(', ') : 'No items';
+                                                            } else if (order.orderDetails.serviceType === 'Boxes' && order.orderDetails.boxTypeName) {
+                                                                return `${order.orderDetails.boxTypeName} x${order.orderDetails.boxQuantity || 0}`;
+                                                            }
+                                                            return 'N/A';
+                                                        };
+                                                        
                                                         return (
                                                             <tr 
                                                                 key={order.id}
@@ -1903,6 +1922,9 @@ export function ClientProfileDetail({ clientId: propClientId, onClose }: Props) 
                                                                     e.currentTarget.style.backgroundColor = '';
                                                                 }}
                                                             >
+                                                                <td style={{ padding: '12px', color: 'var(--text-primary)', fontFamily: 'monospace', fontSize: '0.8125rem' }}>
+                                                                    {order.id.slice(0, 8)}...
+                                                                </td>
                                                                 <td style={{ padding: '12px', color: 'var(--text-primary)' }}>{orderDate}</td>
                                                                 <td style={{ padding: '12px', color: 'var(--text-primary)' }}>{formattedDeliveryDate}</td>
                                                                 <td style={{ padding: '12px' }}>
@@ -1920,8 +1942,15 @@ export function ClientProfileDetail({ clientId: propClientId, onClose }: Props) 
                                                                 <td style={{ padding: '12px', color: 'var(--text-primary)', fontWeight: 600 }}>
                                                                     ${parseFloat((order.totalValue || 0).toString()).toFixed(2)}
                                                                 </td>
-                                                                <td style={{ padding: '12px', color: 'var(--text-primary)' }}>
-                                                                    {order.totalItems || 0}
+                                                                <td style={{ padding: '12px', color: 'var(--text-secondary)', fontSize: '0.875rem', maxWidth: '300px' }}>
+                                                                    <div style={{ 
+                                                                        overflow: 'hidden', 
+                                                                        textOverflow: 'ellipsis', 
+                                                                        whiteSpace: 'nowrap',
+                                                                        cursor: 'default'
+                                                                    }} title={formatOrderItems()}>
+                                                                        {formatOrderItems()}
+                                                                    </div>
                                                                 </td>
                                                                 <td style={{ padding: '12px', textAlign: 'center' }}>
                                                                     {order.deliveryProofUrl ? (
