@@ -124,6 +124,10 @@ export function BoxTypeManagement() {
 
     async function handleAddItem(categoryId: string) {
         if (!newItemName.trim() || !selectedVendorId) return;
+        if (newItemPrice <= 0) {
+            alert('Price must be greater than 0');
+            return;
+        }
 
         await addMenuItem({
             vendorId: selectedVendorId,
@@ -169,6 +173,10 @@ export function BoxTypeManagement() {
 
     async function handleSaveEditItem() {
         if (!editingItemId) return;
+        if (tempItemPrice <= 0) {
+            alert('Price must be greater than 0');
+            return;
+        }
 
         await updateMenuItem(editingItemId, {
             name: tempItemName,

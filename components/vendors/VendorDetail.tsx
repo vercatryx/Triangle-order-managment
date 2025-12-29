@@ -22,7 +22,7 @@ export function VendorDetail({ vendorId }: Props) {
     const [isLoading, setIsLoading] = useState(true);
     const [expandedOrders, setExpandedOrders] = useState<Set<string>>(new Set());
     const [activeTab, setActiveTab] = useState<'all' | 'upcoming' | 'completed'>('all');
-    
+
     // CSV Import Progress State
     const [importProgress, setImportProgress] = useState<{
         isImporting: boolean;
@@ -173,7 +173,7 @@ export function VendorDetail({ vendorId }: Props) {
 
             const items = boxSelection.items || {};
             const itemEntries = Object.entries(items);
-            
+
             if (itemEntries.length === 0) {
                 return (
                     <div className={styles.noItems}>
@@ -185,7 +185,7 @@ export function VendorDetail({ vendorId }: Props) {
             return (
                 <div className={styles.itemsList}>
                     <div style={{ marginBottom: '0.5rem', padding: '0.5rem', background: 'var(--bg-app)', borderRadius: 'var(--radius-sm)' }}>
-                        <strong>Box Type:</strong> {getBoxTypeName(boxSelection.box_type_id)} | 
+                        <strong>Box Type:</strong> {getBoxTypeName(boxSelection.box_type_id)} |
                         <strong style={{ marginLeft: '1rem' }}>Quantity:</strong> {boxSelection.quantity || 1}
                     </div>
                     <div className={styles.itemsHeader}>
@@ -339,7 +339,7 @@ export function VendorDetail({ vendorId }: Props) {
         try {
             const text = await file.text();
             const lines = text.split(/\r?\n/).filter(line => line.trim());
-            
+
             if (lines.length < 2) {
                 alert('CSV file must have at least a header row and one data row');
                 return;
@@ -625,7 +625,7 @@ export function VendorDetail({ vendorId }: Props) {
                     <div className={styles.summaryCard}>
                         <div className={styles.summaryLabel}>Minimum Order</div>
                         <div className={styles.summaryValue}>
-                            {vendor.minimumOrder || 0}
+                            {vendor.minimumMeals || 0}
                         </div>
                     </div>
                     <div className={styles.summaryCard}>
@@ -666,7 +666,7 @@ export function VendorDetail({ vendorId }: Props) {
                         </button>
                     </div>
                 </div>
-                
+
                 {(() => {
                     let filteredOrders = orders;
                     if (activeTab === 'completed') {
@@ -674,16 +674,16 @@ export function VendorDetail({ vendorId }: Props) {
                     } else if (activeTab === 'upcoming') {
                         filteredOrders = upcomingOrders;
                     }
-                    
+
                     return filteredOrders.length === 0 ? (
                         <div className={styles.emptyState}>
                             <Package size={48} style={{ color: 'var(--text-tertiary)', marginBottom: '1rem' }} />
                             <p>
-                                {activeTab === 'all' 
+                                {activeTab === 'all'
                                     ? 'No orders found for this vendor'
                                     : activeTab === 'completed'
-                                    ? 'No completed orders found'
-                                    : 'No upcoming orders found'}
+                                        ? 'No completed orders found'
+                                        : 'No upcoming orders found'}
                             </p>
                         </div>
                     ) : (
@@ -702,108 +702,148 @@ export function VendorDetail({ vendorId }: Props) {
                                 <span style={{ minWidth: '150px', flex: 1.2 }}>Created</span>
                             </div>
                             {filteredOrders.map((order) => {
-                            const orderKey = `${order.orderType}-${order.id}`;
-                            const isExpanded = expandedOrders.has(orderKey);
+                                const orderKey = `${order.orderType}-${order.id}`;
+                                const isExpanded = expandedOrders.has(orderKey);
 
-                            return (
-                                <div key={orderKey}>
-                                    <div 
-                                        className={styles.orderRow}
-                                        onClick={() => toggleOrderExpansion(orderKey)}
-                                        style={{ cursor: 'pointer' }}
-                                    >
-                                        <span style={{ width: '40px', flex: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                                            {isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
-                                        </span>
-                                        <span style={{ minWidth: '120px', flex: 0.8 }}>
-                                            <span className="badge badge-info">{order.service_type}</span>
-                                            {order.orderType === 'upcoming' && (
-                                                <Clock size={14} style={{ marginLeft: '4px', verticalAlign: 'middle', color: 'var(--color-warning)' }} />
-                                            )}
-                                        </span>
-                                        <span 
-                                            title={getClientName(order.client_id)} 
-                                            style={{ minWidth: '200px', flex: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                                return (
+                                    <div key={orderKey}>
+                                        <div
+                                            className={styles.orderRow}
+                                            onClick={() => toggleOrderExpansion(orderKey)}
+                                            style={{ cursor: 'pointer' }}
                                         >
-                                            {getClientName(order.client_id)}
-                                        </span>
-                                        <span style={{ minWidth: '120px', flex: 1, fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                                            {order.case_id || '-'}
-                                        </span>
-                                        <span style={{ minWidth: '120px', flex: 1 }}>
-                                            <span className={`badge ${order.status === 'completed' ? 'badge-success' : ''}`}>
-                                                {order.status}
+                                            <span style={{ width: '40px', flex: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                                {isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
                                             </span>
-                                        </span>
-                                        <span style={{ minWidth: '150px', flex: 1.2, fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
-                                            {formatDate(order.scheduled_delivery_date)}
-                                        </span>
-                                        <span style={{ minWidth: '150px', flex: 1.2, fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
-                                            {formatDate(order.actual_delivery_date)}
-                                        </span>
-                                        <span style={{ minWidth: '100px', flex: 1, fontSize: '0.9rem' }}>
-                                            {order.total_items || 0}
-                                        </span>
-                                        <span style={{ minWidth: '120px', flex: 1, fontWeight: 600 }}>
-                                            ${parseFloat(order.total_value || 0).toFixed(2)}
-                                        </span>
-                                        <span style={{ minWidth: '150px', flex: 1.2, fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                                            {order.updated_by || '-'}
-                                        </span>
-                                        <span style={{ minWidth: '150px', flex: 1.2, fontSize: '0.85rem', color: 'var(--text-tertiary)' }}>
-                                            {formatDateTime(order.created_at)}
-                                        </span>
-                                    </div>
-                                    {isExpanded && (
-                                        <div className={styles.orderDetails}>
-                                            <div className={styles.orderDetailsGrid}>
-                                                <div className={styles.detailItem}>
-                                                    <strong>Order ID:</strong> {order.id}
-                                                </div>
-                                                <div className={styles.detailItem}>
-                                                    <strong>Order Type:</strong> {order.orderType}
-                                                </div>
-                                                {order.case_id && (
-                                                    <div className={styles.detailItem}>
-                                                        <strong>Case ID:</strong> {order.case_id}
-                                                    </div>
+                                            <span style={{ minWidth: '120px', flex: 0.8 }}>
+                                                <span className="badge badge-info">{order.service_type}</span>
+                                                {order.orderType === 'upcoming' && (
+                                                    <Clock size={14} style={{ marginLeft: '4px', verticalAlign: 'middle', color: 'var(--color-warning)' }} />
                                                 )}
-                                                <div className={styles.detailItem}>
-                                                    <strong>Last Updated:</strong> {formatDateTime(order.last_updated)}
-                                                </div>
-                                                {order.updated_by && (
-                                                    <div className={styles.detailItem}>
-                                                        <strong>Updated By:</strong> {order.updated_by}
-                                                    </div>
-                                                )}
-                                                {order.take_effect_date && (
-                                                    <div className={styles.detailItem}>
-                                                        <strong>Take Effect Date:</strong> {formatDate(order.take_effect_date)}
-                                                    </div>
-                                                )}
-                                                {order.delivery_distribution && (
-                                                    <div className={styles.detailItem} style={{ gridColumn: '1 / -1' }}>
-                                                        <strong>Delivery Distribution:</strong> {JSON.stringify(order.delivery_distribution)}
-                                                    </div>
-                                                )}
-                                                {order.notes && (
-                                                    <div className={styles.detailItem} style={{ gridColumn: '1 / -1' }}>
-                                                        <strong>Notes:</strong> {order.notes}
-                                                    </div>
-                                                )}
-                                            </div>
-                                            <div className={styles.itemsSection}>
-                                                <h4 className={styles.itemsTitle}>
-                                                    <ShoppingCart size={16} style={{ marginRight: '8px', verticalAlign: 'middle' }} />
-                                                    Order Items
-                                                </h4>
-                                                {renderOrderItems(order)}
-                                            </div>
+                                            </span>
+                                            <span
+                                                title={getClientName(order.client_id)}
+                                                style={{ minWidth: '200px', flex: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                                            >
+                                                {getClientName(order.client_id)}
+                                            </span>
+                                            <span style={{ minWidth: '120px', flex: 1, fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                                                {order.case_id || '-'}
+                                            </span>
+                                            <span style={{ minWidth: '120px', flex: 1 }}>
+                                                <span className={`badge ${order.status === 'completed' ? 'badge-success' : ''}`}>
+                                                    {order.status}
+                                                </span>
+                                            </span>
+                                            <span style={{ minWidth: '150px', flex: 1.2, fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
+                                                {formatDate(order.scheduled_delivery_date)}
+                                            </span>
+                                            <span style={{ minWidth: '150px', flex: 1.2, fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
+                                                {formatDate(order.actual_delivery_date)}
+                                            </span>
+                                            <span style={{ minWidth: '100px', flex: 1, fontSize: '0.9rem' }}>
+                                                {order.total_items || 0}
+                                            </span>
+                                            <span style={{ minWidth: '120px', flex: 1, fontWeight: 600 }}>
+                                                ${parseFloat(order.total_value || 0).toFixed(2)}
+                                            </span>
+                                            <span style={{ minWidth: '150px', flex: 1.2, fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                                                {order.updated_by || '-'}
+                                            </span>
+                                            <span style={{ minWidth: '150px', flex: 1.2, fontSize: '0.85rem', color: 'var(--text-tertiary)' }}>
+                                                {formatDateTime(order.created_at)}
+                                            </span>
                                         </div>
-                                    )}
-                                </div>
-                            );
-                        })}
+                                        {isExpanded && (
+                                            <div className={styles.orderDetails}>
+                                                <div className={styles.orderDetailsGrid}>
+                                                    <div className={styles.detailItem}>
+                                                        <strong>Order ID:</strong> {order.id}
+                                                    </div>
+                                                    <div className={styles.detailItem}>
+                                                        <strong>Order Type:</strong> {order.orderType}
+                                                    </div>
+                                                    {order.case_id && (
+                                                        <div className={styles.detailItem}>
+                                                            <strong>Case ID:</strong> {order.case_id}
+                                                        </div>
+                                                    )}
+                                                    <div className={styles.detailItem}>
+                                                        <strong>Last Updated:</strong> {formatDateTime(order.last_updated)}
+                                                    </div>
+                                                    {order.updated_by && (
+                                                        <div className={styles.detailItem}>
+                                                            <strong>Updated By:</strong> {order.updated_by}
+                                                        </div>
+                                                    )}
+                                                    {order.take_effect_date && (
+                                                        <div className={styles.detailItem}>
+                                                            <strong>Take Effect Date:</strong> {formatDate(order.take_effect_date)}
+                                                        </div>
+                                                    )}
+                                                    {order.delivery_distribution && (
+                                                        <div className={styles.detailItem} style={{ gridColumn: '1 / -1' }}>
+                                                            <strong>Delivery Distribution:</strong> {JSON.stringify(order.delivery_distribution)}
+                                                        </div>
+                                                    )}
+                                                    {order.notes && (
+                                                        <div className={styles.detailItem} style={{ gridColumn: '1 / -1' }}>
+                                                            <strong>Notes:</strong> {order.notes}
+                                                        </div>
+                                                    )}
+
+                                                    {/* Proof Upload for Waiting Orders */}
+                                                    {order.status === 'waiting_for_proof' && (
+                                                        <div className={styles.detailItem} style={{ gridColumn: '1 / -1', marginTop: '1rem', padding: '1rem', backgroundColor: 'rgba(59, 130, 246, 0.05)', borderRadius: '6px', border: '1px solid rgba(59, 130, 246, 0.2)' }}>
+                                                            <h4 style={{ marginBottom: '0.5rem', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.9rem', color: 'var(--color-primary)' }}>
+                                                                <Upload size={16} /> Submit Proof of Delivery
+                                                            </h4>
+                                                            <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '0.5rem' }}>
+                                                                Providing a proof URL will move this order to <strong>Billing Pending</strong> status.
+                                                            </p>
+                                                            <div style={{ display: 'flex', gap: '0.5rem' }}>
+                                                                <input
+                                                                    placeholder="Enter Proof URL (e.g. https://image-link.com)"
+                                                                    className="input"
+                                                                    style={{ flex: 1 }}
+                                                                    id={`proof-input-${order.id}`}
+                                                                />
+                                                                <button
+                                                                    className="btn btn-primary"
+                                                                    onClick={async () => {
+                                                                        const inputInfo = document.getElementById(`proof-input-${order.id}`) as HTMLInputElement;
+                                                                        if (!inputInfo || !inputInfo.value.trim()) {
+                                                                            alert('Please enter a valid URL');
+                                                                            return;
+                                                                        }
+
+                                                                        const res = await updateOrderDeliveryProof(order.id, inputInfo.value.trim());
+                                                                        if (res.success) {
+                                                                            // Ideally optimistically update specific order in state, but reload is safer for now
+                                                                            await loadData();
+                                                                        } else {
+                                                                            alert('Failed: ' + res.error);
+                                                                        }
+                                                                    }}
+                                                                >
+                                                                    Submit
+                                                                </button>
+                                                            </div>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                                <div className={styles.itemsSection}>
+                                                    <h4 className={styles.itemsTitle}>
+                                                        <ShoppingCart size={16} style={{ marginRight: '8px', verticalAlign: 'middle' }} />
+                                                        Order Items
+                                                    </h4>
+                                                    {renderOrderItems(order)}
+                                                </div>
+                                            </div>
+                                        )}
+                                    </div>
+                                );
+                            })}
                         </div>
                     );
                 })()}
@@ -816,7 +856,7 @@ export function VendorDetail({ vendorId }: Props) {
                         <div className={styles.importModalHeader}>
                             <h3>CSV Import Progress</h3>
                             {!importProgress.isImporting && (
-                                <button 
+                                <button
                                     className={styles.closeButton}
                                     onClick={closeImportProgress}
                                     aria-label="Close"
@@ -825,17 +865,17 @@ export function VendorDetail({ vendorId }: Props) {
                                 </button>
                             )}
                         </div>
-                        
+
                         <div className={styles.importModalContent}>
                             {/* Progress Bar */}
                             <div className={styles.progressSection}>
                                 <div className={styles.progressBarContainer}>
-                                    <div 
+                                    <div
                                         className={styles.progressBar}
-                                        style={{ 
-                                            width: `${importProgress.totalRows > 0 
-                                                ? (importProgress.currentRow / importProgress.totalRows) * 100 
-                                                : 0}%` 
+                                        style={{
+                                            width: `${importProgress.totalRows > 0
+                                                ? (importProgress.currentRow / importProgress.totalRows) * 100
+                                                : 0}%`
                                         }}
                                     />
                                 </div>

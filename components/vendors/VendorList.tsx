@@ -74,35 +74,35 @@ export function VendorList() {
                     <span style={{ minWidth: '100px', flex: 0.8, paddingRight: '16px' }}>Status</span>
                 </div>
                 {filteredVendors.map(vendor => (
-                    <div 
-                        key={vendor.id} 
+                    <div
+                        key={vendor.id}
                         className={styles.vendorRow}
                         onClick={() => router.push(`/vendors/${vendor.id}`)}
                         style={{ cursor: 'pointer' }}
                     >
-                        <span 
-                            title={vendor.name} 
+                        <span
+                            title={vendor.name}
                             style={{ minWidth: '250px', flex: 2, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: '16px' }}
                         >
                             <Truck size={16} style={{ marginRight: '8px', verticalAlign: 'middle' }} />
                             {vendor.name}
                         </span>
-                        <span 
-                            title={vendor.serviceType} 
+                        <span
+                            title={vendor.serviceType}
                             style={{ minWidth: '120px', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: '16px' }}
                         >
                             <span className="badge badge-info">
                                 {vendor.serviceType}
                             </span>
                         </span>
-                        <span 
-                            title={vendor.deliveryDays.join(', ') || 'No delivery days'} 
+                        <span
+                            title={vendor.deliveryDays.join(', ') || 'No delivery days'}
                             style={{ minWidth: '200px', flex: 2, fontSize: '0.9rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: '16px' }}
                         >
                             {vendor.deliveryDays.length > 0 ? vendor.deliveryDays.join(', ') : '-'}
                         </span>
-                        <span 
-                            title={vendor.allowsMultipleDeliveries ? 'Allows multiple deliveries' : 'Single delivery only'} 
+                        <span
+                            title={vendor.allowsMultipleDeliveries ? 'Allows multiple deliveries' : 'Single delivery only'}
                             style={{ minWidth: '150px', flex: 1, paddingRight: '16px' }}
                         >
                             {vendor.allowsMultipleDeliveries ? (
@@ -117,14 +117,14 @@ export function VendorList() {
                                 </span>
                             )}
                         </span>
-                        <span 
-                            title={`Minimum order: ${vendor.minimumOrder || 0}`} 
+                        <span
+                            title={`Minimum order: ${vendor.minimumMeals || 0}`}
                             style={{ minWidth: '120px', flex: 1, fontSize: '0.9rem', color: 'var(--text-secondary)', paddingRight: '16px' }}
                         >
-                            {vendor.minimumOrder || 0}
+                            {vendor.minimumMeals || 0}
                         </span>
-                        <span 
-                            title={vendor.isActive ? 'Active' : 'Inactive'} 
+                        <span
+                            title={vendor.isActive ? 'Active' : 'Inactive'}
                             style={{ minWidth: '100px', flex: 0.8, paddingRight: '16px' }}
                         >
                             {vendor.isActive ? (

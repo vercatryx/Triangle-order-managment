@@ -22,7 +22,7 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({
             success: true,
             processed: result.processed,
-            billingRecordsCreated: result.billingRecordsCreated || 0,
+            billingRecordsCreated: 0,
             errors: result.errors,
             processedAt: new Date().toISOString()
         }, { status: 200 });
@@ -47,10 +47,10 @@ export async function GET(request: NextRequest) {
         return NextResponse.json({
             success: true,
             processed: result.processed,
-            billingRecordsCreated: result.billingRecordsCreated || 0,
+            billingRecordsCreated: 0,
             errors: result.errors,
             processedAt: new Date().toISOString(),
-            message: `Processed ${result.processed} upcoming order(s) and created ${result.billingRecordsCreated || 0} billing record(s)`
+            message: `Processed ${result.processed} upcoming order(s)`
         }, { status: 200 });
 
     } catch (error: any) {

@@ -2,9 +2,9 @@
 
 import { useState, useEffect } from 'react';
 import { AppSettings } from '@/lib/types';
-import { updateSettings, generateDeliveriesForDate } from '@/lib/actions';
+import { updateSettings } from '@/lib/actions';
 import { useDataCache } from '@/lib/data-cache';
-import { Save, Truck } from 'lucide-react';
+import { Save, PlayCircle, AlertCircle, RefreshCw, Truck } from 'lucide-react';
 import styles from './GlobalSettings.module.css';
 
 const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
@@ -18,6 +18,9 @@ export function GlobalSettings() {
     const [saving, setSaving] = useState(false);
     const [message, setMessage] = useState<string | null>(null);
 
+    const [simulating, setSimulating] = useState(false);
+    const [simulationResult, setSimulationResult] = useState<{ success: boolean; message: string } | null>(null);
+
     useEffect(() => {
         loadData();
     }, []);
@@ -29,11 +32,32 @@ export function GlobalSettings() {
 
     async function handleSave() {
         setSaving(true);
-        await updateSettings(settings); // Assume it returns void or updated settings
-        invalidateReferenceData(); // Invalidate cache after settings update
+        await updateSettings(settings);
+        invalidateReferenceData();
         setSaving(false);
         setMessage('Settings saved successfully!');
         setTimeout(() => setMessage(null), 3000);
+    }
+
+    async function handleSimulateRun() {
+        if (!confirm('This will create orders for all scheduled upcoming orders due today or earlier. The original Upcoming Orders will be preserved. Proceed?')) return;
+
+        setSimulating(true);
+        setSimulationResult(null);
+
+        try {
+            const res = await fetch('/api/simulate-delivery-cycle', { method: 'POST' });
+            const data = await res.json();
+
+            setSimulationResult({
+                success: data.success,
+                message: data.message || (data.success ? 'Simulation completed successfully.' : 'Simulation failed.')
+            });
+        } catch (error) {
+            setSimulationResult({ success: false, message: 'An error occurred during simulation.' });
+        } finally {
+            setSimulating(false);
+        }
     }
 
     return (
@@ -81,17 +105,39 @@ export function GlobalSettings() {
             <div className={styles.card} style={{ marginTop: 'var(--spacing-lg)' }}>
                 <h3 className={styles.sectionTitle}>Simulate Delivery Cycle</h3>
                 <p className={styles.description}>
-                    Manually trigger delivery generation for today. In production, this would be automated.
+                    Manually trigger the delivery generation cycle for today. This will:
+                    <br />• Find all Upcoming Orders due today or earlier.
+                    <br />• Create new Orders with status "Waiting for Proof".
+                    <br />• Preserve the existing Upcoming Orders template.
                 </p>
-                <button
-                    className="btn btn-primary"
-                    onClick={async () => {
-                        const count = await generateDeliveriesForDate(new Date().toISOString());
-                        alert(`Generated ${count} deliveries for today.`);
-                    }}
-                >
-                    <Truck size={16} /> Run Delivery Simulation
-                </button>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                    <button
+                        className="btn btn-primary"
+                        onClick={handleSimulateRun}
+                        disabled={simulating}
+                        style={{ backgroundColor: 'var(--color-secondary)' }}
+                    >
+                        {simulating ? <RefreshCw className="spin" size={16} /> : <PlayCircle size={16} />}
+                        {simulating ? 'Running Simulation...' : 'Run Delivery Simulation'}
+                    </button>
+
+                    {simulationResult && (
+                        <div style={{
+                            padding: '8px 12px',
+                            borderRadius: '4px',
+                            fontSize: '0.9rem',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '8px',
+                            backgroundColor: simulationResult.success ? 'rgba(34, 197, 94, 0.1)' : 'rgba(239, 68, 68, 0.1)',
+                            color: simulationResult.success ? 'var(--color-success)' : 'var(--color-danger)',
+                            border: `1px solid ${simulationResult.success ? 'var(--color-success)' : 'var(--color-danger)'}`
+                        }}>
+                            {simulationResult.success ? <Truck size={16} /> : <AlertCircle size={16} />}
+                            {simulationResult.message}
+                        </div>
+                    )}
+                </div>
             </div>
         </div>
     );

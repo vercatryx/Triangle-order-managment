@@ -61,6 +61,10 @@ export function MenuManagement() {
     async function handleSubmit() {
         if (!selectedVendorId) return;
         if (!formData.name) return;
+        if (!formData.priceEach || formData.priceEach <= 0) {
+            alert('Price must be greater than 0');
+            return;
+        }
 
         if (editingId) {
             await updateMenuItem(editingId, formData);
