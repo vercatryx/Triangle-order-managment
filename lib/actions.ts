@@ -1962,14 +1962,11 @@ export async function getActiveOrderForClient(clientId: string) {
                 if (vendorSelections && vendorSelections.length > 0) {
                     orderConfig.vendorSelections = [];
                     for (const vs of vendorSelections) {
-                        const vendorSelectionIdField = orderData.is_upcoming
-                            ? 'upcoming_vendor_selection_id'
-                            : 'vendor_selection_id';
-
+                        // Both upcoming_order_items and order_items use 'vendor_selection_id' field
                         const { data: items, error: itemsError } = await supabase
                             .from(itemsTable)
                             .select('*')
-                            .eq(vendorSelectionIdField, vs.id);
+                            .eq('vendor_selection_id', vs.id);
 
                         if (itemsError) {
                             console.error('Error fetching order items:', itemsError);
@@ -2037,15 +2034,11 @@ export async function getActiveOrderForClient(clientId: string) {
                         .maybeSingle();
 
                     if (vendorSelection) {
-                        // Fetch box items
-                        const vendorSelectionIdField = orderData.is_upcoming
-                            ? 'upcoming_vendor_selection_id'
-                            : 'vendor_selection_id';
-
+                        // Fetch box items - both upcoming_order_items and order_items use 'vendor_selection_id' field
                         const { data: boxItems } = await supabase
                             .from(itemsTable)
                             .select('*')
-                            .eq(vendorSelectionIdField, vendorSelection.id);
+                            .eq('vendor_selection_id', vendorSelection.id);
 
                         if (boxItems && boxItems.length > 0) {
                             const itemsMap: any = {};
@@ -2267,11 +2260,11 @@ async function processVendorOrderDetails(order: any, vendorId: string, isUpcomin
             .maybeSingle();
 
         if (vs) {
-            const vendorSelectionIdField = isUpcoming ? 'upcoming_vendor_selection_id' : 'vendor_selection_id';
+            // Both upcoming_order_items and order_items use 'vendor_selection_id' field
             const { data: items } = await supabase
                 .from(itemsTable)
                 .select('*')
-                .eq(vendorSelectionIdField, vs.id);
+                .eq('vendor_selection_id', vs.id);
 
             result.items = items || [];
         }

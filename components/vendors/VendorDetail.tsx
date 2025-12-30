@@ -260,6 +260,47 @@ export function VendorDetail({ vendorId }: Props) {
         return stringValue;
     }
 
+    function formatOrderedItemsForCSV(order: any): string {
+        if (order.service_type === 'Food') {
+            // Food orders - items from order_items or upcoming_order_items
+            const items = order.items || [];
+            if (items.length === 0) {
+                return 'No items';
+            }
+            return items.map((item: any) => {
+                const menuItem = menuItems.find(mi => mi.id === item.menu_item_id);
+                const itemName = menuItem?.name || item.menuItemName || 'Unknown Item';
+                const quantity = parseInt(item.quantity || 0);
+                const unitPrice = parseFloat(item.unit_value || item.unitValue || 0) || (menuItem?.priceEach || menuItem?.value || 0);
+                const totalPrice = parseFloat(item.total_value || item.totalValue || 0) || (unitPrice * quantity);
+                return `${itemName} (Qty: ${quantity}, Unit Price: $${unitPrice.toFixed(2)}, Total: $${totalPrice.toFixed(2)})`;
+            }).join('; ');
+        } else if (order.service_type === 'Boxes') {
+            // Box orders - items from box_selections.items JSONB
+            const boxSelection = order.boxSelection;
+            if (!boxSelection) {
+                return 'No box selection';
+            }
+            const items = boxSelection.items || {};
+            const itemEntries = Object.entries(items);
+            if (itemEntries.length === 0) {
+                const boxTypeName = getBoxTypeName(boxSelection.box_type_id);
+                return `Box Type: ${boxTypeName} (Quantity: ${boxSelection.quantity || 1})`;
+            }
+            const boxTypeName = getBoxTypeName(boxSelection.box_type_id);
+            const itemStrings = itemEntries.map(([itemId, quantity]: [string, any]) => {
+                const menuItem = menuItems.find(mi => mi.id === itemId);
+                const itemName = menuItem?.name || 'Unknown Item';
+                const qty = typeof quantity === 'number' ? quantity : parseInt(quantity) || 0;
+                const unitPrice = menuItem?.priceEach || menuItem?.value || 0;
+                const totalPrice = unitPrice * qty;
+                return `${itemName} (Qty: ${qty}, Unit Price: $${unitPrice.toFixed(2)}, Total: $${totalPrice.toFixed(2)})`;
+            });
+            return `Box Type: ${boxTypeName} (Box Qty: ${boxSelection.quantity || 1}); Items: ${itemStrings.join('; ')}`;
+        }
+        return 'No items available';
+    }
+
     function exportOrdersToCSV() {
         if (orders.length === 0) {
             alert('No orders to export');
@@ -269,43 +310,25 @@ export function VendorDetail({ vendorId }: Props) {
         // Define CSV headers
         const headers = [
             'Order ID',
-            'Order Type',
             'Client ID',
             'Client Name',
-            'Service Type',
-            'Case ID',
-            'Status',
             'Scheduled Delivery Date',
-            'Actual Delivery Date',
             'Total Items',
-            'Total Value',
-            'Created At',
-            'Last Updated',
-            'Updated By',
-            'Notes',
-            'Delivery Distribution',
-            'delivery_proof_url'
+            'Total Price',
+            'Delivery Proof URL',
+            'Ordered Items'
         ];
 
         // Convert orders to CSV rows
         const rows = orders.map(order => [
             order.id || '',
-            order.orderType || '',
             order.client_id || '',
             getClientName(order.client_id),
-            order.service_type || '',
-            order.case_id || '',
-            order.status || '',
             order.scheduled_delivery_date || '',
-            order.actual_delivery_date || '',
             order.total_items || 0,
             order.total_value || 0,
-            order.created_at || '',
-            order.last_updated || '',
-            order.updated_by || '',
-            order.notes || '',
-            order.delivery_distribution ? JSON.stringify(order.delivery_distribution) : '',
-            order.delivery_proof_url || '' // Include delivery_proof_url if available
+            order.delivery_proof_url || '',
+            formatOrderedItemsForCSV(order)
         ]);
 
         // Combine headers and rows
@@ -336,43 +359,25 @@ export function VendorDetail({ vendorId }: Props) {
         // Define CSV headers
         const headers = [
             'Order ID',
-            'Order Type',
             'Client ID',
             'Client Name',
-            'Service Type',
-            'Case ID',
-            'Status',
             'Scheduled Delivery Date',
-            'Actual Delivery Date',
             'Total Items',
-            'Total Value',
-            'Created At',
-            'Last Updated',
-            'Updated By',
-            'Notes',
-            'Delivery Distribution',
-            'delivery_proof_url'
+            'Total Price',
+            'Delivery Proof URL',
+            'Ordered Items'
         ];
 
         // Convert orders to CSV rows
         const rows = dateOrders.map(order => [
             order.id || '',
-            order.orderType || '',
             order.client_id || '',
             getClientName(order.client_id),
-            order.service_type || '',
-            order.case_id || '',
-            order.status || '',
             order.scheduled_delivery_date || '',
-            order.actual_delivery_date || '',
             order.total_items || 0,
             order.total_value || 0,
-            order.created_at || '',
-            order.last_updated || '',
-            order.updated_by || '',
-            order.notes || '',
-            order.delivery_distribution ? JSON.stringify(order.delivery_distribution) : '',
-            order.delivery_proof_url || ''
+            order.delivery_proof_url || '',
+            formatOrderedItemsForCSV(order)
         ]);
 
         // Combine headers and rows
@@ -879,78 +884,6 @@ export function VendorDetail({ vendorId }: Props) {
                             </label>
                         </div>
                     )}
-                </div>
-            </div>
-
-            {/* Vendor Summary */}
-            <div className={styles.summarySection}>
-                <h2 className={styles.sectionTitle}>Vendor Details</h2>
-                <div className={styles.summaryGrid}>
-                    <div className={styles.summaryCard}>
-                        <div className={styles.summaryLabel}>Service Types</div>
-                        <div className={styles.summaryValue}>
-                            <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
-                                {vendor.serviceTypes.map(t => (
-                                    <span key={t} className="badge badge-info">{t}</span>
-                                ))}
-                            </div>
-                        </div>
-                    </div>
-                    <div className={styles.summaryCard}>
-                        <div className={styles.summaryLabel}>Status</div>
-                        <div className={styles.summaryValue}>
-                            {vendor.isActive ? (
-                                <span className="badge badge-success">Active</span>
-                            ) : (
-                                <span className="badge">Inactive</span>
-                            )}
-                        </div>
-                    </div>
-                    <div className={styles.summaryCard}>
-                        <div className={styles.summaryLabel}>Delivery Days</div>
-                        <div className={styles.summaryValue}>
-                            {vendor.deliveryDays.length > 0 ? (
-                                <div className={styles.deliveryDays}>
-                                    {vendor.deliveryDays.map((day, idx) => (
-                                        <span key={idx} className={styles.dayBadge}>{day}</span>
-                                    ))}
-                                </div>
-                            ) : (
-                                <span style={{ color: 'var(--text-tertiary)' }}>No delivery days set</span>
-                            )}
-                        </div>
-                    </div>
-                    <div className={styles.summaryCard}>
-                        <div className={styles.summaryLabel}>Multiple Deliveries</div>
-                        <div className={styles.summaryValue}>
-                            {vendor.allowsMultipleDeliveries ? (
-                                <span style={{ color: 'var(--color-success)' }}>
-                                    <CheckCircle size={16} style={{ verticalAlign: 'middle', marginRight: '4px' }} />
-                                    Allowed
-                                </span>
-                            ) : (
-                                <span style={{ color: 'var(--text-tertiary)' }}>
-                                    <XCircle size={16} style={{ verticalAlign: 'middle', marginRight: '4px' }} />
-                                    Not Allowed
-                                </span>
-                            )}
-                        </div>
-                    </div>
-                    <div className={styles.summaryCard}>
-                        <div className={styles.summaryLabel}>Minimum Order</div>
-                        <div className={styles.summaryValue}>
-                            {vendor.minimumMeals || 0}
-                        </div>
-                    </div>
-                    <div className={styles.summaryCard}>
-                        <div className={styles.summaryLabel}>Total Orders</div>
-                        <div className={styles.summaryValue}>
-                            <strong>{orders.length}</strong>
-                            <span style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', marginLeft: '8px' }}>
-                                ({completedOrders.length} completed, {upcomingOrders.length} upcoming)
-                            </span>
-                        </div>
-                    </div>
                 </div>
             </div>
 

@@ -22,6 +22,8 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate }: Props) {
     const [boxTypes, setBoxTypes] = useState<BoxType[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const [expandedOrders, setExpandedOrders] = useState<Set<string>>(new Set());
+    const [proofUrls, setProofUrls] = useState<Record<string, string>>({});
+    const [savingProofUrl, setSavingProofUrl] = useState<Set<string>>(new Set());
 
     useEffect(() => {
         loadData();
@@ -49,10 +51,23 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate }: Props) {
                 return orderDateKey === dateKey;
             });
             
+            // Expand all orders by default so items are visible
+            const allOrderKeys = new Set(filteredOrders.map(order => `${order.orderType}-${order.id}`));
+            setExpandedOrders(allOrderKeys);
+            
             setOrders(filteredOrders);
             setClients(clientsData);
             setMenuItems(menuItemsData);
             setBoxTypes(boxTypesData);
+            
+            // Initialize proof URLs from orders
+            const initialProofUrls: Record<string, string> = {};
+            filteredOrders.forEach(order => {
+                if (order.delivery_proof_url) {
+                    initialProofUrls[order.id] = order.delivery_proof_url;
+                }
+            });
+            setProofUrls(initialProofUrls);
         } catch (error) {
             console.error('Error loading vendor delivery orders:', error);
         } finally {
@@ -103,6 +118,45 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate }: Props) {
         setExpandedOrders(newExpanded);
     }
 
+    async function handleSaveProofUrl(orderId: string, url: string) {
+        if (savingProofUrl.has(orderId)) return;
+        
+        setSavingProofUrl(prev => new Set(prev).add(orderId));
+        try {
+            const res = await updateOrderDeliveryProof(orderId, url.trim());
+            if (res.success) {
+                await loadData();
+            } else {
+                alert('Failed to save delivery proof URL: ' + res.error);
+                // Revert to original value on error
+                const order = orders.find(o => o.id === orderId);
+                if (order) {
+                    setProofUrls(prev => ({
+                        ...prev,
+                        [orderId]: order.delivery_proof_url || ''
+                    }));
+                }
+            }
+        } catch (error) {
+            console.error('Error saving proof URL:', error);
+            alert('Failed to save delivery proof URL');
+            // Revert to original value on error
+            const order = orders.find(o => o.id === orderId);
+            if (order) {
+                setProofUrls(prev => ({
+                    ...prev,
+                    [orderId]: order.delivery_proof_url || ''
+                }));
+            }
+        } finally {
+            setSavingProofUrl(prev => {
+                const next = new Set(prev);
+                next.delete(orderId);
+                return next;
+            });
+        }
+    }
+
     function getBoxTypeName(boxTypeId: string) {
         const boxType = boxTypes.find(bt => bt.id === boxTypeId);
         return boxType?.name || 'Unknown Box Type';
@@ -111,93 +165,190 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate }: Props) {
     function renderOrderItems(order: any) {
         if (order.service_type === 'Food') {
             const items = order.items || [];
-            if (items.length === 0) {
-                return <div className={styles.noItems}>No items found</div>;
+            
+            if (!items || items.length === 0) {
+                return (
+                    <div className={styles.noItems} style={{ 
+                        padding: 'var(--spacing-md)', 
+                        textAlign: 'center', 
+                        color: 'var(--text-tertiary)', 
+                        fontStyle: 'italic',
+                        backgroundColor: 'var(--bg-app)',
+                        borderRadius: 'var(--radius-md)',
+                        border: '1px solid var(--border-color)'
+                    }}>
+                        No items found for this order. Order ID: {order.id}
+                    </div>
+                );
             }
 
-            return (
-                <div className={styles.itemsList}>
-                    <div className={styles.itemsHeader}>
-                        <span style={{ minWidth: '300px', flex: 3 }}>Item Name</span>
-                        <span style={{ minWidth: '100px', flex: 1 }}>Quantity</span>
-                        <span style={{ minWidth: '120px', flex: 1.2 }}>Unit Price</span>
-                        <span style={{ minWidth: '120px', flex: 1.2 }}>Total Price</span>
-                    </div>
-                    {items.map((item: any, index: number) => {
-                        const menuItem = menuItems.find(mi => mi.id === item.menu_item_id);
-                        const unitPrice = parseFloat(item.unit_value || item.unitValue || 0) || (menuItem?.priceEach || menuItem?.value || 0);
-                        const quantity = parseInt(item.quantity || 0);
-                        const totalPrice = parseFloat(item.total_value || item.totalValue || 0) || (unitPrice * quantity);
-                        const itemKey = item.id || `${order.id}-item-${index}`;
+            // Group items by vendor (for Food orders, items are already associated with vendor via vendor selection)
+            // Since items are from a single vendor selection, display them in a table
+            const vendorName = vendor?.name || 'Unknown Vendor';
+            
+            // Calculate totals
+            let totalItems = 0;
+            let totalValue = 0;
+            items.forEach((item: any) => {
+                const qty = parseInt(item.quantity || 0);
+                const unitPrice = parseFloat(item.unit_value || item.unitValue || 0);
+                const itemTotal = parseFloat(item.total_value || item.totalValue || 0) || (unitPrice * qty);
+                totalItems += qty;
+                totalValue += itemTotal;
+            });
 
-                        return (
-                            <div key={itemKey} className={styles.itemRow}>
-                                <span style={{ minWidth: '300px', flex: 3 }}>
-                                    {menuItem?.name || item.menuItemName || 'Unknown Item'}
-                                </span>
-                                <span style={{ minWidth: '100px', flex: 1 }}>{quantity}</span>
-                                <span style={{ minWidth: '120px', flex: 1.2 }}>${unitPrice.toFixed(2)}</span>
-                                <span style={{ minWidth: '120px', flex: 1.2, fontWeight: 600 }}>
-                                    ${totalPrice.toFixed(2)}
-                                </span>
-                            </div>
-                        );
-                    })}
+            return (
+                <div className={styles.vendorSection}>
+                    <div className={styles.vendorName}>
+                        <strong>Vendor:</strong> {vendorName}
+                    </div>
+                    <table className={styles.itemsTable}>
+                        <thead>
+                            <tr>
+                                <th>Item</th>
+                                <th>Quantity</th>
+                                <th>Unit Value</th>
+                                <th>Total</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {items.map((item: any, index: number) => {
+                                const menuItem = menuItems.find(mi => mi.id === item.menu_item_id);
+                                const unitPrice = parseFloat(item.unit_value || item.unitValue || 0) || (menuItem?.priceEach || menuItem?.value || 0);
+                                const quantity = parseInt(item.quantity || 0);
+                                const totalPrice = parseFloat(item.total_value || item.totalValue || 0) || (unitPrice * quantity);
+                                const itemKey = item.id || `${order.id}-item-${index}`;
+
+                                return (
+                                    <tr key={itemKey}>
+                                        <td>{menuItem?.name || item.menuItemName || 'Unknown Item'}</td>
+                                        <td>{quantity}</td>
+                                        <td>${unitPrice.toFixed(2)}</td>
+                                        <td>${totalPrice.toFixed(2)}</td>
+                                    </tr>
+                                );
+                            })}
+                        </tbody>
+                    </table>
+                    <div className={styles.orderSummary}>
+                        <div><strong>Total Items:</strong> {totalItems}</div>
+                        <div><strong>Total Value:</strong> ${totalValue.toFixed(2)}</div>
+                    </div>
                 </div>
             );
         } else if (order.service_type === 'Boxes') {
             const boxSelection = order.boxSelection;
+            
             if (!boxSelection) {
-                return <div className={styles.noItems}>No box selection found</div>;
+                return (
+                    <div className={styles.noItems} style={{ 
+                        padding: 'var(--spacing-md)', 
+                        textAlign: 'center', 
+                        color: 'var(--text-tertiary)', 
+                        fontStyle: 'italic',
+                        backgroundColor: 'var(--bg-app)',
+                        borderRadius: 'var(--radius-md)',
+                        border: '1px solid var(--border-color)'
+                    }}>
+                        No box selection found for this order. Order ID: {order.id}
+                    </div>
+                );
             }
 
             const items = boxSelection.items || {};
             const itemEntries = Object.entries(items);
 
-            if (itemEntries.length === 0) {
+            const boxVendorName = vendor?.name || 'Unknown Vendor';
+            const boxTypeName = getBoxTypeName(boxSelection.box_type_id);
+            const boxQuantity = boxSelection.quantity || 1;
+
+            // Calculate totals
+            let totalItems = 0;
+            let totalValue = 0;
+
+            if (!items || itemEntries.length === 0) {
                 return (
-                    <div className={styles.noItems}>
-                        Box Type: {getBoxTypeName(boxSelection.box_type_id)} (Quantity: {boxSelection.quantity || 1})
+                    <div className={styles.boxDetails}>
+                        <div><strong>Vendor:</strong> {boxVendorName}</div>
+                        <div><strong>Box Type:</strong> {boxTypeName}</div>
+                        <div><strong>Quantity:</strong> {boxQuantity}</div>
+                        <div><strong>Total Value:</strong> ${parseFloat(boxSelection.total_value || order.total_value || 0).toFixed(2)}</div>
                     </div>
                 );
             }
 
             return (
-                <div className={styles.itemsList}>
-                    <div style={{ marginBottom: '0.5rem', padding: '0.5rem', background: 'var(--bg-app)', borderRadius: 'var(--radius-sm)' }}>
-                        <strong>Box Type:</strong> {getBoxTypeName(boxSelection.box_type_id)} |
-                        <strong style={{ marginLeft: '1rem' }}>Quantity:</strong> {boxSelection.quantity || 1}
+                <div className={styles.vendorSection}>
+                    <div className={styles.vendorName}>
+                        <strong>Vendor:</strong> {boxVendorName} | <strong>Box Type:</strong> {boxTypeName} × {boxQuantity}
                     </div>
-                    <div className={styles.itemsHeader}>
-                        <span style={{ minWidth: '300px', flex: 3 }}>Item Name</span>
-                        <span style={{ minWidth: '100px', flex: 1 }}>Quantity</span>
-                        <span style={{ minWidth: '120px', flex: 1.2 }}>Unit Price</span>
-                        <span style={{ minWidth: '120px', flex: 1.2 }}>Total Price</span>
-                    </div>
-                    {itemEntries.map(([itemId, quantity]: [string, any]) => {
-                        const menuItem = menuItems.find(mi => mi.id === itemId);
-                        const qty = typeof quantity === 'number' ? quantity : parseInt(quantity) || 0;
-                        const unitPrice = menuItem?.priceEach || menuItem?.value || 0;
-                        const totalPrice = unitPrice * qty;
+                    <table className={styles.itemsTable}>
+                        <thead>
+                            <tr>
+                                <th>Item</th>
+                                <th>Quantity</th>
+                                <th>Unit Value</th>
+                                <th>Total</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {itemEntries.map(([itemId, quantityOrObj]: [string, any]) => {
+                                const menuItem = menuItems.find(mi => mi.id === itemId);
+                                
+                                // Handle both formats: { itemId: quantity } or { itemId: { quantity: X, price: Y } }
+                                let qty = 0;
+                                let unitPrice = menuItem?.priceEach || menuItem?.value || 0;
+                                
+                                if (typeof quantityOrObj === 'number') {
+                                    // Simple format: just a number
+                                    qty = quantityOrObj;
+                                } else if (quantityOrObj && typeof quantityOrObj === 'object' && 'quantity' in quantityOrObj) {
+                                    // Complex format: { quantity: X, price?: Y }
+                                    qty = typeof quantityOrObj.quantity === 'number' ? quantityOrObj.quantity : parseInt(quantityOrObj.quantity) || 0;
+                                    if ('price' in quantityOrObj && quantityOrObj.price !== undefined && quantityOrObj.price !== null) {
+                                        unitPrice = parseFloat(quantityOrObj.price) || unitPrice;
+                                    }
+                                } else {
+                                    // Try to parse as number string
+                                    qty = parseInt(quantityOrObj) || 0;
+                                }
+                                
+                                const totalPrice = unitPrice * qty;
+                                totalItems += qty;
+                                totalValue += totalPrice;
 
-                        return (
-                            <div key={itemId} className={styles.itemRow}>
-                                <span style={{ minWidth: '300px', flex: 3 }}>
-                                    {menuItem?.name || 'Unknown Item'}
-                                </span>
-                                <span style={{ minWidth: '100px', flex: 1 }}>{qty}</span>
-                                <span style={{ minWidth: '120px', flex: 1.2 }}>${unitPrice.toFixed(2)}</span>
-                                <span style={{ minWidth: '120px', flex: 1.2, fontWeight: 600 }}>
-                                    ${totalPrice.toFixed(2)}
-                                </span>
-                            </div>
-                        );
-                    })}
+                                return (
+                                    <tr key={itemId}>
+                                        <td>{menuItem?.name || 'Unknown Item'}</td>
+                                        <td>{qty}</td>
+                                        <td>${unitPrice.toFixed(2)}</td>
+                                        <td>${totalPrice.toFixed(2)}</td>
+                                    </tr>
+                                );
+                            })}
+                        </tbody>
+                    </table>
+                    <div className={styles.orderSummary}>
+                        <div><strong>Total Items:</strong> {totalItems}</div>
+                        <div><strong>Total Value:</strong> ${totalValue.toFixed(2)}</div>
+                    </div>
                 </div>
             );
         }
 
-        return <div className={styles.noItems}>No items available</div>;
+        return (
+            <div className={styles.noItems} style={{ 
+                padding: 'var(--spacing-md)', 
+                textAlign: 'center', 
+                color: 'var(--text-tertiary)', 
+                fontStyle: 'italic',
+                backgroundColor: 'var(--bg-app)',
+                borderRadius: 'var(--radius-md)',
+                border: '1px solid var(--border-color)'
+            }}>
+                No items available for service type: {order.service_type || 'Unknown'}
+            </div>
+        );
     }
 
     if (isLoading) {
@@ -274,6 +425,7 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate }: Props) {
                         <span style={{ minWidth: '150px', flex: 1.2 }}>Actual Date</span>
                         <span style={{ minWidth: '100px', flex: 1 }}>Items</span>
                         <span style={{ minWidth: '120px', flex: 1 }}>Total Value</span>
+                        <span style={{ minWidth: '200px', flex: 1.5 }}>Delivery Proof URL</span>
                         <span style={{ minWidth: '150px', flex: 1.2 }}>Updated By</span>
                         <span style={{ minWidth: '150px', flex: 1.2 }}>Created</span>
                     </div>
@@ -320,6 +472,40 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate }: Props) {
                                     <span style={{ minWidth: '120px', flex: 1, fontWeight: 600 }}>
                                         ${parseFloat(order.total_value || 0).toFixed(2)}
                                     </span>
+                                    <span 
+                                        style={{ minWidth: '200px', flex: 1.5, fontSize: '0.85rem' }}
+                                        onClick={(e) => e.stopPropagation()}
+                                    >
+                                        <input
+                                            type="text"
+                                            placeholder="Enter proof URL"
+                                            className="input"
+                                            style={{ 
+                                                width: '100%',
+                                                fontSize: '0.85rem',
+                                                padding: '0.375rem 0.5rem'
+                                            }}
+                                            value={proofUrls[order.id] || ''}
+                                            onChange={(e) => {
+                                                setProofUrls(prev => ({
+                                                    ...prev,
+                                                    [order.id]: e.target.value
+                                                }));
+                                            }}
+                                            onBlur={(e) => {
+                                                const url = e.target.value.trim();
+                                                if (url && url !== (order.delivery_proof_url || '')) {
+                                                    handleSaveProofUrl(order.id, url);
+                                                }
+                                            }}
+                                            onKeyDown={(e) => {
+                                                if (e.key === 'Enter') {
+                                                    e.currentTarget.blur();
+                                                }
+                                            }}
+                                            disabled={savingProofUrl.has(order.id)}
+                                        />
+                                    </span>
                                     <span style={{ minWidth: '150px', flex: 1.2, fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
                                         {order.updated_by || '-'}
                                     </span>
@@ -327,7 +513,23 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate }: Props) {
                                         {formatDateTime(order.created_at)}
                                     </span>
                                 </div>
-                                {isExpanded && (
+                                {/* Order Items - Always Visible */}
+                                <div className={styles.orderDetails} style={{ 
+                                    borderTop: '1px solid var(--border-color)', 
+                                    backgroundColor: 'var(--bg-surface-hover)',
+                                    padding: 0,
+                                    display: 'block'
+                                }}>
+                                    <div className={styles.itemsSection} style={{ marginTop: 0, padding: 'var(--spacing-lg)' }}>
+                                        <div className={styles.orderDetailsHeader}>
+                                            <ShoppingCart size={16} />
+                                            <span>Order Items</span>
+                                        </div>
+                                        {renderOrderItems(order)}
+                                    </div>
+                                </div>
+                                {/* Order Details - Expandable - Hidden for now */}
+                                {false && isExpanded && (
                                     <div className={styles.orderDetails}>
                                         <div className={styles.orderDetailsGrid}>
                                             <div className={styles.detailItem}>
@@ -403,13 +605,6 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate }: Props) {
                                                     </div>
                                                 </div>
                                             )}
-                                        </div>
-                                        <div className={styles.itemsSection}>
-                                            <h4 className={styles.itemsTitle}>
-                                                <ShoppingCart size={16} style={{ marginRight: '8px', verticalAlign: 'middle' }} />
-                                                Order Items
-                                            </h4>
-                                            {renderOrderItems(order)}
                                         </div>
                                     </div>
                                 )}
