@@ -2332,27 +2332,356 @@ export async function updateOrderDeliveryProof(orderId: string, proofUrl: string
 
     if (error) return { success: false, error: 'Failed to update order status: ' + error.message };
 
-    // 2. Create Billing Record
-    // Fetch client to get navigator info
-    const { data: client } = await supabase.from('clients').select('navigator_id').eq('id', order.client_id).single();
+    // 2. Create Billing Record (if it doesn't already exist)
+    // Fetch client to get navigator info and client name
+    const { data: client } = await supabase
+        .from('clients')
+        .select('navigator_id, fullName')
+        .eq('id', order.client_id)
+        .single();
 
-    const billingPayload = {
-        client_id: order.client_id,
-        order_id: order.id,
-        status: 'pending',
-        amount: order.total_value || 0,
-        navigator: client?.navigator_id || 'Unknown',
-        delivery_date: order.actual_delivery_date,
-        remarks: 'Auto-generated upon proof upload'
-    };
+    // Check if billing record already exists for this order
+    const { data: existingBilling } = await supabase
+        .from('billing_records')
+        .select('id')
+        .eq('order_id', order.id)
+        .maybeSingle();
 
-    const { error: billingError } = await supabase.from('billing_records').insert([billingPayload]);
+    if (!existingBilling) {
+        const billingPayload = {
+            client_id: order.client_id,
+            client_name: client?.fullName || 'Unknown Client',
+            order_id: order.id,
+            status: 'pending',
+            amount: order.total_value || 0,
+            navigator: client?.navigator_id || 'Unknown',
+            delivery_date: order.actual_delivery_date,
+            remarks: 'Auto-generated upon proof upload'
+        };
 
-    if (billingError) {
-        console.error('Failed to create billing record:', billingError);
-        return { success: true, warning: 'Order updated but billing record creation failed.' };
+        const { error: billingError } = await supabase.from('billing_records').insert([billingPayload]);
+
+        if (billingError) {
+            console.error('Failed to create billing record:', billingError);
+            return { success: true, warning: 'Order updated but billing record creation failed.' };
+        }
     }
 
     revalidatePath('/vendors');
     return { success: true };
+}
+
+export async function saveDeliveryProofUrlAndProcessOrder(
+    orderId: string,
+    orderType: string,
+    proofUrl: string
+) {
+    const session = await getSession();
+    const currentUserName = session?.name || 'Admin';
+    
+    let finalOrderId = orderId;
+    let wasProcessed = false;
+    const errors: string[] = [];
+
+    // If order is from upcoming_orders, process it first (but check if already processed)
+    if (orderType === 'upcoming') {
+        // Fetch the upcoming order
+        const { data: upcomingOrder, error: fetchError } = await supabase
+            .from('upcoming_orders')
+            .select('*')
+            .eq('id', orderId)
+            .single();
+
+        if (fetchError || !upcomingOrder) {
+            return { 
+                success: false, 
+                error: 'Upcoming order not found: ' + (fetchError?.message || 'Unknown error') 
+            };
+        }
+
+        // Check if already processed - look for order with same case_id
+        if (upcomingOrder.case_id) {
+            const { data: existingOrder, error: checkError } = await supabase
+                .from('orders')
+                .select('id')
+                .eq('case_id', upcomingOrder.case_id)
+                .maybeSingle();
+
+            if (checkError) {
+                return { 
+                    success: false, 
+                    error: 'Error checking for existing order: ' + checkError.message 
+                };
+            }
+
+            if (existingOrder) {
+                // Already processed, use the existing order ID
+                finalOrderId = existingOrder.id;
+                wasProcessed = false; // Not processed now, was already processed before
+            } else {
+                // Not processed yet, process it now
+                try {
+                    // Create order in orders table
+                    const orderData: any = {
+                        client_id: upcomingOrder.client_id,
+                        service_type: upcomingOrder.service_type,
+                        case_id: upcomingOrder.case_id,
+                        status: 'billing_pending',
+                        last_updated: new Date().toISOString(),
+                        updated_by: currentUserName,
+                        scheduled_delivery_date: upcomingOrder.scheduled_delivery_date,
+                        delivery_distribution: upcomingOrder.delivery_distribution,
+                        total_value: upcomingOrder.total_value,
+                        total_items: upcomingOrder.total_items,
+                        notes: upcomingOrder.notes,
+                        actual_delivery_date: new Date().toISOString()
+                    };
+
+                    const { data: newOrder, error: orderError } = await supabase
+                        .from('orders')
+                        .insert(orderData)
+                        .select()
+                        .single();
+
+                    if (orderError || !newOrder) {
+                        return { 
+                            success: false, 
+                            error: 'Failed to create order: ' + (orderError?.message || 'Unknown error') 
+                        };
+                    }
+
+                    finalOrderId = newOrder.id;
+                    wasProcessed = true;
+
+                    // Create billing record for the processed order
+                    const { data: client } = await supabase
+                        .from('clients')
+                        .select('navigator_id, fullName')
+                        .eq('id', upcomingOrder.client_id)
+                        .single();
+
+                    // Check if billing record already exists for this order
+                    const { data: existingBilling } = await supabase
+                        .from('billing_records')
+                        .select('id')
+                        .eq('order_id', newOrder.id)
+                        .maybeSingle();
+
+                    if (!existingBilling) {
+                        const billingPayload = {
+                            client_id: upcomingOrder.client_id,
+                            client_name: client?.fullName || 'Unknown Client',
+                            order_id: newOrder.id,
+                            status: 'pending',
+                            amount: upcomingOrder.total_value || 0,
+                            navigator: client?.navigator_id || 'Unknown',
+                            delivery_date: newOrder.actual_delivery_date,
+                            remarks: 'Auto-generated when order processed for delivery'
+                        };
+
+                        const { error: billingError } = await supabase
+                            .from('billing_records')
+                            .insert([billingPayload]);
+
+                        if (billingError) {
+                            errors.push('Failed to create billing record: ' + billingError.message);
+                        }
+                    }
+
+                    // Copy vendor selections and items (for Food orders)
+                    if (upcomingOrder.service_type === 'Food') {
+                        const { data: vendorSelections } = await supabase
+                            .from('upcoming_order_vendor_selections')
+                            .select('*')
+                            .eq('upcoming_order_id', upcomingOrder.id);
+
+                        if (vendorSelections) {
+                            for (const vs of vendorSelections) {
+                                const { data: newVs, error: vsError } = await supabase
+                                    .from('order_vendor_selections')
+                                    .insert({
+                                        order_id: newOrder.id,
+                                        vendor_id: vs.vendor_id
+                                    })
+                                    .select()
+                                    .single();
+
+                                if (vsError || !newVs) {
+                                    errors.push(`Failed to copy vendor selection: ${vsError?.message}`);
+                                    continue;
+                                }
+
+                                // Copy items
+                                const { data: items } = await supabase
+                                    .from('upcoming_order_items')
+                                    .select('*')
+                                    .eq('vendor_selection_id', vs.id);
+
+                                if (items) {
+                                    for (const item of items) {
+                                        const { error: itemError } = await supabase
+                                            .from('order_items')
+                                            .insert({
+                                                order_id: newOrder.id,
+                                                vendor_selection_id: newVs.id,
+                                                menu_item_id: item.menu_item_id,
+                                                quantity: item.quantity,
+                                                unit_value: item.unit_value,
+                                                total_value: item.total_value
+                                            });
+                                        
+                                        if (itemError) {
+                                            errors.push(`Failed to copy item: ${itemError.message}`);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Copy box selections (for Box orders)
+                    if (upcomingOrder.service_type === 'Boxes') {
+                        const { data: boxSelections } = await supabase
+                            .from('upcoming_order_box_selections')
+                            .select('*')
+                            .eq('upcoming_order_id', upcomingOrder.id);
+
+                        if (boxSelections) {
+                            for (const bs of boxSelections) {
+                                const { error: bsError } = await supabase
+                                    .from('order_box_selections')
+                                    .insert({
+                                        order_id: newOrder.id,
+                                        box_type_id: bs.box_type_id,
+                                        vendor_id: bs.vendor_id,
+                                        quantity: bs.quantity,
+                                        unit_value: bs.unit_value || 0,
+                                        total_value: bs.total_value || 0,
+                                        items: bs.items || {}
+                                    });
+                                
+                                if (bsError) {
+                                    errors.push(`Failed to copy box selection: ${bsError.message}`);
+                                }
+                            }
+                        }
+                    }
+
+                    // Update upcoming order status to processed
+                    await supabase
+                        .from('upcoming_orders')
+                        .update({
+                            status: 'processed',
+                            processed_order_id: newOrder.id,
+                            processed_at: new Date().toISOString()
+                        })
+                        .eq('id', upcomingOrder.id);
+                } catch (error: any) {
+                    return { 
+                        success: false, 
+                        error: 'Error processing upcoming order: ' + error.message 
+                    };
+                }
+            }
+        } else {
+            // No case_id, can't check if processed, so just try to process
+            // This is similar to above but we'll skip duplicate checking
+            // Actually, let's return an error if there's no case_id as it's risky
+            return { 
+                success: false, 
+                error: 'Upcoming order has no case_id, cannot safely process' 
+            };
+        }
+    }
+
+    // Now update the order (from either upcoming or existing orders table) with proof URL
+    // If order was just processed, it already has status 'billing_pending' and billing record created
+    // Just update the proof URL and other fields
+    const updateData: any = {
+        delivery_proof_url: proofUrl.trim(),
+        updated_by: currentUserName,
+        last_updated: new Date().toISOString()
+    };
+
+    // Only update status and actual_delivery_date if order wasn't just processed
+    if (!wasProcessed) {
+        updateData.status = 'billing_pending';
+        updateData.actual_delivery_date = new Date().toISOString();
+    }
+
+    const { data: order, error: updateError } = await supabase
+        .from('orders')
+        .update(updateData)
+        .eq('id', finalOrderId)
+        .select()
+        .single();
+
+    if (updateError || !order) {
+        return { 
+            success: false, 
+            error: 'Failed to update order with proof URL: ' + (updateError?.message || 'Unknown error') 
+        };
+    }
+
+    // Only create billing record if order wasn't just processed (for existing orders)
+    if (!wasProcessed) {
+        const { data: client } = await supabase
+            .from('clients')
+            .select('navigator_id, fullName')
+            .eq('id', order.client_id)
+            .single();
+
+        // Check if billing record already exists for this order
+        const { data: existingBilling } = await supabase
+            .from('billing_records')
+            .select('id')
+            .eq('order_id', order.id)
+            .maybeSingle();
+
+        if (!existingBilling) {
+            // Create billing record if it doesn't exist
+            const billingPayload = {
+                client_id: order.client_id,
+                client_name: client?.fullName || 'Unknown Client',
+                order_id: order.id,
+                status: 'pending',
+                amount: order.total_value || 0,
+                navigator: client?.navigator_id || 'Unknown',
+                delivery_date: order.actual_delivery_date || new Date().toISOString(),
+                remarks: 'Auto-generated upon proof upload'
+            };
+
+            const { error: billingError } = await supabase
+                .from('billing_records')
+                .insert([billingPayload]);
+
+            if (billingError) {
+                errors.push('Failed to create billing record: ' + billingError.message);
+            }
+        }
+    }
+
+    revalidatePath('/vendors');
+    revalidatePath('/clients');
+
+    // Trigger local DB sync in background
+    const { triggerSyncInBackground } = await import('./local-db');
+    triggerSyncInBackground();
+
+    return {
+        success: true,
+        orderId: finalOrderId,
+        wasProcessed,
+        errors: errors.length > 0 ? errors : undefined,
+        summary: {
+            orderId: finalOrderId,
+            caseId: order.case_id || 'N/A',
+            clientId: order.client_id,
+            serviceType: order.service_type,
+            status: order.status,
+            wasProcessed: wasProcessed,
+            hasErrors: errors.length > 0,
+            errors: errors.length > 0 ? errors : undefined
+        }
+    };
 }

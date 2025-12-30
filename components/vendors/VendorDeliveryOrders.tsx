@@ -4,8 +4,8 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { Vendor, ClientProfile, MenuItem, BoxType } from '@/lib/types';
 import { getVendors, getClients, getMenuItems, getBoxTypes } from '@/lib/cached-data';
-import { getOrdersByVendor, updateOrderDeliveryProof } from '@/lib/actions';
-import { ArrowLeft, Calendar, Package, Clock, ShoppingCart, Upload, ChevronDown, ChevronUp } from 'lucide-react';
+import { getOrdersByVendor, saveDeliveryProofUrlAndProcessOrder } from '@/lib/actions';
+import { ArrowLeft, Calendar, Package, Clock, ShoppingCart, Upload, ChevronDown, ChevronUp, Save, X, CheckCircle, AlertCircle } from 'lucide-react';
 import styles from './VendorDetail.module.css';
 
 interface Props {
@@ -23,7 +23,12 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate }: Props) {
     const [isLoading, setIsLoading] = useState(true);
     const [expandedOrders, setExpandedOrders] = useState<Set<string>>(new Set());
     const [proofUrls, setProofUrls] = useState<Record<string, string>>({});
-    const [savingProofUrl, setSavingProofUrl] = useState<Set<string>>(new Set());
+    const [isSaving, setIsSaving] = useState(false);
+    const [summaryModal, setSummaryModal] = useState<{
+        show: boolean;
+        results?: Array<{ success: boolean; orderId: string; error?: string; summary?: any }>;
+        error?: string;
+    }>({ show: false });
 
     useEffect(() => {
         loadData();
@@ -118,42 +123,65 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate }: Props) {
         setExpandedOrders(newExpanded);
     }
 
-    async function handleSaveProofUrl(orderId: string, url: string) {
-        if (savingProofUrl.has(orderId)) return;
-        
-        setSavingProofUrl(prev => new Set(prev).add(orderId));
+    async function handleBulkSave() {
+        // Get all orders with URLs entered
+        const ordersToSave = orders.filter(order => {
+            const url = proofUrls[order.id];
+            return url && url.trim() && url.trim() !== (order.delivery_proof_url || '');
+        });
+
+        if (ordersToSave.length === 0) {
+            alert('No delivery proof URLs to save. Please enter at least one URL.');
+            return;
+        }
+
+        setIsSaving(true);
+        const results: Array<{ success: boolean; orderId: string; orderType: string; error?: string; summary?: any }> = [];
+
         try {
-            const res = await updateOrderDeliveryProof(orderId, url.trim());
-            if (res.success) {
-                await loadData();
-            } else {
-                alert('Failed to save delivery proof URL: ' + res.error);
-                // Revert to original value on error
-                const order = orders.find(o => o.id === orderId);
-                if (order) {
-                    setProofUrls(prev => ({
-                        ...prev,
-                        [orderId]: order.delivery_proof_url || ''
-                    }));
+            // Process all orders sequentially to avoid race conditions
+            for (const order of ordersToSave) {
+                try {
+                    const url = proofUrls[order.id]?.trim() || '';
+                    const res = await saveDeliveryProofUrlAndProcessOrder(
+                        order.id,
+                        order.orderType || 'completed',
+                        url
+                    );
+
+                    results.push({
+                        success: res.success,
+                        orderId: order.id,
+                        orderType: order.orderType || 'completed',
+                        error: res.success ? undefined : (res.error || 'Unknown error'),
+                        summary: res.summary
+                    });
+                } catch (error: any) {
+                    results.push({
+                        success: false,
+                        orderId: order.id,
+                        orderType: order.orderType || 'completed',
+                        error: error?.message || 'Failed to save delivery proof URL'
+                    });
                 }
             }
-        } catch (error) {
-            console.error('Error saving proof URL:', error);
-            alert('Failed to save delivery proof URL');
-            // Revert to original value on error
-            const order = orders.find(o => o.id === orderId);
-            if (order) {
-                setProofUrls(prev => ({
-                    ...prev,
-                    [orderId]: order.delivery_proof_url || ''
-                }));
-            }
-        } finally {
-            setSavingProofUrl(prev => {
-                const next = new Set(prev);
-                next.delete(orderId);
-                return next;
+
+            // Reload data after all saves
+            await loadData();
+
+            // Show summary modal with all results
+            setSummaryModal({
+                show: true,
+                results: results
             });
+        } catch (error: any) {
+            console.error('Error during bulk save:', error);
+            setSummaryModal({
+                show: true,
+                error: error?.message || 'Failed to save delivery proof URLs'
+            });
+        } finally {
+            setIsSaving(false);
         }
     }
 
@@ -492,18 +520,7 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate }: Props) {
                                                     [order.id]: e.target.value
                                                 }));
                                             }}
-                                            onBlur={(e) => {
-                                                const url = e.target.value.trim();
-                                                if (url && url !== (order.delivery_proof_url || '')) {
-                                                    handleSaveProofUrl(order.id, url);
-                                                }
-                                            }}
-                                            onKeyDown={(e) => {
-                                                if (e.key === 'Enter') {
-                                                    e.currentTarget.blur();
-                                                }
-                                            }}
-                                            disabled={savingProofUrl.has(order.id)}
+                                            disabled={isSaving}
                                         />
                                     </span>
                                     <span style={{ minWidth: '150px', flex: 1.2, fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
@@ -611,6 +628,310 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate }: Props) {
                             </div>
                         );
                     })}
+                </div>
+            )}
+
+            {/* Bulk Save Button */}
+            {orders.length > 0 && (
+                <div style={{ 
+                    marginTop: '2rem', 
+                    padding: '1.5rem', 
+                    backgroundColor: 'var(--bg-app)', 
+                    borderRadius: 'var(--radius-md)', 
+                    border: '1px solid var(--border-color)',
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    gap: '1rem'
+                }}>
+                    <div style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
+                        {(() => {
+                            const ordersWithUrls = orders.filter(order => {
+                                const url = proofUrls[order.id];
+                                return url && url.trim() && url.trim() !== (order.delivery_proof_url || '');
+                            }).length;
+                            return ordersWithUrls > 0 
+                                ? `${ordersWithUrls} order${ordersWithUrls !== 1 ? 's' : ''} with delivery proof URL${ordersWithUrls !== 1 ? 's' : ''} ready to save`
+                                : 'Enter delivery proof URLs in the table above to save';
+                        })()}
+                    </div>
+                    <button
+                        className="btn btn-primary"
+                        style={{ 
+                            padding: '0.75rem 1.5rem',
+                            fontSize: '1rem',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '0.5rem',
+                            whiteSpace: 'nowrap'
+                        }}
+                        onClick={handleBulkSave}
+                        disabled={isSaving || orders.filter(order => {
+                            const url = proofUrls[order.id];
+                            return url && url.trim() && url.trim() !== (order.delivery_proof_url || '');
+                        }).length === 0}
+                    >
+                        {isSaving ? (
+                            <>Saving All...</>
+                        ) : (
+                            <>
+                                <Save size={18} />
+                                Save All Delivery Proof URLs
+                            </>
+                        )}
+                    </button>
+                </div>
+            )}
+
+            {/* Summary Modal */}
+            {summaryModal.show && (
+                <div 
+                    style={{
+                        position: 'fixed',
+                        top: 0,
+                        left: 0,
+                        right: 0,
+                        bottom: 0,
+                        backgroundColor: 'rgba(0, 0, 0, 0.6)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        zIndex: 1000,
+                        padding: 'var(--spacing-lg)'
+                    }}
+                    onClick={() => setSummaryModal({ show: false })}
+                >
+                    <div 
+                        style={{
+                            backgroundColor: 'var(--bg-surface)',
+                            border: '1px solid var(--border-color)',
+                            borderRadius: 'var(--radius-lg)',
+                            boxShadow: '0 8px 32px rgba(0, 0, 0, 0.2)',
+                            width: '100%',
+                            maxWidth: summaryModal.results ? '700px' : '500px',
+                            maxHeight: '90vh',
+                            overflowY: 'auto',
+                            padding: 'var(--spacing-xl)',
+                            position: 'relative'
+                        }}
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        <button
+                            style={{
+                                position: 'absolute',
+                                top: 'var(--spacing-md)',
+                                right: 'var(--spacing-md)',
+                                background: 'none',
+                                border: 'none',
+                                cursor: 'pointer',
+                                color: 'var(--text-secondary)',
+                                padding: 'var(--spacing-xs)',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                borderRadius: 'var(--radius-sm)',
+                                transition: 'all 0.2s'
+                            }}
+                            onClick={() => setSummaryModal({ show: false })}
+                            onMouseEnter={(e) => {
+                                e.currentTarget.style.backgroundColor = 'var(--bg-app)';
+                                e.currentTarget.style.color = 'var(--text-primary)';
+                            }}
+                            onMouseLeave={(e) => {
+                                e.currentTarget.style.backgroundColor = 'transparent';
+                                e.currentTarget.style.color = 'var(--text-secondary)';
+                            }}
+                        >
+                            <X size={20} />
+                        </button>
+
+                        {summaryModal.error ? (
+                            <>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: 'var(--spacing-lg)' }}>
+                                    <AlertCircle size={24} style={{ color: 'var(--color-danger)' }} />
+                                    <h2 style={{ fontSize: '1.5rem', fontWeight: 600, color: 'var(--text-primary)', margin: 0 }}>
+                                        Error
+                                    </h2>
+                                </div>
+                                <p style={{ color: 'var(--text-secondary)', marginBottom: 'var(--spacing-xl)' }}>
+                                    {summaryModal.error}
+                                </p>
+                            </>
+                        ) : summaryModal.results ? (
+                            <>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: 'var(--spacing-lg)' }}>
+                                    <CheckCircle size={24} style={{ color: 'var(--color-success)' }} />
+                                    <h2 style={{ fontSize: '1.5rem', fontWeight: 600, color: 'var(--text-primary)', margin: 0 }}>
+                                        Bulk Save Results
+                                    </h2>
+                                </div>
+                                
+                                <div style={{ 
+                                    backgroundColor: 'var(--bg-app)', 
+                                    borderRadius: 'var(--radius-md)', 
+                                    padding: 'var(--spacing-lg)',
+                                    marginBottom: 'var(--spacing-lg)',
+                                    maxHeight: '400px',
+                                    overflowY: 'auto'
+                                }}>
+                                    {(() => {
+                                        const successful = summaryModal.results.filter(r => r.success);
+                                        const failed = summaryModal.results.filter(r => !r.success);
+                                        
+                                        return (
+                                            <div style={{ display: 'grid', gap: 'var(--spacing-md)' }}>
+                                                <div style={{ 
+                                                    padding: 'var(--spacing-sm)', 
+                                                    backgroundColor: 'rgba(34, 197, 94, 0.1)', 
+                                                    borderRadius: 'var(--radius-sm)',
+                                                    border: '1px solid rgba(34, 197, 94, 0.2)',
+                                                    color: 'var(--color-success)',
+                                                    fontSize: '0.875rem',
+                                                    fontWeight: 600
+                                                }}>
+                                                    ✓ {successful.length} order{successful.length !== 1 ? 's' : ''} saved successfully
+                                                </div>
+                                                
+                                                {failed.length > 0 && (
+                                                    <div style={{ 
+                                                        padding: 'var(--spacing-sm)', 
+                                                        backgroundColor: 'rgba(239, 68, 68, 0.1)', 
+                                                        borderRadius: 'var(--radius-sm)',
+                                                        border: '1px solid rgba(239, 68, 68, 0.2)',
+                                                        color: 'var(--color-danger)',
+                                                        fontSize: '0.875rem',
+                                                        fontWeight: 600,
+                                                        marginBottom: 'var(--spacing-sm)'
+                                                    }}>
+                                                        ✗ {failed.length} order{failed.length !== 1 ? 's' : ''} failed
+                                                    </div>
+                                                )}
+
+                                                <div style={{ display: 'grid', gap: 'var(--spacing-sm)' }}>
+                                                    {summaryModal.results.map((result, idx) => (
+                                                        <div key={idx} style={{ 
+                                                            padding: 'var(--spacing-sm)',
+                                                            backgroundColor: result.success ? 'rgba(34, 197, 94, 0.05)' : 'rgba(239, 68, 68, 0.05)',
+                                                            borderRadius: 'var(--radius-sm)',
+                                                            border: `1px solid ${result.success ? 'rgba(34, 197, 94, 0.2)' : 'rgba(239, 68, 68, 0.2)'}`
+                                                        }}>
+                                                            <div style={{ fontSize: '0.875rem', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '0.25rem' }}>
+                                                                Order ID: {result.orderId}
+                                                            </div>
+                                                            {result.success && result.summary && (
+                                                                <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.25rem' }}>
+                                                                    {result.summary.wasProcessed && '✓ Processed from scheduled → '}
+                                                                    Status: {result.summary.status}
+                                                                </div>
+                                                            )}
+                                                            {!result.success && result.error && (
+                                                                <div style={{ fontSize: '0.75rem', color: 'var(--color-danger)', marginTop: '0.25rem' }}>
+                                                                    Error: {result.error}
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        );
+                                    })()}
+                                </div>
+                            </>
+                        ) : summaryModal.summary ? (
+                            <>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: 'var(--spacing-lg)' }}>
+                                    <CheckCircle size={24} style={{ color: 'var(--color-success)' }} />
+                                    <h2 style={{ fontSize: '1.5rem', fontWeight: 600, color: 'var(--text-primary)', margin: 0 }}>
+                                        Delivery Proof Saved Successfully
+                                    </h2>
+                                </div>
+                                
+                                <div style={{ 
+                                    backgroundColor: 'var(--bg-app)', 
+                                    borderRadius: 'var(--radius-md)', 
+                                    padding: 'var(--spacing-lg)',
+                                    marginBottom: 'var(--spacing-lg)'
+                                }}>
+                                    <div style={{ display: 'grid', gap: 'var(--spacing-md)' }}>
+                                        <div>
+                                            <strong style={{ color: 'var(--text-secondary)', fontSize: '0.875rem' }}>Order ID:</strong>
+                                            <div style={{ color: 'var(--text-primary)', fontSize: '1rem', marginTop: '0.25rem' }}>
+                                                {summaryModal.summary.orderId}
+                                            </div>
+                                        </div>
+                                        <div>
+                                            <strong style={{ color: 'var(--text-secondary)', fontSize: '0.875rem' }}>Case ID:</strong>
+                                            <div style={{ color: 'var(--text-primary)', fontSize: '1rem', marginTop: '0.25rem' }}>
+                                                {summaryModal.summary.caseId}
+                                            </div>
+                                        </div>
+                                        <div>
+                                            <strong style={{ color: 'var(--text-secondary)', fontSize: '0.875rem' }}>Service Type:</strong>
+                                            <div style={{ color: 'var(--text-primary)', fontSize: '1rem', marginTop: '0.25rem' }}>
+                                                {summaryModal.summary.serviceType}
+                                            </div>
+                                        </div>
+                                        <div>
+                                            <strong style={{ color: 'var(--text-secondary)', fontSize: '0.875rem' }}>Status:</strong>
+                                            <div style={{ color: 'var(--text-primary)', fontSize: '1rem', marginTop: '0.25rem' }}>
+                                                <span className="badge badge-success">{summaryModal.summary.status}</span>
+                                            </div>
+                                        </div>
+                                        {summaryModal.summary.wasProcessed && (
+                                            <div style={{ 
+                                                padding: 'var(--spacing-sm)', 
+                                                backgroundColor: 'rgba(59, 130, 246, 0.1)', 
+                                                borderRadius: 'var(--radius-sm)',
+                                                border: '1px solid rgba(59, 130, 246, 0.2)',
+                                                color: 'var(--color-primary)',
+                                                fontSize: '0.875rem'
+                                            }}>
+                                                ✓ Order was processed from scheduled to delivery
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+
+                                {summaryModal.summary.hasErrors && summaryModal.summary.errors && (
+                                    <div style={{ 
+                                        padding: 'var(--spacing-md)', 
+                                        backgroundColor: 'rgba(239, 68, 68, 0.1)', 
+                                        borderRadius: 'var(--radius-md)',
+                                        border: '1px solid rgba(239, 68, 68, 0.2)',
+                                        marginBottom: 'var(--spacing-lg)'
+                                    }}>
+                                        <div style={{ 
+                                            color: 'var(--color-danger)', 
+                                            fontSize: '0.875rem',
+                                            fontWeight: 600,
+                                            marginBottom: '0.5rem'
+                                        }}>
+                                            Warnings:
+                                        </div>
+                                        <ul style={{ 
+                                            margin: 0, 
+                                            paddingLeft: '1.25rem',
+                                            color: 'var(--color-danger)',
+                                            fontSize: '0.875rem'
+                                        }}>
+                                            {summaryModal.summary.errors.map((err: string, idx: number) => (
+                                                <li key={idx} style={{ marginBottom: '0.25rem' }}>{err}</li>
+                                            ))}
+                                        </ul>
+                                    </div>
+                                )}
+                            </>
+                        ) : null}
+
+                        <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                            <button
+                                className="btn btn-primary"
+                                onClick={() => setSummaryModal({ show: false })}
+                            >
+                                Close
+                            </button>
+                        </div>
+                    </div>
                 </div>
             )}
         </div>
