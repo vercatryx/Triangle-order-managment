@@ -167,7 +167,7 @@
     font-weight: 600;
     color: var(--text-secondary);
     font-size: 0.875rem;
-    min-width: 1400px;
+    min-width: 1600px;
     gap: 1rem;
 }
 
@@ -178,7 +178,7 @@
     align-items: center;
     color: var(--text-primary);
     transition: background-color 0.2s;
-    min-width: 1400px;
+    min-width: 1600px;
     white-space: nowrap;
     gap: 1rem;
 }

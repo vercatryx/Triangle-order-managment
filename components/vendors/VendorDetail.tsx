@@ -21,7 +21,7 @@ export function VendorDetail({ vendorId }: Props) {
     const [boxTypes, setBoxTypes] = useState<BoxType[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const [expandedOrders, setExpandedOrders] = useState<Set<string>>(new Set());
-    const [activeTab, setActiveTab] = useState<'all' | 'upcoming' | 'completed'>('all');
+    const [activeTab, setActiveTab] = useState<'all' | 'upcoming' | 'completed'>('upcoming');
 
     // CSV Import Progress State
     const [importProgress, setImportProgress] = useState<{
@@ -117,6 +117,33 @@ export function VendorDetail({ vendorId }: Props) {
         setExpandedOrders(newExpanded);
     }
 
+
+    function groupOrdersByDeliveryDate(ordersList: any[]) {
+        const grouped: { [key: string]: any[] } = {};
+        const noDate: any[] = [];
+
+        ordersList.forEach(order => {
+            const deliveryDate = order.scheduled_delivery_date;
+            if (deliveryDate) {
+                // Use date as key (YYYY-MM-DD format for consistent sorting)
+                const dateKey = new Date(deliveryDate).toISOString().split('T')[0];
+                if (!grouped[dateKey]) {
+                    grouped[dateKey] = [];
+                }
+                grouped[dateKey].push(order);
+            } else {
+                noDate.push(order);
+            }
+        });
+
+        // Sort dates in descending order (most recent first)
+        const sortedDates = Object.keys(grouped).sort((a, b) => {
+            return new Date(b).getTime() - new Date(a).getTime();
+        });
+
+        return { grouped, sortedDates, noDate };
+    }
+
     function getMenuItemName(itemId: string) {
         const item = menuItems.find(mi => mi.id === itemId);
         return item?.name || 'Unknown Item';
@@ -131,8 +158,9 @@ export function VendorDetail({ vendorId }: Props) {
         if (order.service_type === 'Food') {
             // Food orders - items from order_items or upcoming_order_items
             const items = order.items || [];
+            
             if (items.length === 0) {
-                return <div className={styles.noItems}>No items found</div>;
+                return <div className={styles.noItems}>No items found for this order</div>;
             }
 
             return (
@@ -143,16 +171,18 @@ export function VendorDetail({ vendorId }: Props) {
                         <span style={{ minWidth: '120px', flex: 1.2 }}>Unit Price</span>
                         <span style={{ minWidth: '120px', flex: 1.2 }}>Total Price</span>
                     </div>
-                    {items.map((item: any) => {
+                    {items.map((item: any, index: number) => {
                         const menuItem = menuItems.find(mi => mi.id === item.menu_item_id);
-                        const unitPrice = parseFloat(item.unit_value || 0);
-                        const quantity = item.quantity || 0;
-                        const totalPrice = parseFloat(item.total_value || 0) || (unitPrice * quantity);
+                        // Handle both unit_value and priceEach
+                        const unitPrice = parseFloat(item.unit_value || item.unitValue || 0) || (menuItem?.priceEach || menuItem?.value || 0);
+                        const quantity = parseInt(item.quantity || 0);
+                        const totalPrice = parseFloat(item.total_value || item.totalValue || 0) || (unitPrice * quantity);
+                        const itemKey = item.id || `${order.id}-item-${index}`;
 
                         return (
-                            <div key={item.id} className={styles.itemRow}>
+                            <div key={itemKey} className={styles.itemRow}>
                                 <span style={{ minWidth: '300px', flex: 3 }}>
-                                    {menuItem?.name || 'Unknown Item'}
+                                    {menuItem?.name || item.menuItemName || 'Unknown Item'}
                                 </span>
                                 <span style={{ minWidth: '100px', flex: 1 }}>{quantity}</span>
                                 <span style={{ minWidth: '120px', flex: 1.2 }}>${unitPrice.toFixed(2)}</span>
@@ -168,7 +198,7 @@ export function VendorDetail({ vendorId }: Props) {
             // Box orders - items from box_selections.items JSONB
             const boxSelection = order.boxSelection;
             if (!boxSelection) {
-                return <div className={styles.noItems}>No box selection found</div>;
+                return <div className={styles.noItems}>No box selection found for this order</div>;
             }
 
             const items = boxSelection.items || {};
@@ -197,7 +227,7 @@ export function VendorDetail({ vendorId }: Props) {
                     {itemEntries.map(([itemId, quantity]: [string, any]) => {
                         const menuItem = menuItems.find(mi => mi.id === itemId);
                         const qty = typeof quantity === 'number' ? quantity : parseInt(quantity) || 0;
-                        const unitPrice = menuItem?.priceEach || 0;
+                        const unitPrice = menuItem?.priceEach || menuItem?.value || 0;
                         const totalPrice = unitPrice * qty;
 
                         return (
@@ -295,6 +325,286 @@ export function VendorDetail({ vendorId }: Props) {
         link.click();
         document.body.removeChild(link);
         URL.revokeObjectURL(url);
+    }
+
+    function exportOrdersByDateToCSV(dateKey: string, dateOrders: any[]) {
+        if (dateOrders.length === 0) {
+            alert('No orders to export for this date');
+            return;
+        }
+
+        // Define CSV headers
+        const headers = [
+            'Order ID',
+            'Order Type',
+            'Client ID',
+            'Client Name',
+            'Service Type',
+            'Case ID',
+            'Status',
+            'Scheduled Delivery Date',
+            'Actual Delivery Date',
+            'Total Items',
+            'Total Value',
+            'Created At',
+            'Last Updated',
+            'Updated By',
+            'Notes',
+            'Delivery Distribution',
+            'delivery_proof_url'
+        ];
+
+        // Convert orders to CSV rows
+        const rows = dateOrders.map(order => [
+            order.id || '',
+            order.orderType || '',
+            order.client_id || '',
+            getClientName(order.client_id),
+            order.service_type || '',
+            order.case_id || '',
+            order.status || '',
+            order.scheduled_delivery_date || '',
+            order.actual_delivery_date || '',
+            order.total_items || 0,
+            order.total_value || 0,
+            order.created_at || '',
+            order.last_updated || '',
+            order.updated_by || '',
+            order.notes || '',
+            order.delivery_distribution ? JSON.stringify(order.delivery_distribution) : '',
+            order.delivery_proof_url || ''
+        ]);
+
+        // Combine headers and rows
+        const csvContent = [
+            headers.map(escapeCSV).join(','),
+            ...rows.map(row => row.map(escapeCSV).join(','))
+        ].join('\n');
+
+        // Create blob and download
+        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+        const link = document.createElement('a');
+        const url = URL.createObjectURL(blob);
+        const formattedDate = dateKey === 'no-date' 
+            ? 'no_delivery_date' 
+            : formatDate(dateKey).replace(/\s/g, '_');
+        link.setAttribute('href', url);
+        link.setAttribute('download', `${vendor?.name || 'vendor'}_orders_${formattedDate}.csv`);
+        link.style.visibility = 'hidden';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+    }
+
+    async function handleCSVImportForDate(event: React.ChangeEvent<HTMLInputElement>, dateKey: string) {
+        const file = event.target.files?.[0];
+        if (!file) return;
+
+        // Reset input
+        event.target.value = '';
+
+        if (!file.name.endsWith('.csv')) {
+            alert('Please select a CSV file');
+            return;
+        }
+
+        try {
+            const text = await file.text();
+            const lines = text.split(/\r?\n/).filter(line => line.trim());
+
+            if (lines.length < 2) {
+                alert('CSV file must have at least a header row and one data row');
+                return;
+            }
+
+            // Parse header row
+            const headers = parseCSVRow(lines[0]);
+            const orderIdIndex = headers.findIndex(h => h.toLowerCase() === 'order id');
+            const deliveryProofUrlIndex = headers.findIndex(h => h.toLowerCase() === 'delivery_proof_url');
+
+            if (orderIdIndex === -1) {
+                alert('CSV file must contain an "Order ID" column');
+                return;
+            }
+
+            if (deliveryProofUrlIndex === -1) {
+                alert('CSV file must contain a "delivery_proof_url" column');
+                return;
+            }
+
+            const totalRows = lines.length - 1; // Exclude header row
+
+            // Initialize progress state
+            setImportProgress({
+                isImporting: true,
+                currentRow: 0,
+                totalRows: totalRows,
+                successCount: 0,
+                errorCount: 0,
+                skippedCount: 0,
+                currentStatus: 'Starting import...',
+                errors: [],
+                skipped: []
+            });
+
+            // Process each data row
+            let successCount = 0;
+            let errorCount = 0;
+            let skippedCount = 0;
+            const errors: string[] = [];
+            const skipped: string[] = [];
+
+            for (let i = 1; i < lines.length; i++) {
+                const row = parseCSVRow(lines[i]);
+                const orderId = row[orderIdIndex]?.trim();
+                const deliveryProofUrl = row[deliveryProofUrlIndex]?.trim();
+
+                // Update progress - current row
+                setImportProgress(prev => ({
+                    ...prev,
+                    currentRow: i,
+                    currentStatus: `Processing row ${i} of ${totalRows}...`
+                }));
+
+                if (!orderId) {
+                    errorCount++;
+                    const errorMsg = `Row ${i + 1}: Missing Order ID`;
+                    errors.push(errorMsg);
+                    setImportProgress(prev => ({
+                        ...prev,
+                        errorCount,
+                        errors: [...prev.errors, errorMsg]
+                    }));
+                    continue;
+                }
+
+                if (!deliveryProofUrl) {
+                    errorCount++;
+                    const errorMsg = `Row ${i + 1} (Order ${orderId}): Missing delivery_proof_url`;
+                    errors.push(errorMsg);
+                    setImportProgress(prev => ({
+                        ...prev,
+                        errorCount,
+                        errors: [...prev.errors, errorMsg]
+                    }));
+                    continue;
+                }
+
+                // Check if order belongs to this vendor
+                setImportProgress(prev => ({
+                    ...prev,
+                    currentStatus: `Row ${i}: Verifying order ${orderId}...`
+                }));
+                const belongsToVendor = await isOrderUnderVendor(orderId, vendorId);
+                if (!belongsToVendor) {
+                    errorCount++;
+                    const errorMsg = `Row ${i + 1} (Order ${orderId}): Order does not belong to this vendor`;
+                    errors.push(errorMsg);
+                    setImportProgress(prev => ({
+                        ...prev,
+                        errorCount,
+                        errors: [...prev.errors, errorMsg]
+                    }));
+                    continue;
+                }
+
+                // Check if order matches the delivery date
+                const order = orders.find(o => o.id === orderId);
+                if (order) {
+                    if (dateKey === 'no-date') {
+                        // For 'no-date', check that order has no scheduled_delivery_date
+                        if (order.scheduled_delivery_date) {
+                            errorCount++;
+                            const errorMsg = `Row ${i + 1} (Order ${orderId}): Order has a delivery date, but was imported for "No Delivery Date"`;
+                            errors.push(errorMsg);
+                            setImportProgress(prev => ({
+                                ...prev,
+                                errorCount,
+                                errors: [...prev.errors, errorMsg]
+                            }));
+                            continue;
+                        }
+                    } else {
+                        // For specific dates, check that order matches the date
+                        const orderDateKey = order.scheduled_delivery_date 
+                            ? new Date(order.scheduled_delivery_date).toISOString().split('T')[0]
+                            : null;
+                        if (orderDateKey !== dateKey) {
+                            errorCount++;
+                            const errorMsg = `Row ${i + 1} (Order ${orderId}): Order does not match the selected delivery date`;
+                            errors.push(errorMsg);
+                            setImportProgress(prev => ({
+                                ...prev,
+                                errorCount,
+                                errors: [...prev.errors, errorMsg]
+                            }));
+                            continue;
+                        }
+                    }
+                }
+
+                // Check if order already has a delivery proof URL (skip if it does)
+                setImportProgress(prev => ({
+                    ...prev,
+                    currentStatus: `Row ${i}: Checking order ${orderId}...`
+                }));
+                const alreadyHasProof = await orderHasDeliveryProof(orderId);
+                if (alreadyHasProof) {
+                    skippedCount++;
+                    const skippedMsg = `Row ${i + 1} (Order ${orderId}): Already has delivery proof URL, skipping`;
+                    skipped.push(skippedMsg);
+                    setImportProgress(prev => ({
+                        ...prev,
+                        skippedCount,
+                        skipped: [...prev.skipped, skippedMsg]
+                    }));
+                    continue;
+                }
+
+                // Update order with delivery proof URL and set status to completed (delivered)
+                setImportProgress(prev => ({
+                    ...prev,
+                    currentStatus: `Row ${i}: Updating order ${orderId}...`
+                }));
+                const result = await updateOrderDeliveryProof(orderId, deliveryProofUrl);
+                if (result.success) {
+                    successCount++;
+                    setImportProgress(prev => ({
+                        ...prev,
+                        successCount
+                    }));
+                } else {
+                    errorCount++;
+                    const errorMsg = `Row ${i + 1} (Order ${orderId}): ${result.error || 'Failed to update order'}`;
+                    errors.push(errorMsg);
+                    setImportProgress(prev => ({
+                        ...prev,
+                        errorCount,
+                        errors: [...prev.errors, errorMsg]
+                    }));
+                }
+            }
+
+            // Mark import as complete
+            setImportProgress(prev => ({
+                ...prev,
+                isImporting: false,
+                currentStatus: 'Import completed!'
+            }));
+
+            // Reload orders to reflect changes
+            if (successCount > 0) {
+                await loadData();
+            }
+        } catch (error: any) {
+            console.error('Error importing CSV:', error);
+            setImportProgress(prev => ({
+                ...prev,
+                isImporting: false,
+                currentStatus: `Error: ${error.message || 'Unknown error'}`
+            }));
+        }
     }
 
     function parseCSVRow(row: string): string[] {
@@ -650,12 +960,6 @@ export function VendorDetail({ vendorId }: Props) {
                     <h2 className={styles.sectionTitle}>Orders</h2>
                     <div className={styles.tabs}>
                         <button
-                            className={`${styles.tab} ${activeTab === 'all' ? styles.tabActive : ''}`}
-                            onClick={() => setActiveTab('all')}
-                        >
-                            All Orders ({orders.length})
-                        </button>
-                        <button
                             className={`${styles.tab} ${activeTab === 'upcoming' ? styles.tabActive : ''}`}
                             onClick={() => setActiveTab('upcoming')}
                         >
@@ -668,6 +972,12 @@ export function VendorDetail({ vendorId }: Props) {
                         >
                             Completed ({completedOrders.length})
                         </button>
+                        <button
+                            className={`${styles.tab} ${activeTab === 'all' ? styles.tabActive : ''}`}
+                            onClick={() => setActiveTab('all')}
+                        >
+                            All Orders ({orders.length})
+                        </button>
                     </div>
                 </div>
 
@@ -679,175 +989,94 @@ export function VendorDetail({ vendorId }: Props) {
                         filteredOrders = upcomingOrders;
                     }
 
-                    return filteredOrders.length === 0 ? (
-                        <div className={styles.emptyState}>
-                            <Package size={48} style={{ color: 'var(--text-tertiary)', marginBottom: '1rem' }} />
-                            <p>
-                                {activeTab === 'all'
-                                    ? 'No orders found for this vendor'
-                                    : activeTab === 'completed'
-                                        ? 'No completed orders found'
-                                        : 'No upcoming orders found'}
-                            </p>
-                        </div>
-                    ) : (
+                    if (filteredOrders.length === 0) {
+                        return (
+                            <div className={styles.emptyState}>
+                                <Package size={48} style={{ color: 'var(--text-tertiary)', marginBottom: '1rem' }} />
+                                <p>
+                                    {activeTab === 'all'
+                                        ? 'No orders found for this vendor'
+                                        : activeTab === 'completed'
+                                            ? 'No completed orders found'
+                                            : 'No upcoming orders found'}
+                                </p>
+                            </div>
+                        );
+                    }
+
+                    const { grouped, sortedDates, noDate } = groupOrdersByDeliveryDate(filteredOrders);
+
+                    return (
                         <div className={styles.ordersList}>
                             <div className={styles.ordersHeader}>
                                 <span style={{ width: '40px', flex: 'none' }}></span>
-                                <span style={{ minWidth: '120px', flex: 0.8 }}>Type</span>
-                                <span style={{ minWidth: '200px', flex: 2 }}>Client</span>
-                                <span style={{ minWidth: '120px', flex: 1 }}>Case ID</span>
-                                <span style={{ minWidth: '120px', flex: 1 }}>Status</span>
-                                <span style={{ minWidth: '150px', flex: 1.2 }}>Scheduled Date</span>
-                                <span style={{ minWidth: '150px', flex: 1.2 }}>Actual Date</span>
-                                <span style={{ minWidth: '100px', flex: 1 }}>Items</span>
-                                <span style={{ minWidth: '120px', flex: 1 }}>Total Value</span>
-                                <span style={{ minWidth: '150px', flex: 1.2 }}>Updated By</span>
-                                <span style={{ minWidth: '150px', flex: 1.2 }}>Created</span>
+                                <span style={{ minWidth: '200px', flex: 2 }}>Delivery Date</span>
+                                <span style={{ minWidth: '120px', flex: 1 }}>Orders Count</span>
+                                <span style={{ minWidth: '150px', flex: 1.2 }}>Total Items</span>
+                                <span style={{ minWidth: '150px', flex: 1.2 }}>Total Value</span>
                             </div>
-                            {filteredOrders.map((order) => {
-                                const orderKey = `${order.orderType}-${order.id}`;
-                                const isExpanded = expandedOrders.has(orderKey);
+                            
+                            {/* Orders grouped by delivery date */}
+                            {sortedDates.map((dateKey) => {
+                                const dateOrders = grouped[dateKey];
+                                const dateTotalItems = dateOrders.reduce((sum, o) => sum + (o.total_items || 0), 0);
+                                const dateTotalValue = dateOrders.reduce((sum, o) => sum + parseFloat(o.total_value || 0), 0);
 
                                 return (
-                                    <div key={orderKey}>
+                                    <div key={dateKey}>
                                         <div
                                             className={styles.orderRow}
-                                            onClick={() => toggleOrderExpansion(orderKey)}
+                                            onClick={() => router.push(`/vendors/${vendorId}/delivery/${dateKey}`)}
                                             style={{ cursor: 'pointer' }}
                                         >
                                             <span style={{ width: '40px', flex: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                                                {isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                                                <ChevronDown size={16} />
                                             </span>
-                                            <span style={{ minWidth: '120px', flex: 0.8 }}>
-                                                <span className="badge badge-info">{order.service_type}</span>
-                                                {order.orderType === 'upcoming' && (
-                                                    <Clock size={14} style={{ marginLeft: '4px', verticalAlign: 'middle', color: 'var(--color-warning)' }} />
-                                                )}
-                                            </span>
-                                            <span
-                                                title={getClientName(order.client_id)}
-                                                style={{ minWidth: '200px', flex: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
-                                            >
-                                                {getClientName(order.client_id)}
-                                            </span>
-                                            <span style={{ minWidth: '120px', flex: 1, fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                                                {order.case_id || '-'}
+                                            <span style={{ minWidth: '200px', flex: 2, fontWeight: 600, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                                <Calendar size={16} style={{ color: 'var(--color-primary)' }} />
+                                                {formatDate(dateKey)}
                                             </span>
                                             <span style={{ minWidth: '120px', flex: 1 }}>
-                                                <span className={`badge ${order.status === 'completed' ? 'badge-success' : ''}`}>
-                                                    {order.status}
-                                                </span>
+                                                <span className="badge badge-info">{dateOrders.length} order{dateOrders.length !== 1 ? 's' : ''}</span>
                                             </span>
-                                            <span style={{ minWidth: '150px', flex: 1.2, fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
-                                                {formatDate(order.scheduled_delivery_date)}
+                                            <span style={{ minWidth: '150px', flex: 1.2, fontSize: '0.9rem' }}>
+                                                {dateTotalItems}
                                             </span>
-                                            <span style={{ minWidth: '150px', flex: 1.2, fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
-                                                {formatDate(order.actual_delivery_date)}
-                                            </span>
-                                            <span style={{ minWidth: '100px', flex: 1, fontSize: '0.9rem' }}>
-                                                {order.total_items || 0}
-                                            </span>
-                                            <span style={{ minWidth: '120px', flex: 1, fontWeight: 600 }}>
-                                                ${parseFloat(order.total_value || 0).toFixed(2)}
-                                            </span>
-                                            <span style={{ minWidth: '150px', flex: 1.2, fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                                                {order.updated_by || '-'}
-                                            </span>
-                                            <span style={{ minWidth: '150px', flex: 1.2, fontSize: '0.85rem', color: 'var(--text-tertiary)' }}>
-                                                {formatDateTime(order.created_at)}
+                                            <span style={{ minWidth: '150px', flex: 1.2, fontWeight: 600 }}>
+                                                ${dateTotalValue.toFixed(2)}
                                             </span>
                                         </div>
-                                        {isExpanded && (
-                                            <div className={styles.orderDetails}>
-                                                <div className={styles.orderDetailsGrid}>
-                                                    <div className={styles.detailItem}>
-                                                        <strong>Order ID:</strong> {order.id}
-                                                    </div>
-                                                    <div className={styles.detailItem}>
-                                                        <strong>Order Type:</strong> {order.orderType}
-                                                    </div>
-                                                    {order.case_id && (
-                                                        <div className={styles.detailItem}>
-                                                            <strong>Case ID:</strong> {order.case_id}
-                                                        </div>
-                                                    )}
-                                                    <div className={styles.detailItem}>
-                                                        <strong>Last Updated:</strong> {formatDateTime(order.last_updated)}
-                                                    </div>
-                                                    {order.updated_by && (
-                                                        <div className={styles.detailItem}>
-                                                            <strong>Updated By:</strong> {order.updated_by}
-                                                        </div>
-                                                    )}
-                                                    {order.take_effect_date && (
-                                                        <div className={styles.detailItem}>
-                                                            <strong>Take Effect Date:</strong> {formatDate(order.take_effect_date)}
-                                                        </div>
-                                                    )}
-                                                    {order.delivery_distribution && (
-                                                        <div className={styles.detailItem} style={{ gridColumn: '1 / -1' }}>
-                                                            <strong>Delivery Distribution:</strong> {JSON.stringify(order.delivery_distribution)}
-                                                        </div>
-                                                    )}
-                                                    {order.notes && (
-                                                        <div className={styles.detailItem} style={{ gridColumn: '1 / -1' }}>
-                                                            <strong>Notes:</strong> {order.notes}
-                                                        </div>
-                                                    )}
-
-                                                    {/* Proof Upload for Waiting Orders */}
-                                                    {order.status === 'waiting_for_proof' && (
-                                                        <div className={styles.detailItem} style={{ gridColumn: '1 / -1', marginTop: '1rem', padding: '1rem', backgroundColor: 'rgba(59, 130, 246, 0.05)', borderRadius: '6px', border: '1px solid rgba(59, 130, 246, 0.2)' }}>
-                                                            <h4 style={{ marginBottom: '0.5rem', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.9rem', color: 'var(--color-primary)' }}>
-                                                                <Upload size={16} /> Submit Proof of Delivery
-                                                            </h4>
-                                                            <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '0.5rem' }}>
-                                                                Providing a proof URL will move this order to <strong>Billing Pending</strong> status.
-                                                            </p>
-                                                            <div style={{ display: 'flex', gap: '0.5rem' }}>
-                                                                <input
-                                                                    placeholder="Enter Proof URL (e.g. https://image-link.com)"
-                                                                    className="input"
-                                                                    style={{ flex: 1 }}
-                                                                    id={`proof-input-${order.id}`}
-                                                                />
-                                                                <button
-                                                                    className="btn btn-primary"
-                                                                    onClick={async () => {
-                                                                        const inputInfo = document.getElementById(`proof-input-${order.id}`) as HTMLInputElement;
-                                                                        if (!inputInfo || !inputInfo.value.trim()) {
-                                                                            alert('Please enter a valid URL');
-                                                                            return;
-                                                                        }
-
-                                                                        const res = await updateOrderDeliveryProof(order.id, inputInfo.value.trim());
-                                                                        if (res.success) {
-                                                                            // Ideally optimistically update specific order in state, but reload is safer for now
-                                                                            await loadData();
-                                                                        } else {
-                                                                            alert('Failed: ' + res.error);
-                                                                        }
-                                                                    }}
-                                                                >
-                                                                    Submit
-                                                                </button>
-                                                            </div>
-                                                        </div>
-                                                    )}
-                                                </div>
-                                                <div className={styles.itemsSection}>
-                                                    <h4 className={styles.itemsTitle}>
-                                                        <ShoppingCart size={16} style={{ marginRight: '8px', verticalAlign: 'middle' }} />
-                                                        Order Items
-                                                    </h4>
-                                                    {renderOrderItems(order)}
-                                                </div>
-                                            </div>
-                                        )}
                                     </div>
                                 );
                             })}
+
+                            {/* Orders without delivery dates - keep as expandable for now */}
+                            {noDate.length > 0 && (
+                                <div>
+                                    <div
+                                        className={styles.orderRow}
+                                        onClick={() => router.push(`/vendors/${vendorId}/delivery/no-date`)}
+                                        style={{ cursor: 'pointer' }}
+                                    >
+                                        <span style={{ width: '40px', flex: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                            <ChevronDown size={16} />
+                                        </span>
+                                        <span style={{ minWidth: '200px', flex: 2, fontWeight: 600, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                            <Calendar size={16} style={{ color: 'var(--text-tertiary)' }} />
+                                            No Delivery Date
+                                        </span>
+                                        <span style={{ minWidth: '120px', flex: 1 }}>
+                                            <span className="badge">{noDate.length} order{noDate.length !== 1 ? 's' : ''}</span>
+                                        </span>
+                                        <span style={{ minWidth: '150px', flex: 1.2, fontSize: '0.9rem' }}>
+                                            {noDate.reduce((sum, o) => sum + (o.total_items || 0), 0)}
+                                        </span>
+                                        <span style={{ minWidth: '150px', flex: 1.2, fontWeight: 600 }}>
+                                            ${noDate.reduce((sum, o) => sum + parseFloat(o.total_value || 0), 0).toFixed(2)}
+                                        </span>
+                                    </div>
+                                </div>
+                            )}
                         </div>
                     );
                 })()}
