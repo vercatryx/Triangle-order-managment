@@ -254,3 +254,15 @@
     color: var(--text-secondary);
     font-weight: 500;
 }
+
+.refreshIndicator {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.85rem;
+    color: var(--color-primary);
+    background-color: rgba(59, 130, 246, 0.1);
+    padding: 4px 10px;
+    border-radius: var(--radius-sm);
+    animation: fadeIn 0.3s ease-out;
+}

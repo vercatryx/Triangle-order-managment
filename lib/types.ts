@@ -1,7 +1,7 @@
 
 export type OrderStatus = 'pending' | 'confirmed' | 'completed' | 'waiting_for_proof' | 'billing_pending' | 'cancelled';
 
-export type ServiceType = 'Food' | 'Boxes' | 'Cooking supplies' | 'Care plan';
+export type ServiceType = 'Food' | 'Boxes';
 
 export interface ClientProfile {
   id: string;
@@ -81,7 +81,7 @@ export interface Vendor {
   isActive: boolean;
   deliveryDays: string[]; // e.g. ["Monday", "Thursday"]
   allowsMultipleDeliveries: boolean;
-  serviceType: ServiceType; // Vendor usually specializes in Food OR Boxes? Or both? Assuming one for simplicity mostly.
+  serviceTypes: ServiceType[]; // Vendor can support multiple service types
   minimumMeals?: number; // Minimum meals/value required when ordering from this vendor (default 0, meaning no minimum)
 }
 

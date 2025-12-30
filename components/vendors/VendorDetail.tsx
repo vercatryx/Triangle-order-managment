@@ -577,9 +577,13 @@ export function VendorDetail({ vendorId }: Props) {
                 <h2 className={styles.sectionTitle}>Vendor Details</h2>
                 <div className={styles.summaryGrid}>
                     <div className={styles.summaryCard}>
-                        <div className={styles.summaryLabel}>Service Type</div>
+                        <div className={styles.summaryLabel}>Service Types</div>
                         <div className={styles.summaryValue}>
-                            <span className="badge badge-info">{vendor.serviceType}</span>
+                            <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+                                {vendor.serviceTypes.map(t => (
+                                    <span key={t} className="badge badge-info">{t}</span>
+                                ))}
+                            </div>
                         </div>
                     </div>
                     <div className={styles.summaryCard}>

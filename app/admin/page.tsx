@@ -5,7 +5,7 @@ import styles from './Admin.module.css';
 import { StatusManagement } from '@/components/admin/StatusManagement';
 import { VendorManagement } from '@/components/admin/VendorManagement';
 import { MenuManagement } from '@/components/admin/MenuManagement';
-import { BoxTypeManagement } from '@/components/admin/BoxTypeManagement';
+import { BoxCategoriesManagement } from '@/components/admin/BoxCategoriesManagement';
 import { NavigatorManagement } from '@/components/admin/NavigatorManagement';
 import { AdminManagement } from '@/components/admin/AdminManagement';
 
@@ -30,12 +30,11 @@ export default function AdminPage() {
                 >
                     Menus
                 </button>
-
                 <button
                     className={`${styles.tab} ${activeTab === 'boxes' ? styles.activeTab : ''}`}
                     onClick={() => setActiveTab('boxes')}
                 >
-                    Box Types
+                    Box Categories
                 </button>
                 <button
                     className={`${styles.tab} ${activeTab === 'vendors' ? styles.activeTab : ''}`}
@@ -71,7 +70,8 @@ export default function AdminPage() {
 
             <div className={styles.content}>
                 {activeTab === 'menus' && <MenuManagement />}
-                {activeTab === 'boxes' && <BoxTypeManagement />}
+                {activeTab === 'boxes' && <BoxCategoriesManagement />}
+
                 {activeTab === 'vendors' && <VendorManagement />}
                 {activeTab === 'navigators' && <NavigatorManagement />}
                 {activeTab === 'statuses' && <StatusManagement />}

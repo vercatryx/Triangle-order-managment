@@ -8,20 +8,21 @@ import { Plus, Edit2, Trash2, X, Check, Package, Scale, Save } from 'lucide-reac
 import styles from './BoxTypeManagement.module.css';
 
 export function BoxTypeManagement() {
-    const { getVendors, getCategories, getMenuItems, getBoxTypes, invalidateReferenceData } = useDataCache();
-    const [vendors, setVendors] = useState<Vendor[]>([]);
+    const { getCategories, getMenuItems, getBoxTypes, invalidateReferenceData } = useDataCache();
+    const [boxTypes, setBoxTypes] = useState<BoxType[]>([]);
     const [categories, setCategories] = useState<ItemCategory[]>([]);
     const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
-    const [selectedVendorId, setSelectedVendorId] = useState<string>('');
-
-
-    // The single active box for the selected vendor
-    const [activeBoxId, setActiveBoxId] = useState<string | null>(null);
+    const [selectedBoxId, setSelectedBoxId] = useState<string>('');
 
     // Quota State
     const [currentQuotas, setCurrentQuotas] = useState<BoxQuota[]>([]);
     const [newQuotaCategoryId, setNewQuotaCategoryId] = useState('');
     const [newQuotaTarget, setNewQuotaTarget] = useState(1);
+
+    // Box Type Creation
+    const [isAddingBoxType, setIsAddingBoxType] = useState(false);
+    const [newBoxTypeName, setNewBoxTypeName] = useState('');
+    const [newBoxTypePrice, setNewBoxTypePrice] = useState(1);
 
     // Inline Category Creation
     const [isAddingCategory, setIsAddingCategory] = useState(false);
@@ -50,60 +51,55 @@ export function BoxTypeManagement() {
         loadData();
     }, []);
 
-    // When vendor changes, load/create their box
+    // When box type changes, load its quotas
     useEffect(() => {
-        if (selectedVendorId) {
-            loadVendorBox(selectedVendorId);
+        if (selectedBoxId) {
+            loadBoxQuotas(selectedBoxId);
         } else {
-            setActiveBoxId(null);
             setCurrentQuotas([]);
         }
-    }, [selectedVendorId]);
+    }, [selectedBoxId]);
 
     async function loadData() {
-        const [vData, cData, mData] = await Promise.all([getVendors(), getCategories(), getMenuItems()]);
-        // Filter: Box configuration only for companies that ship 'Boxes'
-        const boxVendors = vData.filter(v => v.serviceType === 'Boxes');
-        setVendors(boxVendors);
+        const [bData, cData, mData] = await Promise.all([getBoxTypes(), getCategories(), getMenuItems()]);
+        setBoxTypes(bData);
         setCategories(cData);
         setMenuItems(mData);
-        if (boxVendors.length > 0 && !selectedVendorId) {
-            setSelectedVendorId(boxVendors[0].id);
+        if (bData.length > 0 && !selectedBoxId) {
+            setSelectedBoxId(bData[0].id);
         }
     }
 
-    async function loadVendorBox(vendorId: string) {
-        const allBoxes = await getBoxTypes() as BoxType[];
-        let box = allBoxes.find(b => b.vendorId === vendorId);
+    async function loadBoxQuotas(boxId: string) {
+        const qData = await getBoxQuotas(boxId);
+        setCurrentQuotas(qData);
+    }
 
-        if (!box) {
-            // Auto-create default box for this vendor if none exists
-            // We use a safe default name "Standard Box"
-            const newBox = await addBoxType({
-                name: 'Standard Box',
-                isActive: true,
-                vendorId: vendorId
-            });
-            invalidateReferenceData(); // Invalidate cache after box creation
-            box = newBox as BoxType;
-        }
-
-        if (box) {
-            setActiveBoxId(box.id);
-            const qData = await getBoxQuotas(box.id);
-            setCurrentQuotas(qData);
-        }
+    async function handleAddBoxType() {
+        if (!newBoxTypeName.trim()) return;
+        const newBox = await addBoxType({
+            name: newBoxTypeName,
+            isActive: true,
+            priceEach: newBoxTypePrice
+        });
+        invalidateReferenceData();
+        const bData = await getBoxTypes();
+        setBoxTypes(bData);
+        setSelectedBoxId(newBox.id);
+        setIsAddingBoxType(false);
+        setNewBoxTypeName('');
+        setNewBoxTypePrice(1);
     }
 
     async function handleAddQuota() {
-        if (!activeBoxId || !newQuotaCategoryId) return;
+        if (!selectedBoxId || !newQuotaCategoryId) return;
 
         await addBoxQuota({
-            boxTypeId: activeBoxId,
+            boxTypeId: selectedBoxId,
             categoryId: newQuotaCategoryId,
             targetValue: newQuotaTarget
         });
-        const qData = await getBoxQuotas(activeBoxId);
+        const qData = await getBoxQuotas(selectedBoxId);
         setCurrentQuotas(qData);
         setNewQuotaCategoryId('');
         setNewQuotaTarget(1);
@@ -123,14 +119,14 @@ export function BoxTypeManagement() {
     }
 
     async function handleAddItem(categoryId: string) {
-        if (!newItemName.trim() || !selectedVendorId) return;
+        if (!newItemName.trim()) return;
         if (newItemPrice <= 0) {
             alert('Price must be greater than 0');
             return;
         }
 
         await addMenuItem({
-            vendorId: selectedVendorId,
+            vendorId: '', // Box items are universal (empty string instead of null)
             name: newItemName,
             value: 0, // Default value for box items
             isActive: true,
@@ -191,9 +187,9 @@ export function BoxTypeManagement() {
     }
 
     async function handleDeleteQuota(id: string) {
-        if (!activeBoxId) return;
+        if (!selectedBoxId) return;
         await deleteBoxQuota(id);
-        const qData = await getBoxQuotas(activeBoxId);
+        const qData = await getBoxQuotas(selectedBoxId);
         setCurrentQuotas(qData);
     }
 
@@ -210,7 +206,7 @@ export function BoxTypeManagement() {
     }
 
     async function handleSaveEdit() {
-        if (!editingQuotaId || !activeBoxId) return;
+        if (!editingQuotaId || !selectedBoxId) return;
 
         // 1. Update quota target
         await updateBoxQuota(editingQuotaId, tempQuotaTarget);
@@ -224,7 +220,7 @@ export function BoxTypeManagement() {
         invalidateReferenceData(); // Invalidate cache after quota/category update
 
         // 3. Refresh
-        const qData = await getBoxQuotas(activeBoxId);
+        const qData = await getBoxQuotas(selectedBoxId);
         setCurrentQuotas(qData);
         const cData = await getCategories();
         setCategories(cData);
@@ -232,22 +228,55 @@ export function BoxTypeManagement() {
         handleCancelEdit();
     }
 
-    if (vendors.length === 0) {
-        return <div className={styles.emptyState}>No box vendors available. Please configure a vendor with 'Boxes' service type first.</div>;
-    }
-
     return (
         <div className={styles.container}>
             <div className={styles.sidebar}>
-                <h3 className={styles.sidebarTitle}>Vendors</h3>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem' }}>
+                    <h3 className={styles.sidebarTitle} style={{ margin: 0 }}>Box Types</h3>
+                    <button
+                        className="btn btn-primary"
+                        style={{ padding: '4px 8px', fontSize: '0.75rem' }}
+                        onClick={() => setIsAddingBoxType(true)}
+                    >
+                        <Plus size={14} /> New
+                    </button>
+                </div>
+                {isAddingBoxType && (
+                    <div style={{ marginBottom: '1rem', padding: '0.75rem', background: 'var(--bg-surface-hover)', borderRadius: '4px', border: '1px solid var(--color-primary)' }}>
+                        <input
+                            className="input"
+                            placeholder="Box Name"
+                            value={newBoxTypeName}
+                            onChange={e => setNewBoxTypeName(e.target.value)}
+                            style={{ marginBottom: '0.5rem', width: '100%', fontSize: '0.85rem' }}
+                        />
+                        <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.5rem' }}>
+                            <div style={{ flex: 1 }}>
+                                <label style={{ display: 'block', fontSize: '0.7rem', color: 'var(--text-secondary)' }}>Price</label>
+                                <input
+                                    type="number"
+                                    className="input"
+                                    value={newBoxTypePrice}
+                                    onChange={e => setNewBoxTypePrice(Number(e.target.value))}
+                                    style={{ width: '100%', fontSize: '0.85rem' }}
+                                />
+                            </div>
+                        </div>
+                        <div style={{ display: 'flex', gap: '0.5rem' }}>
+                            <button className="btn btn-primary" style={{ flex: 1, fontSize: '0.8rem' }} onClick={handleAddBoxType}>Save</button>
+                            <button className="btn btn-secondary" style={{ flex: 1, fontSize: '0.8rem' }} onClick={() => setIsAddingBoxType(false)}>Cancel</button>
+                        </div>
+                    </div>
+                )}
                 <div className={styles.vendorList}>
-                    {vendors.map(v => (
+                    {boxTypes.map(b => (
                         <button
-                            key={v.id}
-                            className={`${styles.vendorBtn} ${selectedVendorId === v.id ? styles.activeVendor : ''}`}
-                            onClick={() => setSelectedVendorId(v.id)}
+                            key={b.id}
+                            className={`${styles.vendorBtn} ${selectedBoxId === b.id ? styles.activeVendor : ''}`}
+                            onClick={() => setSelectedBoxId(b.id)}
                         >
-                            {v.name}
+                            {b.name}
+                            <span style={{ fontSize: '0.75rem', opacity: 0.7, marginLeft: '0.5rem' }}>${b.priceEach}</span>
                         </button>
                     ))}
                 </div>
@@ -257,12 +286,12 @@ export function BoxTypeManagement() {
                 <div className={styles.header}>
                     <div>
                         <h2 className={styles.title}>Box Configuration</h2>
-                        <p className={styles.subtitle}>Configure box contents for {vendors.find(v => v.id === selectedVendorId)?.name}</p>
+                        <p className={styles.subtitle}>Configure box contents for {boxTypes.find(b => b.id === selectedBoxId)?.name}</p>
                     </div>
                 </div>
 
-                {/* Quota Management Section - Always Visible for Selected Vendor */}
-                {activeBoxId && (
+                {/* Quota Management Section - Always Visible for Selected Box */}
+                {selectedBoxId && (
                     <div className={styles.quotaSection} style={{ marginTop: '0', paddingTop: '0' }}>
                         <div className={styles.quotaList} style={{ marginBottom: '1rem' }}>
                             {currentQuotas.map(q => {
@@ -333,7 +362,7 @@ export function BoxTypeManagement() {
                                         {/* Inline Item Management */}
                                         <div style={{ padding: '0.5rem', background: 'var(--bg-app)', borderRadius: '4px' }}>
                                             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', marginBottom: '0.5rem' }}>
-                                                {menuItems.filter(i => i.categoryId === q.categoryId && i.vendorId === selectedVendorId).map(item => (
+                                                {menuItems.filter(i => i.categoryId === q.categoryId && (i.vendorId === null || i.vendorId === '')).map(item => (
                                                     editingItemId === item.id ? (
                                                         <div key={item.id} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', background: 'var(--bg-surface)', padding: '4px 8px', borderRadius: '4px', border: '2px solid var(--color-primary)', fontSize: '0.8rem', flexWrap: 'wrap' }}>
                                                             <input
@@ -393,7 +422,7 @@ export function BoxTypeManagement() {
                                                         </div>
                                                     )
                                                 ))}
-                                                {menuItems.filter(i => i.categoryId === q.categoryId && i.vendorId === selectedVendorId).length === 0 && (
+                                                {menuItems.filter(i => i.categoryId === q.categoryId && (i.vendorId === null || i.vendorId === '')).length === 0 && (
                                                     <span style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)', fontStyle: 'italic' }}>No items in this category yet.</span>
                                                 )}
                                             </div>

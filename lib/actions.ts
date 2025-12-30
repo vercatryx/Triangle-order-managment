@@ -2,7 +2,7 @@
 
 import { revalidatePath } from 'next/cache';
 import { supabase } from './supabase';
-import { ClientStatus, Vendor, MenuItem, BoxType, AppSettings, Navigator, ClientProfile, DeliveryRecord, ItemCategory, BoxQuota } from './types';
+import { ClientStatus, Vendor, MenuItem, BoxType, AppSettings, Navigator, ClientProfile, DeliveryRecord, ItemCategory, BoxQuota, ServiceType } from './types';
 import { randomUUID } from 'crypto';
 import { getSession } from './session';
 
@@ -79,7 +79,7 @@ export async function getVendors() {
     return data.map((v: any) => ({
         id: v.id,
         name: v.name,
-        serviceType: v.service_type,
+        serviceTypes: (v.service_type || '').split(',').map((s: string) => s.trim()).filter(Boolean) as ServiceType[],
         deliveryDays: v.delivery_days || [],
         allowsMultipleDeliveries: v.delivery_frequency === 'Multiple',
         isActive: v.is_active,
@@ -90,7 +90,7 @@ export async function getVendors() {
 export async function addVendor(data: Omit<Vendor, 'id'>) {
     const payload: any = {
         name: data.name,
-        service_type: data.serviceType,
+        service_type: (data.serviceTypes || []).join(','),
         delivery_days: data.deliveryDays,
         delivery_frequency: data.allowsMultipleDeliveries ? 'Multiple' : 'Once',
         is_active: data.isActive,
@@ -106,7 +106,7 @@ export async function addVendor(data: Omit<Vendor, 'id'>) {
 export async function updateVendor(id: string, data: Partial<Vendor>) {
     const payload: any = {};
     if (data.name) payload.name = data.name;
-    if (data.serviceType) payload.service_type = data.serviceType;
+    if (data.serviceTypes) payload.service_type = data.serviceTypes.join(',');
     if (data.deliveryDays) payload.delivery_days = data.deliveryDays;
     if (data.allowsMultipleDeliveries !== undefined) {
         payload.delivery_frequency = data.allowsMultipleDeliveries ? 'Multiple' : 'Once';
@@ -145,11 +145,11 @@ export async function getMenuItems() {
 
 export async function addMenuItem(data: Omit<MenuItem, 'id'>) {
     const payload: any = {
-        vendor_id: data.vendorId,
+        vendor_id: data.vendorId || null,
         name: data.name,
         value: data.value,
         is_active: data.isActive,
-        category_id: data.categoryId,
+        category_id: data.categoryId || null,
         quota_value: data.quotaValue,
         minimum_order: data.minimumOrder ?? 0,
         price_each: data.priceEach // Mandatory
@@ -173,12 +173,13 @@ export async function updateMenuItem(id: string, data: Partial<MenuItem>) {
     if (data.value !== undefined) payload.value = data.value;
     if (data.priceEach !== undefined) payload.price_each = data.priceEach;
     if (data.isActive !== undefined) payload.is_active = data.isActive;
-    if (data.categoryId !== undefined) payload.category_id = data.categoryId;
+    if (data.categoryId !== undefined) payload.category_id = data.categoryId || null;
     if (data.quotaValue !== undefined) payload.quota_value = data.quotaValue;
     if (data.minimumOrder !== undefined) payload.minimum_order = data.minimumOrder;
 
+    if (data.vendorId !== undefined) payload.vendor_id = data.vendorId || null;
+
     const { error } = await supabase.from('menu_items').update(payload).eq('id', id);
-    handleError(error);
     revalidatePath('/admin');
 }
 
@@ -264,7 +265,6 @@ export async function getBoxTypes() {
         id: b.id,
         name: b.name,
         isActive: b.is_active,
-        vendorId: b.vendor_id || null,
         priceEach: b.price_each ?? undefined
     }));
 }
@@ -273,7 +273,6 @@ export async function addBoxType(data: Omit<BoxType, 'id'>) {
     const payload: any = {
         name: data.name,
         is_active: data.isActive,
-        vendor_id: data.vendorId || null,
         price_each: data.priceEach ?? 1
     };
 
@@ -293,7 +292,6 @@ export async function updateBoxType(id: string, data: Partial<BoxType>) {
     const payload: any = {};
     if (data.name) payload.name = data.name;
     if (data.isActive !== undefined) payload.is_active = data.isActive;
-    if (data.vendorId !== undefined) payload.vendor_id = data.vendorId;
     if (data.priceEach !== undefined) payload.price_each = data.priceEach;
 
     const { error } = await supabase.from('box_types').update(payload).eq('id', id);
@@ -636,6 +634,134 @@ export async function getOrderHistory(clientId: string) {
         summary: d.summary,
         timestamp: d.timestamp || d.created_at || new Date().toISOString()
     }));
+}
+
+export async function getCompletedOrdersWithDeliveryProof(clientId: string) {
+    if (!clientId) return [];
+
+    const { data, error } = await supabase
+        .from('orders')
+        .select('*')
+        .eq('client_id', clientId)
+        .neq('proof_of_delivery_image', null)
+        .order('created_at', { ascending: false });
+
+    if (error) {
+        console.error('Error fetching completed orders with proof:', error);
+        return [];
+    }
+
+    if (!data || data.length === 0) return [];
+
+    // Fetch reference data once
+    const [menuItems, vendors, boxTypes] = await Promise.all([
+        getMenuItems(),
+        getVendors(),
+        getBoxTypes()
+    ]);
+
+    const orders = await Promise.all(
+        data.map(async (orderData: any) => {
+            let orderDetails: any = undefined;
+
+            if (orderData.service_type === 'Food') {
+                const { data: vendorSelections } = await supabase
+                    .from('order_vendor_selections')
+                    .select('*')
+                    .eq('order_id', orderData.id);
+
+                if (vendorSelections && vendorSelections.length > 0) {
+                    const vendorSelectionsWithItems = await Promise.all(
+                        vendorSelections.map(async (vs: any) => {
+                            const { data: items } = await supabase
+                                .from('order_items')
+                                .select('*')
+                                .eq('vendor_selection_id', vs.id);
+
+                            const vendor = vendors.find(v => v.id === vs.vendor_id);
+                            const itemsWithDetails = (items || []).map((item: any) => {
+                                const menuItem = menuItems.find(mi => mi.id === item.menu_item_id);
+                                const itemPrice = menuItem?.priceEach ?? parseFloat(item.unit_value);
+                                const quantity = item.quantity;
+                                const itemTotal = itemPrice * quantity;
+                                return {
+                                    id: item.id,
+                                    menuItemId: item.menu_item_id,
+                                    menuItemName: menuItem?.name || 'Unknown Item',
+                                    quantity: quantity,
+                                    unitValue: itemPrice,
+                                    totalValue: itemTotal
+                                };
+                            });
+
+                            return {
+                                vendorId: vs.vendor_id,
+                                vendorName: vendor?.name || 'Unknown Vendor',
+                                items: itemsWithDetails
+                            };
+                        })
+                    );
+
+                    orderDetails = {
+                        serviceType: orderData.service_type,
+                        vendorSelections: vendorSelectionsWithItems,
+                        totalItems: orderData.total_items,
+                        totalValue: parseFloat(orderData.total_value || 0)
+                    };
+                }
+            } else if (orderData.service_type === 'Boxes') {
+                const { data: boxSelection } = await supabase
+                    .from('order_box_selections')
+                    .select('*')
+                    .eq('order_id', orderData.id)
+                    .maybeSingle();
+
+                if (boxSelection) {
+                    const vendor = vendors.find(v => v.id === boxSelection.vendor_id);
+                    const boxType = boxTypes.find(bt => bt.id === boxSelection.box_type_id);
+                    const boxTotalValue = boxSelection.total_value
+                        ? parseFloat(boxSelection.total_value)
+                        : parseFloat(orderData.total_value || 0);
+
+                    orderDetails = {
+                        serviceType: orderData.service_type,
+                        vendorId: boxSelection.vendor_id,
+                        vendorName: vendor?.name || 'Unknown Vendor',
+                        boxTypeId: boxSelection.box_type_id,
+                        boxTypeName: boxType?.name || 'Unknown Box Type',
+                        boxQuantity: boxSelection.quantity,
+                        totalValue: boxTotalValue
+                    };
+                }
+            } else {
+                orderDetails = {
+                    serviceType: orderData.service_type,
+                    totalValue: parseFloat(orderData.total_value || 0),
+                    notes: orderData.notes
+                };
+            }
+
+            return {
+                id: orderData.id,
+                clientId: orderData.client_id,
+                serviceType: orderData.service_type,
+                caseId: orderData.case_id,
+                status: orderData.status,
+                scheduledDeliveryDate: orderData.scheduled_delivery_date,
+                actualDeliveryDate: orderData.actual_delivery_date,
+                deliveryProofUrl: orderData.proof_of_delivery_image || '',
+                totalValue: parseFloat(orderData.total_value || 0),
+                totalItems: orderData.total_items,
+                notes: orderData.notes,
+                createdAt: orderData.created_at,
+                lastUpdated: orderData.updated_at,
+                updatedBy: orderData.updated_by,
+                orderDetails: orderDetails
+            };
+        })
+    );
+
+    return orders;
 }
 
 export async function getBillingHistory(clientId: string) {
@@ -1054,6 +1180,7 @@ async function syncSingleOrderForDeliveryDay(
     menuItems: any[],
     boxTypes: any[]
 ): Promise<void> {
+    console.log(`[syncSingleOrderForDeliveryDay] Start sync for client ${clientId}, day: ${deliveryDay || 'null'}`);
     // Calculate dates for this specific delivery day
     let takeEffectDate: Date | null = null;
     let scheduledDeliveryDate: Date | null = null;
@@ -1139,6 +1266,7 @@ async function syncSingleOrderForDeliveryDay(
 
     // If we can't calculate dates, skip this order
     if (!takeEffectDate || !scheduledDeliveryDate) {
+        console.warn(`[syncSingleOrderForDeliveryDay] Skipping sync - missing dates. takeEffectDate: ${takeEffectDate}, scheduledDeliveryDate: ${scheduledDeliveryDate}. boxVendorId: ${(orderConfig as any).vendorId || 'none'}`);
         return;
     }
 
@@ -1341,8 +1469,18 @@ async function syncSingleOrderForDeliveryDay(
  * Now supports multiple orders per client (one per delivery day)
  */
 export async function syncCurrentOrderToUpcoming(clientId: string, client: ClientProfile) {
-    if (!client.activeOrder || !client.activeOrder.caseId) {
-        // If no active order or case ID, remove any existing upcoming orders
+    // 1. DRAFT PERSISTENCE: Save the raw activeOrder metadata to the clients table.
+    // This ensures Case ID, Vendor, and other selections are persisted even if the 
+    // full sync to upcoming_orders fails (e.g. if the vendor/delivery day isn't fully set yet).
+    if (client.activeOrder) {
+        await supabase.from('clients').update({
+            active_order: client.activeOrder,
+            updated_at: new Date().toISOString()
+        }).eq('id', clientId);
+    }
+
+    if (!client.activeOrder) {
+        // If no active order, remove any existing upcoming orders
         await supabase.from('upcoming_orders').delete().eq('client_id', clientId);
         return;
     }
@@ -1454,14 +1592,14 @@ export async function syncCurrentOrderToUpcoming(clientId: string, client: Clien
                 if (selection.vendorId) {
                     const vendor = vendors.find(v => v.id === selection.vendorId);
                     if (vendor && vendor.deliveryDays) {
-                        vendor.deliveryDays.forEach(day => allDeliveryDays.add(day));
+                        vendor.deliveryDays.forEach((day: string) => allDeliveryDays.add(day));
                     }
                 }
             }
             deliveryDays = Array.from(allDeliveryDays);
         } else if (orderConfig.serviceType === 'Boxes' && orderConfig.boxTypeId) {
             const boxType = boxTypes.find(bt => bt.id === orderConfig.boxTypeId);
-            const boxVendorId = (orderConfig as any).vendorId || boxType?.vendorId;
+            const boxVendorId = (orderConfig as any).vendorId;
             if (boxVendorId) {
                 const vendor = vendors.find(v => v.id === boxVendorId);
                 if (vendor && vendor.deliveryDays) {
@@ -1873,10 +2011,23 @@ export async function getActiveOrderForClient(clientId: string) {
                     orderConfig.vendorId = boxSelection.vendor_id;
                     orderConfig.boxTypeId = boxSelection.box_type_id;
                     orderConfig.boxQuantity = boxSelection.quantity;
+
+                    // Pull items from boxSelection.items (JSONB) - this is the source for box orders
+                    if (boxSelection.items && Object.keys(boxSelection.items).length > 0) {
+                        const itemsMap: any = {};
+                        for (const [itemId, val] of Object.entries(boxSelection.items)) {
+                            if (val && typeof val === 'object') {
+                                itemsMap[itemId] = (val as any).quantity;
+                            } else {
+                                itemsMap[itemId] = val;
+                            }
+                        }
+                        orderConfig.items = itemsMap;
+                    }
                 }
 
-                // Fetch box items from order_items (they're stored linked to a vendor_selection for the box vendor)
-                if (boxSelection && boxSelection.vendor_id) {
+                // If items still empty, try to fetch from separate items table as fallback (for migrated data)
+                if ((!orderConfig.items || Object.keys(orderConfig.items).length === 0) && boxSelection?.vendor_id) {
                     // Find the vendor_selection for the box vendor in this order
                     const { data: vendorSelection } = await supabase
                         .from(vendorSelectionsTable)
@@ -2014,6 +2165,131 @@ export async function getClientFullDetails(clientId: string) {
     }
 }
 // --- VENDOR ORDER ACTIONS ---
+
+export async function getOrdersByVendor(vendorId: string) {
+    if (!vendorId) return [];
+
+    try {
+        // 1. Fetch completed orders (from orders table)
+        const { data: foodOrderIds } = await supabase
+            .from('order_vendor_selections')
+            .select('order_id')
+            .eq('vendor_id', vendorId);
+
+        const { data: boxOrderIds } = await supabase
+            .from('order_box_selections')
+            .select('order_id')
+            .eq('vendor_id', vendorId);
+
+        const orderIds = Array.from(new Set([
+            ...(foodOrderIds?.map(o => o.order_id) || []),
+            ...(boxOrderIds?.map(o => o.order_id) || [])
+        ]));
+
+        let completedOrders: any[] = [];
+        if (orderIds.length > 0) {
+            const { data: orders } = await supabase
+                .from('orders')
+                .select('*')
+                .in('id', orderIds)
+                .order('created_at', { ascending: false });
+
+            if (orders) {
+                completedOrders = await Promise.all(orders.map(async (order) => {
+                    const processed = await processVendorOrderDetails(order, vendorId, false);
+                    return { ...processed, orderType: 'completed' };
+                }));
+            }
+        }
+
+        // 2. Fetch upcoming orders (from upcoming_orders table)
+        const { data: upcomingFoodOrderIds } = await supabase
+            .from('upcoming_order_vendor_selections')
+            .select('upcoming_order_id')
+            .eq('vendor_id', vendorId);
+
+        const { data: upcomingBoxOrderIds } = await supabase
+            .from('upcoming_order_box_selections')
+            .select('upcoming_order_id')
+            .eq('vendor_id', vendorId);
+
+        const upcomingOrderIds = Array.from(new Set([
+            ...(upcomingFoodOrderIds?.map(o => o.upcoming_order_id) || []),
+            ...(upcomingBoxOrderIds?.map(o => o.upcoming_order_id) || [])
+        ]));
+
+        let upcomingOrders: any[] = [];
+        if (upcomingOrderIds.length > 0) {
+            const { data: uOrders } = await supabase
+                .from('upcoming_orders')
+                .select('*')
+                .in('id', upcomingOrderIds)
+                .order('created_at', { ascending: false });
+
+            if (uOrders) {
+                upcomingOrders = await Promise.all(uOrders.map(async (order) => {
+                    const processed = await processVendorOrderDetails(order, vendorId, true);
+                    return { ...processed, orderType: 'upcoming' };
+                }));
+            }
+        }
+
+        const allOrders = [...completedOrders, ...upcomingOrders].sort((a, b) =>
+            new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime()
+        );
+
+        return allOrders;
+
+    } catch (err) {
+        console.error('Error in getOrdersByVendor:', err);
+        return [];
+    }
+}
+
+async function processVendorOrderDetails(order: any, vendorId: string, isUpcoming: boolean) {
+    const orderIdField = isUpcoming ? 'upcoming_order_id' : 'order_id';
+    const vendorSelectionsTable = isUpcoming ? 'upcoming_order_vendor_selections' : 'order_vendor_selections';
+    const itemsTable = isUpcoming ? 'upcoming_order_items' : 'order_items';
+    const boxSelectionsTable = isUpcoming ? 'upcoming_order_box_selections' : 'order_box_selections';
+
+    const result = {
+        ...order,
+        items: [],
+        boxSelection: null
+    };
+
+    if (order.service_type === 'Food') {
+        const { data: vs } = await supabase
+            .from(vendorSelectionsTable)
+            .select('id')
+            .eq(orderIdField, order.id)
+            .eq('vendor_id', vendorId)
+            .maybeSingle();
+
+        if (vs) {
+            const vendorSelectionIdField = isUpcoming ? 'upcoming_vendor_selection_id' : 'vendor_selection_id';
+            const { data: items } = await supabase
+                .from(itemsTable)
+                .select('*')
+                .eq(vendorSelectionIdField, vs.id);
+
+            result.items = items || [];
+        }
+    } else if (order.service_type === 'Boxes') {
+        const { data: bs } = await supabase
+            .from(boxSelectionsTable)
+            .select('*')
+            .eq(orderIdField, order.id)
+            .eq('vendor_id', vendorId)
+            .maybeSingle();
+
+        if (bs) {
+            result.boxSelection = bs;
+        }
+    }
+
+    return result;
+}
 
 export async function isOrderUnderVendor(orderId: string, vendorId: string) {
     // Quick check if order is in list

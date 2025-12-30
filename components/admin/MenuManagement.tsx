@@ -29,7 +29,7 @@ export function MenuManagement() {
     async function loadData() {
         const [vData, mData] = await Promise.all([getVendors(), getMenuItems()]);
         // Filter: Menus only for companies that ship 'Food'
-        const foodVendors = vData.filter(v => v.serviceType === 'Food');
+        const foodVendors = vData.filter(v => v.serviceTypes.includes('Food'));
         setVendors(foodVendors);
         setMenuItems(mData);
         if (foodVendors.length > 0 && !selectedVendorId) {
@@ -107,7 +107,7 @@ export function MenuManagement() {
                             onClick={() => { setSelectedVendorId(v.id); resetForm(); }}
                         >
                             {v.name}
-                            <span className="badge" style={{ fontSize: '0.65rem' }}>{v.serviceType}</span>
+                            <span className="badge" style={{ fontSize: '0.65rem' }}>{v.serviceTypes.join(', ')}</span>
                         </button>
                     ))}
                 </div>

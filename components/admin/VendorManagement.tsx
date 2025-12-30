@@ -23,7 +23,7 @@ export function VendorManagement() {
         isActive: true,
         deliveryDays: [],
         allowsMultipleDeliveries: false,
-        serviceType: 'Food',
+        serviceTypes: ['Food'],
         minimumMeals: 0
     });
     const [multiCreateInput, setMultiCreateInput] = useState(''); // New state
@@ -45,7 +45,7 @@ export function VendorManagement() {
             isActive: true,
             deliveryDays: [],
             allowsMultipleDeliveries: false,
-            serviceType: 'Food',
+            serviceTypes: ['Food'],
             minimumMeals: 0
         });
         setIsCreating(false);
@@ -55,7 +55,7 @@ export function VendorManagement() {
     }
 
     function handleEditInit(vendor: Vendor) {
-        setFormData({ 
+        setFormData({
             ...vendor,
             password: '' // Don't populate password field for security
         });
@@ -88,7 +88,7 @@ export function VendorManagement() {
         // Parallel creation (could be optimized with a bulk insert endpoint ideally)
         await Promise.all(names.map(name => addVendor({
             name,
-            serviceType: 'Food', // Defaults
+            serviceTypes: ['Food'], // Defaults
             isActive: true,
             deliveryDays: ['Monday'], // Default? Or maybe prompt? Assume basic default.
             allowsMultipleDeliveries: false
@@ -109,11 +109,27 @@ export function VendorManagement() {
 
     function toggleDay(day: string) {
         const current = formData.deliveryDays || [];
-        if (current.includes(day)) {
-            setFormData({ ...formData, deliveryDays: current.filter(d => d !== day) });
-        } else {
-            setFormData({ ...formData, deliveryDays: [...current, day] });
-        }
+        const nextDays = current.includes(day)
+            ? current.filter(d => d !== day)
+            : [...current, day];
+
+        setFormData({
+            ...formData,
+            deliveryDays: nextDays,
+            allowsMultipleDeliveries: nextDays.length > 1
+        });
+    }
+
+    function toggleServiceType(type: ServiceType) {
+        const current = formData.serviceTypes || [];
+        const nextTypes = current.includes(type)
+            ? current.filter(t => t !== type)
+            : [...current, type];
+
+        // Ensure at least one type is selected
+        if (nextTypes.length === 0) return;
+
+        setFormData({ ...formData, serviceTypes: nextTypes });
     }
 
     return (
@@ -200,17 +216,22 @@ export function VendorManagement() {
                     </div>
                     {/* ... (Existing form fields for Type, Status, Days, Frequency) ... */}
                     <div className={styles.row}>
-                        <div className={styles.formGroup}>
-                            <label className="label">Service Type</label>
-                            <select
-                                className="input"
-                                value={formData.serviceType}
-                                onChange={e => setFormData({ ...formData, serviceType: e.target.value as ServiceType })}
-                            >
-                                {SERVICE_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
-                            </select>
+                        <div className={styles.formGroup} style={{ flex: 2 }}>
+                            <label className="label">Service Types</label>
+                            <div style={{ display: 'flex', gap: '1rem', marginTop: '0.5rem' }}>
+                                {SERVICE_TYPES.map(t => (
+                                    <label key={t} className={styles.checkboxLabel}>
+                                        <input
+                                            type="checkbox"
+                                            checked={formData.serviceTypes?.includes(t)}
+                                            onChange={() => toggleServiceType(t)}
+                                        />
+                                        {t}
+                                    </label>
+                                ))}
+                            </div>
                         </div>
-                        <div className={styles.formGroup}>
+                        <div className={styles.formGroup} style={{ flex: 1 }}>
                             <label className="label">Status</label>
                             <label className={styles.checkboxLabel}>
                                 <input
@@ -238,18 +259,11 @@ export function VendorManagement() {
                                 </label>
                             ))}
                         </div>
-                    </div>
-
-                    <div className={styles.formGroup}>
-                        <label className="label">Delivery Frequency</label>
-                        <label className={styles.checkboxLabel}>
-                            <input
-                                type="checkbox"
-                                checked={formData.allowsMultipleDeliveries}
-                                onChange={e => setFormData({ ...formData, allowsMultipleDeliveries: e.target.checked })}
-                            />
-                            Allow multiple deliveries per week?
-                        </label>
+                        {formData.deliveryDays && formData.deliveryDays.length > 0 && (
+                            <p className={styles.hint} style={{ marginTop: '0.5rem' }}>
+                                Frequency: {formData.allowsMultipleDeliveries ? 'Multiple deliveries per week' : 'Single delivery per week'} (calculated automatically)
+                            </p>
+                        )}
                     </div>
 
                     <div className={styles.formGroup}>
@@ -283,7 +297,7 @@ export function VendorManagement() {
                     <thead>
                         <tr>
                             <th>Name</th>
-                            <th>Type</th>
+                            <th>Services</th>
                             <th>Status</th>
                             <th>Days</th>
                             <th>Frequency</th>
@@ -295,10 +309,20 @@ export function VendorManagement() {
                         {vendors.map(vendor => (
                             <tr key={vendor.id}>
                                 <td style={{ fontWeight: 500 }}>{vendor.name}</td>
-                                <td><span className="badge">{vendor.serviceType}</span></td>
+                                <td>
+                                    <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+                                        {vendor.serviceTypes.map(t => (
+                                            <span key={t} className="badge" style={{ fontSize: '0.75rem' }}>{t}</span>
+                                        ))}
+                                    </div>
+                                </td>
                                 <td>{vendor.isActive ? <span style={{ color: 'var(--color-success)' }}>Active</span> : <span style={{ color: 'var(--text-tertiary)' }}>Inactive</span>}</td>
                                 <td>{vendor.deliveryDays.join(', ')}</td>
-                                <td>{vendor.allowsMultipleDeliveries ? 'Multiple' : 'Once'}</td>
+                                <td>
+                                    <span style={{ fontSize: '0.85rem' }}>
+                                        {vendor.allowsMultipleDeliveries ? 'Multiple' : 'Once'}
+                                    </span>
+                                </td>
                                 <td>{vendor.minimumMeals && vendor.minimumMeals > 0 ? vendor.minimumMeals : '-'}</td>
                                 <td style={{ textAlign: 'right' }}>
                                     <div className={styles.actions}>

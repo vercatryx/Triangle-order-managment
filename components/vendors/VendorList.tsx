@@ -26,7 +26,7 @@ export function VendorList() {
 
     const filteredVendors = vendors.filter(v => {
         const matchesSearch = v.name.toLowerCase().includes(search.toLowerCase()) ||
-            v.serviceType.toLowerCase().includes(search.toLowerCase()) ||
+            v.serviceTypes.some(t => t.toLowerCase().includes(search.toLowerCase())) ||
             v.deliveryDays.some(day => day.toLowerCase().includes(search.toLowerCase()));
         return matchesSearch;
     });
@@ -67,7 +67,7 @@ export function VendorList() {
             <div className={styles.list}>
                 <div className={styles.listHeader}>
                     <span style={{ minWidth: '250px', flex: 2, paddingRight: '16px' }}>Name</span>
-                    <span style={{ minWidth: '120px', flex: 1, paddingRight: '16px' }}>Service Type</span>
+                    <span style={{ minWidth: '120px', flex: 1, paddingRight: '16px' }}>Services</span>
                     <span style={{ minWidth: '200px', flex: 2, paddingRight: '16px' }}>Delivery Days</span>
                     <span style={{ minWidth: '150px', flex: 1, paddingRight: '16px' }}>Multiple Deliveries</span>
                     <span style={{ minWidth: '120px', flex: 1, paddingRight: '16px' }}>Minimum Order</span>
@@ -88,12 +88,16 @@ export function VendorList() {
                             {vendor.name}
                         </span>
                         <span
-                            title={vendor.serviceType}
+                            title={vendor.serviceTypes.join(', ')}
                             style={{ minWidth: '120px', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: '16px' }}
                         >
-                            <span className="badge badge-info">
-                                {vendor.serviceType}
-                            </span>
+                            <div style={{ display: 'flex', gap: '4px' }}>
+                                {vendor.serviceTypes.map(t => (
+                                    <span key={t} className="badge badge-info" style={{ fontSize: '0.7rem' }}>
+                                        {t}
+                                    </span>
+                                ))}
+                            </div>
                         </span>
                         <span
                             title={vendor.deliveryDays.join(', ') || 'No delivery days'}
