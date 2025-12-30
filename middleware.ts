@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { decrypt } from '@/lib/session';
 
 // 1. Specify protected and public routes
-const protectedRoutes = ['/admin', '/clients', '/billing', '/'];
+const protectedRoutes = ['/admin', '/clients', '/billing', '/vendors', '/'];
 const vendorRoutes = ['/vendor'];
 const publicRoutes = ['/login', '/vendor-login', '/api/auth/login', '/api/process-weekly-orders'];
 
@@ -18,7 +18,10 @@ export default async function middleware(req: NextRequest) {
 
     const isPublicRoute = publicRoutes.includes(path);
     const isVendorRoute = vendorRoutes.some(route => path.startsWith(route));
-    const isProtectedRoute = protectedRoutes.some(route => path.startsWith(route));
+    // Check protected routes - handle root path separately to avoid matching all paths
+    const isProtectedRoute = protectedRoutes.some(route => 
+        route === '/' ? path === '/' : path.startsWith(route)
+    );
 
     // 3. Decrypt the session from the cookie
     // In middleware, we must use req.cookies instead of cookies() from next/headers
@@ -41,16 +44,16 @@ export default async function middleware(req: NextRequest) {
     if (session?.userId) {
         // Vendor trying to access admin routes
         if (session.role === 'vendor' && isProtectedRoute) {
-            // Prevent redirect loop
-            if (path === '/vendor') {
+            // Don't redirect if already on a vendor route (shouldn't happen, but safety check)
+            if (isVendorRoute) {
                 return NextResponse.next();
             }
             return NextResponse.redirect(new URL('/vendor', req.url));
         }
         // Admin trying to access vendor routes
         if ((session.role === 'admin' || session.role === 'super-admin') && isVendorRoute) {
-            // Prevent redirect loop
-            if (path === '/clients') {
+            // Don't redirect if already on a protected route (shouldn't happen, but safety check)
+            if (isProtectedRoute) {
                 return NextResponse.next();
             }
             return NextResponse.redirect(new URL('/clients', req.url));

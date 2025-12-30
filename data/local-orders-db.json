@@ -2,26 +2,6 @@
   "orders": [],
   "upcomingOrders": [
     {
-      "id": "b8adfa51-9310-470f-a788-27ec7bfa0934",
-      "client_id": "CLIENT-005",
-      "service_type": "Boxes",
-      "case_id": "768",
-      "status": "scheduled",
-      "last_updated": "2025-12-30T17:02:07.717+00:00",
-      "updated_by": "Avraham",
-      "created_at": "2025-12-30T17:00:58.280475+00:00",
-      "scheduled_delivery_date": "2025-12-31",
-      "take_effect_date": "2026-01-07",
-      "delivery_distribution": null,
-      "total_value": 1,
-      "total_items": 1,
-      "notes": null,
-      "processed_order_id": null,
-      "processed_at": null,
-      "delivery_day": "Thursday",
-      "delivery_proof_url": null
-    },
-    {
       "id": "29ba67ae-e1db-4777-8816-3ae9516a3dd5",
       "client_id": "CLIENT-004",
       "service_type": "Food",
@@ -167,22 +147,6 @@
       "created_at": "2025-12-30T18:47:02.996612+00:00"
     }
   ],
-  "upcomingOrderBoxSelections": [
-    {
-      "id": "e6786b2a-8ea2-442f-861c-b74b90bafb19",
-      "upcoming_order_id": "b8adfa51-9310-470f-a788-27ec7bfa0934",
-      "box_type_id": "2bac2c76-95b2-4b33-88e5-dff90f545d5b",
-      "vendor_id": "4d35b74d-0779-4555-a87c-b672a635cda0",
-      "quantity": 1,
-      "created_at": "2025-12-30T17:02:12.675723+00:00",
-      "unit_value": 1,
-      "total_value": 1,
-      "items": {
-        "60d41a13-4656-4ec5-b95b-97b4942d33a3": 10,
-        "620f48f0-8c55-44ef-a82f-bfa0d36585c1": 2,
-        "6aa6edf3-8072-4c31-b861-416721adf30e": 1
-      }
-    }
-  ],
-  "lastSynced": "2025-12-30T20:07:34.559Z"
+  "upcomingOrderBoxSelections": [],
+  "lastSynced": "2025-12-30T20:28:09.596Z"
 }
