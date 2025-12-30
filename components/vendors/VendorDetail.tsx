@@ -1014,6 +1014,7 @@ export function VendorDetail({ vendorId }: Props) {
                                 <span style={{ minWidth: '120px', flex: 1 }}>Orders Count</span>
                                 <span style={{ minWidth: '150px', flex: 1.2 }}>Total Items</span>
                                 <span style={{ minWidth: '150px', flex: 1.2 }}>Total Value</span>
+                                <span style={{ minWidth: '200px', flex: 1.5 }}>Actions</span>
                             </div>
                             
                             {/* Orders grouped by delivery date */}
@@ -1045,6 +1046,33 @@ export function VendorDetail({ vendorId }: Props) {
                                             <span style={{ minWidth: '150px', flex: 1.2, fontWeight: 600 }}>
                                                 ${dateTotalValue.toFixed(2)}
                                             </span>
+                                            <span 
+                                                style={{ minWidth: '200px', flex: 1.5, display: 'flex', alignItems: 'center', gap: '0.5rem' }}
+                                                onClick={(e) => e.stopPropagation()}
+                                            >
+                                                <button 
+                                                    className="btn btn-secondary" 
+                                                    style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem' }}
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        exportOrdersByDateToCSV(dateKey, dateOrders);
+                                                    }}
+                                                >
+                                                    <Download size={14} /> Download CSV
+                                                </button>
+                                                <label 
+                                                    className="btn btn-secondary" 
+                                                    style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem', cursor: 'pointer', margin: 0 }}
+                                                >
+                                                    <Upload size={14} /> Import CSV
+                                                    <input
+                                                        type="file"
+                                                        accept=".csv"
+                                                        onChange={(e) => handleCSVImportForDate(e, dateKey)}
+                                                        style={{ display: 'none' }}
+                                                    />
+                                                </label>
+                                            </span>
                                         </div>
                                     </div>
                                 );
@@ -1073,6 +1101,33 @@ export function VendorDetail({ vendorId }: Props) {
                                         </span>
                                         <span style={{ minWidth: '150px', flex: 1.2, fontWeight: 600 }}>
                                             ${noDate.reduce((sum, o) => sum + parseFloat(o.total_value || 0), 0).toFixed(2)}
+                                        </span>
+                                        <span 
+                                            style={{ minWidth: '200px', flex: 1.5, display: 'flex', alignItems: 'center', gap: '0.5rem' }}
+                                            onClick={(e) => e.stopPropagation()}
+                                        >
+                                            <button 
+                                                className="btn btn-secondary" 
+                                                style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem' }}
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    exportOrdersByDateToCSV('no-date', noDate);
+                                                }}
+                                            >
+                                                <Download size={14} /> Download CSV
+                                            </button>
+                                            <label 
+                                                className="btn btn-secondary" 
+                                                style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem', cursor: 'pointer', margin: 0 }}
+                                            >
+                                                <Upload size={14} /> Import CSV
+                                                <input
+                                                    type="file"
+                                                    accept=".csv"
+                                                    onChange={(e) => handleCSVImportForDate(e, 'no-date')}
+                                                    style={{ display: 'none' }}
+                                                />
+                                            </label>
                                         </span>
                                     </div>
                                 </div>
