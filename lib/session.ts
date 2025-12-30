@@ -37,22 +37,27 @@ export async function createSession(userId: string, name: string = 'Admin', role
     const session = await encrypt({ userId, name, role, expires });
     const cookieStore = await cookies();
 
+    // Use secure cookies only in production (HTTPS), allow HTTP in development
+    const isProduction = process.env.NODE_ENV === 'production';
+    
     cookieStore.set('session', session, {
         httpOnly: true,
-        secure: true,
+        secure: isProduction,
         expires: expires,
-        sameSite: 'none',
+        sameSite: isProduction ? 'none' : 'lax',
         path: '/',
     });
 }
 
 export async function deleteSession() {
     const cookieStore = await cookies();
+    const isProduction = process.env.NODE_ENV === 'production';
+    
     cookieStore.set('session', '', {
         httpOnly: true,
-        secure: true,
+        secure: isProduction,
         expires: new Date(0),
-        sameSite: 'none',
+        sameSite: isProduction ? 'none' : 'lax',
         path: '/',
     });
 }

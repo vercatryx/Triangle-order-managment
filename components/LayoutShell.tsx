@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { Sidebar } from './Sidebar';
+import { VendorSidebar } from './VendorSidebar';
 import { usePathname } from 'next/navigation';
 import { DataCacheProvider } from '@/lib/data-cache';
 
@@ -9,7 +10,7 @@ export function LayoutShell({ children, userName, userRole }: { children: React.
     const [isCollapsed, setIsCollapsed] = useState(false);
     const pathname = usePathname();
 
-    if (pathname === '/login') {
+    if (pathname === '/login' || pathname === '/vendor-login') {
         return <>{children}</>;
     }
 
@@ -18,10 +19,13 @@ export function LayoutShell({ children, userName, userRole }: { children: React.
     const SIDEBAR_COLLAPSED_WIDTH = 80;
     const currentSidebarWidth = isCollapsed ? SIDEBAR_COLLAPSED_WIDTH : SIDEBAR_WIDTH;
 
+    const isVendorRoute = pathname.startsWith('/vendor');
+    const SidebarComponent = isVendorRoute ? VendorSidebar : Sidebar;
+
     return (
         <DataCacheProvider>
             <div style={{ display: 'flex', minHeight: '100vh' }}>
-                <Sidebar
+                <SidebarComponent
                     isCollapsed={isCollapsed}
                     toggle={() => setIsCollapsed(!isCollapsed)}
                     userName={userName}

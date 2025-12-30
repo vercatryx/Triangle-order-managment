@@ -57,6 +57,72 @@ export async function logout() {
     redirect('/login');
 }
 
+export async function vendorLogin(prevState: any, formData: FormData) {
+    const email = formData.get('email') as string;
+    const password = formData.get('password') as string;
+
+    if (!email || !password) {
+        return { message: 'Please enter an email and password.' };
+    }
+
+    try {
+        // Trim email and make lookup case-insensitive
+        const trimmedEmail = email.trim().toLowerCase();
+        
+        // Fetch vendors with emails and filter for case-insensitive exact match
+        // Using .not() to filter out null emails, then filter in JS for exact case-insensitive match
+        const { data: vendors, error } = await supabase
+            .from('vendors')
+            .select('id, name, email, password, is_active')
+            .not('email', 'is', null);
+
+        if (error) {
+            console.error('Vendor login database error:', error);
+            return { message: 'Invalid credentials.' };
+        }
+
+        if (!vendors || vendors.length === 0) {
+            return { message: 'Invalid credentials.' };
+        }
+
+        // Find exact match (case-insensitive) - trim and compare emails
+        const vendor = vendors.find(v => {
+            if (!v.email) return false;
+            return v.email.trim().toLowerCase() === trimmedEmail;
+        });
+
+        if (!vendor) {
+            console.error('Vendor not found for email:', trimmedEmail);
+            return { message: 'Invalid credentials.' };
+        }
+
+        if (!vendor.is_active) {
+            return { message: 'Your vendor account is inactive. Please contact an administrator.' };
+        }
+
+        if (!vendor.password || vendor.password.trim() === '') {
+            console.error('Vendor has no password set:', vendor.id);
+            return { message: 'No password set for this vendor. Please contact an administrator.' };
+        }
+
+        // Trim both input password and stored password hash before verification
+        const isMatch = await verifyPassword(password.trim(), vendor.password.trim());
+        if (!isMatch) {
+            console.error('Password mismatch for vendor:', vendor.id);
+            return { message: 'Invalid credentials.' };
+        }
+
+        await createSession(vendor.id, vendor.name || 'Vendor', 'vendor');
+        redirect('/vendor');
+    } catch (error) {
+        if (error instanceof Error && error.message === 'NEXT_REDIRECT') {
+            throw error;
+        }
+        console.error('Vendor login error:', error);
+        return { message: 'An unexpected error occurred.' };
+    }
+}
+
 // --- Admin Management Actions ---
 
 export async function getAdmins() {

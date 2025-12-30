@@ -79,6 +79,7 @@ export async function getVendors() {
     return data.map((v: any) => ({
         id: v.id,
         name: v.name,
+        email: v.email || null,
         serviceTypes: (v.service_type || '').split(',').map((s: string) => s.trim()).filter(Boolean) as ServiceType[],
         deliveryDays: v.delivery_days || [],
         allowsMultipleDeliveries: v.delivery_frequency === 'Multiple',
@@ -87,7 +88,7 @@ export async function getVendors() {
     }));
 }
 
-export async function addVendor(data: Omit<Vendor, 'id'>) {
+export async function addVendor(data: Omit<Vendor, 'id'> & { password?: string; email?: string }) {
     const payload: any = {
         name: data.name,
         service_type: (data.serviceTypes || []).join(','),
@@ -97,13 +98,23 @@ export async function addVendor(data: Omit<Vendor, 'id'>) {
         minimum_meals: data.minimumMeals ?? 0
     };
 
+    if (data.email !== undefined && data.email !== null) {
+        const trimmedEmail = data.email.trim();
+        payload.email = trimmedEmail === '' ? null : trimmedEmail;
+    }
+
+    if (data.password && data.password.trim() !== '') {
+        const { hashPassword } = await import('./password');
+        payload.password = await hashPassword(data.password.trim());
+    }
+
     const { data: res, error } = await supabase.from('vendors').insert([payload]).select().single();
     handleError(error);
     revalidatePath('/admin');
     return { ...data, id: res.id };
 }
 
-export async function updateVendor(id: string, data: Partial<Vendor>) {
+export async function updateVendor(id: string, data: Partial<Vendor & { password?: string }>) {
     const payload: any = {};
     if (data.name) payload.name = data.name;
     if (data.serviceTypes) payload.service_type = data.serviceTypes.join(',');
@@ -113,6 +124,17 @@ export async function updateVendor(id: string, data: Partial<Vendor>) {
     }
     if (data.isActive !== undefined) payload.is_active = data.isActive;
     if (data.minimumMeals !== undefined) payload.minimum_meals = data.minimumMeals;
+    if (data.email !== undefined) {
+        // Trim email and set to null if empty string
+        const trimmedEmail = data.email?.trim() || '';
+        payload.email = trimmedEmail === '' ? null : trimmedEmail;
+    }
+    // Only update password if it's provided and not empty
+    // Empty string means "don't change password" (for edit forms)
+    if (data.password !== undefined && data.password !== null && data.password.trim() !== '') {
+        const { hashPassword } = await import('./password');
+        payload.password = await hashPassword(data.password.trim());
+    }
 
     const { error } = await supabase.from('vendors').update(payload).eq('id', id);
     handleError(error);
@@ -2684,4 +2706,194 @@ export async function saveDeliveryProofUrlAndProcessOrder(
             errors: errors.length > 0 ? errors : undefined
         }
     };
+}
+
+// --- VENDOR-SPECIFIC ACTIONS (for vendor portal) ---
+
+export async function getVendorSession() {
+    const session = await getSession();
+    if (!session || session.role !== 'vendor') {
+        return null;
+    }
+    return session;
+}
+
+export async function getVendorOrders() {
+    const session = await getVendorSession();
+    if (!session) return [];
+    return await getOrdersByVendor(session.userId);
+}
+
+export async function getVendorMenuItems() {
+    const session = await getVendorSession();
+    if (!session) return [];
+    
+    const { data, error } = await supabase
+        .from('menu_items')
+        .select('*')
+        .eq('vendor_id', session.userId);
+    
+    if (error) return [];
+    return data.map((i: any) => ({
+        id: i.id,
+        vendorId: i.vendor_id,
+        name: i.name,
+        value: i.value,
+        priceEach: i.price_each ?? undefined,
+        isActive: i.is_active,
+        categoryId: i.category_id,
+        quotaValue: i.quota_value,
+        minimumOrder: i.minimum_order ?? 0
+    }));
+}
+
+export async function getVendorDetails() {
+    const session = await getVendorSession();
+    if (!session) return null;
+    
+    const { data, error } = await supabase
+        .from('vendors')
+        .select('*')
+        .eq('id', session.userId)
+        .single();
+    
+    if (error || !data) return null;
+    
+    return {
+        id: data.id,
+        name: data.name,
+        email: data.email,
+        serviceTypes: (data.service_type || '').split(',').map((s: string) => s.trim()).filter(Boolean) as ServiceType[],
+        deliveryDays: data.delivery_days || [],
+        allowsMultipleDeliveries: data.delivery_frequency === 'Multiple',
+        isActive: data.is_active,
+        minimumMeals: data.minimum_meals ?? 0
+    };
+}
+
+export async function updateVendorDetails(data: Partial<Vendor & { password?: string }>) {
+    const session = await getVendorSession();
+    if (!session) {
+        throw new Error('Unauthorized');
+    }
+    
+    const payload: any = {};
+    if (data.name) payload.name = data.name;
+    if (data.serviceTypes) payload.service_type = data.serviceTypes.join(',');
+    if (data.deliveryDays) payload.delivery_days = data.deliveryDays;
+    if (data.allowsMultipleDeliveries !== undefined) {
+        payload.delivery_frequency = data.allowsMultipleDeliveries ? 'Multiple' : 'Once';
+    }
+    if (data.isActive !== undefined) payload.is_active = data.isActive;
+    if (data.minimumMeals !== undefined) payload.minimum_meals = data.minimumMeals;
+    if (data.email !== undefined) payload.email = data.email;
+    if (data.password) {
+        const { hashPassword } = await import('./password');
+        payload.password = await hashPassword(data.password);
+    }
+
+    const { error } = await supabase
+        .from('vendors')
+        .update(payload)
+        .eq('id', session.userId);
+    
+    handleError(error);
+    revalidatePath('/vendor');
+    revalidatePath('/vendor/details');
+}
+
+export async function addVendorMenuItem(data: Omit<MenuItem, 'id'>) {
+    const session = await getVendorSession();
+    if (!session) {
+        throw new Error('Unauthorized');
+    }
+    
+    const payload: any = {
+        vendor_id: session.userId,
+        name: data.name,
+        value: data.value,
+        is_active: data.isActive,
+        category_id: data.categoryId || null,
+        quota_value: data.quotaValue,
+        minimum_order: data.minimumOrder ?? 0,
+        price_each: data.priceEach
+    };
+
+    if (!data.priceEach || data.priceEach <= 0) {
+        throw new Error('Price is required and must be greater than 0');
+    }
+    
+    const { data: res, error } = await supabase
+        .from('menu_items')
+        .insert([payload])
+        .select()
+        .single();
+    
+    handleError(error);
+    revalidatePath('/vendor');
+    revalidatePath('/vendor/items');
+    return { ...data, id: res.id };
+}
+
+export async function updateVendorMenuItem(id: string, data: Partial<MenuItem>) {
+    const session = await getVendorSession();
+    if (!session) {
+        throw new Error('Unauthorized');
+    }
+    
+    // Verify the menu item belongs to this vendor
+    const { data: item } = await supabase
+        .from('menu_items')
+        .select('vendor_id')
+        .eq('id', id)
+        .single();
+    
+    if (!item || item.vendor_id !== session.userId) {
+        throw new Error('Unauthorized: Menu item does not belong to this vendor');
+    }
+    
+    const payload: any = {};
+    if (data.name) payload.name = data.name;
+    if (data.value !== undefined) payload.value = data.value;
+    if (data.priceEach !== undefined) payload.price_each = data.priceEach;
+    if (data.isActive !== undefined) payload.is_active = data.isActive;
+    if (data.categoryId !== undefined) payload.category_id = data.categoryId || null;
+    if (data.quotaValue !== undefined) payload.quota_value = data.quotaValue;
+    if (data.minimumOrder !== undefined) payload.minimum_order = data.minimumOrder;
+
+    const { error } = await supabase
+        .from('menu_items')
+        .update(payload)
+        .eq('id', id);
+    
+    handleError(error);
+    revalidatePath('/vendor');
+    revalidatePath('/vendor/items');
+}
+
+export async function deleteVendorMenuItem(id: string) {
+    const session = await getVendorSession();
+    if (!session) {
+        throw new Error('Unauthorized');
+    }
+    
+    // Verify the menu item belongs to this vendor
+    const { data: item } = await supabase
+        .from('menu_items')
+        .select('vendor_id')
+        .eq('id', id)
+        .single();
+    
+    if (!item || item.vendor_id !== session.userId) {
+        throw new Error('Unauthorized: Menu item does not belong to this vendor');
+    }
+    
+    const { error } = await supabase
+        .from('menu_items')
+        .delete()
+        .eq('id', id);
+    
+    handleError(error);
+    revalidatePath('/vendor');
+    revalidatePath('/vendor/items');
 }
