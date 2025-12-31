@@ -7,7 +7,7 @@ import { ClientProfile, ClientStatus, Navigator, Vendor, BoxType, ClientFullDeta
 import { getClientsPaginated, getClientFullDetails, getStatuses, getNavigators, addClient, getVendors, getBoxTypes, getMenuItems } from '@/lib/actions';
 import { invalidateClientData } from '@/lib/cached-data';
 import { getClientSubmissions } from '@/lib/form-actions';
-import { Plus, Search, ChevronRight, CheckSquare, Square, StickyNote, Package } from 'lucide-react';
+import { Plus, Search, ChevronRight, CheckSquare, Square, StickyNote, Package, ArrowUpDown, ArrowUp, ArrowDown, Filter } from 'lucide-react';
 import styles from './ClientList.module.css';
 import { useRouter } from 'next/navigation';
 
@@ -39,6 +39,16 @@ export function ClientList({ currentUser }: ClientListProps) {
 
     // Views
     const [currentView, setCurrentView] = useState<'all' | 'eligible' | 'ineligible' | 'billing'>('all');
+
+    // Sorting State
+    const [sortColumn, setSortColumn] = useState<string | null>(null);
+    const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
+
+    // Filtering State
+    const [statusFilter, setStatusFilter] = useState<string | null>(null);
+    const [navigatorFilter, setNavigatorFilter] = useState<string | null>(null);
+    const [screeningFilter, setScreeningFilter] = useState<string | null>(null);
+    const [openFilterMenu, setOpenFilterMenu] = useState<string | null>(null);
 
     // New Client Modal state
     const [isCreating, setIsCreating] = useState(false);
@@ -81,6 +91,23 @@ export function ClientList({ currentUser }: ClientListProps) {
             loadClientSubmissions();
         }
     }, [clients.length, isLoading]);
+
+    // Close filter menus when clicking outside
+    useEffect(() => {
+        function handleClickOutside(event: MouseEvent) {
+            const target = event.target as HTMLElement;
+            // Check if click is inside any filter dropdown or menu
+            const filterDropdown = target.closest('[data-filter-dropdown]');
+            if (!filterDropdown) {
+                setOpenFilterMenu(null);
+            }
+        }
+
+        if (openFilterMenu) {
+            document.addEventListener('click', handleClickOutside);
+            return () => document.removeEventListener('click', handleClickOutside);
+        }
+    }, [openFilterMenu]);
 
 
     async function loadInitialData() {
@@ -181,7 +208,65 @@ export function ClientList({ currentUser }: ClientListProps) {
             matchesView = status ? !status.deliveriesAllowed : false;
         }
 
-        return matchesSearch && matchesView;
+        // Filter by Status
+        const matchesStatusFilter = !statusFilter || c.statusId === statusFilter;
+
+        // Filter by Navigator
+        const matchesNavigatorFilter = !navigatorFilter || c.navigatorId === navigatorFilter;
+
+        // Filter by Screening Status
+        const matchesScreeningFilter = !screeningFilter || (c.screeningStatus || 'not_started') === screeningFilter;
+
+        return matchesSearch && matchesView && matchesStatusFilter && matchesNavigatorFilter && matchesScreeningFilter;
+    }).sort((a, b) => {
+        if (!sortColumn) return 0;
+
+        let comparison = 0;
+
+        switch (sortColumn) {
+            case 'name':
+                comparison = a.fullName.localeCompare(b.fullName);
+                break;
+            case 'status':
+                const statusA = getStatusName(a.statusId);
+                const statusB = getStatusName(b.statusId);
+                comparison = statusA.localeCompare(statusB);
+                break;
+            case 'navigator':
+                const navA = getNavigatorName(a.navigatorId);
+                const navB = getNavigatorName(b.navigatorId);
+                comparison = navA.localeCompare(navB);
+                break;
+            case 'screening':
+                const screeningA = a.screeningStatus || 'not_started';
+                const screeningB = b.screeningStatus || 'not_started';
+                comparison = screeningA.localeCompare(screeningB);
+                break;
+            case 'email':
+                const emailA = a.email || '';
+                const emailB = b.email || '';
+                comparison = emailA.localeCompare(emailB);
+                break;
+            case 'phone':
+                const phoneA = a.phoneNumber || '';
+                const phoneB = b.phoneNumber || '';
+                comparison = phoneA.localeCompare(phoneB);
+                break;
+            case 'address':
+                const addressA = a.address || '';
+                const addressB = b.address || '';
+                comparison = addressA.localeCompare(addressB);
+                break;
+            case 'notes':
+                const notesA = a.notes || '';
+                const notesB = b.notes || '';
+                comparison = notesA.localeCompare(notesB);
+                break;
+            default:
+                return 0;
+        }
+
+        return sortDirection === 'asc' ? comparison : -comparison;
     });
 
     async function handleCreate() {
@@ -221,6 +306,39 @@ export function ClientList({ currentUser }: ClientListProps) {
 
     function getNavigatorName(id: string) {
         return navigators.find(n => n.id === id)?.name || 'Unassigned';
+    }
+
+    function handleSort(column: string) {
+        if (sortColumn === column) {
+            // Toggle direction
+            setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
+        } else {
+            // New column, default to ascending
+            setSortColumn(column);
+            setSortDirection('asc');
+        }
+    }
+
+    function getSortIcon(column: string) {
+        if (sortColumn !== column) {
+            return <ArrowUpDown size={14} />;
+        }
+        return sortDirection === 'asc' ? <ArrowUp size={14} /> : <ArrowDown size={14} />;
+    }
+
+    function getScreeningStatusLabel(status: string) {
+        switch (status) {
+            case 'not_started':
+                return 'Not Started';
+            case 'waiting_approval':
+                return 'Waiting for Approval';
+            case 'approved':
+                return 'Approved';
+            case 'rejected':
+                return 'Rejected';
+            default:
+                return status;
+        }
     }
 
     function getOrderSummaryText(client: ClientProfile) {
@@ -499,16 +617,225 @@ export function ClientList({ currentUser }: ClientListProps) {
 
             <div className={styles.list}>
                 <div className={styles.listHeader}>
-                    <span style={{ minWidth: '200px', flex: 2, paddingRight: '16px' }}>Name</span>
-                    <span style={{ minWidth: '140px', flex: 1, paddingRight: '16px' }}>Status</span>
-                    <span style={{ minWidth: '160px', flex: 1, paddingRight: '16px' }}>Navigator</span>
-                    <span style={{ minWidth: '100px', flex: 0.8, paddingRight: '16px' }}>Screening</span>
-                    <span style={{ minWidth: '350px', flex: 3, paddingRight: '16px' }}>Active Order</span>
-                    <span style={{ minWidth: '180px', flex: 1.2, paddingRight: '16px' }}>Email</span>
-                    <span style={{ minWidth: '140px', flex: 1, paddingRight: '16px' }}>Phone</span>
-                    <span style={{ minWidth: '250px', flex: 2, paddingRight: '16px' }}>Address</span>
-                    <span style={{ minWidth: '200px', flex: 2 }}>Notes</span>
-                    <span style={{ width: '40px' }}></span>
+                    {/* Name - Sort only */}
+                    <div className={styles.columnHeader} style={{ minWidth: '200px', flex: 2, paddingRight: '16px' }}>
+                        <span>Name</span>
+                        <button
+                            className={`${styles.sortButton} ${sortColumn === 'name' ? styles.sortButtonActive : ''}`}
+                            onClick={() => handleSort('name')}
+                            title="Sort by Name"
+                        >
+                            {getSortIcon('name')}
+                        </button>
+                    </div>
+
+                    {/* Status - Sort + Filter */}
+                    <div className={styles.columnHeader} style={{ minWidth: '140px', flex: 1, paddingRight: '16px' }}>
+                        <span>Status</span>
+                        <div className={styles.headerButtons}>
+                            <button
+                                className={`${styles.sortButton} ${sortColumn === 'status' ? styles.sortButtonActive : ''}`}
+                                onClick={() => handleSort('status')}
+                                title="Sort by Status"
+                            >
+                                {getSortIcon('status')}
+                            </button>
+                            <div className={styles.filterDropdown} data-filter-dropdown>
+                                <button
+                                    className={`${styles.filterButton} ${statusFilter ? styles.filterButtonActive : ''}`}
+                                    title="Filter by Status"
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        setOpenFilterMenu(openFilterMenu === 'status' ? null : 'status');
+                                    }}
+                                >
+                                    <Filter size={14} />
+                                </button>
+                                {openFilterMenu === 'status' && (
+                                    <div className={styles.filterMenu} onClick={(e) => e.stopPropagation()}>
+                                        <button
+                                            className={!statusFilter ? styles.filterOptionActive : styles.filterOption}
+                                            onClick={() => {
+                                                setStatusFilter(null);
+                                                setOpenFilterMenu(null);
+                                            }}
+                                        >
+                                            All
+                                        </button>
+                                        {statuses.map(status => (
+                                            <button
+                                                key={status.id}
+                                                className={statusFilter === status.id ? styles.filterOptionActive : styles.filterOption}
+                                                onClick={() => {
+                                                    setStatusFilter(status.id);
+                                                    setOpenFilterMenu(null);
+                                                }}
+                                            >
+                                                {status.name}
+                                            </button>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Navigator - Sort + Filter */}
+                    <div className={styles.columnHeader} style={{ minWidth: '160px', flex: 1, paddingRight: '16px' }}>
+                        <span>Navigator</span>
+                        <div className={styles.headerButtons}>
+                            <button
+                                className={`${styles.sortButton} ${sortColumn === 'navigator' ? styles.sortButtonActive : ''}`}
+                                onClick={() => handleSort('navigator')}
+                                title="Sort by Navigator"
+                            >
+                                {getSortIcon('navigator')}
+                            </button>
+                            <div className={styles.filterDropdown} data-filter-dropdown>
+                                <button
+                                    className={`${styles.filterButton} ${navigatorFilter ? styles.filterButtonActive : ''}`}
+                                    title="Filter by Navigator"
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        setOpenFilterMenu(openFilterMenu === 'navigator' ? null : 'navigator');
+                                    }}
+                                >
+                                    <Filter size={14} />
+                                </button>
+                                {openFilterMenu === 'navigator' && (
+                                    <div className={styles.filterMenu} onClick={(e) => e.stopPropagation()}>
+                                        <button
+                                            className={!navigatorFilter ? styles.filterOptionActive : styles.filterOption}
+                                            onClick={() => {
+                                                setNavigatorFilter(null);
+                                                setOpenFilterMenu(null);
+                                            }}
+                                        >
+                                            All
+                                        </button>
+                                        {navigators.map(navigator => (
+                                            <button
+                                                key={navigator.id}
+                                                className={navigatorFilter === navigator.id ? styles.filterOptionActive : styles.filterOption}
+                                                onClick={() => {
+                                                    setNavigatorFilter(navigator.id);
+                                                    setOpenFilterMenu(null);
+                                                }}
+                                            >
+                                                {navigator.name}
+                                            </button>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Screening - Sort + Filter */}
+                    <div className={styles.columnHeader} style={{ minWidth: '100px', flex: 0.8, paddingRight: '16px' }}>
+                        <span>Screening</span>
+                        <div className={styles.headerButtons}>
+                            <button
+                                className={`${styles.sortButton} ${sortColumn === 'screening' ? styles.sortButtonActive : ''}`}
+                                onClick={() => handleSort('screening')}
+                                title="Sort by Screening Status"
+                            >
+                                {getSortIcon('screening')}
+                            </button>
+                            <div className={styles.filterDropdown} data-filter-dropdown>
+                                <button
+                                    className={`${styles.filterButton} ${screeningFilter ? styles.filterButtonActive : ''}`}
+                                    title="Filter by Screening Status"
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        setOpenFilterMenu(openFilterMenu === 'screening' ? null : 'screening');
+                                    }}
+                                >
+                                    <Filter size={14} />
+                                </button>
+                                {openFilterMenu === 'screening' && (
+                                    <div className={styles.filterMenu} onClick={(e) => e.stopPropagation()}>
+                                        <button
+                                            className={!screeningFilter ? styles.filterOptionActive : styles.filterOption}
+                                            onClick={() => {
+                                                setScreeningFilter(null);
+                                                setOpenFilterMenu(null);
+                                            }}
+                                        >
+                                            All
+                                        </button>
+                                        {['not_started', 'waiting_approval', 'approved', 'rejected'].map(status => (
+                                            <button
+                                                key={status}
+                                                className={screeningFilter === status ? styles.filterOptionActive : styles.filterOption}
+                                                onClick={() => {
+                                                    setScreeningFilter(status);
+                                                    setOpenFilterMenu(null);
+                                                }}
+                                            >
+                                                {getScreeningStatusLabel(status)}
+                                            </button>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Active Order - Nothing */}
+                    <div className={styles.columnHeader} style={{ minWidth: '350px', flex: 3, paddingRight: '16px' }}>
+                        <span>Active Order</span>
+                    </div>
+
+                    {/* Email - Sort only */}
+                    <div className={styles.columnHeader} style={{ minWidth: '180px', flex: 1.2, paddingRight: '16px' }}>
+                        <span>Email</span>
+                        <button
+                            className={`${styles.sortButton} ${sortColumn === 'email' ? styles.sortButtonActive : ''}`}
+                            onClick={() => handleSort('email')}
+                            title="Sort by Email"
+                        >
+                            {getSortIcon('email')}
+                        </button>
+                    </div>
+
+                    {/* Phone - Sort only */}
+                    <div className={styles.columnHeader} style={{ minWidth: '140px', flex: 1, paddingRight: '16px' }}>
+                        <span>Phone</span>
+                        <button
+                            className={`${styles.sortButton} ${sortColumn === 'phone' ? styles.sortButtonActive : ''}`}
+                            onClick={() => handleSort('phone')}
+                            title="Sort by Phone"
+                        >
+                            {getSortIcon('phone')}
+                        </button>
+                    </div>
+
+                    {/* Address - Sort only */}
+                    <div className={styles.columnHeader} style={{ minWidth: '250px', flex: 2, paddingRight: '16px' }}>
+                        <span>Address</span>
+                        <button
+                            className={`${styles.sortButton} ${sortColumn === 'address' ? styles.sortButtonActive : ''}`}
+                            onClick={() => handleSort('address')}
+                            title="Sort by Address"
+                        >
+                            {getSortIcon('address')}
+                        </button>
+                    </div>
+
+                    {/* Notes - Sort only */}
+                    <div className={styles.columnHeader} style={{ minWidth: '200px', flex: 2 }}>
+                        <span>Notes</span>
+                        <button
+                            className={`${styles.sortButton} ${sortColumn === 'notes' ? styles.sortButtonActive : ''}`}
+                            onClick={() => handleSort('notes')}
+                            title="Sort by Notes"
+                        >
+                            {getSortIcon('notes')}
+                        </button>
+                    </div>
+
+                    <div style={{ width: '40px' }}></div>
                 </div>
                 {filteredClients.map(client => {
                     const status = statuses.find(s => s.id === client.statusId);

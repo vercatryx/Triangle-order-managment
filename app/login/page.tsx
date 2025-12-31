@@ -61,7 +61,6 @@ export default function LoginPage() {
                         Welcome Back
                     </h2>
                     <p className={styles.subtitle}>
-                        Admin & Vendor Login
                     </p>
                 </div>
 
