@@ -16,7 +16,7 @@ export default async function middleware(req: NextRequest) {
         return NextResponse.next();
     }
 
-    const isPublicRoute = publicRoutes.includes(path) || path.startsWith('/verify-order/');
+    const isPublicRoute = publicRoutes.includes(path) || path.startsWith('/verify-order/') || path.startsWith('/client-portal');
     const isVendorRoute = vendorRoutes.some(route => path.startsWith(route));
     // Check protected routes - handle root path separately to avoid matching all paths
     const isProtectedRoute = protectedRoutes.some(route =>
@@ -50,6 +50,16 @@ export default async function middleware(req: NextRequest) {
             }
             return NextResponse.redirect(new URL('/vendor', req.url));
         }
+        // Navigator trying to access admin/vendor routes
+        if (session.role === 'navigator') {
+            // Navigators can ONLY access /clients and /client-portal
+            if (path.startsWith('/clients') || path.startsWith('/client-portal')) {
+                return NextResponse.next();
+            }
+            // Redirect to clients dashboard
+            return NextResponse.redirect(new URL('/clients', req.url));
+        }
+
         // Admin trying to access vendor routes
         if ((session.role === 'admin' || session.role === 'super-admin') && isVendorRoute) {
             // Don't redirect if already on a protected route (shouldn't happen, but safety check)
@@ -59,7 +69,10 @@ export default async function middleware(req: NextRequest) {
             return NextResponse.redirect(new URL('/clients', req.url));
         }
         // Redirect authenticated users away from login pages
-        if (path === '/login' && (session.role === 'admin' || session.role === 'super-admin')) {
+        if (path === '/login' && (session.role === 'admin' || session.role === 'super-admin' || session.role === 'navigator')) {
+            if (session.role === 'navigator') {
+                return NextResponse.redirect(new URL('/clients', req.url));
+            }
             return NextResponse.redirect(new URL('/clients', req.url));
         }
         if (path === '/vendor-login' && session.role === 'vendor') {

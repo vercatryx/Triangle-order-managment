@@ -1,11 +1,57 @@
 'use client';
 
-import { useActionState } from 'react';
-import { login } from '@/lib/auth-actions';
+import { useActionState, useState } from 'react';
+import { useRouter } from 'next/navigation';
+import { login, checkEmailIdentity } from '@/lib/auth-actions';
 import styles from './page.module.css';
 
 export default function LoginPage() {
+    const router = useRouter();
     const [state, action, isPending] = useActionState(login, undefined);
+    const [step, setStep] = useState<1 | 2>(1);
+    const [username, setUsername] = useState('');
+    const [checkingIdentity, setCheckingIdentity] = useState(false);
+    const [identityError, setIdentityError] = useState('');
+
+    const handleNext = async () => {
+        if (!username.trim()) {
+            setIdentityError('Please enter a username or email.');
+            return;
+        }
+
+        setCheckingIdentity(true);
+        setIdentityError('');
+
+        try {
+            console.log('Checking identity for:', username);
+            const result = await checkEmailIdentity(username);
+            console.log('Identity result:', result);
+
+            if (result.exists) {
+                if (result.type === 'client' && result.id) {
+                    console.log('Redirecting to client portal:', result.id);
+                    // Redirect to client portal
+                    router.push(`/client-portal/${result.id}`);
+                    // Don't turn off checkingIdentity so we show loading state during redirect
+                    return;
+                }
+                setStep(2);
+                setCheckingIdentity(false);
+            } else {
+                setIdentityError('No account found with that email/username.');
+                setCheckingIdentity(false);
+            }
+        } catch (err) {
+            console.error('Identity check error:', err);
+            setIdentityError('An error occurred. Please try again.');
+            setCheckingIdentity(false);
+        }
+    };
+
+    const handleBack = () => {
+        setStep(1);
+        setIdentityError('');
+    };
 
     return (
         <div className={styles.container}>
@@ -15,60 +61,115 @@ export default function LoginPage() {
                         Welcome Back
                     </h2>
                     <p className={styles.subtitle}>
-                        Sign in to access your account
+                        Admin & Vendor Login
                     </p>
                 </div>
 
                 <form className={styles.form} action={action}>
                     <div className={styles.formGroup}>
-                        <div>
-                            <label htmlFor="username" className={styles.label}>
-                                Username
-                            </label>
-                            <input
-                                id="username"
-                                name="username"
-                                type="text"
-                                required
-                                className={styles.inputLarge}
-                                placeholder="Enter your username"
-                            />
-                        </div>
-                        <div style={{ marginTop: '1.5rem' }}>
-                            <label htmlFor="password" className={styles.label}>
-                                Password
-                            </label>
-                            <input
-                                id="password"
-                                name="password"
-                                type="password"
-                                required
-                                className={styles.inputLarge}
-                                placeholder="Enter your password"
-                            />
-                        </div>
+                        {step === 1 && (
+                            <div className="animate-in fade-in slide-in-from-right-4 duration-300">
+                                <label htmlFor="username" className={styles.label}>
+                                    Username or Email
+                                </label>
+                                <input
+                                    id="username"
+                                    name="username"
+                                    type="text"
+                                    required
+                                    className={styles.inputLarge}
+                                    placeholder="Enter your username or email"
+                                    value={username}
+                                    onChange={(e) => setUsername(e.target.value)}
+                                    // Allow Enter key to trigger Next
+                                    onKeyDown={(e) => {
+                                        if (e.key === 'Enter') {
+                                            e.preventDefault();
+                                            handleNext();
+                                        }
+                                    }}
+                                    disabled={checkingIdentity}
+                                    autoFocus
+                                />
+                                {identityError && (
+                                    <div className={styles.errorMessage} style={{ marginTop: '0.5rem' }}>
+                                        {identityError}
+                                    </div>
+                                )}
+                            </div>
+                        )}
+
+                        {step === 2 && (
+                            <div className="animate-in fade-in slide-in-from-right-4 duration-300">
+                                <div className={styles.userInfoDisplay} style={{ marginBottom: '1.5rem', padding: '0.75rem', background: 'var(--background-secondary)', borderRadius: 'var(--radius-md)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                                    <span style={{ fontWeight: 500, fontSize: '0.9rem' }}>{username}</span>
+                                    <button
+                                        type="button"
+                                        onClick={handleBack}
+                                        style={{ background: 'none', border: 'none', color: 'var(--color-primary)', fontSize: '0.8rem', cursor: 'pointer', fontWeight: 600 }}
+                                    >
+                                        Change
+                                    </button>
+                                </div>
+                                <input type="hidden" name="username" value={username} />
+                                <div>
+                                    <label htmlFor="password" className={styles.label}>
+                                        Password
+                                    </label>
+                                    <input
+                                        id="password"
+                                        name="password"
+                                        type="password"
+                                        required
+                                        className={styles.inputLarge}
+                                        placeholder="Enter your password"
+                                        autoFocus
+                                    />
+                                </div>
+                            </div>
+                        )}
                     </div>
 
-                    {state?.message && (
+                    {step === 2 && state?.message && (
                         <div className={styles.errorMessage}>
                             {state.message}
                         </div>
                     )}
 
-                    <button
-                        type="submit"
-                        disabled={isPending}
-                        className={styles.btnLarge}
-                    >
-                        {isPending ? (
-                            <>
-                                <div className={styles.spinner} />
-                                Signing in...
-                            </>
+                    <div style={{ marginTop: '1.5rem' }}>
+                        {step === 1 ? (
+                            <button
+                                type="button"
+                                onClick={(e) => { e.preventDefault(); handleNext(); }}
+                                disabled={checkingIdentity}
+                                className={styles.btnLarge}
+                            >
+                                {checkingIdentity ? (
+                                    <>
+                                        <div className={styles.spinner} />
+                                        Checking...
+                                    </>
+                                ) : (
+                                    'Next'
+                                )}
+                            </button>
                         ) : (
-                            'Sign In'
+                            <button
+                                type="submit"
+                                disabled={isPending}
+                                className={styles.btnLarge}
+                            >
+                                {isPending ? (
+                                    <>
+                                        <div className={styles.spinner} />
+                                        Signing in...
+                                    </>
+                                ) : (
+                                    'Sign In'
+                                )}
+                            </button>
                         )}
-                    </button>
+                    </div>
 
                     <p className={styles.secureText}>
                         <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">

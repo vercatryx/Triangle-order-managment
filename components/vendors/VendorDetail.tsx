@@ -10,11 +10,13 @@ import styles from './VendorDetail.module.css';
 
 interface Props {
     vendorId: string;
+    isVendorView?: boolean;
+    vendor?: Vendor;
 }
 
-export function VendorDetail({ vendorId }: Props) {
+export function VendorDetail({ vendorId, isVendorView, vendor: initialVendor }: Props) {
     const router = useRouter();
-    const [vendor, setVendor] = useState<Vendor | null>(null);
+    const [vendor, setVendor] = useState<Vendor | null>(initialVendor || null);
     const [orders, setOrders] = useState<any[]>([]);
     const [clients, setClients] = useState<ClientProfile[]>([]);
     const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
@@ -53,16 +55,30 @@ export function VendorDetail({ vendorId }: Props) {
     async function loadData() {
         setIsLoading(true);
         try {
-            const [vendorsData, ordersData, clientsData, menuItemsData, boxTypesData] = await Promise.all([
-                getVendors(),
+            const promises: Promise<any>[] = [
                 getOrdersByVendor(vendorId),
                 getClients(),
                 getMenuItems(),
                 getBoxTypes()
-            ]);
+            ];
 
-            const foundVendor = vendorsData.find(v => v.id === vendorId);
-            setVendor(foundVendor || null);
+            let vendorsResultIndex = -1;
+            if (!initialVendor) {
+                promises.push(getVendors());
+                vendorsResultIndex = 4;
+            }
+
+            const results = await Promise.all(promises);
+            const ordersData = results[0];
+            const clientsData = results[1];
+            const menuItemsData = results[2];
+            const boxTypesData = results[3];
+
+            if (!initialVendor && vendorsResultIndex !== -1 && results[vendorsResultIndex]) {
+                const vendorsData = results[vendorsResultIndex];
+                const foundVendor = vendorsData.find((v: Vendor) => v.id === vendorId);
+                setVendor(foundVendor || null);
+            }
             setOrders(ordersData);
             setClients(clientsData);
             setMenuItems(menuItemsData);
@@ -158,7 +174,7 @@ export function VendorDetail({ vendorId }: Props) {
         if (order.service_type === 'Food') {
             // Food orders - items from order_items or upcoming_order_items
             const items = order.items || [];
-            
+
             if (items.length === 0) {
                 return <div className={styles.noItems}>No items found for this order</div>;
             }
@@ -390,8 +406,8 @@ export function VendorDetail({ vendorId }: Props) {
         const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
         const link = document.createElement('a');
         const url = URL.createObjectURL(blob);
-        const formattedDate = dateKey === 'no-date' 
-            ? 'no_delivery_date' 
+        const formattedDate = dateKey === 'no-date'
+            ? 'no_delivery_date'
             : formatDate(dateKey).replace(/\s/g, '_');
         link.setAttribute('href', url);
         link.setAttribute('download', `${vendor?.name || 'vendor'}_orders_${formattedDate}.csv`);
@@ -532,7 +548,7 @@ export function VendorDetail({ vendorId }: Props) {
                         }
                     } else {
                         // For specific dates, check that order matches the date
-                        const orderDateKey = order.scheduled_delivery_date 
+                        const orderDateKey = order.scheduled_delivery_date
                             ? new Date(order.scheduled_delivery_date).toISOString().split('T')[0]
                             : null;
                         if (orderDateKey !== dateKey) {
@@ -843,9 +859,11 @@ export function VendorDetail({ vendorId }: Props) {
         return (
             <div className={styles.container}>
                 <div className={styles.header}>
-                    <button className={styles.backButton} onClick={() => router.push('/vendors')}>
-                        <ArrowLeft size={16} /> Back to Vendors
-                    </button>
+                    {!isVendorView && (
+                        <button className={styles.backButton} onClick={() => router.push('/vendors')}>
+                            <ArrowLeft size={16} /> Back to Vendors
+                        </button>
+                    )}
                 </div>
                 <div className={styles.errorMessage}>
                     <p>Vendor not found</p>
@@ -860,9 +878,11 @@ export function VendorDetail({ vendorId }: Props) {
     return (
         <div className={styles.container}>
             <div className={styles.header}>
-                <button className={styles.backButton} onClick={() => router.push('/vendors')}>
-                    <ArrowLeft size={16} /> Back to Vendors
-                </button>
+                {!isVendorView && (
+                    <button className={styles.backButton} onClick={() => router.push('/vendors')}>
+                        <ArrowLeft size={16} /> Back to Vendors
+                    </button>
+                )}
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flex: 1 }}>
                     <h1 className={styles.title}>
                         <Truck size={24} style={{ marginRight: '12px', verticalAlign: 'middle' }} />
@@ -949,7 +969,7 @@ export function VendorDetail({ vendorId }: Props) {
                                 <span style={{ minWidth: '150px', flex: 1.2 }}>Total Value</span>
                                 <span style={{ minWidth: '200px', flex: 1.5 }}>Actions</span>
                             </div>
-                            
+
                             {/* Orders grouped by delivery date */}
                             {sortedDates.map((dateKey) => {
                                 const dateOrders = grouped[dateKey];
@@ -960,7 +980,7 @@ export function VendorDetail({ vendorId }: Props) {
                                     <div key={dateKey}>
                                         <div
                                             className={styles.orderRow}
-                                            onClick={() => router.push(`/vendors/${vendorId}/delivery/${dateKey}`)}
+                                            onClick={() => router.push(isVendorView ? `/vendor/delivery/${dateKey}` : `/vendors/${vendorId}/delivery/${dateKey}`)}
                                             style={{ cursor: 'pointer' }}
                                         >
                                             <span style={{ width: '40px', flex: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -979,12 +999,12 @@ export function VendorDetail({ vendorId }: Props) {
                                             <span style={{ minWidth: '150px', flex: 1.2, fontWeight: 600 }}>
                                                 ${dateTotalValue.toFixed(2)}
                                             </span>
-                                            <span 
+                                            <span
                                                 style={{ minWidth: '200px', flex: 1.5, display: 'flex', alignItems: 'center', gap: '0.5rem' }}
                                                 onClick={(e) => e.stopPropagation()}
                                             >
-                                                <button 
-                                                    className="btn btn-secondary" 
+                                                <button
+                                                    className="btn btn-secondary"
                                                     style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem' }}
                                                     onClick={(e) => {
                                                         e.stopPropagation();
@@ -993,8 +1013,8 @@ export function VendorDetail({ vendorId }: Props) {
                                                 >
                                                     <Download size={14} /> Download CSV
                                                 </button>
-                                                <label 
-                                                    className="btn btn-secondary" 
+                                                <label
+                                                    className="btn btn-secondary"
                                                     style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem', cursor: 'pointer', margin: 0 }}
                                                 >
                                                     <Upload size={14} /> Import CSV
@@ -1016,7 +1036,7 @@ export function VendorDetail({ vendorId }: Props) {
                                 <div>
                                     <div
                                         className={styles.orderRow}
-                                        onClick={() => router.push(`/vendors/${vendorId}/delivery/no-date`)}
+                                        onClick={() => router.push(isVendorView ? `/vendor/delivery/no-date` : `/vendors/${vendorId}/delivery/no-date`)}
                                         style={{ cursor: 'pointer' }}
                                     >
                                         <span style={{ width: '40px', flex: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -1035,12 +1055,12 @@ export function VendorDetail({ vendorId }: Props) {
                                         <span style={{ minWidth: '150px', flex: 1.2, fontWeight: 600 }}>
                                             ${noDate.reduce((sum, o) => sum + parseFloat(o.total_value || 0), 0).toFixed(2)}
                                         </span>
-                                        <span 
+                                        <span
                                             style={{ minWidth: '200px', flex: 1.5, display: 'flex', alignItems: 'center', gap: '0.5rem' }}
                                             onClick={(e) => e.stopPropagation()}
                                         >
-                                            <button 
-                                                className="btn btn-secondary" 
+                                            <button
+                                                className="btn btn-secondary"
                                                 style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem' }}
                                                 onClick={(e) => {
                                                     e.stopPropagation();
@@ -1049,8 +1069,8 @@ export function VendorDetail({ vendorId }: Props) {
                                             >
                                                 <Download size={14} /> Download CSV
                                             </button>
-                                            <label 
-                                                className="btn btn-secondary" 
+                                            <label
+                                                className="btn btn-secondary"
                                                 style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem', cursor: 'pointer', margin: 0 }}
                                             >
                                                 <Upload size={14} /> Import CSV

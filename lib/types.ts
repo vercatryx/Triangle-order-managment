@@ -122,6 +122,8 @@ export interface BoxType {
 export interface Navigator {
   id: string;
   name: string;
+  email?: string | null;
+  password?: string | null; // Optional, hashed
   isActive: boolean;
 }
 

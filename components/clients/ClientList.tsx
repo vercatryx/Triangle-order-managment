@@ -11,7 +11,11 @@ import { Plus, Search, ChevronRight, CheckSquare, Square, StickyNote, Package } 
 import styles from './ClientList.module.css';
 import { useRouter } from 'next/navigation';
 
-export function ClientList() {
+interface ClientListProps {
+    currentUser?: { role: string; id: string } | null;
+}
+
+export function ClientList({ currentUser }: ClientListProps) {
     const router = useRouter();
     const [clients, setClients] = useState<ClientProfile[]>([]);
     const [statuses, setStatuses] = useState<ClientStatus[]>([]);
@@ -571,6 +575,7 @@ export function ClientList() {
                                 invalidateClientData();
                                 loadInitialData();
                             }}
+                            currentUser={currentUser}
                         />
                     </div>
                     <div className={styles.overlay} onClick={() => setSelectedClientId(null)}></div>

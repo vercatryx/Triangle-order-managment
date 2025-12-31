@@ -5,6 +5,7 @@ import { supabase } from './supabase';
 import { ClientStatus, Vendor, MenuItem, BoxType, AppSettings, Navigator, ClientProfile, DeliveryRecord, ItemCategory, BoxQuota, ServiceType } from './types';
 import { randomUUID } from 'crypto';
 import { getSession } from './session';
+import { createClient } from '@supabase/supabase-js';
 
 // --- HELPERS ---
 function handleError(error: any) {
@@ -86,6 +87,22 @@ export async function getVendors() {
         isActive: v.is_active,
         minimumMeals: v.minimum_meals ?? 0
     }));
+}
+
+export async function getVendor(id: string) {
+    const { data: v, error } = await supabase.from('vendors').select('*').eq('id', id).single();
+    if (error || !v) return null;
+
+    return {
+        id: v.id,
+        name: v.name,
+        email: v.email || null,
+        serviceTypes: (v.service_type || '').split(',').map((s: string) => s.trim()).filter(Boolean) as ServiceType[],
+        deliveryDays: v.delivery_days || [],
+        allowsMultipleDeliveries: v.delivery_frequency === 'Multiple',
+        isActive: v.is_active,
+        minimumMeals: v.minimum_meals ?? 0
+    };
 }
 
 export async function addVendor(data: Omit<Vendor, 'id'> & { password?: string; email?: string }) {
@@ -202,6 +219,7 @@ export async function updateMenuItem(id: string, data: Partial<MenuItem>) {
     if (data.vendorId !== undefined) payload.vendor_id = data.vendorId || null;
 
     const { error } = await supabase.from('menu_items').update(payload).eq('id', id);
+    handleError(error);
     revalidatePath('/admin');
 }
 
@@ -366,12 +384,28 @@ export async function getNavigators() {
     return data.map((n: any) => ({
         id: n.id,
         name: n.name,
+        email: n.email || null,
         isActive: n.is_active
     }));
 }
 
 export async function addNavigator(data: Omit<Navigator, 'id'>) {
-    const { data: res, error } = await supabase.from('navigators').insert([{ name: data.name, is_active: data.isActive }]).select().single();
+    const payload: any = {
+        name: data.name,
+        is_active: data.isActive
+    };
+
+    if (data.email !== undefined && data.email !== null) {
+        const trimmedEmail = data.email.trim();
+        payload.email = trimmedEmail === '' ? null : trimmedEmail;
+    }
+
+    if (data.password && data.password.trim() !== '') {
+        const { hashPassword } = await import('./password');
+        payload.password = await hashPassword(data.password.trim());
+    }
+
+    const { data: res, error } = await supabase.from('navigators').insert([payload]).select().single();
     handleError(error);
     revalidatePath('/admin');
     return { ...data, id: res.id };
@@ -381,6 +415,16 @@ export async function updateNavigator(id: string, data: Partial<Navigator>) {
     const payload: any = {};
     if (data.name) payload.name = data.name;
     if (data.isActive !== undefined) payload.is_active = data.isActive;
+
+    if (data.email !== undefined) {
+        const trimmedEmail = data.email?.trim() || '';
+        payload.email = trimmedEmail === '' ? null : trimmedEmail;
+    }
+
+    if (data.password !== undefined && data.password !== null && data.password.trim() !== '') {
+        const { hashPassword } = await import('./password');
+        payload.password = await hashPassword(data.password.trim());
+    }
 
     const { error } = await supabase.from('navigators').update(payload).eq('id', id);
     handleError(error);
@@ -429,6 +473,23 @@ export async function getClient(id: string) {
     return mapClientFromDB(data);
 }
 
+export async function getPublicClient(id: string) {
+    if (!id) return undefined;
+
+    // Use Service Role if available to bypass RLS for this specific public view
+    let supabaseClient = supabase;
+    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    if (serviceRoleKey) {
+        supabaseClient = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, serviceRoleKey, {
+            auth: { persistSession: false }
+        });
+    }
+
+    const { data, error } = await supabaseClient.from('clients').select('*').eq('id', id).single();
+    if (error || !data) return undefined;
+    return mapClientFromDB(data);
+}
+
 export async function addClient(data: Omit<ClientProfile, 'id' | 'createdAt' | 'updatedAt'>) {
     const payload = {
         full_name: data.fullName,
@@ -449,22 +510,24 @@ export async function addClient(data: Omit<ClientProfile, 'id' | 'createdAt' | '
     const { data: res, error } = await supabase.from('clients').insert([payload]).select().single();
     handleError(error);
 
-    if (res) {
-        const newClient = mapClientFromDB(res);
-
-        // Sync to upcoming_orders if activeOrder exists
-        if (newClient.activeOrder && newClient.activeOrder.caseId) {
-            await syncCurrentOrderToUpcoming(newClient.id, newClient);
-        }
-
-        revalidatePath('/clients');
-
-        // Trigger local DB sync in background after mutation
-        const { triggerSyncInBackground } = await import('./local-db');
-        triggerSyncInBackground();
-
-        return newClient;
+    if (!res) {
+        throw new Error('Failed to create client: no data returned');
     }
+
+    const newClient = mapClientFromDB(res);
+
+    // Sync to upcoming_orders if activeOrder exists
+    if (newClient.activeOrder && newClient.activeOrder.caseId) {
+        await syncCurrentOrderToUpcoming(newClient.id, newClient);
+    }
+
+    revalidatePath('/clients');
+
+    // Trigger local DB sync in background after mutation
+    const { triggerSyncInBackground } = await import('./local-db');
+    triggerSyncInBackground();
+
+    return newClient;
 }
 
 export async function updateClient(id: string, data: Partial<ClientProfile>) {
@@ -1201,12 +1264,24 @@ async function syncSingleOrderForDeliveryDay(
     deliveryDay: string | null,
     vendors: Vendor[],
     menuItems: any[],
-    boxTypes: any[]
+    boxTypes: any[],
+    supabaseClientObj?: any
 ): Promise<void> {
+    const supabaseClient = supabaseClientObj || supabase;
     console.log(`[syncSingleOrderForDeliveryDay] Start sync for client ${clientId}, day: ${deliveryDay || 'null'}`);
     // Calculate dates for this specific delivery day
     let takeEffectDate: Date | null = null;
     let scheduledDeliveryDate: Date | null = null;
+
+    // ... logic ...
+    // Note: I am rewriting the top of the function to include supabaseClientObj.
+    // I need to search and replace 'supabase.' with 'supabaseClient.' in the REST of the function.
+    // However, ReplaceFileContent works on chunks. I can't easily replace all internal usages without listing them or rewriting the whole function.
+    // The function is long (1234 to 1500+).
+    // I will try to use sed or multiple chunks if possible, or rewrite critical parts.
+    // Let's check usages of `supabase.` in this function.
+    // It uses `supabase.from` for upcoming_orders queries, inserts, deletes.
+    // I will rewrite the query sections.
 
     if (orderConfig.serviceType === 'Food' && orderConfig.vendorSelections && orderConfig.vendorSelections.length > 0) {
         const vendorIds = orderConfig.vendorSelections
@@ -1358,7 +1433,7 @@ async function syncSingleOrderForDeliveryDay(
     }
 
     // Check if upcoming order exists for this delivery day
-    let query = supabase
+    let query = supabaseClient
         .from('upcoming_orders')
         .select('id')
         .eq('client_id', clientId);
@@ -1376,7 +1451,7 @@ async function syncSingleOrderForDeliveryDay(
 
     if (existing) {
         // Update existing
-        const { data, error } = await supabase
+        const { data, error } = await supabaseClient
             .from('upcoming_orders')
             .update(upcomingOrderData)
             .eq('id', existing.id)
@@ -1390,7 +1465,7 @@ async function syncSingleOrderForDeliveryDay(
         upcomingOrderId = data.id;
     } else {
         // Insert new
-        const { data, error } = await supabase
+        const { data, error } = await supabaseClient
             .from('upcoming_orders')
             .insert(upcomingOrderData)
             .select()
@@ -1405,16 +1480,16 @@ async function syncSingleOrderForDeliveryDay(
 
     // Now sync related data (vendor selections, items, box selections)
     // Delete existing related records
-    await supabase.from('upcoming_order_vendor_selections').delete().eq('upcoming_order_id', upcomingOrderId);
-    await supabase.from('upcoming_order_items').delete().eq('upcoming_order_id', upcomingOrderId);
-    await supabase.from('upcoming_order_box_selections').delete().eq('upcoming_order_id', upcomingOrderId);
+    await supabaseClient.from('upcoming_order_vendor_selections').delete().eq('upcoming_order_id', upcomingOrderId);
+    await supabaseClient.from('upcoming_order_items').delete().eq('upcoming_order_id', upcomingOrderId);
+    await supabaseClient.from('upcoming_order_box_selections').delete().eq('upcoming_order_id', upcomingOrderId);
 
     if (orderConfig.serviceType === 'Food' && orderConfig.vendorSelections) {
         // Insert vendor selections and items
         for (const selection of orderConfig.vendorSelections) {
             if (!selection.vendorId || !selection.items) continue;
 
-            const { data: vendorSelection, error: vsError } = await supabase
+            const { data: vendorSelection, error: vsError } = await supabaseClient
                 .from('upcoming_order_vendor_selections')
                 .insert({
                     upcoming_order_id: upcomingOrderId,
@@ -1430,7 +1505,7 @@ async function syncSingleOrderForDeliveryDay(
                 const item = menuItems.find(i => i.id === itemId);
                 const quantity = qty as number;
                 if (item && quantity > 0) {
-                    await supabase.from('upcoming_order_items').insert({
+                    await supabaseClient.from('upcoming_order_items').insert({
                         upcoming_order_id: upcomingOrderId,
                         vendor_selection_id: vendorSelection.id,
                         menu_item_id: itemId,
@@ -1474,7 +1549,7 @@ async function syncSingleOrderForDeliveryDay(
             }
         }
 
-        await supabase.from('upcoming_order_box_selections').insert({
+        await supabaseClient.from('upcoming_order_box_selections').insert({
             upcoming_order_id: upcomingOrderId,
             box_type_id: orderConfig.boxTypeId,
             vendor_id: boxVendorId,
@@ -1495,23 +1570,35 @@ export async function syncCurrentOrderToUpcoming(clientId: string, client: Clien
     // 1. DRAFT PERSISTENCE: Save the raw activeOrder metadata to the clients table.
     // This ensures Case ID, Vendor, and other selections are persisted even if the 
     // full sync to upcoming_orders fails (e.g. if the vendor/delivery day isn't fully set yet).
+    const orderConfig = client.activeOrder;
+    const vendors = await getVendors();
+    const menuItems = await getMenuItems();
+    const boxTypes = await getBoxTypes();
+
+    // Use Service Role if available to bypass RLS for this public-facing update
+    let supabaseClient = supabase;
+    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    if (serviceRoleKey) {
+        supabaseClient = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, serviceRoleKey, {
+            auth: { persistSession: false }
+        });
+    }
+
+    // 1. DRAFT PERSISTENCE: Save the raw activeOrder metadata to the clients table.
+    // This ensures Case ID, Vendor, and other selections are persisted even if the 
+    // full sync to upcoming_orders fails (e.g. if the vendor/delivery day isn't fully set yet).
     if (client.activeOrder) {
-        await supabase.from('clients').update({
+        await supabaseClient.from('clients').update({
             active_order: client.activeOrder,
             updated_at: new Date().toISOString()
         }).eq('id', clientId);
     }
 
-    if (!client.activeOrder) {
+    if (!orderConfig) {
         // If no active order, remove any existing upcoming orders
-        await supabase.from('upcoming_orders').delete().eq('client_id', clientId);
+        await supabaseClient.from('upcoming_orders').delete().eq('client_id', clientId);
         return;
     }
-
-    const orderConfig = client.activeOrder;
-    const vendors = await getVendors();
-    const menuItems = await getMenuItems();
-    const boxTypes = await getBoxTypes();
 
     // Check if orderConfig uses the new deliveryDayOrders format
     const hasDeliveryDayOrders = orderConfig && (orderConfig as any).deliveryDayOrders && typeof (orderConfig as any).deliveryDayOrders === 'object';
@@ -1548,7 +1635,7 @@ export async function syncCurrentOrderToUpcoming(clientId: string, client: Clien
         });
 
         // Delete orders for delivery days that are no longer in the config
-        const { data: existingOrders } = await supabase
+        const { data: existingOrders } = await supabaseClient
             .from('upcoming_orders')
             .select('id, delivery_day')
             .eq('client_id', clientId);
@@ -1562,7 +1649,7 @@ export async function syncCurrentOrderToUpcoming(clientId: string, client: Clien
                 if (!currentDeliveryDays.has(day)) {
                     const orderToDelete = existingOrders.find(o => o.delivery_day === day);
                     if (orderToDelete) {
-                        await supabase.from('upcoming_orders').delete().eq('id', orderToDelete.id);
+                        await supabaseClient.from('upcoming_orders').delete().eq('id', orderToDelete.id);
                     }
                 }
             }
@@ -1596,7 +1683,8 @@ export async function syncCurrentOrderToUpcoming(clientId: string, client: Clien
                         deliveryDay,
                         vendors,
                         menuItems,
-                        boxTypes
+                        boxTypes,
+                        supabaseClient
                     );
                 } else {
                     console.log(`[syncCurrentOrderToUpcoming] Skipping ${deliveryDay} - no vendors with items`);
@@ -1634,7 +1722,7 @@ export async function syncCurrentOrderToUpcoming(clientId: string, client: Clien
         // If vendor(s) have multiple delivery days, create orders for each
         if (deliveryDays.length > 1) {
             // Delete old orders without delivery_day
-            await supabase.from('upcoming_orders')
+            await supabaseClient.from('upcoming_orders')
                 .delete()
                 .eq('client_id', clientId)
                 .is('delivery_day', null);
@@ -1647,7 +1735,8 @@ export async function syncCurrentOrderToUpcoming(clientId: string, client: Clien
                     deliveryDay,
                     vendors,
                     menuItems,
-                    boxTypes
+                    boxTypes,
+                    supabaseClient
                 );
             }
         } else {
@@ -1658,7 +1747,8 @@ export async function syncCurrentOrderToUpcoming(clientId: string, client: Clien
                 deliveryDays.length === 1 ? deliveryDays[0] : null,
                 vendors,
                 menuItems,
-                boxTypes
+                boxTypes,
+                supabaseClient
             );
         }
     }
@@ -2119,6 +2209,98 @@ export async function getUpcomingOrderForClient(clientId: string) {
     }
 }
 
+/**
+ * Get previous orders (history) for a client
+ */
+export async function getPreviousOrdersForClient(clientId: string) {
+    if (!clientId) return [];
+
+    try {
+        const { data: orders, error } = await supabase
+            .from('orders')
+            .select('*')
+            .eq('client_id', clientId)
+            .order('created_at', { ascending: false });
+
+        if (error) {
+            console.error('Error fetching previous orders:', error);
+            return [];
+        }
+
+        return orders || [];
+    } catch (err) {
+        console.error('Error in getPreviousOrdersForClient:', err);
+        return [];
+    }
+}
+
+/**
+ * Log a navigator action (status change)
+ */
+export async function logNavigatorAction(data: {
+    navigatorId: string;
+    clientId: string;
+    oldStatus: string;
+    newStatus: string;
+    unitsAdded: number;
+}) {
+    try {
+        const { error } = await supabase.from('navigator_logs').insert([{
+            navigator_id: data.navigatorId,
+            client_id: data.clientId,
+            old_status: data.oldStatus,
+            new_status: data.newStatus,
+            units_added: data.unitsAdded
+        }]);
+
+        if (error) {
+            console.error('Error logging navigator action:', error);
+            // We don't throw here to avoid blocking the main action if logging fails, 
+            // but in a strict audit system we might want to.
+        }
+    } catch (err) {
+        console.error('Error in logNavigatorAction:', err);
+    }
+}
+
+/**
+ * Get logs for a specific navigator
+ */
+export async function getNavigatorLogs(navigatorId: string) {
+    try {
+        // Fetch logs with client details
+        const { data, error } = await supabase
+            .from('navigator_logs')
+            .select(`
+                *,
+                clients (
+                    full_name
+                )
+            `)
+            .eq('navigator_id', navigatorId)
+            .gt('units_added', 0) // Only get logs where units were added
+            .order('created_at', { ascending: false });
+
+        if (error) {
+            console.error('Error fetching navigator logs:', error);
+            return [];
+        }
+
+        return data.map((log: any) => ({
+            id: log.id,
+            clientId: log.client_id,
+            clientName: log.clients?.full_name || 'Unknown Client',
+            oldStatus: log.old_status,
+            newStatus: log.new_status,
+            unitsAdded: log.units_added,
+            createdAt: log.created_at
+        }));
+    } catch (err) {
+        console.error('Error in getNavigatorLogs:', err);
+        return [];
+    }
+}
+
 // --- OPTIMIZED ACTIONS ---
 
 export async function getClientsPaginated(page: number, pageSize: number, query: string = '') {
@@ -2184,6 +2366,12 @@ export async function getClientFullDetails(clientId: string) {
 
 export async function getOrdersByVendor(vendorId: string) {
     if (!vendorId) return [];
+
+    const session = await getSession();
+    if (!session || (session.role !== 'admin' && session.userId !== vendorId)) {
+        console.error('Unauthorized access to getOrdersByVendor');
+        return [];
+    }
 
     try {
         // 1. Fetch completed orders (from orders table)
@@ -2341,6 +2529,16 @@ export async function orderHasDeliveryProof(orderId: string) {
 }
 
 export async function updateOrderDeliveryProof(orderId: string, proofUrl: string) {
+    // Security check
+    const session = await getSession();
+    if (!session) return { success: false, error: 'Unauthorized' };
+
+    if (session.role === 'vendor') {
+        const authorized = await isOrderUnderVendor(orderId, session.userId);
+        if (!authorized) {
+            return { success: false, error: 'Unauthorized: Order does not belong to this vendor' };
+        }
+    }
     // 1. Update Order Status
     const { data: order, error } = await supabase
         .from('orders')
@@ -2897,4 +3095,12 @@ export async function deleteVendorMenuItem(id: string) {
     handleError(error);
     revalidatePath('/vendor');
     revalidatePath('/vendor/items');
+}
+
+export async function invalidateOrderData(path?: string) {
+    if (path) {
+        revalidatePath(path);
+    } else {
+        revalidatePath('/', 'layout');
+    }
 }

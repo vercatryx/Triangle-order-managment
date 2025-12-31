@@ -4,16 +4,17 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { Vendor, ClientProfile, MenuItem, BoxType } from '@/lib/types';
 import { getVendors, getClients, getMenuItems, getBoxTypes } from '@/lib/cached-data';
-import { getOrdersByVendor, saveDeliveryProofUrlAndProcessOrder } from '@/lib/actions';
-import { ArrowLeft, Calendar, Package, Clock, ShoppingCart, Upload, ChevronDown, ChevronUp, Save, X, CheckCircle, AlertCircle } from 'lucide-react';
+import { getOrdersByVendor, saveDeliveryProofUrlAndProcessOrder, updateOrderDeliveryProof, isOrderUnderVendor, orderHasDeliveryProof } from '@/lib/actions';
+import { ArrowLeft, Calendar, Package, Clock, ShoppingCart, Upload, ChevronDown, ChevronUp, Save, X, CheckCircle, AlertCircle, Download, XCircle } from 'lucide-react';
 import styles from './VendorDetail.module.css';
 
 interface Props {
     vendorId: string;
     deliveryDate: string;
+    isVendorView?: boolean;
 }
 
-export function VendorDeliveryOrders({ vendorId, deliveryDate }: Props) {
+export function VendorDeliveryOrders({ vendorId, deliveryDate, isVendorView }: Props) {
     const router = useRouter();
     const [vendor, setVendor] = useState<Vendor | null>(null);
     const [orders, setOrders] = useState<any[]>([]);
@@ -28,7 +29,39 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate }: Props) {
         show: boolean;
         results?: Array<{ success: boolean; orderId: string; error?: string; summary?: any }>;
         error?: string;
+        summary?: {
+            orderId?: string;
+            caseId?: string;
+            serviceType?: string;
+            status?: string;
+            wasProcessed?: boolean;
+            hasErrors?: boolean;
+            errors?: string[];
+        };
     }>({ show: false });
+
+    // CSV Import Progress State
+    const [importProgress, setImportProgress] = useState<{
+        isImporting: boolean;
+        currentRow: number;
+        totalRows: number;
+        successCount: number;
+        errorCount: number;
+        skippedCount: number;
+        currentStatus: string;
+        errors: string[];
+        skipped: string[];
+    }>({
+        isImporting: false,
+        currentRow: 0,
+        totalRows: 0,
+        successCount: 0,
+        errorCount: 0,
+        skippedCount: 0,
+        currentStatus: '',
+        errors: [],
+        skipped: []
+    });
 
     useEffect(() => {
         loadData();
@@ -47,7 +80,7 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate }: Props) {
 
             const foundVendor = vendorsData.find(v => v.id === vendorId);
             setVendor(foundVendor || null);
-            
+
             // Filter orders by delivery date
             const dateKey = new Date(deliveryDate).toISOString().split('T')[0];
             const filteredOrders = ordersData.filter(order => {
@@ -55,16 +88,16 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate }: Props) {
                 const orderDateKey = new Date(order.scheduled_delivery_date).toISOString().split('T')[0];
                 return orderDateKey === dateKey;
             });
-            
+
             // Expand all orders by default so items are visible
             const allOrderKeys = new Set(filteredOrders.map(order => `${order.orderType}-${order.id}`));
             setExpandedOrders(allOrderKeys);
-            
+
             setOrders(filteredOrders);
             setClients(clientsData);
             setMenuItems(menuItemsData);
             setBoxTypes(boxTypesData);
-            
+
             // Initialize proof URLs from orders
             const initialProofUrls: Record<string, string> = {};
             filteredOrders.forEach(order => {
@@ -121,6 +154,351 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate }: Props) {
             newExpanded.add(orderId);
         }
         setExpandedOrders(newExpanded);
+    }
+
+    function escapeCSV(value: any): string {
+        if (value === null || value === undefined) return '';
+        const stringValue = String(value);
+        // If value contains comma, newline, or quote, wrap in quotes and escape quotes
+        if (stringValue.includes(',') || stringValue.includes('\n') || stringValue.includes('"')) {
+            return `"${stringValue.replace(/"/g, '""')}"`;
+        }
+        return stringValue;
+    }
+
+    function formatOrderedItemsForCSV(order: any): string {
+        if (order.service_type === 'Food') {
+            const items = order.items || [];
+            if (items.length === 0) {
+                return 'No items';
+            }
+            return items.map((item: any) => {
+                const menuItem = menuItems.find(mi => mi.id === item.menu_item_id);
+                const itemName = menuItem?.name || item.menuItemName || 'Unknown Item';
+                const quantity = parseInt(item.quantity || 0);
+                const unitPrice = parseFloat(item.unit_value || item.unitValue || 0) || (menuItem?.priceEach || menuItem?.value || 0);
+                const totalPrice = parseFloat(item.total_value || item.totalValue || 0) || (unitPrice * quantity);
+                return `${itemName} (Qty: ${quantity}, Unit Price: $${unitPrice.toFixed(2)}, Total: $${totalPrice.toFixed(2)})`;
+            }).join('; ');
+        } else if (order.service_type === 'Boxes') {
+            const boxSelection = order.boxSelection;
+            if (!boxSelection) {
+                return 'No box selection';
+            }
+            const items = boxSelection.items || {};
+            const itemEntries = Object.entries(items);
+            if (itemEntries.length === 0) {
+                const boxTypeName = getBoxTypeName(boxSelection.box_type_id);
+                return `Box Type: ${boxTypeName} (Quantity: ${boxSelection.quantity || 1})`;
+            }
+            const boxTypeName = getBoxTypeName(boxSelection.box_type_id);
+            const itemStrings = itemEntries.map(([itemId, quantity]: [string, any]) => {
+                const menuItem = menuItems.find(mi => mi.id === itemId);
+                const itemName = menuItem?.name || 'Unknown Item';
+                const qty = typeof quantity === 'number' ? quantity : parseInt(quantity) || 0;
+                const unitPrice = menuItem?.priceEach || menuItem?.value || 0;
+                const totalPrice = unitPrice * qty;
+                return `${itemName} (Qty: ${qty}, Unit Price: $${unitPrice.toFixed(2)}, Total: $${totalPrice.toFixed(2)})`;
+            });
+            return `Box Type: ${boxTypeName} (Box Qty: ${boxSelection.quantity || 1}); Items: ${itemStrings.join('; ')}`;
+        }
+        return 'No items available';
+    }
+
+    function exportOrdersToCSV() {
+        if (orders.length === 0) {
+            alert('No orders to export');
+            return;
+        }
+
+        // Define CSV headers
+        const headers = [
+            'Order ID',
+            'Client ID',
+            'Client Name',
+            'Scheduled Delivery Date',
+            'Total Items',
+            'Total Price',
+            'Delivery Proof URL',
+            'Ordered Items'
+        ];
+
+        // Convert orders to CSV rows
+        const rows = orders.map(order => [
+            order.id || '',
+            order.client_id || '',
+            getClientName(order.client_id),
+            order.scheduled_delivery_date || '',
+            order.total_items || 0,
+            order.total_value || 0,
+            order.delivery_proof_url || '',
+            formatOrderedItemsForCSV(order)
+        ]);
+
+        // Combine headers and rows
+        const csvContent = [
+            headers.map(escapeCSV).join(','),
+            ...rows.map(row => row.map(escapeCSV).join(','))
+        ].join('\n');
+
+        // Create blob and download
+        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+        const link = document.createElement('a');
+        const url = URL.createObjectURL(blob);
+        const formattedDate = formatDate(deliveryDate).replace(/\s/g, '_');
+        link.setAttribute('href', url);
+        link.setAttribute('download', `${vendor?.name || 'vendor'}_orders_${formattedDate}.csv`);
+        link.style.visibility = 'hidden';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+    }
+
+    function parseCSVRow(row: string): string[] {
+        const result: string[] = [];
+        let current = '';
+        let inQuotes = false;
+
+        for (let i = 0; i < row.length; i++) {
+            const char = row[i];
+            const nextChar = row[i + 1];
+
+            if (char === '"') {
+                if (inQuotes && nextChar === '"') {
+                    current += '"';
+                    i++; // Skip next quote
+                } else {
+                    inQuotes = !inQuotes;
+                }
+            } else if (char === ',' && !inQuotes) {
+                result.push(current);
+                current = '';
+            } else {
+                current += char;
+            }
+        }
+        result.push(current); // Push last field
+        return result;
+    }
+
+    async function handleCSVImport(event: React.ChangeEvent<HTMLInputElement>) {
+        const file = event.target.files?.[0];
+        if (!file) return;
+
+        // Reset input
+        event.target.value = '';
+
+        if (!file.name.endsWith('.csv')) {
+            alert('Please select a CSV file');
+            return;
+        }
+
+        try {
+            const text = await file.text();
+            const lines = text.split(/\r?\n/).filter(line => line.trim());
+
+            if (lines.length < 2) {
+                alert('CSV file must have at least a header row and one data row');
+                return;
+            }
+
+            // Parse header row
+            const headers = parseCSVRow(lines[0]);
+            const orderIdIndex = headers.findIndex(h => h.toLowerCase() === 'order id');
+            const deliveryProofUrlIndex = headers.findIndex(h => h.toLowerCase() === 'delivery_proof_url');
+
+            if (orderIdIndex === -1) {
+                alert('CSV file must contain an "Order ID" column');
+                return;
+            }
+
+            if (deliveryProofUrlIndex === -1) {
+                alert('CSV file must contain a "delivery_proof_url" column');
+                return;
+            }
+
+            const totalRows = lines.length - 1; // Exclude header row
+
+            // Initialize progress state
+            setImportProgress({
+                isImporting: true,
+                currentRow: 0,
+                totalRows: totalRows,
+                successCount: 0,
+                errorCount: 0,
+                skippedCount: 0,
+                currentStatus: 'Starting import...',
+                errors: [],
+                skipped: []
+            });
+
+            // Process each data row
+            let successCount = 0;
+            let errorCount = 0;
+            let skippedCount = 0;
+            const errors: string[] = [];
+            const skipped: string[] = [];
+
+            for (let i = 1; i < lines.length; i++) {
+                const row = parseCSVRow(lines[i]);
+                const orderId = row[orderIdIndex]?.trim();
+                const deliveryProofUrl = row[deliveryProofUrlIndex]?.trim();
+
+                // Update progress - current row
+                setImportProgress(prev => ({
+                    ...prev,
+                    currentRow: i,
+                    currentStatus: `Processing row ${i} of ${totalRows}...`
+                }));
+
+                if (!orderId) {
+                    errorCount++;
+                    const errorMsg = `Row ${i + 1}: Missing Order ID`;
+                    errors.push(errorMsg);
+                    setImportProgress(prev => ({
+                        ...prev,
+                        errorCount,
+                        errors: [...prev.errors, errorMsg]
+                    }));
+                    continue;
+                }
+
+                if (!deliveryProofUrl) {
+                    errorCount++;
+                    const errorMsg = `Row ${i + 1} (Order ${orderId}): Missing delivery_proof_url`;
+                    errors.push(errorMsg);
+                    setImportProgress(prev => ({
+                        ...prev,
+                        errorCount,
+                        errors: [...prev.errors, errorMsg]
+                    }));
+                    continue;
+                }
+
+                // Check if order belongs to this vendor
+                setImportProgress(prev => ({
+                    ...prev,
+                    currentStatus: `Row ${i}: Verifying order ${orderId}...`
+                }));
+                const belongsToVendor = await isOrderUnderVendor(orderId, vendorId);
+                if (!belongsToVendor) {
+                    errorCount++;
+                    const errorMsg = `Row ${i + 1} (Order ${orderId}): Order does not belong to this vendor`;
+                    errors.push(errorMsg);
+                    setImportProgress(prev => ({
+                        ...prev,
+                        errorCount,
+                        errors: [...prev.errors, errorMsg]
+                    }));
+                    continue;
+                }
+
+                // Check if order matches the delivery date
+                // Note: In delivery view, we're strict about the date.
+                const order = orders.find(o => o.id === orderId);
+                // If it's not in the current orders list, it might be for another date but same vendor.
+                // But for safety, we generally only want to update detailed proofs for what we see.
+                // However, the user might have a massive CSV.
+                // Let's rely on the fact that if it's not in 'orders', we might want to still process it if it's valid?
+                // Actually, let's restrict to current view to match the export.
+                // Or better, check the date if we can or just proceed if it's the vendor's order.
+                // The implementation in VendorDetail checks date. Let's do the same.
+
+                if (order) {
+                    const orderDateKey = order.scheduled_delivery_date
+                        ? new Date(order.scheduled_delivery_date).toISOString().split('T')[0]
+                        : null;
+                    const pageDateKey = new Date(deliveryDate).toISOString().split('T')[0];
+
+                    if (orderDateKey !== pageDateKey) {
+                        errorCount++;
+                        const errorMsg = `Row ${i + 1} (Order ${orderId}): Order date ${orderDateKey} does not match page date ${pageDateKey}`;
+                        errors.push(errorMsg);
+                        setImportProgress(prev => ({
+                            ...prev,
+                            errorCount,
+                            errors: [...prev.errors, errorMsg]
+                        }));
+                        continue;
+                    }
+                }
+
+                // Check if order already has a delivery proof URL (skip if it does)
+                setImportProgress(prev => ({
+                    ...prev,
+                    currentStatus: `Row ${i}: Checking order ${orderId}...`
+                }));
+                const alreadyHasProof = await orderHasDeliveryProof(orderId);
+                if (alreadyHasProof) {
+                    skippedCount++;
+                    const skippedMsg = `Row ${i + 1} (Order ${orderId}): Already has delivery proof URL, skipping`;
+                    skipped.push(skippedMsg);
+                    setImportProgress(prev => ({
+                        ...prev,
+                        skippedCount,
+                        skipped: [...prev.skipped, skippedMsg]
+                    }));
+                    continue;
+                }
+
+                // Update order with delivery proof URL and set status to completed (delivered)
+                setImportProgress(prev => ({
+                    ...prev,
+                    currentStatus: `Row ${i}: Updating order ${orderId}...`
+                }));
+                const result = await updateOrderDeliveryProof(orderId, deliveryProofUrl);
+                if (result.success) {
+                    successCount++;
+                    setImportProgress(prev => ({
+                        ...prev,
+                        successCount
+                    }));
+                } else {
+                    errorCount++;
+                    const errorMsg = `Row ${i + 1} (Order ${orderId}): ${result.error || 'Failed to update order'}`;
+                    errors.push(errorMsg);
+                    setImportProgress(prev => ({
+                        ...prev,
+                        errorCount,
+                        errors: [...prev.errors, errorMsg]
+                    }));
+                }
+            }
+
+            // Mark import as complete
+            setImportProgress(prev => ({
+                ...prev,
+                isImporting: false,
+                currentStatus: 'Import completed!'
+            }));
+
+            // Reload orders to reflect changes
+            if (successCount > 0) {
+                await loadData();
+            }
+        } catch (error: any) {
+            console.error('Error importing CSV:', error);
+            setImportProgress(prev => ({
+                ...prev,
+                isImporting: false,
+                currentStatus: `Error: ${error.message || 'Unknown error'}`
+            }));
+        }
+    }
+
+    function closeImportProgress() {
+        setImportProgress({
+            isImporting: false,
+            currentRow: 0,
+            totalRows: 0,
+            successCount: 0,
+            errorCount: 0,
+            skippedCount: 0,
+            currentStatus: '',
+            errors: [],
+            skipped: []
+        });
     }
 
     async function handleBulkSave() {
@@ -193,13 +571,13 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate }: Props) {
     function renderOrderItems(order: any) {
         if (order.service_type === 'Food') {
             const items = order.items || [];
-            
+
             if (!items || items.length === 0) {
                 return (
-                    <div className={styles.noItems} style={{ 
-                        padding: 'var(--spacing-md)', 
-                        textAlign: 'center', 
-                        color: 'var(--text-tertiary)', 
+                    <div className={styles.noItems} style={{
+                        padding: 'var(--spacing-md)',
+                        textAlign: 'center',
+                        color: 'var(--text-tertiary)',
                         fontStyle: 'italic',
                         backgroundColor: 'var(--bg-app)',
                         borderRadius: 'var(--radius-md)',
@@ -213,7 +591,7 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate }: Props) {
             // Group items by vendor (for Food orders, items are already associated with vendor via vendor selection)
             // Since items are from a single vendor selection, display them in a table
             const vendorName = vendor?.name || 'Unknown Vendor';
-            
+
             // Calculate totals
             let totalItems = 0;
             let totalValue = 0;
@@ -266,13 +644,13 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate }: Props) {
             );
         } else if (order.service_type === 'Boxes') {
             const boxSelection = order.boxSelection;
-            
+
             if (!boxSelection) {
                 return (
-                    <div className={styles.noItems} style={{ 
-                        padding: 'var(--spacing-md)', 
-                        textAlign: 'center', 
-                        color: 'var(--text-tertiary)', 
+                    <div className={styles.noItems} style={{
+                        padding: 'var(--spacing-md)',
+                        textAlign: 'center',
+                        color: 'var(--text-tertiary)',
                         fontStyle: 'italic',
                         backgroundColor: 'var(--bg-app)',
                         borderRadius: 'var(--radius-md)',
@@ -322,11 +700,11 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate }: Props) {
                         <tbody>
                             {itemEntries.map(([itemId, quantityOrObj]: [string, any]) => {
                                 const menuItem = menuItems.find(mi => mi.id === itemId);
-                                
+
                                 // Handle both formats: { itemId: quantity } or { itemId: { quantity: X, price: Y } }
                                 let qty = 0;
                                 let unitPrice = menuItem?.priceEach || menuItem?.value || 0;
-                                
+
                                 if (typeof quantityOrObj === 'number') {
                                     // Simple format: just a number
                                     qty = quantityOrObj;
@@ -340,7 +718,7 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate }: Props) {
                                     // Try to parse as number string
                                     qty = parseInt(quantityOrObj) || 0;
                                 }
-                                
+
                                 const totalPrice = unitPrice * qty;
                                 totalItems += qty;
                                 totalValue += totalPrice;
@@ -365,10 +743,10 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate }: Props) {
         }
 
         return (
-            <div className={styles.noItems} style={{ 
-                padding: 'var(--spacing-md)', 
-                textAlign: 'center', 
-                color: 'var(--text-tertiary)', 
+            <div className={styles.noItems} style={{
+                padding: 'var(--spacing-md)',
+                textAlign: 'center',
+                color: 'var(--text-tertiary)',
                 fontStyle: 'italic',
                 backgroundColor: 'var(--bg-app)',
                 borderRadius: 'var(--radius-md)',
@@ -394,7 +772,7 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate }: Props) {
         return (
             <div className={styles.container}>
                 <div className={styles.header}>
-                    <button className={styles.backButton} onClick={() => router.push(`/vendors/${vendorId}`)}>
+                    <button className={styles.backButton} onClick={() => router.push(isVendorView ? '/vendor' : `/vendors/${vendorId}`)}>
                         <ArrowLeft size={16} /> Back to Vendor
                     </button>
                 </div>
@@ -408,13 +786,31 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate }: Props) {
     return (
         <div className={styles.container}>
             <div className={styles.header}>
-                <button className={styles.backButton} onClick={() => router.push(`/vendors/${vendorId}`)}>
+                <button className={styles.backButton} onClick={() => router.push(isVendorView ? '/vendor' : `/vendors/${vendorId}`)}>
                     <ArrowLeft size={16} /> Back to Vendor
                 </button>
-                <h1 className={styles.title} style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                    <Calendar size={24} style={{ color: 'var(--color-primary)' }} />
-                    Orders for {formatDate(deliveryDate)}
-                </h1>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flex: 1 }}>
+                    <h1 className={styles.title} style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                        <Calendar size={24} style={{ color: 'var(--color-primary)' }} />
+                        Orders for {formatDate(deliveryDate)}
+                    </h1>
+                    {orders.length > 0 && (
+                        <div style={{ display: 'flex', gap: '0.5rem' }}>
+                            <button className="btn btn-secondary" onClick={exportOrdersToCSV}>
+                                <Download size={16} /> Export CSV
+                            </button>
+                            <label className="btn btn-secondary" style={{ cursor: 'pointer' }}>
+                                <Upload size={16} /> Import CSV
+                                <input
+                                    type="file"
+                                    accept=".csv"
+                                    onChange={handleCSVImport}
+                                    style={{ display: 'none' }}
+                                />
+                            </label>
+                        </div>
+                    )}
+                </div>
             </div>
 
             <div style={{ marginBottom: '1rem', padding: '1rem', backgroundColor: 'var(--bg-app)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)' }}>
@@ -448,8 +844,6 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate }: Props) {
                         <span style={{ width: '40px', flex: 'none' }}></span>
                         <span style={{ minWidth: '120px', flex: 0.8 }}>Type</span>
                         <span style={{ minWidth: '200px', flex: 2 }}>Client</span>
-                        <span style={{ minWidth: '120px', flex: 1 }}>Case ID</span>
-                        <span style={{ minWidth: '120px', flex: 1 }}>Status</span>
                         <span style={{ minWidth: '150px', flex: 1.2 }}>Actual Date</span>
                         <span style={{ minWidth: '100px', flex: 1 }}>Items</span>
                         <span style={{ minWidth: '120px', flex: 1 }}>Total Value</span>
@@ -483,14 +877,6 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate }: Props) {
                                     >
                                         {getClientName(order.client_id)}
                                     </span>
-                                    <span style={{ minWidth: '120px', flex: 1, fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                                        {order.case_id || '-'}
-                                    </span>
-                                    <span style={{ minWidth: '120px', flex: 1 }}>
-                                        <span className={`badge ${order.status === 'completed' ? 'badge-success' : ''}`}>
-                                            {order.status}
-                                        </span>
-                                    </span>
                                     <span style={{ minWidth: '150px', flex: 1.2, fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
                                         {formatDate(order.actual_delivery_date)}
                                     </span>
@@ -500,7 +886,7 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate }: Props) {
                                     <span style={{ minWidth: '120px', flex: 1, fontWeight: 600 }}>
                                         ${parseFloat(order.total_value || 0).toFixed(2)}
                                     </span>
-                                    <span 
+                                    <span
                                         style={{ minWidth: '200px', flex: 1.5, fontSize: '0.85rem' }}
                                         onClick={(e) => e.stopPropagation()}
                                     >
@@ -508,7 +894,7 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate }: Props) {
                                             type="text"
                                             placeholder="Enter proof URL"
                                             className="input"
-                                            style={{ 
+                                            style={{
                                                 width: '100%',
                                                 fontSize: '0.85rem',
                                                 padding: '0.375rem 0.5rem'
@@ -531,8 +917,8 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate }: Props) {
                                     </span>
                                 </div>
                                 {/* Order Items - Always Visible */}
-                                <div className={styles.orderDetails} style={{ 
-                                    borderTop: '1px solid var(--border-color)', 
+                                <div className={styles.orderDetails} style={{
+                                    borderTop: '1px solid var(--border-color)',
                                     backgroundColor: 'var(--bg-surface-hover)',
                                     padding: 0,
                                     display: 'block'
@@ -555,11 +941,6 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate }: Props) {
                                             <div className={styles.detailItem}>
                                                 <strong>Order Type:</strong> {order.orderType}
                                             </div>
-                                            {order.case_id && (
-                                                <div className={styles.detailItem}>
-                                                    <strong>Case ID:</strong> {order.case_id}
-                                                </div>
-                                            )}
                                             <div className={styles.detailItem}>
                                                 <strong>Last Updated:</strong> {formatDateTime(order.last_updated)}
                                             </div>
@@ -633,11 +1014,11 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate }: Props) {
 
             {/* Bulk Save Button */}
             {orders.length > 0 && (
-                <div style={{ 
-                    marginTop: '2rem', 
-                    padding: '1.5rem', 
-                    backgroundColor: 'var(--bg-app)', 
-                    borderRadius: 'var(--radius-md)', 
+                <div style={{
+                    marginTop: '2rem',
+                    padding: '1.5rem',
+                    backgroundColor: 'var(--bg-app)',
+                    borderRadius: 'var(--radius-md)',
                     border: '1px solid var(--border-color)',
                     display: 'flex',
                     justifyContent: 'space-between',
@@ -650,14 +1031,14 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate }: Props) {
                                 const url = proofUrls[order.id];
                                 return url && url.trim() && url.trim() !== (order.delivery_proof_url || '');
                             }).length;
-                            return ordersWithUrls > 0 
+                            return ordersWithUrls > 0
                                 ? `${ordersWithUrls} order${ordersWithUrls !== 1 ? 's' : ''} with delivery proof URL${ordersWithUrls !== 1 ? 's' : ''} ready to save`
                                 : 'Enter delivery proof URLs in the table above to save';
                         })()}
                     </div>
                     <button
                         className="btn btn-primary"
-                        style={{ 
+                        style={{
                             padding: '0.75rem 1.5rem',
                             fontSize: '1rem',
                             display: 'flex',
@@ -685,7 +1066,7 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate }: Props) {
 
             {/* Summary Modal */}
             {summaryModal.show && (
-                <div 
+                <div
                     style={{
                         position: 'fixed',
                         top: 0,
@@ -701,7 +1082,7 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate }: Props) {
                     }}
                     onClick={() => setSummaryModal({ show: false })}
                 >
-                    <div 
+                    <div
                         style={{
                             backgroundColor: 'var(--bg-surface)',
                             border: '1px solid var(--border-color)',
@@ -765,10 +1146,10 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate }: Props) {
                                         Bulk Save Results
                                     </h2>
                                 </div>
-                                
-                                <div style={{ 
-                                    backgroundColor: 'var(--bg-app)', 
-                                    borderRadius: 'var(--radius-md)', 
+
+                                <div style={{
+                                    backgroundColor: 'var(--bg-app)',
+                                    borderRadius: 'var(--radius-md)',
                                     padding: 'var(--spacing-lg)',
                                     marginBottom: 'var(--spacing-lg)',
                                     maxHeight: '400px',
@@ -777,12 +1158,12 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate }: Props) {
                                     {(() => {
                                         const successful = summaryModal.results.filter(r => r.success);
                                         const failed = summaryModal.results.filter(r => !r.success);
-                                        
+
                                         return (
                                             <div style={{ display: 'grid', gap: 'var(--spacing-md)' }}>
-                                                <div style={{ 
-                                                    padding: 'var(--spacing-sm)', 
-                                                    backgroundColor: 'rgba(34, 197, 94, 0.1)', 
+                                                <div style={{
+                                                    padding: 'var(--spacing-sm)',
+                                                    backgroundColor: 'rgba(34, 197, 94, 0.1)',
                                                     borderRadius: 'var(--radius-sm)',
                                                     border: '1px solid rgba(34, 197, 94, 0.2)',
                                                     color: 'var(--color-success)',
@@ -791,11 +1172,11 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate }: Props) {
                                                 }}>
                                                     ✓ {successful.length} order{successful.length !== 1 ? 's' : ''} saved successfully
                                                 </div>
-                                                
+
                                                 {failed.length > 0 && (
-                                                    <div style={{ 
-                                                        padding: 'var(--spacing-sm)', 
-                                                        backgroundColor: 'rgba(239, 68, 68, 0.1)', 
+                                                    <div style={{
+                                                        padding: 'var(--spacing-sm)',
+                                                        backgroundColor: 'rgba(239, 68, 68, 0.1)',
                                                         borderRadius: 'var(--radius-sm)',
                                                         border: '1px solid rgba(239, 68, 68, 0.2)',
                                                         color: 'var(--color-danger)',
@@ -809,7 +1190,7 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate }: Props) {
 
                                                 <div style={{ display: 'grid', gap: 'var(--spacing-sm)' }}>
                                                     {summaryModal.results.map((result, idx) => (
-                                                        <div key={idx} style={{ 
+                                                        <div key={idx} style={{
                                                             padding: 'var(--spacing-sm)',
                                                             backgroundColor: result.success ? 'rgba(34, 197, 94, 0.05)' : 'rgba(239, 68, 68, 0.05)',
                                                             borderRadius: 'var(--radius-sm)',
@@ -821,7 +1202,6 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate }: Props) {
                                                             {result.success && result.summary && (
                                                                 <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.25rem' }}>
                                                                     {result.summary.wasProcessed && '✓ Processed from scheduled → '}
-                                                                    Status: {result.summary.status}
                                                                 </div>
                                                             )}
                                                             {!result.success && result.error && (
@@ -845,10 +1225,10 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate }: Props) {
                                         Delivery Proof Saved Successfully
                                     </h2>
                                 </div>
-                                
-                                <div style={{ 
-                                    backgroundColor: 'var(--bg-app)', 
-                                    borderRadius: 'var(--radius-md)', 
+
+                                <div style={{
+                                    backgroundColor: 'var(--bg-app)',
+                                    borderRadius: 'var(--radius-md)',
                                     padding: 'var(--spacing-lg)',
                                     marginBottom: 'var(--spacing-lg)'
                                 }}>
@@ -860,27 +1240,15 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate }: Props) {
                                             </div>
                                         </div>
                                         <div>
-                                            <strong style={{ color: 'var(--text-secondary)', fontSize: '0.875rem' }}>Case ID:</strong>
-                                            <div style={{ color: 'var(--text-primary)', fontSize: '1rem', marginTop: '0.25rem' }}>
-                                                {summaryModal.summary.caseId}
-                                            </div>
-                                        </div>
-                                        <div>
                                             <strong style={{ color: 'var(--text-secondary)', fontSize: '0.875rem' }}>Service Type:</strong>
                                             <div style={{ color: 'var(--text-primary)', fontSize: '1rem', marginTop: '0.25rem' }}>
                                                 {summaryModal.summary.serviceType}
                                             </div>
                                         </div>
-                                        <div>
-                                            <strong style={{ color: 'var(--text-secondary)', fontSize: '0.875rem' }}>Status:</strong>
-                                            <div style={{ color: 'var(--text-primary)', fontSize: '1rem', marginTop: '0.25rem' }}>
-                                                <span className="badge badge-success">{summaryModal.summary.status}</span>
-                                            </div>
-                                        </div>
                                         {summaryModal.summary.wasProcessed && (
-                                            <div style={{ 
-                                                padding: 'var(--spacing-sm)', 
-                                                backgroundColor: 'rgba(59, 130, 246, 0.1)', 
+                                            <div style={{
+                                                padding: 'var(--spacing-sm)',
+                                                backgroundColor: 'rgba(59, 130, 246, 0.1)',
                                                 borderRadius: 'var(--radius-sm)',
                                                 border: '1px solid rgba(59, 130, 246, 0.2)',
                                                 color: 'var(--color-primary)',
@@ -893,23 +1261,23 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate }: Props) {
                                 </div>
 
                                 {summaryModal.summary.hasErrors && summaryModal.summary.errors && (
-                                    <div style={{ 
-                                        padding: 'var(--spacing-md)', 
-                                        backgroundColor: 'rgba(239, 68, 68, 0.1)', 
+                                    <div style={{
+                                        padding: 'var(--spacing-md)',
+                                        backgroundColor: 'rgba(239, 68, 68, 0.1)',
                                         borderRadius: 'var(--radius-md)',
                                         border: '1px solid rgba(239, 68, 68, 0.2)',
                                         marginBottom: 'var(--spacing-lg)'
                                     }}>
-                                        <div style={{ 
-                                            color: 'var(--color-danger)', 
+                                        <div style={{
+                                            color: 'var(--color-danger)',
                                             fontSize: '0.875rem',
                                             fontWeight: 600,
                                             marginBottom: '0.5rem'
                                         }}>
                                             Warnings:
                                         </div>
-                                        <ul style={{ 
-                                            margin: 0, 
+                                        <ul style={{
+                                            margin: 0,
                                             paddingLeft: '1.25rem',
                                             color: 'var(--color-danger)',
                                             fontSize: '0.875rem'
@@ -930,6 +1298,124 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate }: Props) {
                             >
                                 Close
                             </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* CSV Import Progress Modal */}
+            {(importProgress.isImporting || importProgress.totalRows > 0) && (
+                <div className={styles.importModalOverlay}>
+                    <div className={styles.importModal}>
+                        <div className={styles.importModalHeader}>
+                            <h3>CSV Import Progress</h3>
+                            {!importProgress.isImporting && (
+                                <button
+                                    className={styles.closeButton}
+                                    onClick={closeImportProgress}
+                                    aria-label="Close"
+                                >
+                                    <X size={20} />
+                                </button>
+                            )}
+                        </div>
+
+                        <div className={styles.importModalContent}>
+                            {/* Progress Bar */}
+                            <div className={styles.progressSection}>
+                                <div className={styles.progressBarContainer}>
+                                    <div
+                                        className={styles.progressBar}
+                                        style={{
+                                            width: `${importProgress.totalRows > 0
+                                                ? (importProgress.currentRow / importProgress.totalRows) * 100
+                                                : 0}%`
+                                        }}
+                                    />
+                                </div>
+                                <div className={styles.progressText}>
+                                    {importProgress.currentRow} of {importProgress.totalRows} rows processed
+                                    {importProgress.totalRows > 0 && (
+                                        <span className={styles.progressPercentage}>
+                                            ({Math.round((importProgress.currentRow / importProgress.totalRows) * 100)}%)
+                                        </span>
+                                    )}
+                                </div>
+                            </div>
+
+                            {/* Status Message */}
+                            <div className={styles.statusMessage}>
+                                {importProgress.isImporting ? (
+                                    <div className={styles.statusLoading}>
+                                        <div className="spinner" style={{ width: '16px', height: '16px', marginRight: '8px' }}></div>
+                                        {importProgress.currentStatus}
+                                    </div>
+                                ) : (
+                                    <div className={styles.statusComplete}>
+                                        <CheckCircle size={16} style={{ marginRight: '8px', color: 'var(--color-success)' }} />
+                                        {importProgress.currentStatus}
+                                    </div>
+                                )}
+                            </div>
+
+                            {/* Statistics */}
+                            <div className={styles.importStats}>
+                                <div className={styles.statItem}>
+                                    <CheckCircle size={16} style={{ color: 'var(--color-success)', marginRight: '6px' }} />
+                                    <span className={styles.statLabel}>Success:</span>
+                                    <span className={styles.statValue}>{importProgress.successCount}</span>
+                                </div>
+                                <div className={styles.statItem}>
+                                    <AlertCircle size={16} style={{ color: 'var(--color-warning)', marginRight: '6px' }} />
+                                    <span className={styles.statLabel}>Skipped:</span>
+                                    <span className={styles.statValue}>{importProgress.skippedCount}</span>
+                                </div>
+                                <div className={styles.statItem}>
+                                    <XCircle size={16} style={{ color: 'var(--color-danger)', marginRight: '6px' }} />
+                                    <span className={styles.statLabel}>Errors:</span>
+                                    <span className={styles.statValue}>{importProgress.errorCount}</span>
+                                </div>
+                            </div>
+
+                            {/* Errors List */}
+                            {importProgress.errors.length > 0 && (
+                                <div className={styles.errorsSection}>
+                                    <h4 className={styles.errorsTitle}>
+                                        <AlertCircle size={16} style={{ marginRight: '8px' }} />
+                                        Errors ({importProgress.errors.length})
+                                    </h4>
+                                    <div className={styles.errorsList}>
+                                        {importProgress.errors.slice(0, 10).map((error, idx) => (
+                                            <div key={idx} className={styles.errorItem}>{error}</div>
+                                        ))}
+                                        {importProgress.errors.length > 10 && (
+                                            <div className={styles.errorItem}>
+                                                ... and {importProgress.errors.length - 10} more error(s)
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* Skipped List */}
+                            {importProgress.skipped.length > 0 && (
+                                <div className={styles.skippedSection}>
+                                    <h4 className={styles.skippedTitle}>
+                                        <Clock size={16} style={{ marginRight: '8px' }} />
+                                        Skipped ({importProgress.skipped.length})
+                                    </h4>
+                                    <div className={styles.skippedList}>
+                                        {importProgress.skipped.slice(0, 10).map((skip, idx) => (
+                                            <div key={idx} className={styles.skippedItem}>{skip}</div>
+                                        ))}
+                                        {importProgress.skipped.length > 10 && (
+                                            <div className={styles.skippedItem}>
+                                                ... and {importProgress.skipped.length - 10} more skipped order(s)
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                            )}
                         </div>
                     </div>
                 </div>
