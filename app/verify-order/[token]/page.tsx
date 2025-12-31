@@ -1,0 +1,366 @@
+"use client";
+
+import { useEffect, useState, useRef } from 'react';
+import { useParams } from 'next/navigation';
+import { getSubmissionByToken, updateSubmissionStatus, finalizeSubmission } from '@/lib/form-actions';
+import { FormSchema } from '@/lib/form-types';
+import { CheckCircle, XCircle, Loader2, Edit, MessageSquare } from 'lucide-react';
+import SignatureCanvas from 'react-signature-canvas';
+import { jsPDF } from 'jspdf';
+
+export default function VerifyOrderPage() {
+    const params = useParams();
+    const token = params.token as string;
+
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState<string | null>(null);
+    const [submission, setSubmission] = useState<any>(null);
+    const [formSchema, setFormSchema] = useState<FormSchema | null>(null);
+    const [showSignature, setShowSignature] = useState(false);
+    const [processing, setProcessing] = useState(false);
+    const [completed, setCompleted] = useState(false);
+    const [comments, setComments] = useState('');
+
+    const signatureRef = useRef<SignatureCanvas>(null);
+
+    useEffect(() => {
+        loadSubmission();
+    }, [token]);
+
+    async function loadSubmission() {
+        try {
+            const result = await getSubmissionByToken(token);
+            if (result.success && result.data) {
+                setSubmission(result.data.submission);
+                setFormSchema(result.data.formSchema);
+
+                // If already processed, show completion
+                if (result.data.submission.status !== 'pending') {
+                    setCompleted(true);
+                    setComments(result.data.submission.comments || '');
+                }
+            } else {
+                setError('Submission not found');
+            }
+        } catch (err: any) {
+            setError(err.message || 'Failed to load submission');
+        } finally {
+            setLoading(false);
+        }
+    }
+
+    async function handleReject() {
+        if (!comments.trim()) {
+            alert('Please provide a reason for rejection');
+            return;
+        }
+
+        setProcessing(true);
+        try {
+            const result = await updateSubmissionStatus(token, 'rejected', undefined, comments);
+            if (result.success) {
+                setCompleted(true);
+                setSubmission({ ...submission, status: 'rejected', comments });
+            } else {
+                throw new Error(result.error || 'Failed to reject');
+            }
+        } catch (err: any) {
+            setError(err.message);
+        } finally {
+            setProcessing(false);
+        }
+    }
+
+    async function handleAccept() {
+        setShowSignature(true);
+    }
+
+    async function handleSignAndComplete() {
+        if (!signatureRef.current || signatureRef.current.isEmpty()) {
+            alert('Please provide a signature');
+            return;
+        }
+
+        setProcessing(true);
+        try {
+            // Get signature as data URL
+            const signatureDataUrl = signatureRef.current.toDataURL();
+
+            // Update status with signature and comments
+            const statusResult = await updateSubmissionStatus(token, 'accepted', signatureDataUrl, comments);
+            if (!statusResult.success) {
+                throw new Error(statusResult.error || 'Failed to update status');
+            }
+
+            // Generate PDF with signature and comments
+            const pdfBlob = await generateSignedPDF(signatureDataUrl);
+
+            // Upload PDF
+            const uploadResult = await finalizeSubmission(token, pdfBlob);
+            if (!uploadResult.success) {
+                throw new Error(uploadResult.error || 'Failed to upload PDF');
+            }
+
+            setCompleted(true);
+            setSubmission({ ...submission, status: 'accepted', comments });
+        } catch (err: any) {
+            setError(err.message);
+        } finally {
+            setProcessing(false);
+        }
+    }
+
+    async function generateSignedPDF(signatureDataUrl: string): Promise<Blob> {
+        const doc = new jsPDF();
+        const answers = submission.data;
+
+        // Header
+        doc.setFontSize(22);
+        doc.text(formSchema!.title, 20, 20);
+
+        doc.setFontSize(12);
+        doc.setTextColor(100);
+        doc.text(`Submitted: ${new Date(submission.created_at).toLocaleString()}`, 20, 30);
+        doc.text(`Status: ACCEPTED`, 20, 37);
+
+        let yPos = 55;
+        const pageHeight = doc.internal.pageSize.height;
+        const margin = 20;
+
+        formSchema!.questions.forEach((q, index) => {
+            if (yPos > pageHeight - 60) {
+                doc.addPage();
+                yPos = 20;
+            }
+
+            doc.setFontSize(12);
+            doc.setTextColor(0);
+            doc.setFont("helvetica", "bold");
+
+            const questionText = `${index + 1}. ${q.text}`;
+            const splitQuestion = doc.splitTextToSize(questionText, 170);
+            doc.text(splitQuestion, margin, yPos);
+            yPos += (splitQuestion.length * 7);
+
+            doc.setFont("helvetica", "normal");
+            doc.setTextColor(50);
+
+            const answer = answers[q.id] || '(No answer provided)';
+            const splitAnswer = doc.splitTextToSize(answer, 160);
+
+            doc.text(splitAnswer, margin + 5, yPos);
+            yPos += (splitAnswer.length * 7) + 10;
+        });
+
+        // Add comments if provided
+        if (comments.trim()) {
+            if (yPos > pageHeight - 60) {
+                doc.addPage();
+                yPos = 20;
+            }
+
+            doc.setFontSize(12);
+            doc.setTextColor(0);
+            doc.setFont("helvetica", "bold");
+            doc.text("Comments:", margin, yPos);
+            yPos += 10;
+
+            doc.setFont("helvetica", "normal");
+            doc.setTextColor(50);
+            const splitComments = doc.splitTextToSize(comments, 160);
+            doc.text(splitComments, margin + 5, yPos);
+            yPos += (splitComments.length * 7) + 15;
+        }
+
+        // Add signature
+        if (yPos > pageHeight - 80) {
+            doc.addPage();
+            yPos = 20;
+        }
+
+        doc.setFontSize(12);
+        doc.setTextColor(0);
+        doc.setFont("helvetica", "bold");
+        doc.text("Signature:", margin, yPos);
+        yPos += 10;
+
+        // Add signature image
+        doc.addImage(signatureDataUrl, 'PNG', margin, yPos, 80, 30);
+
+        return doc.output('blob');
+    }
+
+    if (loading) {
+        return (
+            <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '100vh', background: 'var(--bg-primary)' }}>
+                <Loader2 size={48} className="animate-spin" />
+            </div>
+        );
+    }
+
+    if (error) {
+        return (
+            <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '100vh', flexDirection: 'column', gap: '20px', background: 'var(--bg-primary)' }}>
+                <XCircle size={64} color="#ef4444" />
+                <h1 style={{ fontSize: '24px', fontWeight: 'bold' }}>Error</h1>
+                <p>{error}</p>
+            </div>
+        );
+    }
+
+    if (completed) {
+        return (
+            <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '100vh', flexDirection: 'column', gap: '20px', padding: '20px', background: 'var(--bg-primary)' }}>
+                {submission.status === 'accepted' ? (
+                    <>
+                        <CheckCircle size={64} color="#10b981" />
+                        <h1 style={{ fontSize: '24px', fontWeight: 'bold' }}>Order Accepted!</h1>
+                        <p>The order has been signed and submitted successfully.</p>
+                        {comments && (
+                            <div style={{ marginTop: '20px', padding: '16px', background: 'var(--bg-secondary)', borderRadius: '8px', maxWidth: '600px' }}>
+                                <div style={{ fontWeight: 'bold', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                    <MessageSquare size={16} />
+                                    Comments:
+                                </div>
+                                <div style={{ color: 'var(--text-secondary)' }}>{comments}</div>
+                            </div>
+                        )}
+                    </>
+                ) : (
+                    <>
+                        <XCircle size={64} color="#ef4444" />
+                        <h1 style={{ fontSize: '24px', fontWeight: 'bold' }}>Order Rejected</h1>
+                        <p>This order has been rejected.</p>
+                        {comments && (
+                            <div style={{ marginTop: '20px', padding: '16px', background: 'var(--bg-secondary)', borderRadius: '8px', maxWidth: '600px' }}>
+                                <div style={{ fontWeight: 'bold', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                    <MessageSquare size={16} />
+                                    Reason:
+                                </div>
+                                <div style={{ color: 'var(--text-secondary)' }}>{comments}</div>
+                            </div>
+                        )}
+                    </>
+                )}
+            </div>
+        );
+    }
+
+    return (
+        <div style={{ minHeight: '100vh', background: 'var(--bg-primary)', padding: '40px 20px' }}>
+            <div style={{ maxWidth: '800px', margin: '0 auto' }}>
+                <div style={{ background: 'var(--bg-secondary)', padding: '30px', borderRadius: '12px', marginBottom: '30px' }}>
+                    <h1 style={{ fontSize: '28px', fontWeight: 'bold', marginBottom: '10px' }}>{formSchema?.title}</h1>
+                    <p style={{ color: 'var(--text-secondary)' }}>Review the order details below</p>
+                </div>
+
+                {/* Questions and Answers */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', marginBottom: '30px' }}>
+                    {formSchema?.questions.map((q, index) => (
+                        <div key={q.id} style={{ background: 'var(--bg-secondary)', padding: '20px', borderRadius: '8px' }}>
+                            <div style={{ fontWeight: 'bold', marginBottom: '8px' }}>
+                                {index + 1}. {q.text}
+                            </div>
+                            <div style={{ color: 'var(--text-secondary)', paddingLeft: '20px' }}>
+                                {submission.data[q.id] || '(No answer)'}
+                            </div>
+                        </div>
+                    ))}
+                </div>
+
+                {/* Comments Section */}
+                <div style={{ background: 'var(--bg-secondary)', padding: '30px', borderRadius: '12px', marginBottom: '30px' }}>
+                    <h2 style={{ fontSize: '18px', fontWeight: 'bold', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <MessageSquare size={18} />
+                        Comments {!showSignature && <span style={{ color: 'var(--text-secondary)', fontSize: '14px', fontWeight: 'normal' }}>(optional for acceptance, required for rejection)</span>}
+                    </h2>
+                    <textarea
+                        value={comments}
+                        onChange={(e) => setComments(e.target.value)}
+                        placeholder="Add any comments or notes..."
+                        style={{
+                            width: '100%',
+                            minHeight: '100px',
+                            padding: '12px',
+                            borderRadius: '6px',
+                            border: '1px solid var(--border-color)',
+                            background: 'var(--bg-primary)',
+                            color: 'var(--text-primary)',
+                            fontFamily: 'inherit',
+                            fontSize: '14px',
+                            resize: 'vertical'
+                        }}
+                    />
+                </div>
+
+                {/* Signature Section */}
+                {showSignature && (
+                    <div style={{ background: 'var(--bg-secondary)', padding: '30px', borderRadius: '12px', marginBottom: '30px' }}>
+                        <h2 style={{ fontSize: '20px', fontWeight: 'bold', marginBottom: '20px' }}>
+                            <Edit size={20} style={{ display: 'inline', marginRight: '8px' }} />
+                            Sign to Accept
+                        </h2>
+                        <div style={{ border: '2px solid var(--border-color)', borderRadius: '8px', background: 'white' }}>
+                            <SignatureCanvas
+                                ref={signatureRef}
+                                canvasProps={{
+                                    width: 700,
+                                    height: 200,
+                                    style: { width: '100%', height: '200px' }
+                                }}
+                            />
+                        </div>
+                        <button
+                            onClick={() => signatureRef.current?.clear()}
+                            className="btn btn-secondary"
+                            style={{ marginTop: '10px' }}
+                        >
+                            Clear
+                        </button>
+                    </div>
+                )}
+
+                {/* Action Buttons */}
+                {!showSignature ? (
+                    <div style={{ display: 'flex', gap: '12px', justifyContent: 'center' }}>
+                        <button
+                            onClick={handleReject}
+                            disabled={processing}
+                            className="btn btn-secondary"
+                            style={{ background: '#ef4444' }}
+                        >
+                            {processing ? <Loader2 size={16} className="animate-spin" /> : <XCircle size={16} />}
+                            Reject
+                        </button>
+                        <button
+                            onClick={handleAccept}
+                            disabled={processing}
+                            className="btn btn-primary"
+                        >
+                            <CheckCircle size={16} />
+                            Accept & Sign
+                        </button>
+                    </div>
+                ) : (
+                    <div style={{ display: 'flex', gap: '12px', justifyContent: 'center' }}>
+                        <button
+                            onClick={() => setShowSignature(false)}
+                            disabled={processing}
+                            className="btn btn-secondary"
+                        >
+                            Cancel
+                        </button>
+                        <button
+                            onClick={handleSignAndComplete}
+                            disabled={processing}
+                            className="btn btn-primary"
+                        >
+                            {processing ? <Loader2 size={16} className="animate-spin" /> : <CheckCircle size={16} />}
+                            Sign & Complete
+                        </button>
+                    </div>
+                )}
+            </div>
+        </div>
+    );
+}

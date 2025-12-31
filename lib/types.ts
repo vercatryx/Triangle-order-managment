@@ -13,6 +13,7 @@ export interface ClientProfile {
   endDate: string; // ISO Date
   screeningTookPlace: boolean;
   screeningSigned: boolean;
+  screeningStatus?: 'not_started' | 'waiting_approval' | 'approved' | 'rejected';
   notes: string;
   statusId: string;
   serviceType: ServiceType;

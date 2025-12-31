@@ -406,6 +406,7 @@ function mapClientFromDB(c: any): ClientProfile {
         endDate: c.end_date || '',
         screeningTookPlace: c.screening_took_place,
         screeningSigned: c.screening_signed,
+        screeningStatus: c.screening_status || 'not_started',
         notes: c.notes || '',
         statusId: c.status_id || '',
         serviceType: c.service_type as any,
@@ -2400,7 +2401,7 @@ export async function saveDeliveryProofUrlAndProcessOrder(
 ) {
     const session = await getSession();
     const currentUserName = session?.name || 'Admin';
-    
+
     let finalOrderId = orderId;
     let wasProcessed = false;
     const errors: string[] = [];
@@ -2415,9 +2416,9 @@ export async function saveDeliveryProofUrlAndProcessOrder(
             .single();
 
         if (fetchError || !upcomingOrder) {
-            return { 
-                success: false, 
-                error: 'Upcoming order not found: ' + (fetchError?.message || 'Unknown error') 
+            return {
+                success: false,
+                error: 'Upcoming order not found: ' + (fetchError?.message || 'Unknown error')
             };
         }
 
@@ -2430,9 +2431,9 @@ export async function saveDeliveryProofUrlAndProcessOrder(
                 .maybeSingle();
 
             if (checkError) {
-                return { 
-                    success: false, 
-                    error: 'Error checking for existing order: ' + checkError.message 
+                return {
+                    success: false,
+                    error: 'Error checking for existing order: ' + checkError.message
                 };
             }
 
@@ -2466,9 +2467,9 @@ export async function saveDeliveryProofUrlAndProcessOrder(
                         .single();
 
                     if (orderError || !newOrder) {
-                        return { 
-                            success: false, 
-                            error: 'Failed to create order: ' + (orderError?.message || 'Unknown error') 
+                        return {
+                            success: false,
+                            error: 'Failed to create order: ' + (orderError?.message || 'Unknown error')
                         };
                     }
 
@@ -2551,7 +2552,7 @@ export async function saveDeliveryProofUrlAndProcessOrder(
                                                 unit_value: item.unit_value,
                                                 total_value: item.total_value
                                             });
-                                        
+
                                         if (itemError) {
                                             errors.push(`Failed to copy item: ${itemError.message}`);
                                         }
@@ -2581,7 +2582,7 @@ export async function saveDeliveryProofUrlAndProcessOrder(
                                         total_value: bs.total_value || 0,
                                         items: bs.items || {}
                                     });
-                                
+
                                 if (bsError) {
                                     errors.push(`Failed to copy box selection: ${bsError.message}`);
                                 }
@@ -2599,9 +2600,9 @@ export async function saveDeliveryProofUrlAndProcessOrder(
                         })
                         .eq('id', upcomingOrder.id);
                 } catch (error: any) {
-                    return { 
-                        success: false, 
-                        error: 'Error processing upcoming order: ' + error.message 
+                    return {
+                        success: false,
+                        error: 'Error processing upcoming order: ' + error.message
                     };
                 }
             }
@@ -2609,9 +2610,9 @@ export async function saveDeliveryProofUrlAndProcessOrder(
             // No case_id, can't check if processed, so just try to process
             // This is similar to above but we'll skip duplicate checking
             // Actually, let's return an error if there's no case_id as it's risky
-            return { 
-                success: false, 
-                error: 'Upcoming order has no case_id, cannot safely process' 
+            return {
+                success: false,
+                error: 'Upcoming order has no case_id, cannot safely process'
             };
         }
     }
@@ -2639,9 +2640,9 @@ export async function saveDeliveryProofUrlAndProcessOrder(
         .single();
 
     if (updateError || !order) {
-        return { 
-            success: false, 
-            error: 'Failed to update order with proof URL: ' + (updateError?.message || 'Unknown error') 
+        return {
+            success: false,
+            error: 'Failed to update order with proof URL: ' + (updateError?.message || 'Unknown error')
         };
     }
 
@@ -2727,12 +2728,12 @@ export async function getVendorOrders() {
 export async function getVendorMenuItems() {
     const session = await getVendorSession();
     if (!session) return [];
-    
+
     const { data, error } = await supabase
         .from('menu_items')
         .select('*')
         .eq('vendor_id', session.userId);
-    
+
     if (error) return [];
     return data.map((i: any) => ({
         id: i.id,
@@ -2750,15 +2751,15 @@ export async function getVendorMenuItems() {
 export async function getVendorDetails() {
     const session = await getVendorSession();
     if (!session) return null;
-    
+
     const { data, error } = await supabase
         .from('vendors')
         .select('*')
         .eq('id', session.userId)
         .single();
-    
+
     if (error || !data) return null;
-    
+
     return {
         id: data.id,
         name: data.name,
@@ -2776,7 +2777,7 @@ export async function updateVendorDetails(data: Partial<Vendor & { password?: st
     if (!session) {
         throw new Error('Unauthorized');
     }
-    
+
     const payload: any = {};
     if (data.name) payload.name = data.name;
     if (data.serviceTypes) payload.service_type = data.serviceTypes.join(',');
@@ -2796,7 +2797,7 @@ export async function updateVendorDetails(data: Partial<Vendor & { password?: st
         .from('vendors')
         .update(payload)
         .eq('id', session.userId);
-    
+
     handleError(error);
     revalidatePath('/vendor');
     revalidatePath('/vendor/details');
@@ -2807,7 +2808,7 @@ export async function addVendorMenuItem(data: Omit<MenuItem, 'id'>) {
     if (!session) {
         throw new Error('Unauthorized');
     }
-    
+
     const payload: any = {
         vendor_id: session.userId,
         name: data.name,
@@ -2822,13 +2823,13 @@ export async function addVendorMenuItem(data: Omit<MenuItem, 'id'>) {
     if (!data.priceEach || data.priceEach <= 0) {
         throw new Error('Price is required and must be greater than 0');
     }
-    
+
     const { data: res, error } = await supabase
         .from('menu_items')
         .insert([payload])
         .select()
         .single();
-    
+
     handleError(error);
     revalidatePath('/vendor');
     revalidatePath('/vendor/items');
@@ -2840,18 +2841,18 @@ export async function updateVendorMenuItem(id: string, data: Partial<MenuItem>) 
     if (!session) {
         throw new Error('Unauthorized');
     }
-    
+
     // Verify the menu item belongs to this vendor
     const { data: item } = await supabase
         .from('menu_items')
         .select('vendor_id')
         .eq('id', id)
         .single();
-    
+
     if (!item || item.vendor_id !== session.userId) {
         throw new Error('Unauthorized: Menu item does not belong to this vendor');
     }
-    
+
     const payload: any = {};
     if (data.name) payload.name = data.name;
     if (data.value !== undefined) payload.value = data.value;
@@ -2865,7 +2866,7 @@ export async function updateVendorMenuItem(id: string, data: Partial<MenuItem>) 
         .from('menu_items')
         .update(payload)
         .eq('id', id);
-    
+
     handleError(error);
     revalidatePath('/vendor');
     revalidatePath('/vendor/items');
@@ -2876,23 +2877,23 @@ export async function deleteVendorMenuItem(id: string) {
     if (!session) {
         throw new Error('Unauthorized');
     }
-    
+
     // Verify the menu item belongs to this vendor
     const { data: item } = await supabase
         .from('menu_items')
         .select('vendor_id')
         .eq('id', id)
         .single();
-    
+
     if (!item || item.vendor_id !== session.userId) {
         throw new Error('Unauthorized: Menu item does not belong to this vendor');
     }
-    
+
     const { error } = await supabase
         .from('menu_items')
         .delete()
         .eq('id', id);
-    
+
     handleError(error);
     revalidatePath('/vendor');
     revalidatePath('/vendor/items');

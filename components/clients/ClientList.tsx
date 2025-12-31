@@ -6,6 +6,7 @@ import { useState, useEffect, useRef } from 'react';
 import { ClientProfile, ClientStatus, Navigator, Vendor, BoxType, ClientFullDetails, MenuItem } from '@/lib/types';
 import { getClientsPaginated, getClientFullDetails, getStatuses, getNavigators, addClient, getVendors, getBoxTypes, getMenuItems } from '@/lib/actions';
 import { invalidateClientData } from '@/lib/cached-data';
+import { getClientSubmissions } from '@/lib/form-actions';
 import { Plus, Search, ChevronRight, CheckSquare, Square, StickyNote, Package } from 'lucide-react';
 import styles from './ClientList.module.css';
 import { useRouter } from 'next/navigation';
@@ -20,6 +21,7 @@ export function ClientList() {
     const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
     const [search, setSearch] = useState('');
     const [isLoading, setIsLoading] = useState(true);
+    const [clientSubmissions, setClientSubmissions] = useState<Record<string, any>>({});
 
     // Pagination State
     const [page, setPage] = useState(1);
@@ -69,6 +71,14 @@ export function ClientList() {
         }
     }, [clients, detailsCache, isLoading]);
 
+    // Load submissions when clients are loaded
+    useEffect(() => {
+        if (!isLoading && clients.length > 0) {
+            loadClientSubmissions();
+        }
+    }, [clients.length, isLoading]);
+
+
     async function loadInitialData() {
         setIsLoading(true);
         try {
@@ -95,6 +105,26 @@ export function ClientList() {
             setIsLoading(false);
         }
     }
+
+    async function loadClientSubmissions() {
+        // Load submissions for all clients
+        const submissionsMap: Record<string, any> = {};
+
+        for (const client of clients) {
+            try {
+                const result = await getClientSubmissions(client.id);
+                if (result.success && result.data && result.data.length > 0) {
+                    // Get the most recent submission
+                    submissionsMap[client.id] = result.data[0];
+                }
+            } catch (error) {
+                console.error(`Error loading submissions for client ${client.id}:`, error);
+            }
+        }
+
+        setClientSubmissions(submissionsMap);
+    }
+
 
     async function fetchMoreClients(nextPage: number) {
         setIsFetchingMore(true);
@@ -253,12 +283,12 @@ export function ClientList() {
             });
 
             // Create tooltip with full details
-            const tooltipText = vendorDetails.map(v => 
+            const tooltipText = vendorDetails.map(v =>
                 `${v.vendorName}: ${v.items || 'No items'}`
             ).join('\n') + `\n[Max ${limit}]`;
 
             // Display: Show vendors first, then items in a compact format
-            const displayText = vendorDetails.map(v => 
+            const displayText = vendorDetails.map(v =>
                 `${v.vendorName}: ${v.items || 'No items'}`
             ).join(' | ');
 
@@ -316,13 +346,53 @@ export function ClientList() {
     }
 
     function getScreeningStatus(client: ClientProfile) {
+        // Use screening_status field
+        const screeningStatus = client.screeningStatus || 'not_started';
+
+        // Determine display based on screening_status
+        let firstCheckboxColor = 'var(--text-tertiary)';
+        let firstCheckboxChecked = false;
+        let secondCheckboxColor = 'var(--text-tertiary)';
+        let secondCheckboxChecked = false;
+        let statusText = 'Not Started';
+
+        switch (screeningStatus) {
+            case 'waiting_approval':
+                firstCheckboxChecked = true;
+                firstCheckboxColor = 'var(--color-success)';
+                secondCheckboxColor = '#f59e0b'; // Yellow
+                secondCheckboxChecked = false;
+                statusText = 'Waiting for Approval';
+                break;
+            case 'approved':
+                firstCheckboxChecked = true;
+                firstCheckboxColor = 'var(--color-success)';
+                secondCheckboxColor = '#10b981'; // Green
+                secondCheckboxChecked = true;
+                statusText = 'Approved';
+                break;
+            case 'rejected':
+                firstCheckboxChecked = true;
+                firstCheckboxColor = 'var(--color-success)';
+                secondCheckboxColor = '#ef4444'; // Red
+                secondCheckboxChecked = false;
+                statusText = 'Rejected';
+                break;
+            case 'not_started':
+            default:
+                firstCheckboxChecked = false;
+                secondCheckboxChecked = false;
+                statusText = 'Not Started';
+                break;
+        }
+
         return (
-            <div style={{ display: 'flex', gap: '8px' }}>
-                <span title="Took Place" style={{ color: client.screeningTookPlace ? 'var(--color-success)' : 'var(--text-tertiary)' }}>
-                    {client.screeningTookPlace ? <CheckSquare size={16} /> : <Square size={16} />}
+            <div style={{ display: 'flex', gap: '8px' }} title={statusText}>
+                <span style={{ color: firstCheckboxColor }}>
+                    {firstCheckboxChecked ? <CheckSquare size={16} /> : <Square size={16} />}
                 </span>
-                <span title="Signed" style={{ color: client.screeningSigned ? 'var(--color-success)' : 'var(--text-tertiary)' }}>
-                    {client.screeningSigned ? <StickyNote size={16} /> : <Square size={16} />}
+                <span style={{ color: secondCheckboxColor }}>
+                    {secondCheckboxChecked ? <StickyNote size={16} /> : <Square size={16} />}
                 </span>
             </div>
         );

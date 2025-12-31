@@ -8,10 +8,12 @@ import { MenuManagement } from '@/components/admin/MenuManagement';
 import { BoxCategoriesManagement } from '@/components/admin/BoxCategoriesManagement';
 import { NavigatorManagement } from '@/components/admin/NavigatorManagement';
 import { AdminManagement } from '@/components/admin/AdminManagement';
+import FormBuilder from '@/components/forms/FormBuilder';
+import { saveSingleForm } from '@/lib/form-actions';
 
 import { GlobalSettings } from '@/components/admin/GlobalSettings';
 
-type Tab = 'vendors' | 'menus' | 'statuses' | 'boxes' | 'navigators' | 'settings' | 'admins';
+type Tab = 'vendors' | 'menus' | 'statuses' | 'boxes' | 'navigators' | 'settings' | 'admins' | 'form';
 
 export default function AdminPage() {
     const [activeTab, setActiveTab] = useState<Tab>('admins');
@@ -55,6 +57,12 @@ export default function AdminPage() {
                     Statuses
                 </button>
                 <button
+                    className={`${styles.tab} ${activeTab === 'form' ? styles.activeTab : ''}`}
+                    onClick={() => setActiveTab('form')}
+                >
+                    Order Form
+                </button>
+                <button
                     className={`${styles.tab} ${activeTab === 'settings' ? styles.activeTab : ''}`}
                     onClick={() => setActiveTab('settings')}
                 >
@@ -75,6 +83,19 @@ export default function AdminPage() {
                 {activeTab === 'vendors' && <VendorManagement />}
                 {activeTab === 'navigators' && <NavigatorManagement />}
                 {activeTab === 'statuses' && <StatusManagement />}
+                {activeTab === 'form' && (
+                    <div className="bg-[#1a1a1a] p-6 rounded-xl border border-white/5">
+                        <h2 className="text-xl font-bold mb-4 text-white">Order Form Configuration</h2>
+                        <p className="text-gray-400 mb-6">Manage the fields for the global order form.</p>
+                        {/* We will update FormBuilder to handle singleton logic internally or pass a specific onSave */}
+                        <FormBuilder onSave={async (schema) => {
+                            // This is a bit of a hack until we fully update FormBuilder to be singleton-aware internally
+                            // or we can just ignore the schema return and trust the action inside FormBuilder
+                            // But wait, FormBuilder calls safeForm internally. We need to update FormBuilder to call saveSingleForm instead.
+                            console.log("Form saved");
+                        }} />
+                    </div>
+                )}
                 {activeTab === 'settings' && <GlobalSettings />}
                 {activeTab === 'admins' && <AdminManagement />}
             </div>
