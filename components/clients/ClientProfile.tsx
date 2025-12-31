@@ -4,8 +4,12 @@ import { useState, useEffect, Fragment, useMemo } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import { ClientProfile, ClientStatus, Navigator, Vendor, MenuItem, BoxType, ServiceType, AppSettings, DeliveryRecord, ItemCategory, BoxQuota, ClientFullDetails } from '@/lib/types';
 import { updateClient, deleteClient, updateDeliveryProof, recordClientChange, getBoxQuotas, syncCurrentOrderToUpcoming, logNavigatorAction } from '@/lib/actions';
+import { getSingleForm, getClientSubmissions } from '@/lib/form-actions';
 import { getClient, getStatuses, getNavigators, getVendors, getMenuItems, getBoxTypes, getSettings, getCategories, getClients, invalidateClientData, invalidateReferenceData, getActiveOrderForClient, getUpcomingOrderForClient, getOrderHistory, getClientHistory, getBillingHistory, invalidateOrderData } from '@/lib/cached-data';
-import { Save, ArrowLeft, Truck, Package, AlertTriangle, Upload, Trash2, Plus, Check, ClipboardList, History, CreditCard, Calendar, ChevronDown, ChevronUp, ShoppingCart, Loader2 } from 'lucide-react';
+import { Save, ArrowLeft, Truck, Package, AlertTriangle, Upload, Trash2, Plus, Check, ClipboardList, History, CreditCard, Calendar, ChevronDown, ChevronUp, ShoppingCart, Loader2, FileText } from 'lucide-react';
+import FormFiller from '@/components/forms/FormFiller';
+import { FormSchema } from '@/lib/form-types';
+import SubmissionsList from './SubmissionsList';
 import styles from './ClientProfile.module.css';
 
 
@@ -105,6 +109,13 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
     const [loading, setLoading] = useState(true);
     const [loadingOrderDetails, setLoadingOrderDetails] = useState(true);
 
+    // Form Filler State
+    const [isFillingForm, setIsFillingForm] = useState(false);
+    const [formSchema, setFormSchema] = useState<FormSchema | null>(null);
+    const [loadingForm, setLoadingForm] = useState(false);
+    const [submissions, setSubmissions] = useState<any[]>([]);
+    const [loadingSubmissions, setLoadingSubmissions] = useState(false);
+
     // Status Change Logic
     const [showUnitsModal, setShowUnitsModal] = useState(false);
     const [pendingStatusChange, setPendingStatusChange] = useState<{ oldStatus: string, newStatus: string } | null>(null);
@@ -135,6 +146,28 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
             loadData().then(() => setLoading(false));
         }
     }, [clientId, initialData]);
+
+    useEffect(() => {
+        // Load submissions for this client
+        if (clientId) {
+            loadSubmissions();
+        }
+    }, [clientId]);
+
+    async function loadSubmissions() {
+        setLoadingSubmissions(true);
+        try {
+            const result = await getClientSubmissions(clientId);
+            if (result.success && result.data) {
+                setSubmissions(result.data);
+            }
+        } catch (error) {
+            console.error('Failed to load submissions:', error);
+        } finally {
+            setLoadingSubmissions(false);
+        }
+    }
+
 
     async function loadAuxiliaryData() {
         const [appSettings, catData, allClientsData] = await Promise.all([
@@ -1089,8 +1122,41 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
         setVendorSelectionsForDay(day, current);
     }
 
+    // -- Form Filler Handlers --
+    async function handleOpenOrderForm() {
+        setLoadingForm(true);
+        try {
+            const response = await getSingleForm();
+            if (response.success && response.data) {
+                setFormSchema(response.data);
+                setIsFillingForm(true);
+            } else {
+                alert('No Order Form configured.');
+            }
+        } catch (error) {
+            console.error('Failed to load form:', error);
+            alert('Failed to load form. Please try again.');
+        } finally {
+            setLoadingForm(false);
+        }
+    }
+
+    function handleCloseOrderForm() {
+        setIsFillingForm(false);
+        setFormSchema(null);
+    }
+
     if (!client) {
         return <div>Loading...</div>;
+    }
+
+    // Render Form Filler if active
+    if (isFillingForm && formSchema) {
+        return (
+            <div className={`${styles.container} ${onClose ? styles.inModal : ''}`} style={{ padding: 0 }}>
+                <FormFiller schema={formSchema} onBack={handleCloseOrderForm} clientId={clientId} />
+            </div>
+        );
     }
 
     const content = (
@@ -1177,6 +1243,30 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                             </label>
                         </div>
                     </section>
+
+                    {/* Order Form Submissions */}
+                    <section className={styles.card}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                            <h3 className={styles.sectionTitle} style={{ margin: 0 }}>Order Form Submissions</h3>
+                            <button
+                                className="btn btn-primary"
+                                onClick={handleOpenOrderForm}
+                                disabled={loadingForm}
+                                style={{ fontSize: '14px' }}
+                            >
+                                {loadingForm ? <Loader2 size={16} className="animate-spin" /> : <FileText size={16} />}
+                                Fill Order Form
+                            </button>
+                        </div>
+                        {loadingSubmissions ? (
+                            <div style={{ textAlign: 'center', padding: '20px' }}>
+                                <Loader2 size={24} className="animate-spin" />
+                            </div>
+                        ) : (
+                            <SubmissionsList submissions={submissions} />
+                        )}
+                    </section>
+
                 </div>
 
                 <div className={styles.column}>

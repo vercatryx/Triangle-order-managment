@@ -5,7 +5,7 @@ import { decrypt } from '@/lib/session';
 // 1. Specify protected and public routes
 const protectedRoutes = ['/admin', '/clients', '/billing', '/vendors', '/'];
 const vendorRoutes = ['/vendor'];
-const publicRoutes = ['/login', '/vendor-login', '/api/auth/login', '/api/process-weekly-orders'];
+const publicRoutes = ['/login', '/vendor-login', '/api/auth/login', '/api/process-weekly-orders', '/verify-order'];
 
 export default async function middleware(req: NextRequest) {
     // 2. Check if the current route is protected or public
@@ -16,7 +16,7 @@ export default async function middleware(req: NextRequest) {
         return NextResponse.next();
     }
 
-    const isPublicRoute = publicRoutes.includes(path) || path.startsWith('/client-portal');
+    const isPublicRoute = publicRoutes.includes(path) || path.startsWith('/verify-order/') || path.startsWith('/client-portal');
     const isVendorRoute = vendorRoutes.some(route => path.startsWith(route));
     // Check protected routes - handle root path separately to avoid matching all paths
     const isProtectedRoute = protectedRoutes.some(route =>

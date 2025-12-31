@@ -450,6 +450,7 @@ function mapClientFromDB(c: any): ClientProfile {
         endDate: c.end_date || '',
         screeningTookPlace: c.screening_took_place,
         screeningSigned: c.screening_signed,
+        screeningStatus: c.screening_status || 'not_started',
         notes: c.notes || '',
         statusId: c.status_id || '',
         serviceType: c.service_type as any,

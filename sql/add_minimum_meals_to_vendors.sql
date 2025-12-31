@@ -10,3 +10,5 @@ ADD COLUMN IF NOT EXISTS minimum_meals INTEGER NOT NULL DEFAULT 0;
 -- Add comment for documentation
 COMMENT ON COLUMN vendors.minimum_meals IS 'Minimum number of meals required when ordering from this vendor. Only applies to Food vendors. Default is 0 (no minimum requirement).';
 
+
+

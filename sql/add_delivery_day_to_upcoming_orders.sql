@@ -9,3 +9,5 @@ ADD COLUMN IF NOT EXISTS delivery_day TEXT;
 -- Add comment for documentation
 COMMENT ON COLUMN upcoming_orders.delivery_day IS 'Day of week (e.g., "Monday", "Thursday") for which this order is scheduled. Allows multiple orders per client when vendors have multiple delivery days.';
 
+
+
