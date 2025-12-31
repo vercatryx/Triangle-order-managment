@@ -53,6 +53,9 @@ export function Sidebar({
                     if (item.label === 'Admin Control') {
                         return userRole === 'admin' || userRole === 'super-admin';
                     }
+                    if (item.label === 'Vendors') {
+                        return userRole === 'admin' || userRole === 'super-admin';
+                    }
                     return true;
                 }).map((item) => {
                     const Icon = item.icon;

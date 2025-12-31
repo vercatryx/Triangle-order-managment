@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { Sidebar } from './Sidebar';
-import { VendorSidebar } from './VendorSidebar';
+
 import { usePathname } from 'next/navigation';
 import { DataCacheProvider } from '@/lib/data-cache';
 
@@ -10,7 +10,7 @@ export function LayoutShell({ children, userName, userRole }: { children: React.
     const [isCollapsed, setIsCollapsed] = useState(false);
     const pathname = usePathname();
 
-    if (pathname === '/login' || pathname === '/vendor-login') {
+    if (pathname === '/login') {
         return <>{children}</>;
     }
 
@@ -19,22 +19,27 @@ export function LayoutShell({ children, userName, userRole }: { children: React.
     const SIDEBAR_COLLAPSED_WIDTH = 80;
     const currentSidebarWidth = isCollapsed ? SIDEBAR_COLLAPSED_WIDTH : SIDEBAR_WIDTH;
 
-    const isVendorRoute = pathname.startsWith('/vendor');
-    const SidebarComponent = isVendorRoute ? VendorSidebar : Sidebar;
+    // Hide sidebar only for vendor portal (singular /vendor), not admin vendor management (plural /vendors)
+    // Hide sidebar only for vendor portal (singular /vendor) and client portal
+    const isVendorPortal = pathname === '/vendor' || pathname.startsWith('/vendor/');
+    const isClientPortal = pathname.startsWith('/client-portal');
+    const showSidebar = !isVendorPortal && !isClientPortal;
 
     return (
         <DataCacheProvider>
             <div style={{ display: 'flex', minHeight: '100vh' }}>
-                <SidebarComponent
-                    isCollapsed={isCollapsed}
-                    toggle={() => setIsCollapsed(!isCollapsed)}
-                    userName={userName}
-                    userRole={userRole}
-                />
+                {showSidebar && (
+                    <Sidebar
+                        isCollapsed={isCollapsed}
+                        toggle={() => setIsCollapsed(!isCollapsed)}
+                        userName={userName}
+                        userRole={userRole}
+                    />
+                )}
 
                 <main style={{
                     flex: 1,
-                    marginLeft: `${currentSidebarWidth}px`,
+                    marginLeft: `${showSidebar ? currentSidebarWidth : 0}px`,
                     padding: '2rem 20px 0 20px',
                     backgroundColor: 'var(--bg-app)',
                     transition: 'margin-left 0.3s ease',

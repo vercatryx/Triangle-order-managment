@@ -10,7 +10,11 @@ import { Plus, Search, ChevronRight, CheckSquare, Square, StickyNote, Package } 
 import styles from './ClientList.module.css';
 import { useRouter } from 'next/navigation';
 
-export function ClientList() {
+interface ClientListProps {
+    currentUser?: { role: string; id: string } | null;
+}
+
+export function ClientList({ currentUser }: ClientListProps) {
     const router = useRouter();
     const [clients, setClients] = useState<ClientProfile[]>([]);
     const [statuses, setStatuses] = useState<ClientStatus[]>([]);
@@ -253,12 +257,12 @@ export function ClientList() {
             });
 
             // Create tooltip with full details
-            const tooltipText = vendorDetails.map(v => 
+            const tooltipText = vendorDetails.map(v =>
                 `${v.vendorName}: ${v.items || 'No items'}`
             ).join('\n') + `\n[Max ${limit}]`;
 
             // Display: Show vendors first, then items in a compact format
-            const displayText = vendorDetails.map(v => 
+            const displayText = vendorDetails.map(v =>
                 `${v.vendorName}: ${v.items || 'No items'}`
             ).join(' | ');
 
@@ -501,6 +505,7 @@ export function ClientList() {
                                 invalidateClientData();
                                 loadInitialData();
                             }}
+                            currentUser={currentUser}
                         />
                     </div>
                     <div className={styles.overlay} onClick={() => setSelectedClientId(null)}></div>

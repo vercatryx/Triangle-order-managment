@@ -3,7 +3,7 @@
 import { useState, useEffect, Fragment, useMemo } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import { ClientProfile, ClientStatus, Navigator, Vendor, MenuItem, BoxType, ServiceType, AppSettings, DeliveryRecord, ItemCategory, BoxQuota, ClientFullDetails } from '@/lib/types';
-import { updateClient, deleteClient, updateDeliveryProof, recordClientChange, getBoxQuotas, syncCurrentOrderToUpcoming } from '@/lib/actions';
+import { updateClient, deleteClient, updateDeliveryProof, recordClientChange, getBoxQuotas, syncCurrentOrderToUpcoming, logNavigatorAction } from '@/lib/actions';
 import { getClient, getStatuses, getNavigators, getVendors, getMenuItems, getBoxTypes, getSettings, getCategories, getClients, invalidateClientData, invalidateReferenceData, getActiveOrderForClient, getUpcomingOrderForClient, getOrderHistory, getClientHistory, getBillingHistory, invalidateOrderData } from '@/lib/cached-data';
 import { Save, ArrowLeft, Truck, Package, AlertTriangle, Upload, Trash2, Plus, Check, ClipboardList, History, CreditCard, Calendar, ChevronDown, ChevronUp, ShoppingCart, Loader2 } from 'lucide-react';
 import styles from './ClientProfile.module.css';
@@ -19,11 +19,60 @@ interface Props {
     vendors?: Vendor[];
     menuItems?: MenuItem[];
     boxTypes?: BoxType[];
+    currentUser?: { role: string; id: string } | null;
 }
 
 const SERVICE_TYPES: ServiceType[] = ['Food', 'Boxes'];
 
-export function ClientProfileDetail({ clientId: propClientId, onClose, initialData, statuses: initialStatuses, navigators: initialNavigators, vendors: initialVendors, menuItems: initialMenuItems, boxTypes: initialBoxTypes }: Props) {
+
+function UnitsModal({
+    isOpen,
+    onClose,
+    onConfirm,
+    saving
+}: {
+    isOpen: boolean;
+    onClose: () => void;
+    onConfirm: (units: number) => void;
+    saving: boolean;
+}) {
+    const [units, setUnits] = useState<string>('0');
+
+    if (!isOpen) return null;
+
+    return (
+        <div className={styles.modalOverlay} style={{ zIndex: 1000 }}>
+            <div className={styles.modalContent} style={{ maxWidth: '400px', height: 'auto', padding: '24px' }}>
+                <h2 style={{ fontSize: '1.25rem', fontWeight: 600, marginBottom: '16px' }}>Status Change Detected</h2>
+                <p style={{ marginBottom: '16px', color: 'var(--text-secondary)' }}>
+                    You are changing the client's status. How many units should be added?
+                </p>
+                <div style={{ marginBottom: '24px' }}>
+                    <label className="label">Units Added</label>
+                    <input
+                        type="number"
+                        className="input"
+                        value={units}
+                        onChange={e => setUnits(e.target.value)}
+                        min="0"
+                    />
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px' }}>
+                    <button className="btn" onClick={onClose} disabled={saving}>Cancel</button>
+                    <button
+                        className="btn btn-primary"
+                        onClick={() => onConfirm(parseInt(units) || 0)}
+                        disabled={saving}
+                    >
+                        {saving ? <Loader2 className="spin" size={16} /> : 'Confirm & Save'}
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+}
+
+export function ClientProfileDetail({ clientId: propClientId, onClose, initialData, statuses: initialStatuses, navigators: initialNavigators, vendors: initialVendors, menuItems: initialMenuItems, boxTypes: initialBoxTypes, currentUser }: Props) {
     const router = useRouter();
     const params = useParams();
     const clientId = (params?.id as string) || propClientId;
@@ -55,6 +104,10 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
 
     const [loading, setLoading] = useState(true);
     const [loadingOrderDetails, setLoadingOrderDetails] = useState(true);
+
+    // Status Change Logic
+    const [showUnitsModal, setShowUnitsModal] = useState(false);
+    const [pendingStatusChange, setPendingStatusChange] = useState<{ oldStatus: string, newStatus: string } | null>(null);
 
     useEffect(() => {
         // If we have initialData AND we have the necessary lookups (passed as props), we can hydrate instantly without loading state.
@@ -867,177 +920,8 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
         }
     }
 
-    async function handleSave(): Promise<boolean> {
-        if (!client) return false;
+    // Old handleSave removed
 
-        const validation = validateOrder();
-        if (!validation.isValid) {
-            setValidationError({ show: true, messages: validation.messages });
-            return false;
-        }
-
-        setSaving(true);
-
-        // -- Change Detection --
-        const changes: string[] = [];
-        if (client.fullName !== formData.fullName) changes.push(`Full Name: "${client.fullName}" -> "${formData.fullName}"`);
-        if (client.address !== formData.address) changes.push(`Address: "${client.address}" -> "${formData.address}"`);
-        if (client.email !== formData.email) changes.push(`Email: "${client.email}" -> "${formData.email}"`);
-        if (client.phoneNumber !== formData.phoneNumber) changes.push(`Phone: "${client.phoneNumber}" -> "${formData.phoneNumber}"`);
-        if (client.notes !== formData.notes) changes.push('Notes updated');
-        if (client.statusId !== formData.statusId) {
-            const oldStatus = statuses.find(s => s.id === client.statusId)?.name || 'Unknown';
-            const newStatus = statuses.find(s => s.id === formData.statusId)?.name || 'Unknown';
-            changes.push(`Status: "${oldStatus}" -> "${newStatus}"`);
-        }
-        if (client.navigatorId !== formData.navigatorId) {
-            const oldNav = navigators.find(n => n.id === client.navigatorId)?.name || 'Unassigned';
-            const newNav = navigators.find(n => n.id === formData.navigatorId)?.name || 'Unassigned';
-            changes.push(`Navigator: "${oldNav}" -> "${newNav}"`);
-        }
-        if (client.serviceType !== formData.serviceType) changes.push(`Service Type: "${client.serviceType}" -> "${formData.serviceType}"`);
-        if (client.approvedMealsPerWeek !== formData.approvedMealsPerWeek) changes.push(`Approved Meals: ${client.approvedMealsPerWeek} -> ${formData.approvedMealsPerWeek}`);
-        if (client.screeningTookPlace !== formData.screeningTookPlace) changes.push(`Screening Took Place: ${client.screeningTookPlace} -> ${formData.screeningTookPlace}`);
-        if (client.screeningSigned !== formData.screeningSigned) changes.push(`Screening Signed: ${client.screeningSigned} -> ${formData.screeningSigned}`);
-
-        // Check if order configuration changed
-        const hasOrderChanges = orderConfig && orderConfig.caseId;
-        if (hasOrderChanges) {
-            changes.push('Order configuration changed');
-        }
-
-        const summary = changes.length > 0 ? changes.join(', ') : 'No functional changes detected (re-saved profile)';
-
-        // Update client profile (without activeOrder - that comes from orders table)
-        const updateData: Partial<ClientProfile> = {
-            ...formData
-        };
-
-        await updateClient(clientId, updateData);
-        await recordClientChange(clientId, summary, 'Admin');
-
-        // Sync Current Order Request to upcoming_orders table
-        if (hasOrderChanges) {
-            // Ensure structure is correct and convert per-vendor delivery days to deliveryDayOrders format
-            const cleanedOrderConfig = { ...orderConfig };
-            if (formData.serviceType === 'Food') {
-                if (cleanedOrderConfig.deliveryDayOrders) {
-                    // Clean multi-day format (already in deliveryDayOrders)
-                    for (const day of Object.keys(cleanedOrderConfig.deliveryDayOrders)) {
-                        cleanedOrderConfig.deliveryDayOrders[day].vendorSelections = (cleanedOrderConfig.deliveryDayOrders[day].vendorSelections || [])
-                            .filter((s: any) => s.vendorId)
-                            .map((s: any) => ({
-                                vendorId: s.vendorId,
-                                items: s.items || {}
-                            }));
-                    }
-                } else if (cleanedOrderConfig.vendorSelections) {
-                    // Check if any vendor has per-vendor delivery days (itemsByDay)
-                    const hasPerVendorDeliveryDays = cleanedOrderConfig.vendorSelections.some((s: any) =>
-                        s.selectedDeliveryDays && s.selectedDeliveryDays.length > 0 && s.itemsByDay
-                    );
-
-                    if (hasPerVendorDeliveryDays) {
-                        // Convert per-vendor delivery days to deliveryDayOrders format
-                        const deliveryDayOrders: any = {};
-
-                        for (const selection of cleanedOrderConfig.vendorSelections) {
-                            if (!selection.vendorId || !selection.selectedDeliveryDays || !selection.itemsByDay) continue;
-
-                            for (const day of selection.selectedDeliveryDays) {
-                                if (!deliveryDayOrders[day]) {
-                                    deliveryDayOrders[day] = { vendorSelections: [] };
-                                }
-
-                                // Add this vendor to this day with its items
-                                const dayItems = selection.itemsByDay[day] || {};
-                                // Only add vendor if it has items for this day
-                                const hasItems = Object.keys(dayItems).length > 0 &&
-                                    Object.values(dayItems).some((qty: any) => (Number(qty) || 0) > 0);
-
-                                if (hasItems) {
-                                    deliveryDayOrders[day].vendorSelections.push({
-                                        vendorId: selection.vendorId,
-                                        items: dayItems
-                                    });
-                                }
-                            }
-                        }
-
-                        // Only set deliveryDayOrders if we have at least one day with vendors
-                        const daysWithVendors = Object.keys(deliveryDayOrders).filter(day =>
-                            deliveryDayOrders[day].vendorSelections && deliveryDayOrders[day].vendorSelections.length > 0
-                        );
-
-                        if (daysWithVendors.length > 0) {
-                            // Clean up days with no vendors
-                            const cleanedDeliveryDayOrders: any = {};
-                            for (const day of daysWithVendors) {
-                                cleanedDeliveryDayOrders[day] = deliveryDayOrders[day];
-                            }
-                            cleanedOrderConfig.deliveryDayOrders = cleanedDeliveryDayOrders;
-                            cleanedOrderConfig.vendorSelections = undefined;
-
-                            console.log('[handleSave] Converted to deliveryDayOrders format:', {
-                                days: daysWithVendors,
-                                dayDetails: daysWithVendors.map(day => ({
-                                    day,
-                                    vendorCount: cleanedDeliveryDayOrders[day].vendorSelections.length
-                                }))
-                            });
-                        }
-                    } else {
-                        // Clean single-day format (normal items, not itemsByDay)
-                        cleanedOrderConfig.vendorSelections = (cleanedOrderConfig.vendorSelections || [])
-                            .filter((s: any) => s.vendorId)
-                            .map((s: any) => ({
-                                vendorId: s.vendorId,
-                                items: s.items || {}
-                            }));
-                    }
-                }
-            }
-
-            // Create a temporary client object for syncCurrentOrderToUpcoming
-            const tempClient: ClientProfile = {
-                ...client,
-                ...formData,
-                activeOrder: {
-                    ...cleanedOrderConfig,
-                    serviceType: formData.serviceType,
-                    lastUpdated: new Date().toISOString(),
-                    updatedBy: 'Admin'
-                }
-            } as ClientProfile;
-
-            // Sync to upcoming_orders table
-            await syncCurrentOrderToUpcoming(clientId, tempClient);
-
-            // Reload upcoming order to reflect changes
-            const updatedUpcomingOrder = await getUpcomingOrderForClient(clientId);
-            if (updatedUpcomingOrder) {
-                setOrderConfig(updatedUpcomingOrder);
-            }
-        }
-
-        // Refresh client
-        const updatedClient = await getClient(clientId);
-        if (updatedClient) {
-            setClient(updatedClient);
-        }
-
-        setSaving(false);
-        setMessage('Client profile updated.');
-        setTimeout(() => setMessage(null), 3000);
-        return true;
-    }
-
-    async function handleSaveAndClose() {
-        const saved = await handleSave();
-        if (saved && onClose) {
-            onClose();
-        }
-    }
 
     async function handleBack() {
         // If used as a page (not modal), we want to try to save before leaving.
@@ -1215,11 +1099,11 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                         {onClose ? (
-                            <button className="btn btn-secondary" onClick={handleBack} style={{ marginRight: '8px' }}>
+                            <button className="btn btn-secondary" onClick={handleDiscardChanges} style={{ marginRight: '8px' }}>
                                 <ArrowLeft size={16} /> Back
                             </button>
                         ) : (
-                            <button className="btn btn-secondary" onClick={handleBack} style={{ marginRight: '8px' }}>
+                            <button className="btn btn-secondary" onClick={handleDiscardChanges} style={{ marginRight: '8px' }}>
                                 <ArrowLeft size={16} /> Back
                             </button>
                         )}
@@ -2290,7 +2174,7 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                                     Saving...
                                 </>
                             ) : (
-                                'Close'
+                                'Save'
                             )}
                         </button>
                     </div>
@@ -2298,6 +2182,197 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
             }
         </div>
     );
+
+    async function handleSave(): Promise<boolean> {
+        console.time('handleSave:total');
+        console.time('handleSave:pre-check');
+        if (!client) {
+            console.timeEnd('handleSave:pre-check');
+            console.timeEnd('handleSave:total');
+            return false;
+        }
+
+        // Validate Order Config before saving (if we have config)
+        if (orderConfig && orderConfig.caseId) {
+            console.time('handleSave:validate');
+            const validation = validateOrder();
+            console.timeEnd('handleSave:validate');
+            if (!validation.isValid) {
+                setValidationError({ show: true, messages: validation.messages });
+                console.timeEnd('handleSave:pre-check');
+                console.timeEnd('handleSave:total');
+                return false;
+            }
+        }
+
+        // Check for Status Change by Navigator
+        // Check for Status Change by Navigator
+        if (currentUser?.role === 'navigator' && formData.statusId !== client.statusId) {
+            console.timeEnd('handleSave:pre-check');
+            console.log('Detected status change, showing modal');
+
+            try {
+                const oldStatusName = getStatusName(client.statusId);
+                const newStatusName = getStatusName(formData.statusId!);
+                setPendingStatusChange({ oldStatus: oldStatusName, newStatus: newStatusName });
+                setShowUnitsModal(true);
+                return false; // Intercepted
+            } catch (e) {
+                console.error('Error in status change logic:', e);
+            }
+        }
+
+
+        return await executeSave(0);
+    }
+
+    async function executeSave(unitsAdded: number = 0): Promise<boolean> {
+        if (!client) return false;
+        setSaving(true);
+        setMessage(null);
+
+        try {
+            // Log Navigator Action if applicable
+            if (currentUser?.role === 'navigator' && pendingStatusChange && unitsAdded >= 0) {
+                await logNavigatorAction({
+                    navigatorId: currentUser.id,
+                    clientId: clientId,
+                    oldStatus: pendingStatusChange.oldStatus,
+                    newStatus: pendingStatusChange.newStatus,
+                    unitsAdded: unitsAdded
+                });
+            }
+
+            // -- Change Detection --
+            const changes: string[] = [];
+            if (client.fullName !== formData.fullName) changes.push(`Full Name: "${client.fullName}" -> "${formData.fullName}"`);
+            if (client.address !== formData.address) changes.push(`Address: "${client.address}" -> "${formData.address}"`);
+            if (client.email !== formData.email) changes.push(`Email: "${client.email}" -> "${formData.email}"`);
+            if (client.phoneNumber !== formData.phoneNumber) changes.push(`Phone: "${client.phoneNumber}" -> "${formData.phoneNumber}"`);
+            if (client.notes !== formData.notes) changes.push('Notes updated');
+            if (client.statusId !== formData.statusId) {
+                const oldStatus = statuses.find(s => s.id === client.statusId)?.name || 'Unknown';
+                const newStatus = statuses.find(s => s.id === formData.statusId)?.name || 'Unknown';
+                changes.push(`Status: "${oldStatus}" -> "${newStatus}"`);
+            }
+            if (client.navigatorId !== formData.navigatorId) {
+                const oldNav = navigators.find(n => n.id === client.navigatorId)?.name || 'Unassigned';
+                const newNav = navigators.find(n => n.id === formData.navigatorId)?.name || 'Unassigned';
+                changes.push(`Navigator: "${oldNav}" -> "${newNav}"`);
+            }
+            if (client.serviceType !== formData.serviceType) changes.push(`Service Type: "${client.serviceType}" -> "${formData.serviceType}"`);
+            if (client.approvedMealsPerWeek !== formData.approvedMealsPerWeek) changes.push(`Approved Meals: ${client.approvedMealsPerWeek} -> ${formData.approvedMealsPerWeek}`);
+            if (client.screeningTookPlace !== formData.screeningTookPlace) changes.push(`Screening Took Place: ${client.screeningTookPlace} -> ${formData.screeningTookPlace}`);
+            if (client.screeningSigned !== formData.screeningSigned) changes.push(`Screening Signed: ${client.screeningSigned} -> ${formData.screeningSigned}`);
+
+            // Check if order configuration changed
+            const hasOrderChanges = orderConfig && orderConfig.caseId;
+            if (hasOrderChanges) {
+                changes.push('Order configuration changed');
+            }
+
+            const summary = changes.length > 0 ? changes.join(', ') : 'No functional changes detected (re-saved profile)';
+
+            // Update client profile
+            const updateData: Partial<ClientProfile> = { ...formData };
+            await updateClient(clientId, updateData);
+            await recordClientChange(clientId, summary, 'Admin');
+
+            // Sync Current Order Request
+            if (hasOrderChanges) {
+                const cleanedOrderConfig = { ...orderConfig };
+                if (formData.serviceType === 'Food') {
+                    if (cleanedOrderConfig.deliveryDayOrders) {
+                        for (const day of Object.keys(cleanedOrderConfig.deliveryDayOrders)) {
+                            cleanedOrderConfig.deliveryDayOrders[day].vendorSelections = (cleanedOrderConfig.deliveryDayOrders[day].vendorSelections || [])
+                                .filter((s: any) => s.vendorId)
+                                .map((s: any) => ({ vendorId: s.vendorId, items: s.items || {} }));
+                        }
+                    } else if (cleanedOrderConfig.vendorSelections) {
+                        const hasPerVendorDeliveryDays = cleanedOrderConfig.vendorSelections.some((s: any) =>
+                            s.selectedDeliveryDays && s.selectedDeliveryDays.length > 0 && s.itemsByDay
+                        );
+
+                        if (hasPerVendorDeliveryDays) {
+                            const deliveryDayOrders: any = {};
+                            for (const selection of cleanedOrderConfig.vendorSelections) {
+                                if (!selection.vendorId || !selection.selectedDeliveryDays || !selection.itemsByDay) continue;
+                                for (const day of selection.selectedDeliveryDays) {
+                                    if (!deliveryDayOrders[day]) deliveryDayOrders[day] = { vendorSelections: [] };
+                                    const dayItems = selection.itemsByDay[day] || {};
+                                    const hasItems = Object.keys(dayItems).length > 0 && Object.values(dayItems).some((qty: any) => (Number(qty) || 0) > 0);
+                                    if (hasItems) {
+                                        deliveryDayOrders[day].vendorSelections.push({ vendorId: selection.vendorId, items: dayItems });
+                                    }
+                                }
+                            }
+                            // Clean up days with no vendors
+                            const daysWithVendors = Object.keys(deliveryDayOrders).filter(day =>
+                                deliveryDayOrders[day].vendorSelections && deliveryDayOrders[day].vendorSelections.length > 0
+                            );
+                            if (daysWithVendors.length > 0) {
+                                const cleanedDeliveryDayOrders: any = {};
+                                for (const day of daysWithVendors) cleanedDeliveryDayOrders[day] = deliveryDayOrders[day];
+                                cleanedOrderConfig.deliveryDayOrders = cleanedDeliveryDayOrders;
+                                cleanedOrderConfig.vendorSelections = undefined;
+                            }
+                        } else {
+                            cleanedOrderConfig.vendorSelections = (cleanedOrderConfig.vendorSelections || [])
+                                .filter((s: any) => s.vendorId)
+                                .map((s: any) => ({ vendorId: s.vendorId, items: s.items || {} }));
+                        }
+                    }
+                }
+
+                const tempClient: ClientProfile = {
+                    ...client,
+                    ...formData,
+                    activeOrder: {
+                        ...cleanedOrderConfig,
+                        serviceType: formData.serviceType,
+                        lastUpdated: new Date().toISOString(),
+                        updatedBy: 'Admin'
+                    }
+                } as ClientProfile;
+
+                await syncCurrentOrderToUpcoming(clientId, tempClient);
+
+                // Reload upcoming order
+                const updatedUpcomingOrder = await getUpcomingOrderForClient(clientId);
+                if (updatedUpcomingOrder) {
+                    setOrderConfig(updatedUpcomingOrder);
+                }
+            }
+
+            if (onClose) {
+                onClose();
+            } else {
+                setMessage('Changes saved successfully.');
+                setTimeout(() => setMessage(null), 3000);
+                const updatedClient = await getClient(clientId);
+                if (updatedClient) {
+                    setClient(updatedClient);
+                    loadData();
+                }
+            }
+            return true;
+        } catch (error) {
+            setMessage('Error saving changes.');
+            console.error(error);
+            return false;
+        } finally {
+            setSaving(false);
+            setShowUnitsModal(false);
+            setPendingStatusChange(null);
+        }
+    }
+
+    async function handleSaveAndClose() {
+        const saved = await handleSave();
+        if (saved && onClose) {
+            onClose();
+        }
+    }
 
     if (onClose) {
         return (
@@ -2345,6 +2420,12 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                         </div>
                     </div>
                 )}
+                <UnitsModal
+                    isOpen={showUnitsModal}
+                    onClose={() => setShowUnitsModal(false)}
+                    onConfirm={executeSave}
+                    saving={saving}
+                />
             </>
         );
     } else {
@@ -2386,6 +2467,12 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                         </div>
                     </div>
                 )}
+                <UnitsModal
+                    isOpen={showUnitsModal}
+                    onClose={() => setShowUnitsModal(false)}
+                    onConfirm={executeSave}
+                    saving={saving}
+                />
             </>
         );
     }

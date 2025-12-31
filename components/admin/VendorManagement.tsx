@@ -72,9 +72,20 @@ export function VendorManagement() {
         }
 
         if (editingId) {
-            await updateVendor(editingId, formData);
+            // Ensure password is string | undefined, not null (to match updateVendor signature)
+            const dataToUpdate = {
+                ...formData,
+                password: formData.password ?? undefined
+            };
+            await updateVendor(editingId, dataToUpdate);
         } else {
-            await addVendor(formData as Omit<Vendor, 'id'>);
+            // Same treatment: ensure password/email are string | undefined, not null
+            const dataToAdd = {
+                ...formData,
+                password: formData.password ?? undefined,
+                email: formData.email ?? undefined
+            };
+            await addVendor(dataToAdd as Omit<Vendor, 'id'> & { password?: string; email?: string });
         }
         invalidateReferenceData(); // Invalidate cache after update/add
         await loadVendors();

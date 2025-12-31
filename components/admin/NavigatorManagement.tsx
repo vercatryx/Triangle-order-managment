@@ -2,9 +2,9 @@
 
 import { useState, useEffect } from 'react';
 import { Navigator } from '@/lib/types';
-import { addNavigator, updateNavigator, deleteNavigator } from '@/lib/actions';
+import { addNavigator, updateNavigator, deleteNavigator, getNavigatorLogs } from '@/lib/actions';
 import { useDataCache } from '@/lib/data-cache';
-import { Plus, Edit2, Trash2, X, Check, Users } from 'lucide-react';
+import { Plus, Edit2, Trash2, X, Check, Users, Download } from 'lucide-react';
 import styles from './NavigatorManagement.module.css';
 
 export function NavigatorManagement() {
@@ -15,7 +15,9 @@ export function NavigatorManagement() {
     const [editingId, setEditingId] = useState<string | null>(null);
     const [formData, setFormData] = useState<Partial<Navigator>>({
         name: '',
-        isActive: true
+        isActive: true,
+        email: '',
+        password: ''
     });
     const [multiCreateInput, setMultiCreateInput] = useState('');
 
@@ -31,7 +33,9 @@ export function NavigatorManagement() {
     function resetForm() {
         setFormData({
             name: '',
-            isActive: true
+            isActive: true,
+            email: '',
+            password: ''
         });
         setIsCreating(false);
         setIsMultiCreating(false);
@@ -40,7 +44,7 @@ export function NavigatorManagement() {
     }
 
     function handleEditInit(nav: Navigator) {
-        setFormData({ ...nav });
+        setFormData({ ...nav, password: '' }); // Don't show hash, allow reset
         setEditingId(nav.id);
         setIsCreating(false);
     }
@@ -78,6 +82,46 @@ export function NavigatorManagement() {
             await deleteNavigator(id);
             invalidateReferenceData(); // Invalidate cache after delete
             await loadData();
+        }
+    }
+
+    async function handleDownloadLogs(nav: Navigator) {
+        try {
+            const logs = await getNavigatorLogs(nav.id);
+
+            if (!logs || logs.length === 0) {
+                alert('No logs found for this navigator.');
+                return;
+            }
+
+            // Generate CSV
+            const headers = ['Date', 'Client Name', 'Old Status', 'New Status', 'Units Added'];
+            const rows = logs.map((log: any) => [
+                new Date(log.createdAt).toLocaleString(),
+                log.clientName,
+                log.oldStatus,
+                log.newStatus,
+                log.unitsAdded
+            ]);
+
+            const csvContent = [
+                headers.join(','),
+                ...rows.map((row: any[]) => row.map(cell => `"${cell}"`).join(','))
+            ].join('\n');
+
+            // Download
+            const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+            const link = document.createElement('a');
+            const url = URL.createObjectURL(blob);
+            link.setAttribute('href', url);
+            link.setAttribute('download', `navigator_logs_${nav.name.replace(/\s+/g, '_')}_${new Date().toISOString().split('T')[0]}.csv`);
+            link.style.visibility = 'hidden';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        } catch (error) {
+            console.error('Error downloading logs:', error);
+            alert('Failed to download logs.');
         }
     }
 
@@ -140,6 +184,28 @@ export function NavigatorManagement() {
                     </div>
 
                     <div className={styles.formGroup}>
+                        <label className="label">Email (Optional)</label>
+                        <input
+                            className="input"
+                            type="email"
+                            value={formData.email || ''}
+                            onChange={e => setFormData({ ...formData, email: e.target.value })}
+                            placeholder="navigator@example.com"
+                        />
+                    </div>
+
+                    <div className={styles.formGroup}>
+                        <label className="label">{editingId ? 'Reset Password (Optional)' : 'Password'}</label>
+                        <input
+                            className="input"
+                            type="password"
+                            value={formData.password || ''}
+                            onChange={e => setFormData({ ...formData, password: e.target.value })}
+                            placeholder={editingId ? 'Leave blank to keep unchanged' : 'Secret password'}
+                        />
+                    </div>
+
+                    <div className={styles.formGroup}>
                         <label className={styles.checkboxLabel}>
                             <input
                                 type="checkbox"
@@ -173,7 +239,10 @@ export function NavigatorManagement() {
                     <tbody>
                         {navigators.map(nav => (
                             <tr key={nav.id}>
-                                <td style={{ fontWeight: 500 }}>{nav.name}</td>
+                                <td style={{ fontWeight: 500 }}>
+                                    {nav.name}
+                                    {nav.email && <div style={{ fontSize: '0.8em', color: 'var(--text-tertiary)', fontWeight: 400 }}>{nav.email}</div>}
+                                </td>
                                 <td>
                                     {nav.isActive ?
                                         <span style={{ color: 'var(--color-success)' }}>Active</span> :
@@ -182,6 +251,9 @@ export function NavigatorManagement() {
                                 </td>
                                 <td style={{ textAlign: 'right' }}>
                                     <div className={styles.actions}>
+                                        <button className={styles.iconBtn} onClick={() => handleDownloadLogs(nav)} title="Download Logs">
+                                            <Download size={16} />
+                                        </button>
                                         <button className={styles.iconBtn} onClick={() => handleEditInit(nav)}>
                                             <Edit2 size={16} />
                                         </button>

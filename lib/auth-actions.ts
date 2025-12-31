@@ -4,44 +4,92 @@ import { createSession, deleteSession, verifySession } from './session';
 import { hashPassword, verifyPassword } from './password';
 import { supabase } from './supabase';
 import { redirect } from 'next/navigation';
+import { createClient } from '@supabase/supabase-js';
 
 export async function login(prevState: any, formData: FormData) {
-    const start = Date.now();
-    const username = formData.get('username') as string;
+    const loginInput = formData.get('username') as string;
     const password = formData.get('password') as string;
 
-    if (!username || !password) {
-        return { message: 'Please enter a username and password.' };
+    if (!loginInput || !password) {
+        return { message: 'Please enter a username/email and password.' };
     }
 
-    // 1. Check Env Super Admin
-    const envUser = process.env.ADMIN_USERNAME;
-    const envPass = process.env.ADMIN_PASSWORD;
-
-    if (envUser && envPass && username === envUser && password === envPass) {
-        await createSession('super-admin', 'Admin', 'super-admin');
-        redirect('/');
-    }
-
-    // 2. Check Database Admins
     try {
-        const { data: admin, error } = await supabase
+        // 1. Check Env Super Admin
+        const envUser = process.env.ADMIN_USERNAME;
+        const envPass = process.env.ADMIN_PASSWORD;
+
+        if (envUser && envPass && loginInput === envUser && password === envPass) {
+            await createSession('super-admin', 'Admin', 'super-admin');
+            redirect('/');
+        }
+
+        // 2. Check Database Admins
+        const { data: admin } = await supabase
             .from('admins')
             .select('*')
-            .eq('username', username)
-            .single();
+            .eq('username', loginInput)
+            .maybeSingle();
 
-        if (error || !admin) {
-            return { message: 'Invalid credentials.' };
+        if (admin) {
+            const isMatch = await verifyPassword(password, admin.password);
+            if (!isMatch) {
+                return { message: 'Invalid credentials.' };
+            }
+            await createSession(admin.id, admin.name || 'Admin', 'admin');
+            redirect('/');
         }
 
-        const isMatch = await verifyPassword(password, admin.password);
-        if (!isMatch) {
-            return { message: 'Invalid credentials.' };
+        // 3. Check Vendors (by Email)
+        const trimmedInput = loginInput.trim();
+
+        const { data: vendor } = await supabase
+            .from('vendors')
+            .select('*')
+            .ilike('email', trimmedInput)
+            .maybeSingle();
+
+        if (vendor) {
+            if (!vendor.is_active) {
+                return { message: 'Account inactive. Contact administrator.' };
+            }
+            if (!vendor.password) {
+                return { message: 'No password set. Contact administrator.' };
+            }
+            // Trim password input and stored hash before verifying
+            const isMatch = await verifyPassword(password.trim(), vendor.password.trim());
+            if (!isMatch) {
+                return { message: 'Invalid credentials.' };
+            }
+            await createSession(vendor.id, vendor.name || 'Vendor', 'vendor');
+            redirect('/vendor');
         }
 
-        await createSession(admin.id, admin.name || 'Admin', 'admin');
-        redirect('/'); // Or /admin
+        // 4. Check Navigators (by Email)
+        const { data: navigator } = await supabase
+            .from('navigators')
+            .select('*')
+            .ilike('email', trimmedInput)
+            .maybeSingle();
+
+        if (navigator) {
+            if (!navigator.is_active) {
+                return { message: 'Account inactive. Contact administrator.' };
+            }
+            // If no password set, we can't login (unless we allow setting it here, but typically admin sets it)
+            if (!navigator.password) {
+                return { message: 'No password set. Contact administrator.' };
+            }
+            const isMatch = await verifyPassword(password.trim(), navigator.password.trim());
+            if (!isMatch) {
+                return { message: 'Invalid credentials.' };
+            }
+            await createSession(navigator.id, navigator.name || 'Navigator', 'navigator');
+            redirect('/clients');
+        }
+
+        return { message: 'Invalid credentials.' };
+
     } catch (error) {
         if (error instanceof Error && error.message === 'NEXT_REDIRECT') {
             throw error;
@@ -57,71 +105,83 @@ export async function logout() {
     redirect('/login');
 }
 
-export async function vendorLogin(prevState: any, formData: FormData) {
-    const email = formData.get('email') as string;
-    const password = formData.get('password') as string;
 
-    if (!email || !password) {
-        return { message: 'Please enter an email and password.' };
+export async function checkEmailIdentity(identifier: string) {
+    if (!identifier) return { exists: false, type: null };
+    const trimmedInput = identifier.trim();
+
+    // 1. Check Env Super Admin
+    const envUser = process.env.ADMIN_USERNAME;
+    if (envUser && trimmedInput === envUser) {
+        return { exists: true, type: 'admin' };
     }
 
-    try {
-        // Trim email and make lookup case-insensitive
-        const trimmedEmail = email.trim().toLowerCase();
-        
-        // Fetch vendors with emails and filter for case-insensitive exact match
-        // Using .not() to filter out null emails, then filter in JS for exact case-insensitive match
-        const { data: vendors, error } = await supabase
-            .from('vendors')
-            .select('id, name, email, password, is_active')
-            .not('email', 'is', null);
+    // 2. Check Database Admins
+    const { data: admin } = await supabase
+        .from('admins')
+        .select('id')
+        .eq('username', trimmedInput)
+        .maybeSingle();
 
-        if (error) {
-            console.error('Vendor login database error:', error);
-            return { message: 'Invalid credentials.' };
-        }
+    if (admin) {
+        return { exists: true, type: 'admin' };
+    }
 
-        if (!vendors || vendors.length === 0) {
-            return { message: 'Invalid credentials.' };
-        }
+    // 3. Check Vendors (by Email)
+    const { data: vendor } = await supabase
+        .from('vendors')
+        .select('id, is_active')
+        .ilike('email', trimmedInput)
+        .maybeSingle();
 
-        // Find exact match (case-insensitive) - trim and compare emails
-        const vendor = vendors.find(v => {
-            if (!v.email) return false;
-            return v.email.trim().toLowerCase() === trimmedEmail;
-        });
-
-        if (!vendor) {
-            console.error('Vendor not found for email:', trimmedEmail);
-            return { message: 'Invalid credentials.' };
-        }
-
+    if (vendor) {
         if (!vendor.is_active) {
-            return { message: 'Your vendor account is inactive. Please contact an administrator.' };
+            // Technically exists, but we might want to handle this specifically or just say exists
+            // For safety/UX, let's treat inactive as "exists" but maybe the login will fail later?
+            // Or we can return a specific error here. The plan said "if not exists, show invalid".
+            // If inactive, we probably still want to show password prompt so we don't leak status,
+            // OR effectively the prompt asks for password, then fails.
+            // Let's just return exists=true, and let login handle the 'inactive' error message.
+            return { exists: true, type: 'vendor' };
         }
-
-        if (!vendor.password || vendor.password.trim() === '') {
-            console.error('Vendor has no password set:', vendor.id);
-            return { message: 'No password set for this vendor. Please contact an administrator.' };
-        }
-
-        // Trim both input password and stored password hash before verification
-        const isMatch = await verifyPassword(password.trim(), vendor.password.trim());
-        if (!isMatch) {
-            console.error('Password mismatch for vendor:', vendor.id);
-            return { message: 'Invalid credentials.' };
-        }
-
-        await createSession(vendor.id, vendor.name || 'Vendor', 'vendor');
-        redirect('/vendor');
-    } catch (error) {
-        if (error instanceof Error && error.message === 'NEXT_REDIRECT') {
-            throw error;
-        }
-        console.error('Vendor login error:', error);
-        return { message: 'An unexpected error occurred.' };
+        return { exists: true, type: 'vendor' };
     }
+
+    // 4. Check Navigators
+    const { data: navigator } = await supabase
+        .from('navigators')
+        .select('id')
+        .ilike('email', trimmedInput)
+        .maybeSingle();
+
+    if (navigator) {
+        return { exists: true, type: 'navigator' };
+    }
+
+    // 5. Check Clients (by Email)
+    // Use Service Role if available to bypass RLS
+    let supabaseClient = supabase;
+    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    if (serviceRoleKey) {
+        supabaseClient = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, serviceRoleKey, {
+            auth: { persistSession: false }
+        });
+    }
+
+    const { data: client } = await supabaseClient
+        .from('clients')
+        .select('id')
+        .ilike('email', trimmedInput)
+        .maybeSingle();
+
+    if (client) {
+        return { exists: true, type: 'client', id: client.id };
+    }
+
+    return { exists: false, type: null };
 }
+
+
 
 // --- Admin Management Actions ---
 
