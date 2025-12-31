@@ -5,7 +5,8 @@ import { ClientProfileDetail } from './ClientProfile';
 import { useState, useEffect, useRef } from 'react';
 import { ClientProfile, ClientStatus, Navigator, Vendor, BoxType, ClientFullDetails, MenuItem } from '@/lib/types';
 import { getClientsPaginated, getClientFullDetails, getStatuses, getNavigators, addClient, getVendors, getBoxTypes, getMenuItems } from '@/lib/actions';
-import { Plus, Search, ChevronRight, CheckSquare, Square, StickyNote, Package, Calendar } from 'lucide-react';
+import { invalidateClientData } from '@/lib/cached-data';
+import { Plus, Search, ChevronRight, CheckSquare, Square, StickyNote, Package, ArrowUpDown, ArrowUp, ArrowDown, Filter, Eye, EyeOff } from 'lucide-react';
 import styles from './ClientList.module.css';
 import { useRouter } from 'next/navigation';
 
@@ -35,7 +36,18 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
     const pendingPrefetches = useRef<Set<string>>(new Set());
 
     // Views
-    const [currentView, setCurrentView] = useState<'all' | 'eligible' | 'ineligible' | 'history' | 'billing' | 'orders'>('all');
+    const [currentView, setCurrentView] = useState<'all' | 'eligible' | 'ineligible' | 'billing'>('all');
+
+    // Sorting State
+    const [sortColumn, setSortColumn] = useState<string | null>(null);
+    const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
+
+    // Filtering State
+    const [statusFilter, setStatusFilter] = useState<string | null>(null);
+    const [navigatorFilter, setNavigatorFilter] = useState<string | null>(null);
+    const [screeningFilter, setScreeningFilter] = useState<string | null>(null);
+    const [serviceTypeFilter, setServiceTypeFilter] = useState<string | null>(null);
+    const [openFilterMenu, setOpenFilterMenu] = useState<string | null>(null);
 
     // New Client Modal state
     const [isCreating, setIsCreating] = useState(false);
@@ -43,6 +55,9 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
 
     // Selected Client for Modal
     const [selectedClientId, setSelectedClientId] = useState<string | null>(null);
+
+    // Order Details Visibility Toggle
+    const [showOrderDetails, setShowOrderDetails] = useState(true);
 
     useEffect(() => {
         loadInitialData();
@@ -71,6 +86,22 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
             batch.forEach(c => prefetchClient(c.id));
         }
     }, [clients, detailsCache, isLoading]);
+
+    // Click-outside-to-close filter menus
+    useEffect(() => {
+        function handleClickOutside(event: MouseEvent) {
+            const target = event.target as HTMLElement;
+            const filterDropdown = target.closest('[data-filter-dropdown]');
+            if (!filterDropdown) {
+                setOpenFilterMenu(null);
+            }
+        }
+
+        if (openFilterMenu) {
+            document.addEventListener('click', handleClickOutside);
+            return () => document.removeEventListener('click', handleClickOutside);
+        }
+    }, [openFilterMenu]);
 
     async function loadInitialData() {
         setIsLoading(true);
@@ -148,15 +179,71 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
             const status = statuses.find(s => s.id === c.statusId);
             // Show clients whose status does NOT allow deliveries
             matchesView = status ? !status.deliveriesAllowed : false;
-        } else if (currentView === 'orders') {
-            // Show only clients with orders updated this week
-            if (!c.activeOrder || !c.activeOrder.lastUpdated) return false;
-            matchesView = isInCurrentWeek(c.activeOrder.lastUpdated);
         }
-        // 'history' and 'billing' might just show all clients but with different columns? 
-        // Or maybe just a placeholder for now as requested.
+        // 'billing' might just show all clients but with different columns?
 
-        return matchesSearch && matchesView;
+        // Filter by Status
+        const matchesStatusFilter = !statusFilter || c.statusId === statusFilter;
+
+        // Filter by Navigator
+        const matchesNavigatorFilter = !navigatorFilter || c.navigatorId === navigatorFilter;
+
+        // Filter by Screening Status
+        const matchesScreeningFilter = !screeningFilter || (c.screeningStatus || 'not_started') === screeningFilter;
+
+        // Filter by Service Type (Active Order)
+        const matchesServiceTypeFilter = !serviceTypeFilter || c.serviceType === serviceTypeFilter;
+
+        return matchesSearch && matchesView && matchesStatusFilter && matchesNavigatorFilter && matchesScreeningFilter && matchesServiceTypeFilter;
+    }).sort((a, b) => {
+        if (!sortColumn) return 0;
+
+        let comparison = 0;
+
+        switch (sortColumn) {
+            case 'name':
+                comparison = a.fullName.localeCompare(b.fullName);
+                break;
+            case 'status':
+                const statusA = getStatusName(a.statusId);
+                const statusB = getStatusName(b.statusId);
+                comparison = statusA.localeCompare(statusB);
+                break;
+            case 'navigator':
+                const navA = getNavigatorName(a.navigatorId);
+                const navB = getNavigatorName(b.navigatorId);
+                comparison = navA.localeCompare(navB);
+                break;
+            case 'screening':
+                const screeningA = a.screeningStatus || 'not_started';
+                const screeningB = b.screeningStatus || 'not_started';
+                comparison = screeningA.localeCompare(screeningB);
+                break;
+            case 'email':
+                const emailA = a.email || '';
+                const emailB = b.email || '';
+                comparison = emailA.localeCompare(emailB);
+                break;
+            case 'phone':
+                const phoneA = a.phoneNumber || '';
+                const phoneB = b.phoneNumber || '';
+                comparison = phoneA.localeCompare(phoneB);
+                break;
+            case 'address':
+                const addressA = a.address || '';
+                const addressB = b.address || '';
+                comparison = addressA.localeCompare(addressB);
+                break;
+            case 'notes':
+                const notesA = a.notes || '';
+                const notesB = b.notes || '';
+                comparison = notesA.localeCompare(notesB);
+                break;
+            default:
+                return 0;
+        }
+
+        return sortDirection === 'asc' ? comparison : -comparison;
     });
 
     async function handleCreate() {
@@ -181,6 +268,7 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
         });
 
         if (newClient) {
+            invalidateClientData(); // Invalidate cache
             setIsCreating(false);
             setNewClientName(''); // Reset
             // Refresh logic: for simplicity, confirm and maybe add to top? 
@@ -195,6 +283,39 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
 
     function getNavigatorName(id: string) {
         return navigators.find(n => n.id === id)?.name || 'Unassigned';
+    }
+
+    function handleSort(column: string) {
+        if (sortColumn === column) {
+            // Toggle direction
+            setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
+        } else {
+            // New column, default to ascending
+            setSortColumn(column);
+            setSortDirection('asc');
+        }
+    }
+
+    function getSortIcon(column: string) {
+        if (sortColumn !== column) {
+            return <ArrowUpDown size={14} />;
+        }
+        return sortDirection === 'asc' ? <ArrowUp size={14} /> : <ArrowDown size={14} />;
+    }
+
+    function getScreeningStatusLabel(status: string) {
+        switch (status) {
+            case 'not_started':
+                return 'Not Started';
+            case 'waiting_approval':
+                return 'Waiting for Approval';
+            case 'approved':
+                return 'Approved';
+            case 'rejected':
+                return 'Rejected';
+            default:
+                return status;
+        }
     }
 
     function getOrderSummaryText(client: ClientProfile) {
@@ -234,42 +355,221 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
     function getOrderSummary(client: ClientProfile) {
         if (!client.activeOrder) return '-';
         const st = client.serviceType;
-
-        // Use shared text logic for consistency and validity check
-        const fullText = getOrderSummaryText(client);
-        if (!fullText || fullText === '') return null;
-
         const conf = client.activeOrder;
-        let content = '';
-        if (st === 'Food') {
-            const limit = client.approvedMealsPerWeek || 0;
-            const vendorsSummary = (conf.vendorSelections || [])
-                .map(v => {
-                    const vendorName = vendors.find(ven => ven.id === v.vendorId)?.name || 'Unknown';
-                    const itemCount = Object.values(v.items || {}).reduce((a: number, b: any) => a + Number(b), 0);
-                    return itemCount > 0 ? `${vendorName} (${itemCount})` : '';
-                }).filter(Boolean).join(', ');
 
-            if (!vendorsSummary) return null;
-            content = `: ${vendorsSummary} [Max ${limit}]`;
-        } else if (st === 'Boxes') {
-            const box = boxTypes.find(b => b.id === conf.boxTypeId);
-            const vendorName = vendors.find(v => v.id === box?.vendorId)?.name || '-';
+        if (!showOrderDetails) {
+            let vendorSummary = 'Not Set';
 
-            const itemDetails = Object.entries(conf.items || {}).map(([id, qty]) => {
-                const item = menuItems.find(i => i.id === id);
-                return item ? `${item.name} x${qty}` : null;
-            }).filter(Boolean).join(', ');
+            if (st === 'Food') {
+                const uniqueVendors = new Set<string>();
 
-            const itemSuffix = itemDetails ? ` (${itemDetails})` : '';
-            content = `: ${vendorName}${itemSuffix}`;
+                // Check if it's multi-day format
+                const isMultiDay = conf.deliveryDayOrders && typeof conf.deliveryDayOrders === 'object';
+
+                if (isMultiDay) {
+                    Object.values(conf.deliveryDayOrders || {}).forEach((dayOrder: any) => {
+                        if (dayOrder?.vendorSelections) {
+                            dayOrder.vendorSelections.forEach((v: any) => {
+                                const vName = vendors.find(ven => ven.id === v.vendorId)?.name;
+                                if (vName) uniqueVendors.add(vName);
+                            });
+                        }
+                    });
+                } else if (conf.vendorSelections) {
+                    conf.vendorSelections.forEach(v => {
+                        const vName = vendors.find(ven => ven.id === v.vendorId)?.name;
+                        if (vName) uniqueVendors.add(vName);
+                    });
+                }
+
+                if (uniqueVendors.size > 0) {
+                    vendorSummary = Array.from(uniqueVendors).join(', ');
+                }
+            } else if (st === 'Boxes') {
+                const box = boxTypes.find(b => b.id === conf.boxTypeId);
+                const vendorName = vendors.find(v => v.id === box?.vendorId)?.name;
+                if (vendorName) vendorSummary = vendorName;
+            }
+
+            return (
+                <div>
+                    <strong style={{ fontWeight: 600, color: '#2563eb' }}>{st}</strong>
+                    <span style={{ color: 'var(--text-primary)', marginLeft: '4px' }}>
+                        - {vendorSummary}
+                    </span>
+                </div>
+            );
         }
 
-        return (
-            <span title={fullText}>
-                <strong style={{ fontWeight: 600 }}>{st}</strong>{content}
-            </span>
-        );
+        if (st === 'Food') {
+            // Check if it's multi-day format
+            const isMultiDay = conf.deliveryDayOrders && typeof conf.deliveryDayOrders === 'object';
+
+            if (isMultiDay) {
+                // Multi-day format: deliveryDayOrders[day].vendorSelections
+                const days = Object.keys(conf.deliveryDayOrders || {}).sort();
+
+                if (days.length === 0) {
+                    return (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                            <div><strong style={{ fontWeight: 600 }}>Food</strong> - Vendor: Not Set</div>
+                        </div>
+                    );
+                }
+
+                const dayLines = days.map(day => {
+                    const dayOrder = conf.deliveryDayOrders?.[day];
+                    const vendorSelections = dayOrder?.vendorSelections || [];
+
+                    if (vendorSelections.length === 0) {
+                        return { day, vendors: [] };
+                    }
+
+                    const vendorLines = vendorSelections.map((v: any) => {
+                        const vendorName = vendors.find(ven => ven.id === v.vendorId)?.name || 'Not Set';
+                        const items = v.items || {};
+                        const itemEntries = Object.entries(items);
+
+                        const hasItems = itemEntries.some(([_, qty]) => Number(qty) > 0);
+                        if (!hasItems) return null;
+
+                        const itemDetails = itemEntries
+                            .filter(([_, qty]) => Number(qty) > 0)
+                            .map(([id, qty]) => {
+                                const item = menuItems.find(i => i.id === id);
+                                return item ? `${item.name} x${qty}` : null;
+                            })
+                            .filter((item): item is string => item !== null)
+                            .join(', ');
+
+                        return { vendorName, itemDetails };
+                    }).filter((line): line is { vendorName: string; itemDetails: string } => line !== null);
+
+                    return { day, vendors: vendorLines };
+                }).filter((dayLine): dayLine is { day: string; vendors: { vendorName: string; itemDetails: string }[] } => dayLine.vendors.length > 0);
+
+                if (dayLines.length === 0) {
+                    return (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                            <div><strong style={{ fontWeight: 600 }}>Food</strong> - Vendor: Not Set</div>
+                        </div>
+                    );
+                }
+
+                return (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                        {dayLines.map((dayLine, dayIdx) => (
+                            <div key={dayIdx} style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                                <div>
+                                    {dayIdx === 0 && <strong style={{ fontWeight: 600 }}>Food</strong>}
+                                    {dayIdx === 0 && ' - '}
+                                    <span style={{ fontWeight: 500, color: 'var(--text-secondary)' }}>{dayLine.day}:</span>
+                                </div>
+                                {dayLine.vendors.map((vendor: { vendorName: string; itemDetails: string }, vIdx: number) => (
+                                    <div key={vIdx} style={{ marginLeft: '0' }}>
+                                        <span style={{ fontWeight: 500 }}>Vendor: {vendor.vendorName}</span>
+                                        {vendor.itemDetails && (
+                                            <div style={{ fontSize: '0.85em', color: 'var(--text-secondary)', marginLeft: '0' }}>
+                                                {vendor.itemDetails}
+                                            </div>
+                                        )}
+                                    </div>
+                                ))}
+                            </div>
+                        ))}
+                    </div>
+                );
+            } else {
+                // Single-day format: vendorSelections array
+                const vendorSelections = conf.vendorSelections || [];
+
+                if (vendorSelections.length === 0) {
+                    return (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                            <div><strong style={{ fontWeight: 600 }}>Food</strong> - Vendor: Not Set</div>
+                        </div>
+                    );
+                }
+
+                const vendorLines = vendorSelections.map(v => {
+                    const vendorName = vendors.find(ven => ven.id === v.vendorId)?.name || 'Not Set';
+                    const items = v.items || {};
+                    const itemEntries = Object.entries(items);
+
+                    const hasItems = itemEntries.some(([_, qty]) => Number(qty) > 0);
+                    if (!hasItems) return null;
+
+                    const itemDetails = itemEntries
+                        .filter(([_, qty]) => Number(qty) > 0)
+                        .map(([id, qty]) => {
+                            const item = menuItems.find(i => i.id === id);
+                            return item ? `${item.name} x${qty}` : null;
+                        })
+                        .filter((item): item is string => item !== null)
+                        .join(', ');
+
+                    return { vendorName, itemDetails };
+                }).filter((line): line is { vendorName: string; itemDetails: string } => line !== null);
+
+                if (vendorLines.length === 0) {
+                    return (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                            <div><strong style={{ fontWeight: 600 }}>Food</strong> - Vendor: Not Set</div>
+                        </div>
+                    );
+                }
+
+                return (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                        {vendorLines.map((line, idx) => (
+                            <div key={idx}>
+                                {idx === 0 && <strong style={{ fontWeight: 600 }}>Food</strong>}
+                                {idx === 0 ? ' - ' : ''}
+                                <span style={{ fontWeight: 500 }}>Vendor: {line.vendorName}</span>
+                                {line.itemDetails && (
+                                    <div style={{ fontSize: '0.85em', color: 'var(--text-secondary)', marginLeft: '0' }}>
+                                        {line.itemDetails}
+                                    </div>
+                                )}
+                            </div>
+                        ))}
+                    </div>
+                );
+            }
+        } else if (st === 'Boxes') {
+            const box = boxTypes.find(b => b.id === conf.boxTypeId);
+            const vendorName = vendors.find(v => v.id === box?.vendorId)?.name || 'Not Set';
+
+            const items = conf.items || {};
+            const itemDetails = Object.entries(items)
+                .filter(([_, qty]) => Number(qty) > 0)
+                .map(([id, qty]) => {
+                    const item = menuItems.find(i => i.id === id);
+                    return item ? `${item.name} x${qty}` : null;
+                })
+                .filter(Boolean)
+                .join(', ');
+
+            return (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                    <div>
+                        <strong style={{ fontWeight: 600 }}>Boxes</strong> - Vendor: {vendorName}
+                    </div>
+                    {itemDetails && (
+                        <div style={{ fontSize: '0.85em', color: 'var(--text-secondary)' }}>
+                            {itemDetails}
+                        </div>
+                    )}
+                    {!itemDetails && (
+                        <div style={{ fontSize: '0.85em', color: 'var(--text-secondary)' }}>
+                            Items: Not Set
+                        </div>
+                    )}
+                </div>
+            );
+        }
+
+        return '-';
     }
 
     function getScreeningStatus(client: ClientProfile) {
@@ -393,19 +693,6 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
                             Ineligible
                         </button>
                         <button
-                            className={`${styles.viewBtn} ${currentView === 'history' ? styles.viewBtnActive : ''}`}
-                            onClick={() => setCurrentView('history')}
-                        >
-                            History
-                        </button>
-                        <button
-                            className={`${styles.viewBtn} ${currentView === 'orders' ? styles.viewBtnActive : ''}`}
-                            onClick={() => setCurrentView('orders')}
-                        >
-                            <Calendar size={14} style={{ marginRight: '4px' }} />
-                            This Week's Orders
-                        </button>
-                        <button
                             className={`${styles.viewBtn} ${currentView === 'billing' ? styles.viewBtnActive : ''}`}
                             onClick={() => router.push('/billing')}
                         >
@@ -430,6 +717,24 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
                         onChange={e => setSearch(e.target.value)}
                     />
                 </div>
+
+
+
+                {/* Clear All Filters Button */}
+                {(statusFilter || navigatorFilter || screeningFilter || serviceTypeFilter) && (
+                    <button
+                        className="btn btn-secondary"
+                        onClick={() => {
+                            setStatusFilter(null);
+                            setNavigatorFilter(null);
+                            setScreeningFilter(null);
+                            setServiceTypeFilter(null);
+                        }}
+                        style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.9rem' }}
+                    >
+                        Clear All Filters
+                    </button>
+                )}
             </div>
 
             {isCreating && (
@@ -457,42 +762,202 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
 
             <div className={styles.list}>
                 <div className={styles.listHeader}>
-                    {currentView === 'orders' ? (
-                        <>
-                            <span style={{ minWidth: '200px', flex: 2, paddingRight: '16px' }}>Client Name</span>
-                            <span style={{ minWidth: '140px', flex: 1, paddingRight: '16px' }}>Status</span>
-                            <span style={{ minWidth: '160px', flex: 1, paddingRight: '16px' }}>Navigator</span>
-                            <span style={{ minWidth: '350px', flex: 3, paddingRight: '16px' }}>Order Details</span>
-                            <span style={{ minWidth: '180px', flex: 1.2, paddingRight: '16px' }}>Last Updated</span>
-                            <span style={{ width: '40px' }}></span>
-                        </>
-                    ) : (
-                        <>
-                            <span style={{ minWidth: '200px', flex: 2, paddingRight: '16px' }}>Name</span>
-                            <span style={{ minWidth: '140px', flex: 1, paddingRight: '16px' }}>Status</span>
-                            <span style={{ minWidth: '160px', flex: 1, paddingRight: '16px' }}>Navigator</span>
-                            <span style={{ minWidth: '100px', flex: 0.8, paddingRight: '16px' }}>Screening</span>
-                            <span style={{ minWidth: '350px', flex: 3, paddingRight: '16px' }}>Active Order</span>
-                            <span style={{ minWidth: '180px', flex: 1.2, paddingRight: '16px' }}>Email</span>
-                            <span style={{ minWidth: '140px', flex: 1, paddingRight: '16px' }}>Phone</span>
-                            <span style={{ minWidth: '250px', flex: 2, paddingRight: '16px' }}>Address</span>
-                            <span style={{ minWidth: '200px', flex: 2 }}>Notes</span>
-                            <span style={{ width: '40px' }}></span>
-                        </>
-                    )}
+                    <span style={{ minWidth: '200px', flex: 2, paddingRight: '16px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}
+                        onClick={() => handleSort('name')}>
+                        Name {getSortIcon('name')}
+                    </span>
+
+                    {/* Status column with filter */}
+                    <span style={{ minWidth: '140px', flex: 1, paddingRight: '16px', display: 'flex', alignItems: 'center', gap: '4px', position: 'relative' }} data-filter-dropdown>
+                        <span style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }} onClick={() => handleSort('status')}>
+                            Status {getSortIcon('status')}
+                        </span>
+                        <Filter
+                            size={14}
+                            style={{ cursor: 'pointer', opacity: statusFilter ? 1 : 0.5, color: statusFilter ? '#3b82f6' : 'inherit', filter: statusFilter ? 'drop-shadow(0 0 3px #3b82f6)' : 'none' }}
+                            onClick={(e) => { e.stopPropagation(); setOpenFilterMenu(openFilterMenu === 'status' ? null : 'status'); }}
+                        />
+                        {openFilterMenu === 'status' && (
+                            <div style={{
+                                position: 'absolute', top: '100%', left: 0, marginTop: '4px',
+                                backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-color)',
+                                borderRadius: 'var(--radius-md)', boxShadow: 'var(--shadow-lg)',
+                                zIndex: 1000, minWidth: '200px', maxHeight: '300px', overflowY: 'auto'
+                            }}>
+                                <div onClick={() => { setStatusFilter(null); setOpenFilterMenu(null); }}
+                                    style={{
+                                        padding: '8px 12px', cursor: 'pointer',
+                                        backgroundColor: !statusFilter ? 'var(--bg-surface-hover)' : 'transparent',
+                                        fontWeight: !statusFilter ? 600 : 400
+                                    }}>
+                                    All Statuses
+                                </div>
+                                {statuses.map(status => (
+                                    <div key={status.id}
+                                        onClick={() => { setStatusFilter(status.id); setOpenFilterMenu(null); }}
+                                        style={{
+                                            padding: '8px 12px', cursor: 'pointer',
+                                            backgroundColor: statusFilter === status.id ? 'var(--bg-surface-hover)' : 'transparent',
+                                            fontWeight: statusFilter === status.id ? 600 : 400
+                                        }}>
+                                        {status.name}
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </span>
+
+                    {/* Navigator column with filter */}
+                    <span style={{ minWidth: '160px', flex: 1, paddingRight: '16px', display: 'flex', alignItems: 'center', gap: '4px', position: 'relative' }} data-filter-dropdown>
+                        <span style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }} onClick={() => handleSort('navigator')}>
+                            Navigator {getSortIcon('navigator')}
+                        </span>
+                        <Filter
+                            size={14}
+                            style={{ cursor: 'pointer', opacity: navigatorFilter ? 1 : 0.5, color: navigatorFilter ? '#3b82f6' : 'inherit', filter: navigatorFilter ? 'drop-shadow(0 0 3px #3b82f6)' : 'none' }}
+                            onClick={(e) => { e.stopPropagation(); setOpenFilterMenu(openFilterMenu === 'navigator' ? null : 'navigator'); }}
+                        />
+                        {openFilterMenu === 'navigator' && (
+                            <div style={{
+                                position: 'absolute', top: '100%', left: 0, marginTop: '4px',
+                                backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-color)',
+                                borderRadius: 'var(--radius-md)', boxShadow: 'var(--shadow-lg)',
+                                zIndex: 1000, minWidth: '200px', maxHeight: '300px', overflowY: 'auto'
+                            }}>
+                                <div onClick={() => { setNavigatorFilter(null); setOpenFilterMenu(null); }}
+                                    style={{
+                                        padding: '8px 12px', cursor: 'pointer',
+                                        backgroundColor: !navigatorFilter ? 'var(--bg-surface-hover)' : 'transparent',
+                                        fontWeight: !navigatorFilter ? 600 : 400
+                                    }}>
+                                    All Navigators
+                                </div>
+                                {navigators.map(navigator => (
+                                    <div key={navigator.id}
+                                        onClick={() => { setNavigatorFilter(navigator.id); setOpenFilterMenu(null); }}
+                                        style={{
+                                            padding: '8px 12px', cursor: 'pointer',
+                                            backgroundColor: navigatorFilter === navigator.id ? 'var(--bg-surface-hover)' : 'transparent',
+                                            fontWeight: navigatorFilter === navigator.id ? 600 : 400
+                                        }}>
+                                        {navigator.name}
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </span>
+
+                    {/* Screening column with filter */}
+                    <span style={{ minWidth: '140px', flex: 1, paddingRight: '16px', display: 'flex', alignItems: 'center', gap: '4px', position: 'relative' }} data-filter-dropdown>
+                        <span style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }} onClick={() => handleSort('screening')}>
+                            Screening {getSortIcon('screening')}
+                        </span>
+                        <Filter
+                            size={14}
+                            style={{ cursor: 'pointer', opacity: screeningFilter ? 1 : 0.5, color: screeningFilter ? '#3b82f6' : 'inherit', filter: screeningFilter ? 'drop-shadow(0 0 3px #3b82f6)' : 'none' }}
+                            onClick={(e) => { e.stopPropagation(); setOpenFilterMenu(openFilterMenu === 'screening' ? null : 'screening'); }}
+                        />
+                        {openFilterMenu === 'screening' && (
+                            <div style={{
+                                position: 'absolute', top: '100%', left: 0, marginTop: '4px',
+                                backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-color)',
+                                borderRadius: 'var(--radius-md)', boxShadow: 'var(--shadow-lg)',
+                                zIndex: 1000, minWidth: '200px'
+                            }}>
+                                <div onClick={() => { setScreeningFilter(null); setOpenFilterMenu(null); }}
+                                    style={{
+                                        padding: '8px 12px', cursor: 'pointer',
+                                        backgroundColor: !screeningFilter ? 'var(--bg-surface-hover)' : 'transparent',
+                                        fontWeight: !screeningFilter ? 600 : 400
+                                    }}>
+                                    All Statuses
+                                </div>
+                                {['not_started', 'waiting_approval', 'approved', 'rejected'].map(status => (
+                                    <div key={status}
+                                        onClick={() => { setScreeningFilter(status); setOpenFilterMenu(null); }}
+                                        style={{
+                                            padding: '8px 12px', cursor: 'pointer',
+                                            backgroundColor: screeningFilter === status ? 'var(--bg-surface-hover)' : 'transparent',
+                                            fontWeight: screeningFilter === status ? 600 : 400
+                                        }}>
+                                        {getScreeningStatusLabel(status)}
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </span>
+
+                    {/* Active Order column with filter */}
+                    <span style={{ minWidth: '350px', flex: 3, paddingRight: '16px', display: 'flex', alignItems: 'center', gap: '8px', position: 'relative' }} data-filter-dropdown>
+                        Active Order
+                        <span
+                            onClick={(e) => { e.stopPropagation(); setShowOrderDetails(!showOrderDetails); }}
+                            style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', color: 'var(--text-secondary)' }}
+                            title={showOrderDetails ? "Hide Details" : "Show Details"}
+                        >
+                            {showOrderDetails ? <EyeOff size={14} /> : <Eye size={14} />}
+                        </span>
+                        <Filter
+                            size={14}
+                            style={{ cursor: 'pointer', opacity: serviceTypeFilter ? 1 : 0.5, color: serviceTypeFilter ? '#3b82f6' : 'inherit', filter: serviceTypeFilter ? 'drop-shadow(0 0 3px #3b82f6)' : 'none' }}
+                            onClick={(e) => { e.stopPropagation(); setOpenFilterMenu(openFilterMenu === 'serviceType' ? null : 'serviceType'); }}
+                        />
+                        {openFilterMenu === 'serviceType' && (
+                            <div style={{
+                                position: 'absolute', top: '100%', left: 0, marginTop: '4px',
+                                backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-color)',
+                                borderRadius: 'var(--radius-md)', boxShadow: 'var(--shadow-lg)',
+                                zIndex: 1000, minWidth: '200px'
+                            }}>
+                                <div onClick={() => { setServiceTypeFilter(null); setOpenFilterMenu(null); }}
+                                    style={{
+                                        padding: '8px 12px', cursor: 'pointer',
+                                        backgroundColor: !serviceTypeFilter ? 'var(--bg-surface-hover)' : 'transparent',
+                                        fontWeight: !serviceTypeFilter ? 600 : 400
+                                    }}>
+                                    All Types
+                                </div>
+                                <div onClick={() => { setServiceTypeFilter('Food'); setOpenFilterMenu(null); }}
+                                    style={{
+                                        padding: '8px 12px', cursor: 'pointer',
+                                        backgroundColor: serviceTypeFilter === 'Food' ? 'var(--bg-surface-hover)' : 'transparent',
+                                        fontWeight: serviceTypeFilter === 'Food' ? 600 : 400
+                                    }}>
+                                    Food
+                                </div>
+                                <div onClick={() => { setServiceTypeFilter('Boxes'); setOpenFilterMenu(null); }}
+                                    style={{
+                                        padding: '8px 12px', cursor: 'pointer',
+                                        backgroundColor: serviceTypeFilter === 'Boxes' ? 'var(--bg-surface-hover)' : 'transparent',
+                                        fontWeight: serviceTypeFilter === 'Boxes' ? 600 : 400
+                                    }}>
+                                    Boxes
+                                </div>
+                            </div>
+                        )}
+                    </span>
+
+                    <span style={{ minWidth: '180px', flex: 1.2, paddingRight: '16px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}
+                        onClick={() => handleSort('email')}>
+                        Email {getSortIcon('email')}
+                    </span>
+                    <span style={{ minWidth: '140px', flex: 1, paddingRight: '16px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}
+                        onClick={() => handleSort('phone')}>
+                        Phone {getSortIcon('phone')}
+                    </span>
+                    <span style={{ minWidth: '250px', flex: 2, paddingRight: '16px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}
+                        onClick={() => handleSort('address')}>
+                        Address {getSortIcon('address')}
+                    </span>
+                    <span style={{ minWidth: '200px', flex: 2, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}
+                        onClick={() => handleSort('notes')}>
+                        Notes {getSortIcon('notes')}
+                    </span>
+                    <span style={{ width: '40px' }}></span>
                 </div>
                 {filteredClients.map(client => {
                     const status = statuses.find(s => s.id === client.statusId);
                     const isNotAllowed = status ? status.deliveriesAllowed === false : false;
-                    const lastUpdated = currentView === 'orders' && client.activeOrder?.lastUpdated
-                        ? new Date(client.activeOrder.lastUpdated).toLocaleDateString('en-US', {
-                            month: 'short',
-                            day: 'numeric',
-                            year: 'numeric',
-                            hour: '2-digit',
-                            minute: '2-digit'
-                        })
-                        : null;
 
                     return (
                         <div
@@ -511,35 +976,22 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
                                 </span>
                             </span>
                             <span title={getNavigatorName(client.navigatorId)} style={{ minWidth: '160px', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: '16px' }}>{getNavigatorName(client.navigatorId)}</span>
-                            {currentView === 'orders' ? (
-                                <>
-                                    <span style={{ minWidth: '350px', flex: 3, fontSize: '0.9rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: '16px' }}>
-                                        {getOrderSummary(client)}
-                                    </span>
-                                    <span title={lastUpdated || '-'} style={{ minWidth: '180px', flex: 1.2, fontSize: '0.85rem', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: '16px' }}>
-                                        {lastUpdated || '-'}
-                                    </span>
-                                </>
-                            ) : (
-                                <>
-                                    <span style={{ minWidth: '100px', flex: 0.8, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: '16px' }}>{getScreeningStatus(client)}</span>
-                                    <span style={{ minWidth: '350px', flex: 3, fontSize: '0.9rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: '16px' }}>
-                                        {getOrderSummary(client)}
-                                    </span>
-                                    <span title={client.email || undefined} style={{ minWidth: '180px', flex: 1.2, fontSize: '0.85rem', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: '16px' }}>
-                                        {client.email || '-'}
-                                    </span>
-                                    <span title={client.phoneNumber} style={{ minWidth: '140px', flex: 1, fontSize: '0.85rem', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: '16px' }}>
-                                        {client.phoneNumber || '-'}
-                                    </span>
-                                    <span title={client.address} style={{ minWidth: '250px', flex: 2, fontSize: '0.85rem', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: '16px' }}>
-                                        {client.address || '-'}
-                                    </span>
-                                    <span title={client.notes} style={{ minWidth: '200px', flex: 2, fontSize: '0.85rem', color: 'var(--text-tertiary)', fontStyle: 'italic', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: '16px' }}>
-                                        {client.notes || '-'}
-                                    </span>
-                                </>
-                            )}
+                            <span style={{ minWidth: '140px', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: '16px' }}>{getScreeningStatus(client)}</span>
+                            <span style={{ minWidth: '350px', flex: 3, fontSize: '0.9rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: '16px' }}>
+                                {getOrderSummary(client)}
+                            </span>
+                            <span title={client.email || undefined} style={{ minWidth: '180px', flex: 1.2, fontSize: '0.85rem', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: '16px' }}>
+                                {client.email || '-'}
+                            </span>
+                            <span title={client.phoneNumber} style={{ minWidth: '140px', flex: 1, fontSize: '0.85rem', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: '16px' }}>
+                                {client.phoneNumber || '-'}
+                            </span>
+                            <span title={client.address} style={{ minWidth: '250px', flex: 2, fontSize: '0.85rem', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: '16px' }}>
+                                {client.address || '-'}
+                            </span>
+                            <span title={client.notes} style={{ minWidth: '200px', flex: 2, fontSize: '0.85rem', color: 'var(--text-tertiary)', fontStyle: 'italic', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: '16px' }}>
+                                {client.notes || '-'}
+                            </span>
                             <span style={{ width: '40px' }}><ChevronRight size={16} /></span>
                         </div>
                     );
@@ -548,8 +1000,7 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
                     <div className={styles.empty}>
                         {currentView === 'ineligible' ? 'No ineligible clients found.' :
                             currentView === 'eligible' ? 'No eligible clients found.' :
-                                currentView === 'orders' ? 'No orders found for this week.' :
-                                    'No clients found.'}
+                                'No clients found.'}
                     </div>
                 )}
             </div>
@@ -580,13 +1031,6 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
                         />
                     </div>
                     <div className={styles.overlay} onClick={() => setSelectedClientId(null)}></div>
-                </div>
-            )}
-
-            {/* Disclaimer for unimplemented views */}
-            {(currentView === 'history' || currentView === 'billing') && (
-                <div style={{ marginTop: '2rem', textAlign: 'center', color: 'var(--text-tertiary)' }}>
-                    <p>Detailed {currentView} view implementation pending backend support.</p>
                 </div>
             )}
         </div>

@@ -453,6 +453,10 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
 
                     // Ensure structure is correct and convert per-vendor delivery days to deliveryDayOrders format
                     const cleanedOrderConfig = { ...orderConfig };
+
+                    // CRITICAL: Always preserve caseId at the top level for both Food and Boxes
+                    cleanedOrderConfig.caseId = orderConfig.caseId;
+
                     if (serviceType === 'Food') {
                         if (cleanedOrderConfig.deliveryDayOrders) {
                             // Clean multi-day format (already in deliveryDayOrders)
@@ -502,6 +506,14 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                                     }));
                             }
                         }
+                    } else if (serviceType === 'Boxes') {
+                        // For Boxes: Explicitly preserve all critical fields
+                        cleanedOrderConfig.vendorId = orderConfig.vendorId;
+                        cleanedOrderConfig.caseId = orderConfig.caseId; // Also set above
+                        cleanedOrderConfig.boxTypeId = orderConfig.boxTypeId;
+                        cleanedOrderConfig.boxQuantity = orderConfig.boxQuantity || 1;
+                        cleanedOrderConfig.items = orderConfig.items || {};
+                        cleanedOrderConfig.itemPrices = orderConfig.itemPrices || {};
                     }
 
                     // Create a temporary client object for syncCurrentOrderToUpcoming
@@ -2489,28 +2501,44 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
             // Sync Current Order Request
             if (hasOrderChanges) {
                 const cleanedOrderConfig = { ...orderConfig };
+
+                // CRITICAL: Always preserve caseId at the top level for both Food and Boxes
+                cleanedOrderConfig.caseId = orderConfig.caseId;
+
                 if (formData.serviceType === 'Food') {
+                    // For Food service: Ensure vendorId and items are preserved in all vendor selections
                     if (cleanedOrderConfig.deliveryDayOrders) {
+                        // Multi-day format: Clean and preserve vendor selections for each day
                         for (const day of Object.keys(cleanedOrderConfig.deliveryDayOrders)) {
                             cleanedOrderConfig.deliveryDayOrders[day].vendorSelections = (cleanedOrderConfig.deliveryDayOrders[day].vendorSelections || [])
-                                .filter((s: any) => s.vendorId)
-                                .map((s: any) => ({ vendorId: s.vendorId, items: s.items || {} }));
+                                .filter((s: any) => s.vendorId) // Only keep selections with a vendor
+                                .map((s: any) => ({
+                                    vendorId: s.vendorId, // Preserve vendor ID
+                                    items: s.items || {} // Preserve items
+                                }));
                         }
                     } else if (cleanedOrderConfig.vendorSelections) {
+                        // Check if we have per-vendor delivery days (itemsByDay format)
                         const hasPerVendorDeliveryDays = cleanedOrderConfig.vendorSelections.some((s: any) =>
                             s.selectedDeliveryDays && s.selectedDeliveryDays.length > 0 && s.itemsByDay
                         );
 
                         if (hasPerVendorDeliveryDays) {
+                            // Convert per-vendor delivery days to deliveryDayOrders format
                             const deliveryDayOrders: any = {};
                             for (const selection of cleanedOrderConfig.vendorSelections) {
                                 if (!selection.vendorId || !selection.selectedDeliveryDays || !selection.itemsByDay) continue;
+
                                 for (const day of selection.selectedDeliveryDays) {
                                     if (!deliveryDayOrders[day]) deliveryDayOrders[day] = { vendorSelections: [] };
                                     const dayItems = selection.itemsByDay[day] || {};
                                     const hasItems = Object.keys(dayItems).length > 0 && Object.values(dayItems).some((qty: any) => (Number(qty) || 0) > 0);
                                     if (hasItems) {
-                                        deliveryDayOrders[day].vendorSelections.push({ vendorId: selection.vendorId, items: dayItems });
+                                        // Preserve vendorId and items for this day
+                                        deliveryDayOrders[day].vendorSelections.push({
+                                            vendorId: selection.vendorId,
+                                            items: dayItems
+                                        });
                                     }
                                 }
                             }
@@ -2525,20 +2553,23 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                                 cleanedOrderConfig.vendorSelections = undefined;
                             }
                         } else {
+                            // Single-day format: Clean and preserve vendor selections
                             cleanedOrderConfig.vendorSelections = (cleanedOrderConfig.vendorSelections || [])
-                                .filter((s: any) => s.vendorId)
-                                .map((s: any) => ({ vendorId: s.vendorId, items: s.items || {} }));
+                                .filter((s: any) => s.vendorId) // Only keep selections with a vendor
+                                .map((s: any) => ({
+                                    vendorId: s.vendorId, // Preserve vendor ID
+                                    items: s.items || {} // Preserve items
+                                }));
                         }
                     }
                 } else if (formData.serviceType === 'Boxes') {
-                    // For Boxes, explicitly preserve vendorId and caseId
-                    // These are critical fields that must be saved
-                    cleanedOrderConfig.vendorId = orderConfig.vendorId;
-                    cleanedOrderConfig.caseId = orderConfig.caseId;
-                    cleanedOrderConfig.boxTypeId = orderConfig.boxTypeId;
-                    cleanedOrderConfig.boxQuantity = orderConfig.boxQuantity || 1;
-                    cleanedOrderConfig.items = orderConfig.items || {};
-                    cleanedOrderConfig.itemPrices = orderConfig.itemPrices || {};
+                    // For Boxes: Explicitly preserve all critical fields
+                    cleanedOrderConfig.vendorId = orderConfig.vendorId; // Preserve vendor ID
+                    cleanedOrderConfig.caseId = orderConfig.caseId; // Preserve case ID (also set above)
+                    cleanedOrderConfig.boxTypeId = orderConfig.boxTypeId; // Preserve box type
+                    cleanedOrderConfig.boxQuantity = orderConfig.boxQuantity || 1; // Preserve quantity
+                    cleanedOrderConfig.items = orderConfig.items || {}; // Preserve items
+                    cleanedOrderConfig.itemPrices = orderConfig.itemPrices || {}; // Preserve item prices
                 }
 
                 const tempClient: ClientProfile = {

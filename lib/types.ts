@@ -34,13 +34,23 @@ export interface OrderConfiguration {
   caseId?: string;
 
   // Previously single vendor/menuSelections, now supporting multi-vendor for Food
-  vendorSelections: {
+  vendorSelections?: {
     vendorId: string;
     items: { [itemId: string]: number }; // itemId -> quantity
   }[];
 
-  lastUpdated: string;
-  updatedBy: string; // Admin ID or Name
+  // Multi-day food orders: organized by delivery day
+  deliveryDayOrders?: {
+    [day: string]: {
+      vendorSelections: {
+        vendorId: string;
+        items: { [itemId: string]: number };
+      }[];
+    };
+  };
+
+  lastUpdated?: string;
+  updatedBy?: string; // Admin ID or Name
 
   // For Boxes (still typically single vendor per box type, but keeping flexible)
   vendorId?: string; // Vendor ID for Boxes service
