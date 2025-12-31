@@ -58,7 +58,7 @@ export default function FormsPage() {
             <div className="min-h-screen bg-[#0a0a0a] flex items-center justify-center text-white p-4">
                 <div className="text-center">
                     <h2 className="text-xl font-bold text-gray-200 mb-2">No Form Found</h2>
-                    <p className="text-gray-400">The administrator has not configured the order form yet.</p>
+                    <p className="text-gray-400">The administrator has not configured the screening form yet.</p>
                 </div>
             </div>
         );

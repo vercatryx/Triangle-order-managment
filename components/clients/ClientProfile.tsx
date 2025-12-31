@@ -6,7 +6,7 @@ import { ClientProfile, ClientStatus, Navigator, Vendor, MenuItem, BoxType, Serv
 import { updateClient, deleteClient, updateDeliveryProof, recordClientChange, getBoxQuotas, syncCurrentOrderToUpcoming, logNavigatorAction } from '@/lib/actions';
 import { getSingleForm, getClientSubmissions } from '@/lib/form-actions';
 import { getClient, getStatuses, getNavigators, getVendors, getMenuItems, getBoxTypes, getSettings, getCategories, getClients, invalidateClientData, invalidateReferenceData, getActiveOrderForClient, getUpcomingOrderForClient, getOrderHistory, getClientHistory, getBillingHistory, invalidateOrderData } from '@/lib/cached-data';
-import { Save, ArrowLeft, Truck, Package, AlertTriangle, Upload, Trash2, Plus, Check, ClipboardList, History, CreditCard, Calendar, ChevronDown, ChevronUp, ShoppingCart, Loader2, FileText } from 'lucide-react';
+import { Save, ArrowLeft, Truck, Package, AlertTriangle, Upload, Trash2, Plus, Check, ClipboardList, History, CreditCard, Calendar, ChevronDown, ChevronUp, ShoppingCart, Loader2, FileText, Square, CheckSquare } from 'lucide-react';
 import FormFiller from '@/components/forms/FormFiller';
 import { FormSchema } from '@/lib/form-types';
 import SubmissionsList from './SubmissionsList';
@@ -229,6 +229,15 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
             } else {
                 setOrderConfig(upcomingOrderData);
             }
+        } else if (data.client.activeOrder) {
+            // No upcoming order, but we have active_order from clients table - use that
+            // This ensures vendorId, items, and other Boxes data are preserved even if sync to upcoming_orders failed
+            const activeOrderConfig = { ...data.client.activeOrder };
+            // Ensure serviceType matches client's service type
+            if (!activeOrderConfig.serviceType) {
+                activeOrderConfig.serviceType = data.client.serviceType;
+            }
+            setOrderConfig(activeOrderConfig);
         } else {
             const defaultOrder: any = { serviceType: data.client.serviceType };
             if (data.client.serviceType === 'Food') {
@@ -296,7 +305,8 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
         setLoadingOrderDetails(false);
 
         // Set order config from upcoming_orders table (Current Order Request)
-        // If no upcoming order exists, initialize with default based on service type
+        // If no upcoming order exists, fall back to active_order from clients table
+        // If no active_order exists, initialize with default based on service type
         if (c) {
             let configToSet: any = {};
             if (upcomingOrderData) {
@@ -337,8 +347,16 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                 } else {
                     configToSet = upcomingOrderData;
                 }
+            } else if (c.activeOrder) {
+                // No upcoming order, but we have active_order from clients table - use that
+                // This ensures vendorId, items, and other Boxes data are preserved even if sync to upcoming_orders failed
+                configToSet = { ...c.activeOrder };
+                // Ensure serviceType matches client's service type
+                if (!configToSet.serviceType) {
+                    configToSet.serviceType = c.serviceType;
+                }
             } else {
-                // No upcoming order, initialize with default
+                // No upcoming order and no active_order, initialize with default
                 const defaultOrder: any = { serviceType: c.serviceType };
                 if (c.serviceType === 'Food') {
                     defaultOrder.vendorSelections = [{ vendorId: '', items: {} }];
@@ -922,8 +940,30 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
             }
         }
 
-        if (formData.serviceType === 'Boxes' && orderConfig.boxTypeId) {
-            return getBoxValidationSummary();
+        if (formData.serviceType === 'Boxes') {
+            const messages: string[] = [];
+
+            // Validate that vendorId is set
+            if (!orderConfig.vendorId) {
+                messages.push('Vendor is required for Boxes orders.');
+            }
+
+            // Validate that boxTypeId is set
+            if (!orderConfig.boxTypeId) {
+                messages.push('Box Type is required for Boxes orders.');
+            }
+
+            // Get box validation summary (quota validation)
+            const boxValidation = getBoxValidationSummary();
+            if (!boxValidation.isValid) {
+                messages.push(...boxValidation.messages);
+            }
+
+            if (messages.length > 0) {
+                return { isValid: false, messages };
+            }
+
+            return { isValid: true, messages: [] };
         }
 
         return { isValid: true, messages: [] };
@@ -1123,7 +1163,7 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
     }
 
     // -- Form Filler Handlers --
-    async function handleOpenOrderForm() {
+    async function handleOpenScreeningForm() {
         setLoadingForm(true);
         try {
             const response = await getSingleForm();
@@ -1131,7 +1171,7 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                 setFormSchema(response.data);
                 setIsFillingForm(true);
             } else {
-                alert('No Order Form configured.');
+                alert('No Screening Form configured.');
             }
         } catch (error) {
             console.error('Failed to load form:', error);
@@ -1141,20 +1181,26 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
         }
     }
 
-    function handleCloseOrderForm() {
+    function handleCloseScreeningForm() {
         setIsFillingForm(false);
         setFormSchema(null);
     }
 
-    if (!client) {
-        return <div>Loading...</div>;
+    // Don't show anything until all data is loaded
+    if (loading || loadingOrderDetails || !client) {
+        return (
+            <div className={styles.loadingContainer} style={{ minHeight: '400px' }}>
+                <div className={styles.spinner}></div>
+                <p className={styles.loadingText}>Loading client profile...</p>
+            </div>
+        );
     }
 
     // Render Form Filler if active
     if (isFillingForm && formSchema) {
         return (
             <div className={`${styles.container} ${onClose ? styles.inModal : ''}`} style={{ padding: 0 }}>
-                <FormFiller schema={formSchema} onBack={handleCloseOrderForm} clientId={clientId} />
+                <FormFiller schema={formSchema} onBack={handleCloseScreeningForm} clientId={clientId} />
             </div>
         );
     }
@@ -1231,31 +1277,72 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                             <textarea className="input" style={{ height: '100px' }} value={formData.notes} onChange={e => setFormData({ ...formData, notes: e.target.value })} />
                         </div>
 
-                        <div className={styles.checkboxTitle}>Screening</div>
-                        <div className={styles.row}>
-                            <label className={styles.checkboxLabel}>
-                                <input type="checkbox" checked={formData.screeningTookPlace} onChange={e => setFormData({ ...formData, screeningTookPlace: e.target.checked })} />
-                                Took Place
-                            </label>
-                            <label className={styles.checkboxLabel}>
-                                <input type="checkbox" checked={formData.screeningSigned} onChange={e => setFormData({ ...formData, screeningSigned: e.target.checked })} />
-                                Signed
-                            </label>
+
+                        <div className={styles.formGroup}>
+                            <label className="label">Screening Status</label>
+                            <div style={{
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '8px',
+                                padding: '12px 16px',
+                                borderRadius: 'var(--radius-md)',
+                                fontSize: '1rem',
+                                fontWeight: 500,
+                                backgroundColor: (() => {
+                                    const status = client?.screeningStatus || 'not_started';
+                                    switch (status) {
+                                        case 'waiting_approval': return 'rgba(234, 179, 8, 0.1)';
+                                        case 'approved': return 'rgba(34, 197, 94, 0.1)';
+                                        case 'rejected': return 'rgba(239, 68, 68, 0.1)';
+                                        default: return 'var(--bg-surface-hover)';
+                                    }
+                                })(),
+                                color: (() => {
+                                    const status = client?.screeningStatus || 'not_started';
+                                    switch (status) {
+                                        case 'waiting_approval': return '#eab308';
+                                        case 'approved': return 'var(--color-success)';
+                                        case 'rejected': return 'var(--color-danger)';
+                                        default: return 'var(--text-tertiary)';
+                                    }
+                                })(),
+                                border: '1px solid var(--border-color)'
+                            }}>
+                                {(() => {
+                                    const status = client?.screeningStatus || 'not_started';
+                                    switch (status) {
+                                        case 'not_started': return <><Square size={18} /> Not Started</>;
+                                        case 'waiting_approval': return <><CheckSquare size={18} /> Pending Approval</>;
+                                        case 'approved': return <><CheckSquare size={18} /> Approved</>;
+                                        case 'rejected': return <><Square size={18} /> Rejected</>;
+                                        default: return <><Square size={18} /> Not Started</>;
+                                    }
+                                })()}
+                            </div>
+                            <p style={{
+                                fontSize: '0.85rem',
+                                color: 'var(--text-tertiary)',
+                                marginTop: '8px',
+                                fontStyle: 'italic'
+                            }}>
+                                Status updates automatically when screening forms are submitted and reviewed.
+                            </p>
                         </div>
+
                     </section>
 
-                    {/* Order Form Submissions */}
+                    {/* Screening Form Submissions */}
                     <section className={styles.card}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-                            <h3 className={styles.sectionTitle} style={{ margin: 0 }}>Order Form Submissions</h3>
+                            <h3 className={styles.sectionTitle} style={{ margin: 0 }}>Screening Form Submissions</h3>
                             <button
                                 className="btn btn-primary"
-                                onClick={handleOpenOrderForm}
+                                onClick={handleOpenScreeningForm}
                                 disabled={loadingForm}
                                 style={{ fontSize: '14px' }}
                             >
                                 {loadingForm ? <Loader2 size={16} className="animate-spin" /> : <FileText size={16} />}
-                                Fill Order Form
+                                Fill Screening Form
                             </button>
                         </div>
                         {loadingSubmissions ? (
@@ -2136,53 +2223,59 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                                                             </div>
                                                         )}
                                                         <div>
+                                                            {/* Service Type Header */}
+                                                            <div style={{ marginBottom: 'var(--spacing-sm)', fontSize: '0.9rem', fontWeight: 600, color: 'var(--text-primary)' }}>
+                                                                {isFood ? 'Food' : isBoxes ? 'Boxes' : 'Unknown Service'}
+                                                            </div>
+
                                                             {/* Food Order Display - Show vendors first, then items grouped by vendor */}
-                                                            {isFood && order.vendorSelections && order.vendorSelections.length > 0 && (
-                                                                <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--spacing-md)' }}>
-                                                                    {order.vendorSelections.map((vendorSelection: any, idx: number) => {
-                                                                        const vendor = vendors.find(v => v.id === vendorSelection.vendorId);
-                                                                        const vendorName = vendor?.name || 'Unknown Vendor';
-                                                                        const nextDelivery = getNextDeliveryDate(vendorSelection.vendorId);
-                                                                        const items = vendorSelection.items || {};
+                                                            {isFood && (
+                                                                <div style={{ padding: 'var(--spacing-md)', backgroundColor: 'var(--bg-surface)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)' }}>
+                                                                    {order.vendorSelections && order.vendorSelections.length > 0 ? (
+                                                                        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--spacing-md)' }}>
+                                                                            {order.vendorSelections.map((vendorSelection: any, idx: number) => {
+                                                                                const vendor = vendors.find(v => v.id === vendorSelection.vendorId);
+                                                                                const vendorName = vendor?.name || 'Unassigned';
+                                                                                const nextDelivery = getNextDeliveryDate(vendorSelection.vendorId);
+                                                                                const items = vendorSelection.items || {};
 
-                                                                        return (
-                                                                            <div key={idx} style={{ padding: 'var(--spacing-md)', backgroundColor: 'var(--bg-surface)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)' }}>
-                                                                                {/* Vendor Header */}
-                                                                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--spacing-sm)', paddingBottom: 'var(--spacing-sm)', borderBottom: '1px solid var(--border-color)' }}>
-                                                                                    <div style={{ fontWeight: 600, fontSize: '1rem', color: 'var(--color-primary)' }}>{vendorName}</div>
-                                                                                    {nextDelivery && (
-                                                                                        <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', fontWeight: 500 }}>
-                                                                                            Next delivery: {nextDelivery.dayOfWeek}, {nextDelivery.date}
+                                                                                return (
+                                                                                    <div key={idx} style={{ padding: 'var(--spacing-md)', backgroundColor: 'var(--bg-surface)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)' }}>
+                                                                                        {/* Vendor Header */}
+                                                                                        <div style={{ marginBottom: 'var(--spacing-sm)', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                                                                                            {vendorName}
                                                                                         </div>
-                                                                                    )}
-                                                                                </div>
-
-                                                                            </div>
-                                                                        );
-                                                                    })}
-
-                                                                    {/* Overall Box Total */}
-                                                                    {(() => {
-                                                                        const boxTotal = getBoxItemsTotal();
-                                                                        if (boxTotal > 0) {
-                                                                            return (
-                                                                                <div style={{
-                                                                                    marginTop: 'var(--spacing-md)',
-                                                                                    padding: '1rem',
-                                                                                    backgroundColor: 'var(--color-primary-bg)',
-                                                                                    borderRadius: 'var(--radius-md)',
-                                                                                    border: '2px solid var(--color-primary)',
-                                                                                    fontSize: '1rem',
-                                                                                    textAlign: 'center',
-                                                                                    fontWeight: 700,
-                                                                                    color: 'var(--color-primary)'
-                                                                                }}>
-                                                                                    Box Total: ${boxTotal.toFixed(2)}
-                                                                                </div>
-                                                                            );
-                                                                        }
-                                                                        return null;
-                                                                    })()}
+                                                                                        {/* Items List */}
+                                                                                        {Object.keys(items).length > 0 ? (
+                                                                                            <div style={{ fontSize: '0.85rem', color: 'var(--text-primary)' }}>
+                                                                                                {Object.entries(items).map(([itemId, qty]: [string, any]) => {
+                                                                                                    const item = menuItems.find(i => i.id === itemId);
+                                                                                                    return item ? (
+                                                                                                        <div key={itemId} style={{ marginBottom: '4px' }}>
+                                                                                                            {item.name} × {qty}
+                                                                                                        </div>
+                                                                                                    ) : null;
+                                                                                                })}
+                                                                                            </div>
+                                                                                        ) : (
+                                                                                            <div style={{ fontSize: '0.85rem', color: 'var(--text-tertiary)', fontStyle: 'italic' }}>
+                                                                                                No items selected
+                                                                                            </div>
+                                                                                        )}
+                                                                                        {nextDelivery && (
+                                                                                            <div style={{ marginTop: 'var(--spacing-sm)', fontSize: '0.8rem', color: 'var(--text-secondary)', fontWeight: 500 }}>
+                                                                                                Next delivery: {nextDelivery.dayOfWeek}, {nextDelivery.date}
+                                                                                            </div>
+                                                                                        )}
+                                                                                    </div>
+                                                                                );
+                                                                            })}
+                                                                        </div>
+                                                                    ) : (
+                                                                        <div style={{ fontSize: '0.85rem', color: 'var(--text-tertiary)', fontStyle: 'italic' }}>
+                                                                            No vendors or items selected
+                                                                        </div>
+                                                                    )}
                                                                 </div>
                                                             )}
 
@@ -2191,29 +2284,46 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                                                                 <div style={{ padding: 'var(--spacing-md)', backgroundColor: 'var(--bg-surface)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)' }}>
                                                                     {(() => {
                                                                         const box = boxTypes.find(b => b.id === order.boxTypeId);
-                                                                        const boxVendorId = box?.vendorId;
+                                                                        // Get vendorId from order first, then fall back to box.vendorId
+                                                                        const boxVendorId = order.vendorId || box?.vendorId || null;
                                                                         const vendor = boxVendorId ? vendors.find(v => v.id === boxVendorId) : null;
-                                                                        const vendorName = vendor?.name || 'Unknown Vendor';
+                                                                        const vendorName = vendor?.name || 'Unassigned';
                                                                         const boxName = box?.name || 'Unknown Box';
                                                                         const nextDelivery = boxVendorId ? getNextDeliveryDate(boxVendorId) : null;
                                                                         const items = order.items || {};
 
                                                                         return (
                                                                             <>
-                                                                                {/* Vendor and Box Type Header */}
-                                                                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--spacing-sm)', paddingBottom: 'var(--spacing-sm)', borderBottom: '1px solid var(--border-color)' }}>
-                                                                                    <div>
-                                                                                        <div style={{ fontWeight: 600, fontSize: '1rem', color: 'var(--color-primary)' }}>{vendorName}</div>
-                                                                                        <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginTop: '2px' }}>
-                                                                                            {boxName} × {order.boxQuantity || 1}
-                                                                                        </div>
-                                                                                    </div>
-                                                                                    {nextDelivery && (
-                                                                                        <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', fontWeight: 500 }}>
-                                                                                            Next delivery: {nextDelivery.dayOfWeek}, {nextDelivery.date}
-                                                                                        </div>
-                                                                                    )}
+                                                                                {/* Vendor */}
+                                                                                <div style={{ marginBottom: 'var(--spacing-sm)', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                                                                                    {vendorName}
                                                                                 </div>
+                                                                                {/* Box Type and Quantity */}
+                                                                                <div style={{ marginBottom: 'var(--spacing-sm)', fontSize: '0.85rem', color: 'var(--text-primary)' }}>
+                                                                                    {boxName} × {order.boxQuantity || 1}
+                                                                                </div>
+                                                                                {/* Items List */}
+                                                                                {Object.keys(items).length > 0 ? (
+                                                                                    <div style={{ fontSize: '0.85rem', color: 'var(--text-primary)' }}>
+                                                                                        {Object.entries(items).map(([itemId, qty]: [string, any]) => {
+                                                                                            const item = menuItems.find(i => i.id === itemId);
+                                                                                            return item ? (
+                                                                                                <div key={itemId} style={{ marginBottom: '4px' }}>
+                                                                                                    {item.name} × {qty}
+                                                                                                </div>
+                                                                                            ) : null;
+                                                                                        })}
+                                                                                    </div>
+                                                                                ) : (
+                                                                                    <div style={{ fontSize: '0.85rem', color: 'var(--text-tertiary)', fontStyle: 'italic' }}>
+                                                                                        No items selected
+                                                                                    </div>
+                                                                                )}
+                                                                                {nextDelivery && (
+                                                                                    <div style={{ marginTop: 'var(--spacing-sm)', fontSize: '0.8rem', color: 'var(--text-secondary)', fontWeight: 500 }}>
+                                                                                        Next delivery: {nextDelivery.dayOfWeek}, {nextDelivery.date}
+                                                                                    </div>
+                                                                                )}
                                                                             </>
                                                                         );
                                                                     })()}
@@ -2296,19 +2406,27 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
         }
 
         // Check for Status Change by Navigator
-        // Check for Status Change by Navigator
+        // Only show units modal if the new status requires units on change
         if (currentUser?.role === 'navigator' && formData.statusId !== client.statusId) {
-            console.timeEnd('handleSave:pre-check');
-            console.log('Detected status change, showing modal');
+            const newStatus = statuses.find(s => s.id === formData.statusId);
 
-            try {
-                const oldStatusName = getStatusName(client.statusId);
-                const newStatusName = getStatusName(formData.statusId!);
-                setPendingStatusChange({ oldStatus: oldStatusName, newStatus: newStatusName });
-                setShowUnitsModal(true);
-                return false; // Intercepted
-            } catch (e) {
-                console.error('Error in status change logic:', e);
+            // Only show modal if the new status has requiresUnitsOnChange enabled
+            if (newStatus?.requiresUnitsOnChange) {
+                console.timeEnd('handleSave:pre-check');
+                console.log('Detected status change to status that requires units, showing modal');
+
+                try {
+                    const oldStatusName = getStatusName(client.statusId);
+                    const newStatusName = getStatusName(formData.statusId!);
+                    setPendingStatusChange({ oldStatus: oldStatusName, newStatus: newStatusName });
+                    setShowUnitsModal(true);
+                    return false; // Intercepted
+                } catch (e) {
+                    console.error('Error in status change logic:', e);
+                }
+            } else {
+                // Status change doesn't require units, proceed with save
+                console.log('Status change detected but new status does not require units');
             }
         }
 
@@ -2412,6 +2530,15 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                                 .map((s: any) => ({ vendorId: s.vendorId, items: s.items || {} }));
                         }
                     }
+                } else if (formData.serviceType === 'Boxes') {
+                    // For Boxes, explicitly preserve vendorId and caseId
+                    // These are critical fields that must be saved
+                    cleanedOrderConfig.vendorId = orderConfig.vendorId;
+                    cleanedOrderConfig.caseId = orderConfig.caseId;
+                    cleanedOrderConfig.boxTypeId = orderConfig.boxTypeId;
+                    cleanedOrderConfig.boxQuantity = orderConfig.boxQuantity || 1;
+                    cleanedOrderConfig.items = orderConfig.items || {};
+                    cleanedOrderConfig.itemPrices = orderConfig.itemPrices || {};
                 }
 
                 const tempClient: ClientProfile = {
@@ -2471,8 +2598,18 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                     // Try to save and close when clicking overlay
                     handleSaveAndClose();
                 }}>
-                    <div className={styles.modalContent} onClick={e => e.stopPropagation()}>
-                        {content}
+                    <div className={styles.modalContent} onClick={e => e.stopPropagation()} style={{ position: 'relative' }}>
+                        {saving && (
+                            <div className={styles.savingOverlay}>
+                                <div className={styles.savingIndicator}>
+                                    <Loader2 size={48} className="animate-spin" style={{ color: 'var(--color-primary)' }} />
+                                    <p className={styles.savingText}>Saving changes...</p>
+                                </div>
+                            </div>
+                        )}
+                        <div style={{ filter: saving ? 'blur(4px)' : 'none', pointerEvents: saving ? 'none' : 'auto' }}>
+                            {content}
+                        </div>
                     </div>
                 </div>
                 {validationError.show && (
@@ -2521,7 +2658,19 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
     } else {
         return (
             <>
-                {content}
+                <div style={{ position: 'relative' }}>
+                    {saving && (
+                        <div className={styles.savingOverlay}>
+                            <div className={styles.savingIndicator}>
+                                <Loader2 size={48} className="animate-spin" style={{ color: 'var(--color-primary)' }} />
+                                <p className={styles.savingText}>Saving changes...</p>
+                            </div>
+                        </div>
+                    )}
+                    <div style={{ filter: saving ? 'blur(4px)' : 'none', pointerEvents: saving ? 'none' : 'auto' }}>
+                        {content}
+                    </div>
+                </div>
                 {validationError.show && (
                     <div className={styles.modalOverlay} style={{ zIndex: 200 }}>
                         <div className={styles.modalContent} style={{ maxWidth: '400px', height: 'auto', padding: '24px' }} onClick={e => e.stopPropagation()}>

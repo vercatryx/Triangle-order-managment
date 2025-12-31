@@ -62,22 +62,53 @@ export default function FormBuilder({ onSave }: FormBuilderProps) {
         }));
     };
 
-    const updateOption = (questionId: string, index: number, value: string) => {
-        setQuestions(questions.map(q => {
-            if (q.id === questionId) {
-                const newOptions = [...(q.options || [])];
-                newOptions[index] = value;
-                return { ...q, options: newOptions };
-            }
-            return q;
-        }));
-    };
 
     const removeOption = (questionId: string, index: number) => {
         setQuestions(questions.map(q => {
             if (q.id === questionId) {
                 const newOptions = [...(q.options || [])];
+                const removedOption = newOptions[index];
                 newOptions.splice(index, 1);
+                // Also remove from conditionalTextInputs if it exists
+                const newConditionalTextInputs = { ...q.conditionalTextInputs };
+                if (removedOption && newConditionalTextInputs[removedOption]) {
+                    delete newConditionalTextInputs[removedOption];
+                }
+                return { ...q, options: newOptions, conditionalTextInputs: Object.keys(newConditionalTextInputs).length > 0 ? newConditionalTextInputs : undefined };
+            }
+            return q;
+        }));
+    };
+
+    const toggleConditionalTextInput = (questionId: string, option: string) => {
+        setQuestions(questions.map(q => {
+            if (q.id === questionId) {
+                const current = q.conditionalTextInputs || {};
+                const newConditional = { ...current };
+                if (newConditional[option]) {
+                    delete newConditional[option];
+                } else {
+                    newConditional[option] = true;
+                }
+                return { ...q, conditionalTextInputs: Object.keys(newConditional).length > 0 ? newConditional : undefined };
+            }
+            return q;
+        }));
+    };
+
+    const updateOption = (questionId: string, index: number, value: string) => {
+        setQuestions(questions.map(q => {
+            if (q.id === questionId) {
+                const newOptions = [...(q.options || [])];
+                const oldOption = newOptions[index];
+                newOptions[index] = value;
+                // Update conditionalTextInputs key if option text changed
+                if (oldOption !== value && q.conditionalTextInputs?.[oldOption]) {
+                    const newConditionalTextInputs = { ...q.conditionalTextInputs };
+                    newConditionalTextInputs[value] = newConditionalTextInputs[oldOption];
+                    delete newConditionalTextInputs[oldOption];
+                    return { ...q, options: newOptions, conditionalTextInputs: newConditionalTextInputs };
+                }
                 return { ...q, options: newOptions };
             }
             return q;
@@ -85,15 +116,30 @@ export default function FormBuilder({ onSave }: FormBuilderProps) {
     };
 
     const handleSave = async () => {
+        // Check if there's an existing form
+        const existingFormResult = await getSingleForm();
+        const hasExistingForm = existingFormResult.success && existingFormResult.data !== null;
+
+        // If there's an existing form, ask for confirmation to delete it
+        let deleteOldForms = false;
+        if (hasExistingForm) {
+            const confirmed = window.confirm(
+                'A screening form already exists. Creating a new form will replace the old one.\n\n' +
+                'Do you want to delete the old form once the new one is created?\n\n' +
+                'Click OK to delete the old form, or Cancel to keep both forms.'
+            );
+            deleteOldForms = confirmed;
+        }
+
         setIsSaving(true);
         setError(null);
         try {
-            const result = await saveSingleForm(questions);
+            const result = await saveSingleForm(questions, deleteOldForms);
 
             if (result.success) {
                 const schema: FormSchema = {
                     id: result.formId,
-                    title: "Order Form",
+                    title: "Screening Form",
                     questions: questions
                 };
                 onSave(schema);
@@ -161,23 +207,38 @@ export default function FormBuilder({ onSave }: FormBuilderProps) {
                         {q.type === 'select' && (
                             <div className={styles.optionsList}>
                                 {q.options?.map((opt, optIndex) => (
-                                    <div key={optIndex} className={styles.optionRow}>
-                                        <div className={styles.optionDot} />
-                                        <input
-                                            type="text"
-                                            value={opt}
-                                            onChange={(e) => updateOption(q.id, optIndex, e.target.value)}
-                                            placeholder={`Option ${optIndex + 1} `}
-                                            className={styles.optionInput}
-                                        />
-                                        <button
-                                            onClick={() => removeOption(q.id, optIndex)}
-                                            className={styles.removeOptionBtn}
-                                            type="button"
-                                            title="Remove Option"
-                                        >
-                                            <X size={16} />
-                                        </button>
+                                    <div key={optIndex} className={styles.optionRowContainer}>
+                                        <div className={styles.optionRow}>
+                                            <div className={styles.optionDot} />
+                                            <input
+                                                type="text"
+                                                value={opt}
+                                                onChange={(e) => updateOption(q.id, optIndex, e.target.value)}
+                                                placeholder={`Option ${optIndex + 1} `}
+                                                className={styles.optionInput}
+                                            />
+                                            <button
+                                                onClick={() => removeOption(q.id, optIndex)}
+                                                className={styles.removeOptionBtn}
+                                                type="button"
+                                                title="Remove Option"
+                                            >
+                                                <X size={16} />
+                                            </button>
+                                        </div>
+                                        {opt.trim() && (
+                                            <label className={styles.conditionalCheckboxLabel}>
+                                                <input
+                                                    type="checkbox"
+                                                    checked={q.conditionalTextInputs?.[opt] || false}
+                                                    onChange={() => toggleConditionalTextInput(q.id, opt)}
+                                                    className={styles.conditionalCheckbox}
+                                                />
+                                                <span className={styles.conditionalCheckboxText}>
+                                                    Requires text input when selected
+                                                </span>
+                                            </label>
+                                        )}
                                     </div>
                                 ))}
                                 <button

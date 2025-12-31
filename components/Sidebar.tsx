@@ -2,13 +2,14 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Users, Truck, Utensils, Box as BoxIcon, Settings, LayoutDashboard, ChevronLeft, ChevronRight, LogOut, Store } from 'lucide-react';
+import { Users, Truck, Utensils, Box as BoxIcon, Settings, LayoutDashboard, ChevronLeft, ChevronRight, LogOut, Store, History } from 'lucide-react';
 import styles from './Sidebar.module.css';
 import { logout } from '@/lib/auth-actions';
 import { useState } from 'react';
 
 const navItems = [
     { label: 'Client Dashboard', href: '/clients', icon: Users },
+    { label: 'My History', href: '/navigator-history', icon: History, role: 'navigator' },
     { label: 'Vendors', href: '/vendors', icon: Store },
     { label: 'Admin Control', href: '/admin', icon: Settings },
 ];
@@ -55,6 +56,9 @@ export function Sidebar({
                     }
                     if (item.label === 'Vendors') {
                         return userRole === 'admin' || userRole === 'super-admin';
+                    }
+                    if ((item as any).role) {
+                        return userRole === (item as any).role;
                     }
                     return true;
                 }).map((item) => {

@@ -45,6 +45,7 @@ export async function saveForm(schema: FormSchema) {
             text: q.text,
             type: q.type,
             options: q.options ? JSON.stringify(q.options) : null,
+            conditional_text_inputs: q.conditionalTextInputs ? JSON.stringify(q.conditionalTextInputs) : null,
             "order": index
         }));
 
@@ -102,7 +103,8 @@ export async function getForm(formId: string): Promise<{ success: boolean; data?
             id: q.id,
             type: q.type,
             text: q.text,
-            options: q.options ? JSON.parse(q.options) : undefined
+            options: q.options ? JSON.parse(q.options) : undefined,
+            conditionalTextInputs: q.conditional_text_inputs ? JSON.parse(q.conditional_text_inputs) : undefined
         }));
 
         return {
@@ -163,43 +165,28 @@ export async function submitForm(formId: string, answers: Record<string, string>
     }
 }
 
-const ORDER_FORM_TITLE = "Order Form";
+const SCREENING_FORM_TITLE = "Screening Form";
 
-export async function saveSingleForm(questions: any[]) {
+export async function saveSingleForm(questions: any[], deleteOldForms: boolean = false) {
     try {
-        // 1. Check if the single form exists
-        let { data: form } = await supabase
+        // Always create a new form
+        const timestamp = new Date().toISOString().replace('T', ' ').substring(0, 19);
+        const formTitle = `${SCREENING_FORM_TITLE} - ${timestamp}`;
+
+        // 1. Create new form
+        const { data: newForm, error: createError } = await supabase
             .from('forms')
-            .select('id')
-            .eq('title', ORDER_FORM_TITLE)
+            .insert({
+                title: formTitle,
+                description: 'Global Screening Form'
+            })
+            .select()
             .single();
 
-        let formId = form?.id;
+        if (createError) throw createError;
+        const formId = newForm.id;
 
-        if (!formId) {
-            // Create if it doesn't exist
-            const { data: newForm, error: createError } = await supabase
-                .from('forms')
-                .insert({
-                    title: ORDER_FORM_TITLE,
-                    description: 'Global Order Form'
-                })
-                .select()
-                .single();
-
-            if (createError) throw createError;
-            formId = newForm.id;
-        }
-
-        // 2. Clear existing questions (full replace strategy)
-        const { error: deleteError } = await supabase
-            .from('questions')
-            .delete()
-            .eq('form_id', formId);
-
-        if (deleteError) throw deleteError;
-
-        // 3. Insert new questions
+        // 2. Insert new questions
         if (questions.length > 0) {
             const { error: insertError } = await supabase
                 .from('questions')
@@ -209,11 +196,36 @@ export async function saveSingleForm(questions: any[]) {
                         text: q.text,
                         type: q.type,
                         options: q.options ? JSON.stringify(q.options) : null,
+                        conditional_text_inputs: q.conditionalTextInputs ? JSON.stringify(q.conditionalTextInputs) : null,
                         order: index
                     }))
                 );
 
             if (insertError) throw insertError;
+        }
+
+        // 3. Delete old forms if requested (after successfully creating the new one)
+        if (deleteOldForms) {
+            // Get all old screening forms (excluding the one we just created)
+            const { data: oldForms, error: fetchOldError } = await supabase
+                .from('forms')
+                .select('id')
+                .like('title', `${SCREENING_FORM_TITLE}%`)
+                .neq('id', formId);
+
+            if (!fetchOldError && oldForms && oldForms.length > 0) {
+                // Delete old forms (cascade will delete their questions)
+                const oldFormIds = oldForms.map(f => f.id);
+                const { error: deleteError } = await supabase
+                    .from('forms')
+                    .delete()
+                    .in('id', oldFormIds);
+
+                if (deleteError) {
+                    console.error('Error deleting old forms:', deleteError);
+                    // Don't fail the whole operation if deletion fails
+                }
+            }
         }
 
         revalidatePath('/forms');
@@ -225,19 +237,23 @@ export async function saveSingleForm(questions: any[]) {
 
 export async function getSingleForm() {
     try {
-        const { data: form, error: formError } = await supabase
+        // Get the most recent screening form (forms with title starting with "Screening Form")
+        // This allows multiple forms to exist, but we use the latest one
+        const { data: forms, error: formsError } = await supabase
             .from('forms')
-            .select('id, title, description')
-            .eq('title', ORDER_FORM_TITLE)
-            .single();
+            .select('id, title, description, created_at')
+            .like('title', `${SCREENING_FORM_TITLE}%`)
+            .order('created_at', { ascending: false })
+            .limit(1);
 
-        if (formError) {
-            if (formError.code === 'PGRST116') {
-                // No rows found, return null (not an error, just empty)
-                return { success: true, data: null };
-            }
-            throw formError;
+        if (formsError) throw formsError;
+
+        if (!forms || forms.length === 0) {
+            // No screening forms found, return null (not an error, just empty)
+            return { success: true, data: null };
         }
+
+        const form = forms[0];
 
         const { data: questions, error: qError } = await supabase
             .from('questions')
@@ -249,12 +265,13 @@ export async function getSingleForm() {
 
         const schema: FormSchema = {
             id: form.id,
-            title: form.title,
+            title: SCREENING_FORM_TITLE, // Return the base title for display
             questions: questions.map((q: any) => ({ // Explicit typing to fix implicit any
                 id: q.id,
                 type: q.type as QuestionType,
                 text: q.text,
-                options: q.options ? JSON.parse(q.options as unknown as string) : undefined
+                options: q.options ? JSON.parse(q.options as unknown as string) : undefined,
+                conditionalTextInputs: q.conditional_text_inputs ? JSON.parse(q.conditional_text_inputs as unknown as string) : undefined
             }))
         };
 
@@ -277,7 +294,7 @@ export async function uploadFormPdf(formData: FormData) {
 
         const buffer = Buffer.from(await file.arrayBuffer());
         const timestamp = new Date().getTime();
-        const filename = `order-form-${timestamp}.pdf`; // Simple unique key
+        const filename = `screening-form-${timestamp}.pdf`; // Simple unique key
 
         const { success, key } = await uploadFile(filename, buffer, 'application/pdf');
 
@@ -296,10 +313,10 @@ export async function uploadFormPdf(formData: FormData) {
 
 export async function createSubmission(data: Record<string, string>, clientId?: string) {
     try {
-        // Get the Order Form ID
+        // Get the Screening Form ID
         const formResult = await getSingleForm();
         if (!formResult.success || !formResult.data) {
-            throw new Error('Order Form not found');
+            throw new Error('Screening Form not found');
         }
 
         const { data: submission, error } = await supabase
@@ -459,5 +476,95 @@ export async function getClientSubmissions(clientId: string) {
     } catch (error: any) {
         console.error('Error fetching client submissions:', error);
         return { success: false, error: error.message };
+    }
+}
+
+// --- EMAIL ACTIONS ---
+
+import { sendEmail } from './email';
+import { getNutritionists } from './actions';
+import { getClient } from './actions';
+
+export async function sendSubmissionToNutritionist(
+    nutritionistId: string,
+    submissionData: Record<string, string>,
+    clientId?: string
+): Promise<{ success: boolean; error?: string }> {
+    try {
+        // Get nutritionist
+        const nutritionists = await getNutritionists();
+        const nutritionist = nutritionists.find(n => n.id === nutritionistId);
+        
+        if (!nutritionist) {
+            return { success: false, error: 'Nutritionist not found' };
+        }
+
+        if (!nutritionist.email) {
+            return { success: false, error: 'Nutritionist does not have an email address' };
+        }
+
+        // Get client info if available
+        let clientInfo = '';
+        if (clientId) {
+            const client = await getClient(clientId);
+            if (client) {
+                clientInfo = `<p><strong>Client:</strong> ${client.fullName}</p>`;
+            }
+        }
+
+        // Get form schema to format the submission nicely
+        const formResult = await getSingleForm();
+        let submissionHtml = '<h2>New Form Submission</h2>';
+        
+        if (clientInfo) {
+            submissionHtml += clientInfo;
+        }
+
+        submissionHtml += '<hr style="margin: 20px 0;">';
+        submissionHtml += '<h3>Submission Details:</h3>';
+        submissionHtml += '<ul style="list-style: none; padding: 0;">';
+
+        if (formResult.success && formResult.data) {
+            // Format with question text
+            formResult.data.questions.forEach((question, index) => {
+                const answer = submissionData[question.id];
+                const conditionalAnswer = submissionData[`${question.id}_conditional`];
+                
+                if (answer) {
+                    submissionHtml += `<li style="margin-bottom: 15px; padding: 10px; background-color: #f5f5f5; border-radius: 5px;">`;
+                    submissionHtml += `<strong>${index + 1}. ${question.text}</strong><br>`;
+                    submissionHtml += `<span>${answer}</span>`;
+                    
+                    if (conditionalAnswer) {
+                        submissionHtml += `<br><em style="margin-top: 5px; display: block;">Additional details: ${conditionalAnswer}</em>`;
+                    }
+                    
+                    submissionHtml += `</li>`;
+                }
+            });
+        } else {
+            // Fallback: just show raw data
+            Object.entries(submissionData).forEach(([key, value]) => {
+                if (!key.endsWith('_conditional')) {
+                    submissionHtml += `<li style="margin-bottom: 10px;"><strong>${key}:</strong> ${value}</li>`;
+                }
+            });
+        }
+
+        submissionHtml += '</ul>';
+        submissionHtml += '<hr style="margin: 20px 0;">';
+        submissionHtml += `<p style="color: #666; font-size: 12px;">Submitted at: ${new Date().toLocaleString()}</p>`;
+
+        // Send email
+        const emailResult = await sendEmail({
+            to: nutritionist.email,
+            subject: `New Form Submission${clientId ? ' - Client Form' : ''}`,
+            html: submissionHtml
+        });
+
+        return emailResult;
+    } catch (error: any) {
+        console.error('Error sending submission to nutritionist:', error);
+        return { success: false, error: error.message || 'Failed to send submission' };
     }
 }

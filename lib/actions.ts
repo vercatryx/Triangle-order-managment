@@ -2,7 +2,7 @@
 
 import { revalidatePath } from 'next/cache';
 import { supabase } from './supabase';
-import { ClientStatus, Vendor, MenuItem, BoxType, AppSettings, Navigator, ClientProfile, DeliveryRecord, ItemCategory, BoxQuota, ServiceType } from './types';
+import { ClientStatus, Vendor, MenuItem, BoxType, AppSettings, Navigator, Nutritionist, ClientProfile, DeliveryRecord, ItemCategory, BoxQuota, ServiceType } from './types';
 import { randomUUID } from 'crypto';
 import { getSession } from './session';
 import { createClient } from '@supabase/supabase-js';
@@ -27,14 +27,15 @@ export async function getStatuses() {
         id: s.id,
         name: s.name,
         isSystemDefault: s.is_system_default,
-        deliveriesAllowed: s.deliveries_allowed
+        deliveriesAllowed: s.deliveries_allowed,
+        requiresUnitsOnChange: s.requires_units_on_change ?? false
     }));
 }
 
 export async function addStatus(name: string) {
     const { data, error } = await supabase
         .from('client_statuses')
-        .insert([{ name, is_system_default: false, deliveries_allowed: true }]) // Default to true or false? Let's say true.
+        .insert([{ name, is_system_default: false, deliveries_allowed: true, requires_units_on_change: false }])
         .select()
         .single();
 
@@ -44,7 +45,8 @@ export async function addStatus(name: string) {
         id: data.id,
         name: data.name,
         isSystemDefault: data.is_system_default,
-        deliveriesAllowed: data.deliveries_allowed
+        deliveriesAllowed: data.deliveries_allowed,
+        requiresUnitsOnChange: data.requires_units_on_change ?? false
     };
 }
 
@@ -58,6 +60,7 @@ export async function updateStatus(id: string, data: Partial<ClientStatus>) { //
     const payload: any = {};
     if (data.name) payload.name = data.name;
     if (data.deliveriesAllowed !== undefined) payload.deliveries_allowed = data.deliveriesAllowed;
+    if (data.requiresUnitsOnChange !== undefined) payload.requires_units_on_change = data.requiresUnitsOnChange;
 
     const { data: res, error } = await supabase
         .from('client_statuses')
@@ -68,7 +71,13 @@ export async function updateStatus(id: string, data: Partial<ClientStatus>) { //
 
     handleError(error);
     revalidatePath('/admin');
-    return { id: res.id, name: res.name, isSystemDefault: res.is_system_default, deliveriesAllowed: res.deliveries_allowed };
+    return {
+        id: res.id,
+        name: res.name,
+        isSystemDefault: res.is_system_default,
+        deliveriesAllowed: res.deliveries_allowed,
+        requiresUnitsOnChange: res.requires_units_on_change ?? false
+    };
 }
 
 // --- VENDOR ACTIONS ---
@@ -304,6 +313,7 @@ export async function getBoxTypes() {
     return data.map((b: any) => ({
         id: b.id,
         name: b.name,
+        vendorId: b.vendor_id ?? null,
         isActive: b.is_active,
         priceEach: b.price_each ?? undefined
     }));
@@ -433,6 +443,59 @@ export async function updateNavigator(id: string, data: Partial<Navigator>) {
 
 export async function deleteNavigator(id: string) {
     const { error } = await supabase.from('navigators').delete().eq('id', id);
+    handleError(error);
+    revalidatePath('/admin');
+}
+
+// --- NUTRITIONIST ACTIONS ---
+
+export async function getNutritionists() {
+    const { data, error } = await supabase.from('nutritionists').select('*').order('created_at', { ascending: true });
+    if (error) return [];
+    return data.map((n: any) => ({
+        id: n.id,
+        name: n.name,
+        email: n.email || null
+    }));
+}
+
+export async function addNutritionist(data: Omit<Nutritionist, 'id'>) {
+    const payload: any = {
+        name: data.name
+    };
+
+    if (data.email !== undefined && data.email !== null) {
+        const trimmedEmail = data.email.trim();
+        payload.email = trimmedEmail === '' ? null : trimmedEmail;
+    }
+
+    const { data: res, error } = await supabase.from('nutritionists').insert([payload]).select().single();
+    handleError(error);
+    revalidatePath('/admin');
+    return { ...data, id: res.id };
+}
+
+export async function updateNutritionist(id: string, data: Partial<Nutritionist>) {
+    const payload: any = {};
+    if (data.name) payload.name = data.name;
+
+    if (data.email !== undefined) {
+        const trimmedEmail = data.email?.trim() || '';
+        payload.email = trimmedEmail === '' ? null : trimmedEmail;
+    }
+
+    const { data: res, error } = await supabase.from('nutritionists').update(payload).eq('id', id).select().single();
+    handleError(error);
+    revalidatePath('/admin');
+    return {
+        id: res.id,
+        name: res.name,
+        email: res.email || null
+    };
+}
+
+export async function deleteNutritionist(id: string) {
+    const { error } = await supabase.from('nutritionists').delete().eq('id', id);
     handleError(error);
     revalidatePath('/admin');
 }
@@ -1325,7 +1388,7 @@ async function syncSingleOrderForDeliveryDay(
             }
         }
     } else if (orderConfig.serviceType === 'Boxes' && orderConfig.boxTypeId) {
-        let boxVendorId = (orderConfig as any).vendorId;
+        let boxVendorId = orderConfig.vendorId;
         if (!boxVendorId && orderConfig.boxTypeId) {
             const boxType = boxTypes.find(bt => bt.id === orderConfig.boxTypeId);
             boxVendorId = boxType?.vendorId || null;
@@ -1338,7 +1401,7 @@ async function syncSingleOrderForDeliveryDay(
             } else {
                 takeEffectDate = calculateTakeEffectDate(boxVendorId, vendors);
                 const vendor = vendors.find(v => v.id === boxVendorId);
-                if (vendor && vendor.deliveryDays) {
+                if (vendor && vendor.deliveryDays && vendor.deliveryDays.length > 0) {
                     const today = new Date();
                     today.setHours(0, 0, 0, 0);
                     const dayNameToNumber: { [key: string]: number } = {
@@ -1359,13 +1422,39 @@ async function syncSingleOrderForDeliveryDay(
                     }
                 }
             }
+        } else {
+            // If no vendorId, we can't calculate dates, but log a warning
+            console.warn(`[syncSingleOrderForDeliveryDay] No vendorId found for Boxes order with boxTypeId ${orderConfig.boxTypeId}`);
         }
     }
 
-    // If we can't calculate dates, skip this order
+    // If we can't calculate dates, we still want to save the order data to active_order
+    // But we need dates for upcoming_orders, so use fallback dates if needed
     if (!takeEffectDate || !scheduledDeliveryDate) {
-        console.warn(`[syncSingleOrderForDeliveryDay] Skipping sync - missing dates. takeEffectDate: ${takeEffectDate}, scheduledDeliveryDate: ${scheduledDeliveryDate}. boxVendorId: ${(orderConfig as any).vendorId || 'none'}`);
-        return;
+        console.warn(`[syncSingleOrderForDeliveryDay] Missing dates. takeEffectDate: ${takeEffectDate}, scheduledDeliveryDate: ${scheduledDeliveryDate}. boxVendorId: ${orderConfig.vendorId || 'none'}`);
+
+        // For Boxes orders, if we have vendorId and boxTypeId, we should still try to save
+        // Use fallback dates (today + 7 days for take effect, today + 14 days for delivery)
+        if (orderConfig.serviceType === 'Boxes' && orderConfig.boxTypeId && orderConfig.vendorId) {
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+
+            if (!takeEffectDate) {
+                takeEffectDate = new Date(today);
+                takeEffectDate.setDate(today.getDate() + 7); // Default to 7 days from now
+            }
+
+            if (!scheduledDeliveryDate) {
+                scheduledDeliveryDate = new Date(today);
+                scheduledDeliveryDate.setDate(today.getDate() + 14); // Default to 14 days from now
+            }
+
+            console.log(`[syncSingleOrderForDeliveryDay] Using fallback dates for Boxes order: takeEffectDate=${takeEffectDate.toISOString()}, scheduledDeliveryDate=${scheduledDeliveryDate.toISOString()}`);
+        } else {
+            // For other cases or if we don't have required Boxes data, skip
+            console.warn(`[syncSingleOrderForDeliveryDay] Skipping sync - missing dates and no fallback available`);
+            return;
+        }
     }
 
     // Calculate totals
@@ -1523,7 +1612,7 @@ async function syncSingleOrderForDeliveryDay(
         const unitValue = boxType?.priceEach || 0;
         const totalValueForBox = unitValue * quantity;
 
-        const boxVendorId = (orderConfig as any).vendorId || boxType?.vendorId || null;
+        const boxVendorId = orderConfig.vendorId || boxType?.vendorId || null;
 
         const boxItemsRaw = (orderConfig as any).items || {};
         const boxItemPrices = (orderConfig as any).itemPrices || {};
@@ -1549,7 +1638,7 @@ async function syncSingleOrderForDeliveryDay(
             }
         }
 
-        await supabaseClient.from('upcoming_order_box_selections').insert({
+        const { error: boxSelectionError } = await supabaseClient.from('upcoming_order_box_selections').insert({
             upcoming_order_id: upcomingOrderId,
             box_type_id: orderConfig.boxTypeId,
             vendor_id: boxVendorId,
@@ -1558,6 +1647,22 @@ async function syncSingleOrderForDeliveryDay(
             total_value: calculatedTotal,
             items: boxItems
         });
+
+        if (boxSelectionError) {
+            console.error(`[syncSingleOrderForDeliveryDay] Error inserting box selection:`, boxSelectionError);
+            console.error(`[syncSingleOrderForDeliveryDay] Insert data:`, {
+                upcoming_order_id: upcomingOrderId,
+                box_type_id: orderConfig.boxTypeId,
+                vendor_id: boxVendorId,
+                quantity: quantity,
+                unit_value: unitValue,
+                total_value: calculatedTotal,
+                items: boxItems
+            });
+            throw boxSelectionError;
+        } else {
+            console.log(`[syncSingleOrderForDeliveryDay] Successfully inserted box selection for upcoming_order_id=${upcomingOrderId}, vendor_id=${boxVendorId}, box_type_id=${orderConfig.boxTypeId}`);
+        }
     }
 }
 
@@ -1710,12 +1815,17 @@ export async function syncCurrentOrderToUpcoming(clientId: string, client: Clien
             deliveryDays = Array.from(allDeliveryDays);
         } else if (orderConfig.serviceType === 'Boxes' && orderConfig.boxTypeId) {
             const boxType = boxTypes.find(bt => bt.id === orderConfig.boxTypeId);
-            const boxVendorId = (orderConfig as any).vendorId;
+            const boxVendorId = orderConfig.vendorId || boxType?.vendorId || null;
             if (boxVendorId) {
                 const vendor = vendors.find(v => v.id === boxVendorId);
-                if (vendor && vendor.deliveryDays) {
+                if (vendor && vendor.deliveryDays && vendor.deliveryDays.length > 0) {
                     deliveryDays = vendor.deliveryDays;
+                } else {
+                    // If vendor has no delivery days, still try to sync (will use default logic)
+                    console.warn(`[syncCurrentOrderToUpcoming] Vendor ${boxVendorId} has no delivery days configured, will attempt sync anyway`);
                 }
+            } else {
+                console.warn(`[syncCurrentOrderToUpcoming] No vendorId found for Boxes order with boxTypeId ${orderConfig.boxTypeId}, will attempt sync anyway`);
             }
         }
 

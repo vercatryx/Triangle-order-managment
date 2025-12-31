@@ -5,6 +5,7 @@ export interface Question {
     type: QuestionType;
     text: string;
     options?: string[]; // Only for 'select' type
+    conditionalTextInputs?: { [option: string]: boolean }; // Maps option text to whether it requires conditional text input
 }
 
 export interface FormSchema {

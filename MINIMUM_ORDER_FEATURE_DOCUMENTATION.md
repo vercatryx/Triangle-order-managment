@@ -61,7 +61,7 @@ The following functions have been updated to handle `minimumOrder`:
 -- Add minimum_order column to menu_items table
 -- This column stores the minimum order quantity required for each menu item/product
 -- Default value is 0, which means no minimum order requirement
--- Used in: MenuManagement (admin UI) and ClientProfile (order form validation)
+-- Used in: MenuManagement (admin UI) and ClientProfile (screening form validation)
 
 ALTER TABLE menu_items 
 ADD COLUMN IF NOT EXISTS minimum_order INTEGER NOT NULL DEFAULT 0;
@@ -106,7 +106,7 @@ LIMIT 10;
 - Allows vendors to set minimum order quantity when creating/editing products
 - Displays minimum order in the product list
 
-### Order Form (ClientProfile)
+### Screening Form (ClientProfile)
 - Location: Client Profile → Service Configuration → Food tab
 - Displays minimum order requirement next to each product
 - Validates order quantities before saving

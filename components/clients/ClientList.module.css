@@ -221,13 +221,12 @@
     padding: 0.5rem 0.75rem !important;
 }
 
-.clientRowNotAllowed {
-    background-color: rgba(239, 68, 68, 0.1);
-    /* light red */
-}
-
-.clientRowNotAllowed:hover {
-    background-color: rgba(239, 68, 68, 0.15);
+.redTab {
+    width: 4px;
+    height: 20px;
+    background-color: #ef4444;
+    border-radius: 2px;
+    flex-shrink: 0;
 }
 
 /* This Week's Orders Section */

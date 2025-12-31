@@ -184,15 +184,10 @@ export function VendorDetail({ vendorId, isVendorView, vendor: initialVendor }: 
                     <div className={styles.itemsHeader}>
                         <span style={{ minWidth: '300px', flex: 3 }}>Item Name</span>
                         <span style={{ minWidth: '100px', flex: 1 }}>Quantity</span>
-                        <span style={{ minWidth: '120px', flex: 1.2 }}>Unit Price</span>
-                        <span style={{ minWidth: '120px', flex: 1.2 }}>Total Price</span>
                     </div>
                     {items.map((item: any, index: number) => {
                         const menuItem = menuItems.find(mi => mi.id === item.menu_item_id);
-                        // Handle both unit_value and priceEach
-                        const unitPrice = parseFloat(item.unit_value || item.unitValue || 0) || (menuItem?.priceEach || menuItem?.value || 0);
                         const quantity = parseInt(item.quantity || 0);
-                        const totalPrice = parseFloat(item.total_value || item.totalValue || 0) || (unitPrice * quantity);
                         const itemKey = item.id || `${order.id}-item-${index}`;
 
                         return (
@@ -201,10 +196,6 @@ export function VendorDetail({ vendorId, isVendorView, vendor: initialVendor }: 
                                     {menuItem?.name || item.menuItemName || 'Unknown Item'}
                                 </span>
                                 <span style={{ minWidth: '100px', flex: 1 }}>{quantity}</span>
-                                <span style={{ minWidth: '120px', flex: 1.2 }}>${unitPrice.toFixed(2)}</span>
-                                <span style={{ minWidth: '120px', flex: 1.2, fontWeight: 600 }}>
-                                    ${totalPrice.toFixed(2)}
-                                </span>
                             </div>
                         );
                     })}
@@ -237,14 +228,10 @@ export function VendorDetail({ vendorId, isVendorView, vendor: initialVendor }: 
                     <div className={styles.itemsHeader}>
                         <span style={{ minWidth: '300px', flex: 3 }}>Item Name</span>
                         <span style={{ minWidth: '100px', flex: 1 }}>Quantity</span>
-                        <span style={{ minWidth: '120px', flex: 1.2 }}>Unit Price</span>
-                        <span style={{ minWidth: '120px', flex: 1.2 }}>Total Price</span>
                     </div>
                     {itemEntries.map(([itemId, quantity]: [string, any]) => {
                         const menuItem = menuItems.find(mi => mi.id === itemId);
                         const qty = typeof quantity === 'number' ? quantity : parseInt(quantity) || 0;
-                        const unitPrice = menuItem?.priceEach || menuItem?.value || 0;
-                        const totalPrice = unitPrice * qty;
 
                         return (
                             <div key={itemId} className={styles.itemRow}>
@@ -252,10 +239,6 @@ export function VendorDetail({ vendorId, isVendorView, vendor: initialVendor }: 
                                     {menuItem?.name || 'Unknown Item'}
                                 </span>
                                 <span style={{ minWidth: '100px', flex: 1 }}>{qty}</span>
-                                <span style={{ minWidth: '120px', flex: 1.2 }}>${unitPrice.toFixed(2)}</span>
-                                <span style={{ minWidth: '120px', flex: 1.2, fontWeight: 600 }}>
-                                    ${totalPrice.toFixed(2)}
-                                </span>
                             </div>
                         );
                     })}
@@ -287,9 +270,7 @@ export function VendorDetail({ vendorId, isVendorView, vendor: initialVendor }: 
                 const menuItem = menuItems.find(mi => mi.id === item.menu_item_id);
                 const itemName = menuItem?.name || item.menuItemName || 'Unknown Item';
                 const quantity = parseInt(item.quantity || 0);
-                const unitPrice = parseFloat(item.unit_value || item.unitValue || 0) || (menuItem?.priceEach || menuItem?.value || 0);
-                const totalPrice = parseFloat(item.total_value || item.totalValue || 0) || (unitPrice * quantity);
-                return `${itemName} (Qty: ${quantity}, Unit Price: $${unitPrice.toFixed(2)}, Total: $${totalPrice.toFixed(2)})`;
+                return `${itemName} (Qty: ${quantity})`;
             }).join('; ');
         } else if (order.service_type === 'Boxes') {
             // Box orders - items from box_selections.items JSONB
@@ -308,9 +289,7 @@ export function VendorDetail({ vendorId, isVendorView, vendor: initialVendor }: 
                 const menuItem = menuItems.find(mi => mi.id === itemId);
                 const itemName = menuItem?.name || 'Unknown Item';
                 const qty = typeof quantity === 'number' ? quantity : parseInt(quantity) || 0;
-                const unitPrice = menuItem?.priceEach || menuItem?.value || 0;
-                const totalPrice = unitPrice * qty;
-                return `${itemName} (Qty: ${qty}, Unit Price: $${unitPrice.toFixed(2)}, Total: $${totalPrice.toFixed(2)})`;
+                return `${itemName} (Qty: ${qty})`;
             });
             return `Box Type: ${boxTypeName} (Box Qty: ${boxSelection.quantity || 1}); Items: ${itemStrings.join('; ')}`;
         }
@@ -330,9 +309,8 @@ export function VendorDetail({ vendorId, isVendorView, vendor: initialVendor }: 
             'Client Name',
             'Scheduled Delivery Date',
             'Total Items',
-            'Total Price',
-            'Delivery Proof URL',
-            'Ordered Items'
+            'Ordered Items',
+            'Delivery Proof URL'
         ];
 
         // Convert orders to CSV rows
@@ -342,9 +320,8 @@ export function VendorDetail({ vendorId, isVendorView, vendor: initialVendor }: 
             getClientName(order.client_id),
             order.scheduled_delivery_date || '',
             order.total_items || 0,
-            order.total_value || 0,
-            order.delivery_proof_url || '',
-            formatOrderedItemsForCSV(order)
+            formatOrderedItemsForCSV(order),
+            order.delivery_proof_url || ''
         ]);
 
         // Combine headers and rows
@@ -379,9 +356,8 @@ export function VendorDetail({ vendorId, isVendorView, vendor: initialVendor }: 
             'Client Name',
             'Scheduled Delivery Date',
             'Total Items',
-            'Total Price',
-            'Delivery Proof URL',
-            'Ordered Items'
+            'Ordered Items',
+            'Delivery Proof URL'
         ];
 
         // Convert orders to CSV rows
@@ -391,9 +367,8 @@ export function VendorDetail({ vendorId, isVendorView, vendor: initialVendor }: 
             getClientName(order.client_id),
             order.scheduled_delivery_date || '',
             order.total_items || 0,
-            order.total_value || 0,
-            order.delivery_proof_url || '',
-            formatOrderedItemsForCSV(order)
+            formatOrderedItemsForCSV(order),
+            order.delivery_proof_url || ''
         ]);
 
         // Combine headers and rows
@@ -966,7 +941,6 @@ export function VendorDetail({ vendorId, isVendorView, vendor: initialVendor }: 
                                 <span style={{ minWidth: '200px', flex: 2 }}>Delivery Date</span>
                                 <span style={{ minWidth: '120px', flex: 1 }}>Orders Count</span>
                                 <span style={{ minWidth: '150px', flex: 1.2 }}>Total Items</span>
-                                <span style={{ minWidth: '150px', flex: 1.2 }}>Total Value</span>
                                 <span style={{ minWidth: '200px', flex: 1.5 }}>Actions</span>
                             </div>
 
@@ -974,7 +948,6 @@ export function VendorDetail({ vendorId, isVendorView, vendor: initialVendor }: 
                             {sortedDates.map((dateKey) => {
                                 const dateOrders = grouped[dateKey];
                                 const dateTotalItems = dateOrders.reduce((sum, o) => sum + (o.total_items || 0), 0);
-                                const dateTotalValue = dateOrders.reduce((sum, o) => sum + parseFloat(o.total_value || 0), 0);
 
                                 return (
                                     <div key={dateKey}>
@@ -995,9 +968,6 @@ export function VendorDetail({ vendorId, isVendorView, vendor: initialVendor }: 
                                             </span>
                                             <span style={{ minWidth: '150px', flex: 1.2, fontSize: '0.9rem' }}>
                                                 {dateTotalItems}
-                                            </span>
-                                            <span style={{ minWidth: '150px', flex: 1.2, fontWeight: 600 }}>
-                                                ${dateTotalValue.toFixed(2)}
                                             </span>
                                             <span
                                                 style={{ minWidth: '200px', flex: 1.5, display: 'flex', alignItems: 'center', gap: '0.5rem' }}
@@ -1051,9 +1021,6 @@ export function VendorDetail({ vendorId, isVendorView, vendor: initialVendor }: 
                                         </span>
                                         <span style={{ minWidth: '150px', flex: 1.2, fontSize: '0.9rem' }}>
                                             {noDate.reduce((sum, o) => sum + (o.total_items || 0), 0)}
-                                        </span>
-                                        <span style={{ minWidth: '150px', flex: 1.2, fontWeight: 600 }}>
-                                            ${noDate.reduce((sum, o) => sum + parseFloat(o.total_value || 0), 0).toFixed(2)}
                                         </span>
                                         <span
                                             style={{ minWidth: '200px', flex: 1.5, display: 'flex', alignItems: 'center', gap: '0.5rem' }}

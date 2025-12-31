@@ -122,6 +122,12 @@
     gap: 0.75rem;
 }
 
+.optionRowContainer {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
 .optionRow {
     display: flex;
     align-items: center;
@@ -185,6 +191,33 @@
 
 .addOptionBtn:hover {
     color: #a78bfa;
+}
+
+.conditionalCheckboxLabel {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding-left: 1.75rem;
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    cursor: pointer;
+    user-select: none;
+}
+
+.conditionalCheckbox {
+    width: 1rem;
+    height: 1rem;
+    cursor: pointer;
+    accent-color: var(--color-primary);
+}
+
+.conditionalCheckboxText {
+    color: var(--text-secondary);
+    transition: color 0.2s;
+}
+
+.conditionalCheckboxLabel:hover .conditionalCheckboxText {
+    color: var(--text-primary);
 }
 
 .actionsFooter {

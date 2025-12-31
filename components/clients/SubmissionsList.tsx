@@ -23,7 +23,7 @@ export default function SubmissionsList({ submissions }: SubmissionsListProps) {
                 borderRadius: '8px',
                 color: 'var(--text-secondary)'
             }}>
-                No order forms submitted yet
+                No screening forms submitted yet
             </div>
         );
     }
@@ -66,7 +66,7 @@ export default function SubmissionsList({ submissions }: SubmissionsListProps) {
 
                             <div>
                                 <div style={{ fontWeight: '500' }}>
-                                    Order Form - {new Date(submission.created_at).toLocaleDateString()}
+                                    Screening Form - {new Date(submission.created_at).toLocaleDateString()}
                                 </div>
                                 <div style={{
                                     fontSize: '12px',

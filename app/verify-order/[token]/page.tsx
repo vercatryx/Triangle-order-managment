@@ -145,7 +145,11 @@ export default function VerifyOrderPage() {
             doc.setFont("helvetica", "normal");
             doc.setTextColor(50);
 
-            const answer = answers[q.id] || '(No answer provided)';
+            let answer = answers[q.id] || '(No answer provided)';
+            // Add conditional text if it exists
+            if (q.type === 'select' && q.conditionalTextInputs?.[answers[q.id]] && answers[`${q.id}_conditional`]) {
+                answer += `\n\nAdditional details: ${answers[`${q.id}_conditional`]}`;
+            }
             const splitAnswer = doc.splitTextToSize(answer, 160);
 
             doc.text(splitAnswer, margin + 5, yPos);
@@ -214,8 +218,8 @@ export default function VerifyOrderPage() {
                 {submission.status === 'accepted' ? (
                     <>
                         <CheckCircle size={64} color="#10b981" />
-                        <h1 style={{ fontSize: '24px', fontWeight: 'bold' }}>Order Accepted!</h1>
-                        <p>The order has been signed and submitted successfully.</p>
+                        <h1 style={{ fontSize: '24px', fontWeight: 'bold' }}>Screening Form Accepted!</h1>
+                        <p>The screening form has been signed and submitted successfully.</p>
                         {comments && (
                             <div style={{ marginTop: '20px', padding: '16px', background: 'var(--bg-secondary)', borderRadius: '8px', maxWidth: '600px' }}>
                                 <div style={{ fontWeight: 'bold', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -229,8 +233,8 @@ export default function VerifyOrderPage() {
                 ) : (
                     <>
                         <XCircle size={64} color="#ef4444" />
-                        <h1 style={{ fontSize: '24px', fontWeight: 'bold' }}>Order Rejected</h1>
-                        <p>This order has been rejected.</p>
+                        <h1 style={{ fontSize: '24px', fontWeight: 'bold' }}>Screening Form Rejected</h1>
+                        <p>This screening form has been rejected.</p>
                         {comments && (
                             <div style={{ marginTop: '20px', padding: '16px', background: 'var(--bg-secondary)', borderRadius: '8px', maxWidth: '600px' }}>
                                 <div style={{ fontWeight: 'bold', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -251,7 +255,7 @@ export default function VerifyOrderPage() {
             <div style={{ maxWidth: '800px', margin: '0 auto' }}>
                 <div style={{ background: 'var(--bg-secondary)', padding: '30px', borderRadius: '12px', marginBottom: '30px' }}>
                     <h1 style={{ fontSize: '28px', fontWeight: 'bold', marginBottom: '10px' }}>{formSchema?.title}</h1>
-                    <p style={{ color: 'var(--text-secondary)' }}>Review the order details below</p>
+                    <p style={{ color: 'var(--text-secondary)' }}>Review the screening form details below</p>
                 </div>
 
                 {/* Questions and Answers */}
@@ -263,6 +267,16 @@ export default function VerifyOrderPage() {
                             </div>
                             <div style={{ color: 'var(--text-secondary)', paddingLeft: '20px' }}>
                                 {submission.data[q.id] || '(No answer)'}
+                                {q.type === 'select' && q.conditionalTextInputs?.[submission.data[q.id]] && submission.data[`${q.id}_conditional`] && (
+                                    <div style={{ marginTop: '0.5rem', paddingLeft: '1rem', borderLeft: '2px solid var(--border-color)' }}>
+                                        <div style={{ fontSize: '0.875rem', color: 'var(--text-tertiary)', marginBottom: '0.25rem' }}>
+                                            Additional details:
+                                        </div>
+                                        <div style={{ fontSize: '0.875rem' }}>
+                                            {submission.data[`${q.id}_conditional`]}
+                                        </div>
+                                    </div>
+                                )}
                             </div>
                         </div>
                     ))}

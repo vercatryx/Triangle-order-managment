@@ -118,6 +118,16 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate, isVendorView }: P
         return client?.fullName || 'Unknown Client';
     }
 
+    function getClientAddress(clientId: string) {
+        const client = clients.find(c => c.id === clientId);
+        return client?.address || '-';
+    }
+
+    function getClientPhone(clientId: string) {
+        const client = clients.find(c => c.id === clientId);
+        return client?.phoneNumber || '-';
+    }
+
     function formatDate(dateString: string | null | undefined) {
         if (!dateString) return '-';
         try {
@@ -176,9 +186,7 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate, isVendorView }: P
                 const menuItem = menuItems.find(mi => mi.id === item.menu_item_id);
                 const itemName = menuItem?.name || item.menuItemName || 'Unknown Item';
                 const quantity = parseInt(item.quantity || 0);
-                const unitPrice = parseFloat(item.unit_value || item.unitValue || 0) || (menuItem?.priceEach || menuItem?.value || 0);
-                const totalPrice = parseFloat(item.total_value || item.totalValue || 0) || (unitPrice * quantity);
-                return `${itemName} (Qty: ${quantity}, Unit Price: $${unitPrice.toFixed(2)}, Total: $${totalPrice.toFixed(2)})`;
+                return `${itemName} (Qty: ${quantity})`;
             }).join('; ');
         } else if (order.service_type === 'Boxes') {
             const boxSelection = order.boxSelection;
@@ -196,9 +204,7 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate, isVendorView }: P
                 const menuItem = menuItems.find(mi => mi.id === itemId);
                 const itemName = menuItem?.name || 'Unknown Item';
                 const qty = typeof quantity === 'number' ? quantity : parseInt(quantity) || 0;
-                const unitPrice = menuItem?.priceEach || menuItem?.value || 0;
-                const totalPrice = unitPrice * qty;
-                return `${itemName} (Qty: ${qty}, Unit Price: $${unitPrice.toFixed(2)}, Total: $${totalPrice.toFixed(2)})`;
+                return `${itemName} (Qty: ${qty})`;
             });
             return `Box Type: ${boxTypeName} (Box Qty: ${boxSelection.quantity || 1}); Items: ${itemStrings.join('; ')}`;
         }
@@ -216,11 +222,12 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate, isVendorView }: P
             'Order ID',
             'Client ID',
             'Client Name',
+            'Address',
+            'Phone',
             'Scheduled Delivery Date',
             'Total Items',
-            'Total Price',
-            'Delivery Proof URL',
-            'Ordered Items'
+            'Ordered Items',
+            'Delivery Proof URL'
         ];
 
         // Convert orders to CSV rows
@@ -228,11 +235,12 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate, isVendorView }: P
             order.id || '',
             order.client_id || '',
             getClientName(order.client_id),
+            getClientAddress(order.client_id),
+            getClientPhone(order.client_id),
             order.scheduled_delivery_date || '',
             order.total_items || 0,
-            order.total_value || 0,
-            order.delivery_proof_url || '',
-            formatOrderedItemsForCSV(order)
+            formatOrderedItemsForCSV(order),
+            order.delivery_proof_url || ''
         ]);
 
         // Combine headers and rows
@@ -588,49 +596,32 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate, isVendorView }: P
                 );
             }
 
-            // Group items by vendor (for Food orders, items are already associated with vendor via vendor selection)
-            // Since items are from a single vendor selection, display them in a table
-            const vendorName = vendor?.name || 'Unknown Vendor';
-
             // Calculate totals
             let totalItems = 0;
-            let totalValue = 0;
             items.forEach((item: any) => {
                 const qty = parseInt(item.quantity || 0);
-                const unitPrice = parseFloat(item.unit_value || item.unitValue || 0);
-                const itemTotal = parseFloat(item.total_value || item.totalValue || 0) || (unitPrice * qty);
                 totalItems += qty;
-                totalValue += itemTotal;
             });
 
             return (
                 <div className={styles.vendorSection}>
-                    <div className={styles.vendorName}>
-                        <strong>Vendor:</strong> {vendorName}
-                    </div>
                     <table className={styles.itemsTable}>
                         <thead>
                             <tr>
                                 <th>Item</th>
                                 <th>Quantity</th>
-                                <th>Unit Value</th>
-                                <th>Total</th>
                             </tr>
                         </thead>
                         <tbody>
                             {items.map((item: any, index: number) => {
                                 const menuItem = menuItems.find(mi => mi.id === item.menu_item_id);
-                                const unitPrice = parseFloat(item.unit_value || item.unitValue || 0) || (menuItem?.priceEach || menuItem?.value || 0);
                                 const quantity = parseInt(item.quantity || 0);
-                                const totalPrice = parseFloat(item.total_value || item.totalValue || 0) || (unitPrice * quantity);
                                 const itemKey = item.id || `${order.id}-item-${index}`;
 
                                 return (
                                     <tr key={itemKey}>
                                         <td>{menuItem?.name || item.menuItemName || 'Unknown Item'}</td>
                                         <td>{quantity}</td>
-                                        <td>${unitPrice.toFixed(2)}</td>
-                                        <td>${totalPrice.toFixed(2)}</td>
                                     </tr>
                                 );
                             })}
@@ -638,7 +629,6 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate, isVendorView }: P
                     </table>
                     <div className={styles.orderSummary}>
                         <div><strong>Total Items:</strong> {totalItems}</div>
-                        <div><strong>Total Value:</strong> ${totalValue.toFixed(2)}</div>
                     </div>
                 </div>
             );
@@ -664,21 +654,17 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate, isVendorView }: P
             const items = boxSelection.items || {};
             const itemEntries = Object.entries(items);
 
-            const boxVendorName = vendor?.name || 'Unknown Vendor';
             const boxTypeName = getBoxTypeName(boxSelection.box_type_id);
             const boxQuantity = boxSelection.quantity || 1;
 
             // Calculate totals
             let totalItems = 0;
-            let totalValue = 0;
 
             if (!items || itemEntries.length === 0) {
                 return (
                     <div className={styles.boxDetails}>
-                        <div><strong>Vendor:</strong> {boxVendorName}</div>
                         <div><strong>Box Type:</strong> {boxTypeName}</div>
                         <div><strong>Quantity:</strong> {boxQuantity}</div>
-                        <div><strong>Total Value:</strong> ${parseFloat(boxSelection.total_value || order.total_value || 0).toFixed(2)}</div>
                     </div>
                 );
             }
@@ -686,15 +672,13 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate, isVendorView }: P
             return (
                 <div className={styles.vendorSection}>
                     <div className={styles.vendorName}>
-                        <strong>Vendor:</strong> {boxVendorName} | <strong>Box Type:</strong> {boxTypeName} × {boxQuantity}
+                        <strong>Box Type:</strong> {boxTypeName} × {boxQuantity}
                     </div>
                     <table className={styles.itemsTable}>
                         <thead>
                             <tr>
                                 <th>Item</th>
                                 <th>Quantity</th>
-                                <th>Unit Value</th>
-                                <th>Total</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -703,7 +687,6 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate, isVendorView }: P
 
                                 // Handle both formats: { itemId: quantity } or { itemId: { quantity: X, price: Y } }
                                 let qty = 0;
-                                let unitPrice = menuItem?.priceEach || menuItem?.value || 0;
 
                                 if (typeof quantityOrObj === 'number') {
                                     // Simple format: just a number
@@ -711,24 +694,17 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate, isVendorView }: P
                                 } else if (quantityOrObj && typeof quantityOrObj === 'object' && 'quantity' in quantityOrObj) {
                                     // Complex format: { quantity: X, price?: Y }
                                     qty = typeof quantityOrObj.quantity === 'number' ? quantityOrObj.quantity : parseInt(quantityOrObj.quantity) || 0;
-                                    if ('price' in quantityOrObj && quantityOrObj.price !== undefined && quantityOrObj.price !== null) {
-                                        unitPrice = parseFloat(quantityOrObj.price) || unitPrice;
-                                    }
                                 } else {
                                     // Try to parse as number string
                                     qty = parseInt(quantityOrObj) || 0;
                                 }
 
-                                const totalPrice = unitPrice * qty;
                                 totalItems += qty;
-                                totalValue += totalPrice;
 
                                 return (
                                     <tr key={itemId}>
                                         <td>{menuItem?.name || 'Unknown Item'}</td>
                                         <td>{qty}</td>
-                                        <td>${unitPrice.toFixed(2)}</td>
-                                        <td>${totalPrice.toFixed(2)}</td>
                                     </tr>
                                 );
                             })}
@@ -736,7 +712,6 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate, isVendorView }: P
                     </table>
                     <div className={styles.orderSummary}>
                         <div><strong>Total Items:</strong> {totalItems}</div>
-                        <div><strong>Total Value:</strong> ${totalValue.toFixed(2)}</div>
                     </div>
                 </div>
             );
@@ -827,9 +802,6 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate, isVendorView }: P
                     <div>
                         <strong>Total Items:</strong> {orders.reduce((sum, o) => sum + (o.total_items || 0), 0)}
                     </div>
-                    <div>
-                        <strong>Total Value:</strong> ${orders.reduce((sum, o) => sum + parseFloat(o.total_value || 0), 0).toFixed(2)}
-                    </div>
                 </div>
             </div>
 
@@ -844,9 +816,9 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate, isVendorView }: P
                         <span style={{ width: '40px', flex: 'none' }}></span>
                         <span style={{ minWidth: '120px', flex: 0.8 }}>Type</span>
                         <span style={{ minWidth: '200px', flex: 2 }}>Client</span>
-                        <span style={{ minWidth: '150px', flex: 1.2 }}>Actual Date</span>
+                        <span style={{ minWidth: '200px', flex: 1.5 }}>Address</span>
+                        <span style={{ minWidth: '150px', flex: 1.2 }}>Phone</span>
                         <span style={{ minWidth: '100px', flex: 1 }}>Items</span>
-                        <span style={{ minWidth: '120px', flex: 1 }}>Total Value</span>
                         <span style={{ minWidth: '200px', flex: 1.5 }}>Delivery Proof URL</span>
                         <span style={{ minWidth: '150px', flex: 1.2 }}>Updated By</span>
                         <span style={{ minWidth: '150px', flex: 1.2 }}>Created</span>
@@ -877,14 +849,17 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate, isVendorView }: P
                                     >
                                         {getClientName(order.client_id)}
                                     </span>
+                                    <span
+                                        title={getClientAddress(order.client_id)}
+                                        style={{ minWidth: '200px', flex: 1.5, fontSize: '0.9rem', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                                    >
+                                        {getClientAddress(order.client_id)}
+                                    </span>
                                     <span style={{ minWidth: '150px', flex: 1.2, fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
-                                        {formatDate(order.actual_delivery_date)}
+                                        {getClientPhone(order.client_id)}
                                     </span>
                                     <span style={{ minWidth: '100px', flex: 1, fontSize: '0.9rem' }}>
                                         {order.total_items || 0}
-                                    </span>
-                                    <span style={{ minWidth: '120px', flex: 1, fontWeight: 600 }}>
-                                        ${parseFloat(order.total_value || 0).toFixed(2)}
                                     </span>
                                     <span
                                         style={{ minWidth: '200px', flex: 1.5, fontSize: '0.85rem' }}

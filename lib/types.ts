@@ -43,6 +43,7 @@ export interface OrderConfiguration {
   updatedBy: string; // Admin ID or Name
 
   // For Boxes (still typically single vendor per box type, but keeping flexible)
+  vendorId?: string; // Vendor ID for Boxes service
   boxTypeId?: string;
   boxQuantity?: number;
   items?: { [itemId: string]: number }; // itemId -> quantity (for box contents)
@@ -72,6 +73,7 @@ export interface ClientStatus {
   name: string;
   isSystemDefault?: boolean;
   deliveriesAllowed: boolean;
+  requiresUnitsOnChange?: boolean; // If true, navigators will be prompted to add units when switching to this status
 }
 
 export interface Vendor {
@@ -125,6 +127,12 @@ export interface Navigator {
   email?: string | null;
   password?: string | null; // Optional, hashed
   isActive: boolean;
+}
+
+export interface Nutritionist {
+  id: string;
+  name: string;
+  email?: string | null;
 }
 
 export interface AppSettings {

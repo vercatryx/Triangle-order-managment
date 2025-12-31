@@ -5,9 +5,7 @@ import { ClientProfileDetail } from './ClientProfile';
 import { useState, useEffect, useRef } from 'react';
 import { ClientProfile, ClientStatus, Navigator, Vendor, BoxType, ClientFullDetails, MenuItem } from '@/lib/types';
 import { getClientsPaginated, getClientFullDetails, getStatuses, getNavigators, addClient, getVendors, getBoxTypes, getMenuItems } from '@/lib/actions';
-import { invalidateClientData } from '@/lib/cached-data';
-import { getClientSubmissions } from '@/lib/form-actions';
-import { Plus, Search, ChevronRight, CheckSquare, Square, StickyNote, Package, ArrowUpDown, ArrowUp, ArrowDown, Filter } from 'lucide-react';
+import { Plus, Search, ChevronRight, CheckSquare, Square, StickyNote, Package, Calendar } from 'lucide-react';
 import styles from './ClientList.module.css';
 import { useRouter } from 'next/navigation';
 
@@ -15,7 +13,7 @@ interface ClientListProps {
     currentUser?: { role: string; id: string } | null;
 }
 
-export function ClientList({ currentUser }: ClientListProps) {
+export function ClientList({ currentUser }: ClientListProps = {}) {
     const router = useRouter();
     const [clients, setClients] = useState<ClientProfile[]>([]);
     const [statuses, setStatuses] = useState<ClientStatus[]>([]);
@@ -25,7 +23,6 @@ export function ClientList({ currentUser }: ClientListProps) {
     const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
     const [search, setSearch] = useState('');
     const [isLoading, setIsLoading] = useState(true);
-    const [clientSubmissions, setClientSubmissions] = useState<Record<string, any>>({});
 
     // Pagination State
     const [page, setPage] = useState(1);
@@ -38,17 +35,7 @@ export function ClientList({ currentUser }: ClientListProps) {
     const pendingPrefetches = useRef<Set<string>>(new Set());
 
     // Views
-    const [currentView, setCurrentView] = useState<'all' | 'eligible' | 'ineligible' | 'billing'>('all');
-
-    // Sorting State
-    const [sortColumn, setSortColumn] = useState<string | null>(null);
-    const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
-
-    // Filtering State
-    const [statusFilter, setStatusFilter] = useState<string | null>(null);
-    const [navigatorFilter, setNavigatorFilter] = useState<string | null>(null);
-    const [screeningFilter, setScreeningFilter] = useState<string | null>(null);
-    const [openFilterMenu, setOpenFilterMenu] = useState<string | null>(null);
+    const [currentView, setCurrentView] = useState<'all' | 'eligible' | 'ineligible' | 'history' | 'billing' | 'orders'>('all');
 
     // New Client Modal state
     const [isCreating, setIsCreating] = useState(false);
@@ -85,31 +72,6 @@ export function ClientList({ currentUser }: ClientListProps) {
         }
     }, [clients, detailsCache, isLoading]);
 
-    // Load submissions when clients are loaded
-    useEffect(() => {
-        if (!isLoading && clients.length > 0) {
-            loadClientSubmissions();
-        }
-    }, [clients.length, isLoading]);
-
-    // Close filter menus when clicking outside
-    useEffect(() => {
-        function handleClickOutside(event: MouseEvent) {
-            const target = event.target as HTMLElement;
-            // Check if click is inside any filter dropdown or menu
-            const filterDropdown = target.closest('[data-filter-dropdown]');
-            if (!filterDropdown) {
-                setOpenFilterMenu(null);
-            }
-        }
-
-        if (openFilterMenu) {
-            document.addEventListener('click', handleClickOutside);
-            return () => document.removeEventListener('click', handleClickOutside);
-        }
-    }, [openFilterMenu]);
-
-
     async function loadInitialData() {
         setIsLoading(true);
         try {
@@ -136,26 +98,6 @@ export function ClientList({ currentUser }: ClientListProps) {
             setIsLoading(false);
         }
     }
-
-    async function loadClientSubmissions() {
-        // Load submissions for all clients
-        const submissionsMap: Record<string, any> = {};
-
-        for (const client of clients) {
-            try {
-                const result = await getClientSubmissions(client.id);
-                if (result.success && result.data && result.data.length > 0) {
-                    // Get the most recent submission
-                    submissionsMap[client.id] = result.data[0];
-                }
-            } catch (error) {
-                console.error(`Error loading submissions for client ${client.id}:`, error);
-            }
-        }
-
-        setClientSubmissions(submissionsMap);
-    }
-
 
     async function fetchMoreClients(nextPage: number) {
         setIsFetchingMore(true);
@@ -206,67 +148,15 @@ export function ClientList({ currentUser }: ClientListProps) {
             const status = statuses.find(s => s.id === c.statusId);
             // Show clients whose status does NOT allow deliveries
             matchesView = status ? !status.deliveriesAllowed : false;
+        } else if (currentView === 'orders') {
+            // Show only clients with orders updated this week
+            if (!c.activeOrder || !c.activeOrder.lastUpdated) return false;
+            matchesView = isInCurrentWeek(c.activeOrder.lastUpdated);
         }
+        // 'history' and 'billing' might just show all clients but with different columns? 
+        // Or maybe just a placeholder for now as requested.
 
-        // Filter by Status
-        const matchesStatusFilter = !statusFilter || c.statusId === statusFilter;
-
-        // Filter by Navigator
-        const matchesNavigatorFilter = !navigatorFilter || c.navigatorId === navigatorFilter;
-
-        // Filter by Screening Status
-        const matchesScreeningFilter = !screeningFilter || (c.screeningStatus || 'not_started') === screeningFilter;
-
-        return matchesSearch && matchesView && matchesStatusFilter && matchesNavigatorFilter && matchesScreeningFilter;
-    }).sort((a, b) => {
-        if (!sortColumn) return 0;
-
-        let comparison = 0;
-
-        switch (sortColumn) {
-            case 'name':
-                comparison = a.fullName.localeCompare(b.fullName);
-                break;
-            case 'status':
-                const statusA = getStatusName(a.statusId);
-                const statusB = getStatusName(b.statusId);
-                comparison = statusA.localeCompare(statusB);
-                break;
-            case 'navigator':
-                const navA = getNavigatorName(a.navigatorId);
-                const navB = getNavigatorName(b.navigatorId);
-                comparison = navA.localeCompare(navB);
-                break;
-            case 'screening':
-                const screeningA = a.screeningStatus || 'not_started';
-                const screeningB = b.screeningStatus || 'not_started';
-                comparison = screeningA.localeCompare(screeningB);
-                break;
-            case 'email':
-                const emailA = a.email || '';
-                const emailB = b.email || '';
-                comparison = emailA.localeCompare(emailB);
-                break;
-            case 'phone':
-                const phoneA = a.phoneNumber || '';
-                const phoneB = b.phoneNumber || '';
-                comparison = phoneA.localeCompare(phoneB);
-                break;
-            case 'address':
-                const addressA = a.address || '';
-                const addressB = b.address || '';
-                comparison = addressA.localeCompare(addressB);
-                break;
-            case 'notes':
-                const notesA = a.notes || '';
-                const notesB = b.notes || '';
-                comparison = notesA.localeCompare(notesB);
-                break;
-            default:
-                return 0;
-        }
-
-        return sortDirection === 'asc' ? comparison : -comparison;
+        return matchesSearch && matchesView;
     });
 
     async function handleCreate() {
@@ -291,7 +181,6 @@ export function ClientList({ currentUser }: ClientListProps) {
         });
 
         if (newClient) {
-            invalidateClientData(); // Invalidate cache
             setIsCreating(false);
             setNewClientName(''); // Reset
             // Refresh logic: for simplicity, confirm and maybe add to top? 
@@ -306,39 +195,6 @@ export function ClientList({ currentUser }: ClientListProps) {
 
     function getNavigatorName(id: string) {
         return navigators.find(n => n.id === id)?.name || 'Unassigned';
-    }
-
-    function handleSort(column: string) {
-        if (sortColumn === column) {
-            // Toggle direction
-            setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
-        } else {
-            // New column, default to ascending
-            setSortColumn(column);
-            setSortDirection('asc');
-        }
-    }
-
-    function getSortIcon(column: string) {
-        if (sortColumn !== column) {
-            return <ArrowUpDown size={14} />;
-        }
-        return sortDirection === 'asc' ? <ArrowUp size={14} /> : <ArrowDown size={14} />;
-    }
-
-    function getScreeningStatusLabel(status: string) {
-        switch (status) {
-            case 'not_started':
-                return 'Not Started';
-            case 'waiting_approval':
-                return 'Waiting for Approval';
-            case 'approved':
-                return 'Approved';
-            case 'rejected':
-                return 'Rejected';
-            default:
-                return status;
-        }
     }
 
     function getOrderSummaryText(client: ClientProfile) {
@@ -378,146 +234,117 @@ export function ClientList({ currentUser }: ClientListProps) {
     function getOrderSummary(client: ClientProfile) {
         if (!client.activeOrder) return '-';
         const st = client.serviceType;
-        const conf = client.activeOrder;
 
+        // Use shared text logic for consistency and validity check
+        const fullText = getOrderSummaryText(client);
+        if (!fullText || fullText === '') return null;
+
+        const conf = client.activeOrder;
+        let content = '';
         if (st === 'Food') {
             const limit = client.approvedMealsPerWeek || 0;
-            const vendorSelections = (conf.vendorSelections || []).filter((v: any) => {
-                const itemCount = Object.values(v.items || {}).reduce((a: number, b: any) => a + Number(b), 0);
-                return itemCount > 0;
-            });
+            const vendorsSummary = (conf.vendorSelections || [])
+                .map(v => {
+                    const vendorName = vendors.find(ven => ven.id === v.vendorId)?.name || 'Unknown';
+                    const itemCount = Object.values(v.items || {}).reduce((a: number, b: any) => a + Number(b), 0);
+                    return itemCount > 0 ? `${vendorName} (${itemCount})` : '';
+                }).filter(Boolean).join(', ');
 
-            if (vendorSelections.length === 0) return null;
-
-            // Build detailed summary showing vendors and their items
-            const vendorDetails = vendorSelections.map((v: any) => {
-                const vendorName = vendors.find(ven => ven.id === v.vendorId)?.name || 'Unknown';
-                const items = Object.entries(v.items || {})
-                    .filter(([_, qty]) => Number(qty) > 0)
-                    .map(([itemId, qty]) => {
-                        const item = menuItems.find(i => i.id === itemId);
-                        return item ? `${item.name} x${qty}` : null;
-                    })
-                    .filter(Boolean)
-                    .join(', ');
-
-                return { vendorName, items };
-            });
-
-            // Create tooltip with full details
-            const tooltipText = vendorDetails.map(v =>
-                `${v.vendorName}: ${v.items || 'No items'}`
-            ).join('\n') + `\n[Max ${limit}]`;
-
-            // Display: Show vendors first, then items in a compact format
-            const displayText = vendorDetails.map(v =>
-                `${v.vendorName}: ${v.items || 'No items'}`
-            ).join(' | ');
-
-            return (
-                <span title={tooltipText} style={{ display: 'block', lineHeight: '1.4' }}>
-                    <strong style={{ fontWeight: 600, color: 'var(--color-primary)' }}>{st}</strong>
-                    <span style={{ fontSize: '0.85rem', marginLeft: '4px' }}>
-                        {displayText}
-                    </span>
-                    <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginLeft: '4px' }}>
-                        [Max {limit}]
-                    </span>
-                </span>
-            );
+            if (!vendorsSummary) return null;
+            content = `: ${vendorsSummary} [Max ${limit}]`;
         } else if (st === 'Boxes') {
             const box = boxTypes.find(b => b.id === conf.boxTypeId);
-            const vendorName = vendors.find(v => v.id === box?.vendorId)?.name || 'Unknown Vendor';
-            const boxName = box?.name || 'Unknown Box';
-            const items = Object.entries(conf.items || {})
-                .filter(([_, qty]) => Number(qty) > 0)
-                .map(([itemId, qty]) => {
-                    const item = menuItems.find(i => i.id === itemId);
-                    return item ? `${item.name} x${qty}` : null;
-                })
-                .filter(Boolean);
+            const vendorName = vendors.find(v => v.id === box?.vendorId)?.name || '-';
 
-            if (items.length === 0) {
-                return (
-                    <span>
-                        <strong style={{ fontWeight: 600, color: 'var(--color-primary)' }}>{st}</strong>
-                        <span style={{ fontSize: '0.85rem', marginLeft: '4px' }}>
-                            : {vendorName} - {boxName} × {conf.boxQuantity || 1}
-                        </span>
-                    </span>
-                );
-            }
+            const itemDetails = Object.entries(conf.items || {}).map(([id, qty]) => {
+                const item = menuItems.find(i => i.id === id);
+                return item ? `${item.name} x${qty}` : null;
+            }).filter(Boolean).join(', ');
 
-            const itemsText = items.join(', ');
-            const tooltipText = `${vendorName} - ${boxName} × ${conf.boxQuantity || 1}\nItems: ${itemsText}`;
-
-            return (
-                <span title={tooltipText} style={{ display: 'block', lineHeight: '1.4' }}>
-                    <strong style={{ fontWeight: 600, color: 'var(--color-primary)' }}>{st}</strong>
-                    <span style={{ fontSize: '0.85rem', marginLeft: '4px' }}>
-                        : {vendorName} - {boxName} × {conf.boxQuantity || 1}
-                    </span>
-                    <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginTop: '2px', marginLeft: '0' }}>
-                        {itemsText}
-                    </div>
-                </span>
-            );
-        }
-
-        return null;
-    }
-
-    function getScreeningStatus(client: ClientProfile) {
-        // Use screening_status field
-        const screeningStatus = client.screeningStatus || 'not_started';
-
-        // Determine display based on screening_status
-        let firstCheckboxColor = 'var(--text-tertiary)';
-        let firstCheckboxChecked = false;
-        let secondCheckboxColor = 'var(--text-tertiary)';
-        let secondCheckboxChecked = false;
-        let statusText = 'Not Started';
-
-        switch (screeningStatus) {
-            case 'waiting_approval':
-                firstCheckboxChecked = true;
-                firstCheckboxColor = 'var(--color-success)';
-                secondCheckboxColor = '#f59e0b'; // Yellow
-                secondCheckboxChecked = false;
-                statusText = 'Waiting for Approval';
-                break;
-            case 'approved':
-                firstCheckboxChecked = true;
-                firstCheckboxColor = 'var(--color-success)';
-                secondCheckboxColor = '#10b981'; // Green
-                secondCheckboxChecked = true;
-                statusText = 'Approved';
-                break;
-            case 'rejected':
-                firstCheckboxChecked = true;
-                firstCheckboxColor = 'var(--color-success)';
-                secondCheckboxColor = '#ef4444'; // Red
-                secondCheckboxChecked = false;
-                statusText = 'Rejected';
-                break;
-            case 'not_started':
-            default:
-                firstCheckboxChecked = false;
-                secondCheckboxChecked = false;
-                statusText = 'Not Started';
-                break;
+            const itemSuffix = itemDetails ? ` (${itemDetails})` : '';
+            content = `: ${vendorName}${itemSuffix}`;
         }
 
         return (
-            <div style={{ display: 'flex', gap: '8px' }} title={statusText}>
-                <span style={{ color: firstCheckboxColor }}>
-                    {firstCheckboxChecked ? <CheckSquare size={16} /> : <Square size={16} />}
-                </span>
-                <span style={{ color: secondCheckboxColor }}>
-                    {secondCheckboxChecked ? <StickyNote size={16} /> : <Square size={16} />}
-                </span>
-            </div>
+            <span title={fullText}>
+                <strong style={{ fontWeight: 600 }}>{st}</strong>{content}
+            </span>
         );
+    }
+
+    function getScreeningStatus(client: ClientProfile) {
+        const status = client.screeningStatus || 'not_started';
+
+        const statusConfig = {
+            not_started: {
+                label: 'Not Started',
+                color: 'var(--text-tertiary)',
+                bgColor: 'var(--bg-surface-hover)',
+                icon: <Square size={14} />
+            },
+            waiting_approval: {
+                label: 'Pending',
+                color: '#eab308',
+                bgColor: 'rgba(234, 179, 8, 0.1)',
+                icon: <CheckSquare size={14} />
+            },
+            approved: {
+                label: 'Approved',
+                color: 'var(--color-success)',
+                bgColor: 'rgba(34, 197, 94, 0.1)',
+                icon: <CheckSquare size={14} />
+            },
+            rejected: {
+                label: 'Rejected',
+                color: 'var(--color-danger)',
+                bgColor: 'rgba(239, 68, 68, 0.1)',
+                icon: <Square size={14} />
+            }
+        };
+
+        const config = statusConfig[status];
+
+        return (
+            <span
+                title={`Screening Status: ${config.label}`}
+                style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '4px',
+                    padding: '4px 8px',
+                    borderRadius: 'var(--radius-sm)',
+                    fontSize: '0.85rem',
+                    fontWeight: 500,
+                    color: config.color,
+                    backgroundColor: config.bgColor,
+                    whiteSpace: 'nowrap'
+                }}
+            >
+                {config.icon}
+                {config.label}
+            </span>
+        );
+    }
+
+    // Helper function to check if a date is in the current week
+    function isInCurrentWeek(dateString: string): boolean {
+        if (!dateString) return false;
+
+        const date = new Date(dateString);
+        const today = new Date();
+
+        // Get the start of the week (Sunday)
+        const startOfWeek = new Date(today);
+        const day = startOfWeek.getDay();
+        startOfWeek.setDate(today.getDate() - day);
+        startOfWeek.setHours(0, 0, 0, 0);
+
+        // Get the end of the week (Saturday)
+        const endOfWeek = new Date(startOfWeek);
+        endOfWeek.setDate(startOfWeek.getDate() + 6);
+        endOfWeek.setHours(23, 59, 59, 999);
+
+        return date >= startOfWeek && date <= endOfWeek;
     }
 
     if (isLoading) {
@@ -564,6 +391,19 @@ export function ClientList({ currentUser }: ClientListProps) {
                             onClick={() => setCurrentView('ineligible')}
                         >
                             Ineligible
+                        </button>
+                        <button
+                            className={`${styles.viewBtn} ${currentView === 'history' ? styles.viewBtnActive : ''}`}
+                            onClick={() => setCurrentView('history')}
+                        >
+                            History
+                        </button>
+                        <button
+                            className={`${styles.viewBtn} ${currentView === 'orders' ? styles.viewBtnActive : ''}`}
+                            onClick={() => setCurrentView('orders')}
+                        >
+                            <Calendar size={14} style={{ marginRight: '4px' }} />
+                            This Week's Orders
                         </button>
                         <button
                             className={`${styles.viewBtn} ${currentView === 'billing' ? styles.viewBtnActive : ''}`}
@@ -617,260 +457,89 @@ export function ClientList({ currentUser }: ClientListProps) {
 
             <div className={styles.list}>
                 <div className={styles.listHeader}>
-                    {/* Name - Sort only */}
-                    <div className={styles.columnHeader} style={{ minWidth: '200px', flex: 2, paddingRight: '16px' }}>
-                        <span>Name</span>
-                        <button
-                            className={`${styles.sortButton} ${sortColumn === 'name' ? styles.sortButtonActive : ''}`}
-                            onClick={() => handleSort('name')}
-                            title="Sort by Name"
-                        >
-                            {getSortIcon('name')}
-                        </button>
-                    </div>
-
-                    {/* Status - Sort + Filter */}
-                    <div className={styles.columnHeader} style={{ minWidth: '140px', flex: 1, paddingRight: '16px' }}>
-                        <span>Status</span>
-                        <div className={styles.headerButtons}>
-                            <button
-                                className={`${styles.sortButton} ${sortColumn === 'status' ? styles.sortButtonActive : ''}`}
-                                onClick={() => handleSort('status')}
-                                title="Sort by Status"
-                            >
-                                {getSortIcon('status')}
-                            </button>
-                            <div className={styles.filterDropdown} data-filter-dropdown>
-                                <button
-                                    className={`${styles.filterButton} ${statusFilter ? styles.filterButtonActive : ''}`}
-                                    title="Filter by Status"
-                                    onClick={(e) => {
-                                        e.stopPropagation();
-                                        setOpenFilterMenu(openFilterMenu === 'status' ? null : 'status');
-                                    }}
-                                >
-                                    <Filter size={14} />
-                                </button>
-                                {openFilterMenu === 'status' && (
-                                    <div className={styles.filterMenu} onClick={(e) => e.stopPropagation()}>
-                                        <button
-                                            className={!statusFilter ? styles.filterOptionActive : styles.filterOption}
-                                            onClick={() => {
-                                                setStatusFilter(null);
-                                                setOpenFilterMenu(null);
-                                            }}
-                                        >
-                                            All
-                                        </button>
-                                        {statuses.map(status => (
-                                            <button
-                                                key={status.id}
-                                                className={statusFilter === status.id ? styles.filterOptionActive : styles.filterOption}
-                                                onClick={() => {
-                                                    setStatusFilter(status.id);
-                                                    setOpenFilterMenu(null);
-                                                }}
-                                            >
-                                                {status.name}
-                                            </button>
-                                        ))}
-                                    </div>
-                                )}
-                            </div>
-                        </div>
-                    </div>
-
-                    {/* Navigator - Sort + Filter */}
-                    <div className={styles.columnHeader} style={{ minWidth: '160px', flex: 1, paddingRight: '16px' }}>
-                        <span>Navigator</span>
-                        <div className={styles.headerButtons}>
-                            <button
-                                className={`${styles.sortButton} ${sortColumn === 'navigator' ? styles.sortButtonActive : ''}`}
-                                onClick={() => handleSort('navigator')}
-                                title="Sort by Navigator"
-                            >
-                                {getSortIcon('navigator')}
-                            </button>
-                            <div className={styles.filterDropdown} data-filter-dropdown>
-                                <button
-                                    className={`${styles.filterButton} ${navigatorFilter ? styles.filterButtonActive : ''}`}
-                                    title="Filter by Navigator"
-                                    onClick={(e) => {
-                                        e.stopPropagation();
-                                        setOpenFilterMenu(openFilterMenu === 'navigator' ? null : 'navigator');
-                                    }}
-                                >
-                                    <Filter size={14} />
-                                </button>
-                                {openFilterMenu === 'navigator' && (
-                                    <div className={styles.filterMenu} onClick={(e) => e.stopPropagation()}>
-                                        <button
-                                            className={!navigatorFilter ? styles.filterOptionActive : styles.filterOption}
-                                            onClick={() => {
-                                                setNavigatorFilter(null);
-                                                setOpenFilterMenu(null);
-                                            }}
-                                        >
-                                            All
-                                        </button>
-                                        {navigators.map(navigator => (
-                                            <button
-                                                key={navigator.id}
-                                                className={navigatorFilter === navigator.id ? styles.filterOptionActive : styles.filterOption}
-                                                onClick={() => {
-                                                    setNavigatorFilter(navigator.id);
-                                                    setOpenFilterMenu(null);
-                                                }}
-                                            >
-                                                {navigator.name}
-                                            </button>
-                                        ))}
-                                    </div>
-                                )}
-                            </div>
-                        </div>
-                    </div>
-
-                    {/* Screening - Sort + Filter */}
-                    <div className={styles.columnHeader} style={{ minWidth: '100px', flex: 0.8, paddingRight: '16px' }}>
-                        <span>Screening</span>
-                        <div className={styles.headerButtons}>
-                            <button
-                                className={`${styles.sortButton} ${sortColumn === 'screening' ? styles.sortButtonActive : ''}`}
-                                onClick={() => handleSort('screening')}
-                                title="Sort by Screening Status"
-                            >
-                                {getSortIcon('screening')}
-                            </button>
-                            <div className={styles.filterDropdown} data-filter-dropdown>
-                                <button
-                                    className={`${styles.filterButton} ${screeningFilter ? styles.filterButtonActive : ''}`}
-                                    title="Filter by Screening Status"
-                                    onClick={(e) => {
-                                        e.stopPropagation();
-                                        setOpenFilterMenu(openFilterMenu === 'screening' ? null : 'screening');
-                                    }}
-                                >
-                                    <Filter size={14} />
-                                </button>
-                                {openFilterMenu === 'screening' && (
-                                    <div className={styles.filterMenu} onClick={(e) => e.stopPropagation()}>
-                                        <button
-                                            className={!screeningFilter ? styles.filterOptionActive : styles.filterOption}
-                                            onClick={() => {
-                                                setScreeningFilter(null);
-                                                setOpenFilterMenu(null);
-                                            }}
-                                        >
-                                            All
-                                        </button>
-                                        {['not_started', 'waiting_approval', 'approved', 'rejected'].map(status => (
-                                            <button
-                                                key={status}
-                                                className={screeningFilter === status ? styles.filterOptionActive : styles.filterOption}
-                                                onClick={() => {
-                                                    setScreeningFilter(status);
-                                                    setOpenFilterMenu(null);
-                                                }}
-                                            >
-                                                {getScreeningStatusLabel(status)}
-                                            </button>
-                                        ))}
-                                    </div>
-                                )}
-                            </div>
-                        </div>
-                    </div>
-
-                    {/* Active Order - Nothing */}
-                    <div className={styles.columnHeader} style={{ minWidth: '350px', flex: 3, paddingRight: '16px' }}>
-                        <span>Active Order</span>
-                    </div>
-
-                    {/* Email - Sort only */}
-                    <div className={styles.columnHeader} style={{ minWidth: '180px', flex: 1.2, paddingRight: '16px' }}>
-                        <span>Email</span>
-                        <button
-                            className={`${styles.sortButton} ${sortColumn === 'email' ? styles.sortButtonActive : ''}`}
-                            onClick={() => handleSort('email')}
-                            title="Sort by Email"
-                        >
-                            {getSortIcon('email')}
-                        </button>
-                    </div>
-
-                    {/* Phone - Sort only */}
-                    <div className={styles.columnHeader} style={{ minWidth: '140px', flex: 1, paddingRight: '16px' }}>
-                        <span>Phone</span>
-                        <button
-                            className={`${styles.sortButton} ${sortColumn === 'phone' ? styles.sortButtonActive : ''}`}
-                            onClick={() => handleSort('phone')}
-                            title="Sort by Phone"
-                        >
-                            {getSortIcon('phone')}
-                        </button>
-                    </div>
-
-                    {/* Address - Sort only */}
-                    <div className={styles.columnHeader} style={{ minWidth: '250px', flex: 2, paddingRight: '16px' }}>
-                        <span>Address</span>
-                        <button
-                            className={`${styles.sortButton} ${sortColumn === 'address' ? styles.sortButtonActive : ''}`}
-                            onClick={() => handleSort('address')}
-                            title="Sort by Address"
-                        >
-                            {getSortIcon('address')}
-                        </button>
-                    </div>
-
-                    {/* Notes - Sort only */}
-                    <div className={styles.columnHeader} style={{ minWidth: '200px', flex: 2 }}>
-                        <span>Notes</span>
-                        <button
-                            className={`${styles.sortButton} ${sortColumn === 'notes' ? styles.sortButtonActive : ''}`}
-                            onClick={() => handleSort('notes')}
-                            title="Sort by Notes"
-                        >
-                            {getSortIcon('notes')}
-                        </button>
-                    </div>
-
-                    <div style={{ width: '40px' }}></div>
+                    {currentView === 'orders' ? (
+                        <>
+                            <span style={{ minWidth: '200px', flex: 2, paddingRight: '16px' }}>Client Name</span>
+                            <span style={{ minWidth: '140px', flex: 1, paddingRight: '16px' }}>Status</span>
+                            <span style={{ minWidth: '160px', flex: 1, paddingRight: '16px' }}>Navigator</span>
+                            <span style={{ minWidth: '350px', flex: 3, paddingRight: '16px' }}>Order Details</span>
+                            <span style={{ minWidth: '180px', flex: 1.2, paddingRight: '16px' }}>Last Updated</span>
+                            <span style={{ width: '40px' }}></span>
+                        </>
+                    ) : (
+                        <>
+                            <span style={{ minWidth: '200px', flex: 2, paddingRight: '16px' }}>Name</span>
+                            <span style={{ minWidth: '140px', flex: 1, paddingRight: '16px' }}>Status</span>
+                            <span style={{ minWidth: '160px', flex: 1, paddingRight: '16px' }}>Navigator</span>
+                            <span style={{ minWidth: '100px', flex: 0.8, paddingRight: '16px' }}>Screening</span>
+                            <span style={{ minWidth: '350px', flex: 3, paddingRight: '16px' }}>Active Order</span>
+                            <span style={{ minWidth: '180px', flex: 1.2, paddingRight: '16px' }}>Email</span>
+                            <span style={{ minWidth: '140px', flex: 1, paddingRight: '16px' }}>Phone</span>
+                            <span style={{ minWidth: '250px', flex: 2, paddingRight: '16px' }}>Address</span>
+                            <span style={{ minWidth: '200px', flex: 2 }}>Notes</span>
+                            <span style={{ width: '40px' }}></span>
+                        </>
+                    )}
                 </div>
                 {filteredClients.map(client => {
                     const status = statuses.find(s => s.id === client.statusId);
                     const isNotAllowed = status ? status.deliveriesAllowed === false : false;
+                    const lastUpdated = currentView === 'orders' && client.activeOrder?.lastUpdated
+                        ? new Date(client.activeOrder.lastUpdated).toLocaleDateString('en-US', {
+                            month: 'short',
+                            day: 'numeric',
+                            year: 'numeric',
+                            hour: '2-digit',
+                            minute: '2-digit'
+                        })
+                        : null;
 
                     return (
                         <div
                             key={client.id}
                             onClick={() => setSelectedClientId(client.id)}
-                            className={`${styles.clientRow} ${isNotAllowed ? styles.clientRowNotAllowed : ''}`}
+                            className={styles.clientRow}
                             style={{ cursor: 'pointer' }}
                         >
-                            <span title={client.fullName} style={{ minWidth: '200px', flex: 2, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: '16px' }}>{client.fullName}</span>
+                            <span title={client.fullName} style={{ minWidth: '200px', flex: 2, fontWeight: 600, paddingRight: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                {isNotAllowed && <span className={styles.redTab}></span>}
+                                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1, minWidth: 0 }}>{client.fullName}</span>
+                            </span>
                             <span title={getStatusName(client.statusId)} style={{ minWidth: '140px', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: '16px' }}>
                                 <span className={`badge ${getStatusName(client.statusId) === 'Active' ? 'badge-success' : ''}`}>
                                     {getStatusName(client.statusId)}
                                 </span>
                             </span>
                             <span title={getNavigatorName(client.navigatorId)} style={{ minWidth: '160px', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: '16px' }}>{getNavigatorName(client.navigatorId)}</span>
-                            <span style={{ minWidth: '100px', flex: 0.8, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: '16px' }}>{getScreeningStatus(client)}</span>
-                            <span style={{ minWidth: '350px', flex: 3, fontSize: '0.9rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: '16px' }}>
-                                {getOrderSummary(client)}
-                            </span>
-                            <span title={client.email || undefined} style={{ minWidth: '180px', flex: 1.2, fontSize: '0.85rem', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: '16px' }}>
-                                {client.email || '-'}
-                            </span>
-                            <span title={client.phoneNumber} style={{ minWidth: '140px', flex: 1, fontSize: '0.85rem', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: '16px' }}>
-                                {client.phoneNumber || '-'}
-                            </span>
-                            <span title={client.address} style={{ minWidth: '250px', flex: 2, fontSize: '0.85rem', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: '16px' }}>
-                                {client.address || '-'}
-                            </span>
-                            <span title={client.notes} style={{ minWidth: '200px', flex: 2, fontSize: '0.85rem', color: 'var(--text-tertiary)', fontStyle: 'italic', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: '16px' }}>
-                                {client.notes || '-'}
-                            </span>
+                            {currentView === 'orders' ? (
+                                <>
+                                    <span style={{ minWidth: '350px', flex: 3, fontSize: '0.9rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: '16px' }}>
+                                        {getOrderSummary(client)}
+                                    </span>
+                                    <span title={lastUpdated || '-'} style={{ minWidth: '180px', flex: 1.2, fontSize: '0.85rem', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: '16px' }}>
+                                        {lastUpdated || '-'}
+                                    </span>
+                                </>
+                            ) : (
+                                <>
+                                    <span style={{ minWidth: '100px', flex: 0.8, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: '16px' }}>{getScreeningStatus(client)}</span>
+                                    <span style={{ minWidth: '350px', flex: 3, fontSize: '0.9rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: '16px' }}>
+                                        {getOrderSummary(client)}
+                                    </span>
+                                    <span title={client.email || undefined} style={{ minWidth: '180px', flex: 1.2, fontSize: '0.85rem', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: '16px' }}>
+                                        {client.email || '-'}
+                                    </span>
+                                    <span title={client.phoneNumber} style={{ minWidth: '140px', flex: 1, fontSize: '0.85rem', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: '16px' }}>
+                                        {client.phoneNumber || '-'}
+                                    </span>
+                                    <span title={client.address} style={{ minWidth: '250px', flex: 2, fontSize: '0.85rem', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: '16px' }}>
+                                        {client.address || '-'}
+                                    </span>
+                                    <span title={client.notes} style={{ minWidth: '200px', flex: 2, fontSize: '0.85rem', color: 'var(--text-tertiary)', fontStyle: 'italic', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: '16px' }}>
+                                        {client.notes || '-'}
+                                    </span>
+                                </>
+                            )}
                             <span style={{ width: '40px' }}><ChevronRight size={16} /></span>
                         </div>
                     );
@@ -879,7 +548,8 @@ export function ClientList({ currentUser }: ClientListProps) {
                     <div className={styles.empty}>
                         {currentView === 'ineligible' ? 'No ineligible clients found.' :
                             currentView === 'eligible' ? 'No eligible clients found.' :
-                                'No clients found.'}
+                                currentView === 'orders' ? 'No orders found for this week.' :
+                                    'No clients found.'}
                     </div>
                 )}
             </div>
@@ -892,20 +562,31 @@ export function ClientList({ currentUser }: ClientListProps) {
                             initialData={detailsCache[selectedClientId]}
                             onClose={() => {
                                 setSelectedClientId(null);
-                                // Clear the cached details for this client
+                                // We might want to refresh only this client in the list?
+                                // For now, let's just let it be. If they edit, cache might be stale, 
+                                // but we re-fetch effectively on mount of ClientProfile anyway if initialData is stale?
+                                // Actually, I passed initialData only. If they edit and close, 
+                                // valid logic dictates we should maybe invalidate the cache for this ID.
                                 setDetailsCache(prev => {
                                     const next = { ...prev };
                                     delete next[selectedClientId];
                                     return next;
                                 });
-                                // Invalidate cache and refresh data on close in case of changes
-                                invalidateClientData();
-                                loadInitialData();
+                                // We also should probably update the list row if things changed (like name).
+                                // Implementing full re-fetch of list or just this item is tricky without prop drilling.
+                                // For MVP, we can re-fetch page 1 or just leave it.
+                                // Let's just invalidate cache so next open is fresh.
                             }}
-                            currentUser={currentUser}
                         />
                     </div>
                     <div className={styles.overlay} onClick={() => setSelectedClientId(null)}></div>
+                </div>
+            )}
+
+            {/* Disclaimer for unimplemented views */}
+            {(currentView === 'history' || currentView === 'billing') && (
+                <div style={{ marginTop: '2rem', textAlign: 'center', color: 'var(--text-tertiary)' }}>
+                    <p>Detailed {currentView} view implementation pending backend support.</p>
                 </div>
             )}
         </div>
