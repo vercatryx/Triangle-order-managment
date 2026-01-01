@@ -14,13 +14,14 @@ const S3 = new S3Client({
     },
 });
 
-export async function uploadFile(key: string, body: Buffer | Uint8Array, contentType: string) {
-    if (!R2_BUCKET_NAME) {
-        throw new Error('R2_BUCKET_NAME is not defined');
+export async function uploadFile(key: string, body: Buffer | Uint8Array, contentType: string, bucketName?: string) {
+    const targetBucket = bucketName || R2_BUCKET_NAME;
+    if (!targetBucket) {
+        throw new Error('Bucket name is not defined. Please set R2_BUCKET_NAME or pass a bucketName.');
     }
 
     const command = new PutObjectCommand({
-        Bucket: R2_BUCKET_NAME,
+        Bucket: targetBucket,
         Key: key,
         Body: body,
         ContentType: contentType,

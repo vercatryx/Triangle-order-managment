@@ -61,6 +61,9 @@ export interface OrderConfiguration {
 
   // Delivery Schedule Configuration
   deliveryDistribution?: { [dayOfWeek: string]: number }; // e.g. "Monday": 5
+
+  // Display Helpers
+  orderNumber?: number;
 }
 
 export interface DeliveryRecord {
@@ -186,6 +189,7 @@ export interface CompletedOrderWithDeliveryProof {
   createdAt: string;
   lastUpdated: string;
   updatedBy: string;
+  orderNumber?: number; // Numeric ID for display
   orderDetails?: {
     serviceType: ServiceType;
     vendorSelections?: {

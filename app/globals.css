@@ -1,3 +1,7 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
 :root {
   /* Color Palette - Dark Mode Default (Premium Slate/Blue) */
   --bg-app: #0f172a;

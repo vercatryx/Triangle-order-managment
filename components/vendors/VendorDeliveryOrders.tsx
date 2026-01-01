@@ -5,7 +5,9 @@ import { useRouter } from 'next/navigation';
 import { Vendor, ClientProfile, MenuItem, BoxType } from '@/lib/types';
 import { getVendors, getClients, getMenuItems, getBoxTypes } from '@/lib/cached-data';
 import { getOrdersByVendor, saveDeliveryProofUrlAndProcessOrder, updateOrderDeliveryProof, isOrderUnderVendor, orderHasDeliveryProof } from '@/lib/actions';
-import { ArrowLeft, Calendar, Package, Clock, ShoppingCart, Upload, ChevronDown, ChevronUp, Save, X, CheckCircle, AlertCircle, Download, XCircle } from 'lucide-react';
+import { ArrowLeft, Calendar, Package, Clock, ShoppingCart, Upload, ChevronDown, ChevronUp, Save, X, CheckCircle, AlertCircle, Download, XCircle, FileText } from 'lucide-react';
+import { jsPDF } from 'jspdf';
+import QRCode from 'qrcode';
 import styles from './VendorDetail.module.css';
 
 interface Props {
@@ -81,10 +83,14 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate, isVendorView }: P
             const foundVendor = vendorsData.find(v => v.id === vendorId);
             setVendor(foundVendor || null);
 
-            // Filter orders by delivery date
+            // Filter orders by delivery date and exclude "upcoming" (scheduled but not placed) orders
             const dateKey = new Date(deliveryDate).toISOString().split('T')[0];
             const filteredOrders = ordersData.filter(order => {
                 if (!order.scheduled_delivery_date) return false;
+
+                // Exclude upcoming orders
+                if (order.orderType === 'upcoming') return false;
+
                 const orderDateKey = new Date(order.scheduled_delivery_date).toISOString().split('T')[0];
                 return orderDateKey === dateKey;
             });
@@ -219,6 +225,7 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate, isVendorView }: P
 
         // Define CSV headers
         const headers = [
+            'Order Number',
             'Order ID',
             'Client ID',
             'Client Name',
@@ -232,6 +239,7 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate, isVendorView }: P
 
         // Convert orders to CSV rows
         const rows = orders.map(order => [
+            order.orderNumber || '',
             order.id || '',
             order.client_id || '',
             getClientName(order.client_id),
@@ -261,6 +269,165 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate, isVendorView }: P
         link.click();
         document.body.removeChild(link);
         URL.revokeObjectURL(url);
+    }
+
+    async function exportLabelsPDF() {
+        if (orders.length === 0) {
+            alert('No orders to export');
+            return;
+        }
+
+        // Avery 5163 Template Dimensions (in inches)
+        // 2 columns, 5 labels per page
+        const PROPS = {
+            pageWidth: 8.5,
+            pageHeight: 11,
+            marginTop: 0.5,
+            marginLeft: 0.156,
+            labelWidth: 4,
+            labelHeight: 2,
+            hGap: 0.188,
+            vGap: 0,
+            fontSize: 10,
+            headerSize: 12, // Slightly smaller header to fit more
+            smallSize: 8,
+            padding: 0.15,
+            // Split layout
+            qrZoneWidth: 1.3, // Reserved right side width
+        };
+
+        const doc = new jsPDF({
+            orientation: 'portrait',
+            unit: 'in',
+            format: 'letter'
+        });
+
+        // Determine Base URL
+        const origin = typeof window !== 'undefined' && window.location.origin ? window.location.origin : 'https://vercatryx-triangle.vercel.app';
+
+        for (let index = 0; index < orders.length; index++) {
+            const order = orders[index];
+
+            // Check for page break (every 10 labels)
+            if (index > 0 && index % 10 === 0) {
+                doc.addPage();
+            }
+
+            // Calculate position
+            const posOnPage = index % 10;
+            const col = posOnPage % 2;
+            const row = Math.floor(posOnPage / 2);
+
+            const labelX = PROPS.marginLeft + (col * (PROPS.labelWidth + PROPS.hGap));
+            const labelY = PROPS.marginTop + (row * PROPS.labelHeight);
+
+            // Draw Border
+            doc.setLineWidth(0.01);
+            doc.rect(labelX, labelY, PROPS.labelWidth, PROPS.labelHeight);
+
+            // -- ZONES --
+            const contentX = labelX + PROPS.padding;
+            const contentY = labelY + PROPS.padding;
+            // Left Zone Width (Total - QR Zone - Padding)
+            const textZoneWidth = PROPS.labelWidth - PROPS.qrZoneWidth - (PROPS.padding * 2);
+
+            // Right Zone (QR)
+            const qrZoneX = labelX + PROPS.labelWidth - PROPS.qrZoneWidth - PROPS.padding;
+
+            let currentY = contentY + 0.15; // Start Y
+
+            // 1. Client Name (Bold)
+            doc.setFontSize(PROPS.headerSize);
+            doc.setFont('helvetica', 'bold');
+            const clientName = getClientName(order.client_id).toUpperCase();
+
+            // Wrap text
+            const splitName = doc.splitTextToSize(clientName, textZoneWidth);
+            doc.text(splitName, contentX, currentY);
+
+            // Increment Y based on lines used
+            currentY += (splitName.length * 0.2);
+
+            // 2. Address (Normal)
+            doc.setFontSize(PROPS.fontSize);
+            doc.setFont('helvetica', 'normal');
+            const address = getClientAddress(order.client_id);
+
+            if (address && address !== '-') {
+                const splitAddress = doc.splitTextToSize(address, textZoneWidth);
+                doc.text(splitAddress, contentX, currentY);
+                currentY += (splitAddress.length * 0.16) + 0.1; // Add extra gap after address
+            } else {
+                currentY += 0.1;
+            }
+
+            // 3. Ordered Items
+            doc.setFontSize(PROPS.smallSize);
+            // Process items string: replace ; with |
+            const itemsText = formatOrderedItemsForCSV(order).split('; ').join(' | ');
+            const itemsDisplay = itemsText || 'No items';
+
+            // Calculate remaining height for text
+            const maxY = labelY + PROPS.labelHeight - PROPS.padding;
+            const remainingHeight = maxY - currentY;
+
+            if (remainingHeight > 0.2) {
+                const splitItems = doc.splitTextToSize(itemsDisplay, textZoneWidth);
+
+                // Check if it fits, otherwise simple truncation (no fancy ellipsing for multi-line block for now)
+                // jsPDF overflow handling is manual.
+                const lineHeight = 0.14;
+                const maxLines = Math.floor(remainingHeight / lineHeight);
+
+                if (splitItems.length > maxLines) {
+                    const visible = splitItems.slice(0, maxLines);
+                    // Add ... to last visible line
+                    if (visible.length > 0) {
+                        const last = visible[visible.length - 1];
+                        visible[visible.length - 1] = last.substring(0, last.length - 3) + '...';
+                    }
+                    doc.text(visible, contentX, currentY);
+                } else {
+                    doc.text(splitItems, contentX, currentY);
+                }
+            }
+
+
+            // 4. QR Code & ID (Right Side - Vertical Center)
+            try {
+                // Determine Order Identifier (Prefer Order Number)
+                const orderIdentifier = order.orderNumber || order.id;
+                const deliveryUrl = `${origin}/delivery/${orderIdentifier}`;
+
+                const qrSize = 1.1;
+                // Center in the reserved zone
+                const qrX = qrZoneX + ((PROPS.qrZoneWidth - qrSize) / 2);
+
+                // Vertically center in label
+                const qrY = labelY + ((PROPS.labelHeight - qrSize) / 2) - 0.1;
+
+                const qrDataUrl = await QRCode.toDataURL(deliveryUrl, {
+                    errorCorrectionLevel: 'M',
+                    margin: 0,
+                    width: 300
+                });
+
+                doc.addImage(qrDataUrl, 'PNG', qrX, qrY, qrSize, qrSize);
+
+                // Order Number below QR
+                const orderNum = order.orderNumber || order.id.slice(0, 6);
+                doc.setFontSize(10);
+                doc.setFont('helvetica', 'bold');
+                doc.text(`#${orderNum}`, qrX + (qrSize / 2), qrY + qrSize + 0.15, { align: 'center' });
+
+            } catch (e) {
+                console.error("QR generation failed", e);
+                doc.text("Error", qrZoneX, labelY + 1);
+            }
+        }
+
+        const formattedDate = formatDate(deliveryDate).replace(/\s/g, '_');
+        doc.save(`${vendor?.name || 'vendor'}_labels_${formattedDate}.pdf`);
     }
 
     function parseCSVRow(row: string): string[] {
@@ -313,11 +480,11 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate, isVendorView }: P
 
             // Parse header row
             const headers = parseCSVRow(lines[0]);
-            const orderIdIndex = headers.findIndex(h => h.toLowerCase() === 'order id');
+            const orderIdIndex = headers.findIndex(h => h.toLowerCase() === 'order id' || h.toLowerCase() === 'order number');
             const deliveryProofUrlIndex = headers.findIndex(h => h.toLowerCase() === 'delivery_proof_url');
 
             if (orderIdIndex === -1) {
-                alert('CSV file must contain an "Order ID" column');
+                alert('CSV file must contain an "Order ID" or "Order Number" column');
                 return;
             }
 
@@ -770,12 +937,15 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate, isVendorView }: P
                         Orders for {formatDate(deliveryDate)}
                     </h1>
                     {orders.length > 0 && (
-                        <div style={{ display: 'flex', gap: '0.5rem' }}>
-                            <button className="btn btn-secondary" onClick={exportOrdersToCSV}>
-                                <Download size={16} /> Export CSV
+                        <div style={{ display: 'flex', gap: '1rem' }}>
+                            <button className="btn btn-secondary" onClick={exportLabelsPDF} style={{ padding: '0.75rem 1.5rem', fontSize: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                <FileText size={20} /> Download Labels
                             </button>
-                            <label className="btn btn-secondary" style={{ cursor: 'pointer' }}>
-                                <Upload size={16} /> Import CSV
+                            <button className="btn btn-secondary" onClick={exportOrdersToCSV} style={{ padding: '0.75rem 1.5rem', fontSize: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                <Download size={20} /> Download Excel
+                            </button>
+                            <label className="btn btn-secondary" style={{ cursor: 'pointer', padding: '0.75rem 1.5rem', fontSize: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                <Upload size={20} /> Upload Excel
                                 <input
                                     type="file"
                                     accept=".csv"
@@ -814,6 +984,7 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate, isVendorView }: P
                 <div className={styles.ordersList}>
                     <div className={styles.ordersHeader}>
                         <span style={{ width: '40px', flex: 'none' }}></span>
+                        <span style={{ minWidth: '80px', flex: 0.6 }}>Order #</span>
                         <span style={{ minWidth: '120px', flex: 0.8 }}>Type</span>
                         <span style={{ minWidth: '200px', flex: 2 }}>Client</span>
                         <span style={{ minWidth: '200px', flex: 1.5 }}>Address</span>
@@ -836,6 +1007,9 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate, isVendorView }: P
                                 >
                                     <span style={{ width: '40px', flex: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                                         {isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                                    </span>
+                                    <span style={{ minWidth: '80px', flex: 0.6, fontSize: '0.9rem', fontFamily: 'monospace', fontWeight: 'bold' }}>
+                                        #{order.orderNumber || '-'}
                                     </span>
                                     <span style={{ minWidth: '120px', flex: 0.8 }}>
                                         <span className="badge badge-info">{order.service_type}</span>
@@ -911,7 +1085,10 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate, isVendorView }: P
                                     <div className={styles.orderDetails}>
                                         <div className={styles.orderDetailsGrid}>
                                             <div className={styles.detailItem}>
-                                                <strong>Order ID:</strong> {order.id}
+                                                <strong>Order Number:</strong> #{order.orderNumber || '-'}
+                                            </div>
+                                            <div className={styles.detailItem}>
+                                                <strong>Database ID:</strong> <span style={{ fontFamily: 'monospace', fontSize: '0.8em' }}>{order.id}</span>
                                             </div>
                                             <div className={styles.detailItem}>
                                                 <strong>Order Type:</strong> {order.orderType}

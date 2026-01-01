@@ -24,7 +24,8 @@ export function LayoutShell({ children, userName, userRole }: { children: React.
     const isVendorPortal = pathname === '/vendor' || pathname.startsWith('/vendor/');
     const isClientPortal = pathname.startsWith('/client-portal');
     const isVerifyOrder = pathname.startsWith('/verify-order');
-    const showSidebar = !isVendorPortal && !isClientPortal && !isVerifyOrder;
+    const isDelivery = pathname.startsWith('/delivery');
+    const showSidebar = !isVendorPortal && !isClientPortal && !isVerifyOrder && !isDelivery;
 
     return (
         <DataCacheProvider>

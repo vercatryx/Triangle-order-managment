@@ -905,6 +905,7 @@ export async function getCompletedOrdersWithDeliveryProof(clientId: string) {
                 createdAt: orderData.created_at,
                 lastUpdated: orderData.updated_at,
                 updatedBy: orderData.updated_by,
+                orderNumber: orderData.order_number,
                 orderDetails: orderDetails
             };
         })
@@ -1911,7 +1912,8 @@ export async function processUpcomingOrders() {
                 delivery_distribution: upcomingOrder.delivery_distribution,
                 total_value: upcomingOrder.total_value,
                 total_items: upcomingOrder.total_items,
-                notes: upcomingOrder.notes
+                notes: upcomingOrder.notes,
+                order_number: upcomingOrder.order_number // Preserve the assigned 6-digit number
             };
 
             const { data: newOrder, error: orderError } = await supabase
@@ -1919,6 +1921,9 @@ export async function processUpcomingOrders() {
                 .insert(orderData)
                 .select()
                 .single();
+
+            // Refetch to get the generated order_number if it wasn't returned in the insert select (triggers sometimes issue)
+            // But usually select() returns it. Let's verify type if needed.
 
             if (orderError || !newOrder) {
                 errors.push(`Failed to create order for client ${upcomingOrder.client_id}: ${orderError?.message}`);
@@ -2157,7 +2162,8 @@ export async function getActiveOrderForClient(clientId: string) {
                 totalItems: orderData.total_items,
                 notes: orderData.notes,
                 deliveryDay: orderData.delivery_day, // Include delivery_day if present
-                isUpcoming: orderData.is_upcoming || false // Flag for upcoming orders
+                isUpcoming: orderData.is_upcoming || false, // Flag for upcoming orders
+                orderNumber: orderData.order_number // Numeric Order ID
             };
 
             // Determine which table to query based on whether this is an upcoming order
@@ -2538,6 +2544,7 @@ export async function getOrdersByVendor(vendorId: string) {
                 .from('upcoming_orders')
                 .select('*')
                 .in('id', upcomingOrderIds)
+                .eq('status', 'scheduled') // Only show scheduled, not processed
                 .order('created_at', { ascending: false });
 
             if (uOrders) {
@@ -2568,6 +2575,7 @@ async function processVendorOrderDetails(order: any, vendorId: string, isUpcomin
 
     const result = {
         ...order,
+        orderNumber: order.order_number, // Ensure mapped for UI
         items: [],
         boxSelection: null
     };
