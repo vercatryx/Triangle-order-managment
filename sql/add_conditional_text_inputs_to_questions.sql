@@ -9,3 +9,5 @@ ADD COLUMN IF NOT EXISTS conditional_text_inputs JSONB;
 COMMENT ON COLUMN questions.conditional_text_inputs IS 'JSON object mapping option text to boolean. Options with true values require a conditional text input when selected.';
 
 
+
+

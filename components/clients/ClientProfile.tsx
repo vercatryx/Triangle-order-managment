@@ -2,8 +2,8 @@
 
 import { useState, useEffect, Fragment, useMemo } from 'react';
 import { useRouter, useParams } from 'next/navigation';
-import { ClientProfile, ClientStatus, Navigator, Vendor, MenuItem, BoxType, ServiceType, AppSettings, DeliveryRecord, ItemCategory, BoxQuota, ClientFullDetails } from '@/lib/types';
-import { updateClient, deleteClient, updateDeliveryProof, recordClientChange, getBoxQuotas, syncCurrentOrderToUpcoming, logNavigatorAction } from '@/lib/actions';
+import { ClientProfile, ClientStatus, Navigator, Vendor, MenuItem, BoxType, ServiceType, AppSettings, DeliveryRecord, ItemCategory, ClientFullDetails, BoxQuota } from '@/lib/types';
+import { updateClient, deleteClient, updateDeliveryProof, recordClientChange, syncCurrentOrderToUpcoming, logNavigatorAction, getBoxQuotas } from '@/lib/actions';
 import { getSingleForm, getClientSubmissions } from '@/lib/form-actions';
 import { getClient, getStatuses, getNavigators, getVendors, getMenuItems, getBoxTypes, getSettings, getCategories, getClients, invalidateClientData, invalidateReferenceData, getActiveOrderForClient, getUpcomingOrderForClient, getOrderHistory, getClientHistory, getBillingHistory, invalidateOrderData } from '@/lib/cached-data';
 import { Save, ArrowLeft, Truck, Package, AlertTriangle, Upload, Trash2, Plus, Check, ClipboardList, History, CreditCard, Calendar, ChevronDown, ChevronUp, ShoppingCart, Loader2, FileText, Square, CheckSquare } from 'lucide-react';
@@ -92,7 +92,7 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
     const [menuItems, setMenuItems] = useState<MenuItem[]>(initialMenuItems || []);
     const [boxTypes, setBoxTypes] = useState<BoxType[]>(initialBoxTypes || []);
     const [categories, setCategories] = useState<ItemCategory[]>([]);
-    const [activeBoxQuotas, setActiveBoxQuotas] = useState<BoxQuota[]>([]);
+    const [boxQuotas, setBoxQuotas] = useState<BoxQuota[]>([]);
     const [settings, setSettings] = useState<AppSettings | null>(null);
     const [history, setHistory] = useState<DeliveryRecord[]>([]);
     const [orderHistory, setOrderHistory] = useState<any[]>([]);
@@ -218,11 +218,19 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                         };
                     }
                 }
-                setOrderConfig({
-                    serviceType: (upcomingOrderData as any)[Object.keys(upcomingOrderData)[0]]?.serviceType || data.client.serviceType,
-                    caseId: (upcomingOrderData as any)[Object.keys(upcomingOrderData)[0]]?.caseId,
-                    deliveryDayOrders
-                });
+                // Check if it's Boxes - if so, flatten it to single order config
+                const firstDayKey = Object.keys(upcomingOrderData)[0];
+                const firstDayOrder = (upcomingOrderData as any)[firstDayKey];
+
+                if (firstDayOrder?.serviceType === 'Boxes') {
+                    setOrderConfig(firstDayOrder);
+                } else {
+                    setOrderConfig({
+                        serviceType: firstDayOrder?.serviceType || data.client.serviceType,
+                        caseId: firstDayOrder?.caseId,
+                        deliveryDayOrders
+                    });
+                }
             } else if (upcomingOrderData.serviceType === 'Food' && !upcomingOrderData.vendorSelections && !upcomingOrderData.deliveryDayOrders) {
                 if (upcomingOrderData.vendorId) {
                     upcomingOrderData.vendorSelections = [{ vendorId: upcomingOrderData.vendorId, items: upcomingOrderData.menuSelections || {} }];
@@ -314,6 +322,8 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
         if (c) {
             let configToSet: any = {};
             if (upcomingOrderData) {
+
+
                 // Check if it's the multi-day format (object keyed by delivery day, not deliveryDayOrders)
                 const isMultiDayFormat = upcomingOrderData && typeof upcomingOrderData === 'object' &&
                     !upcomingOrderData.serviceType &&
@@ -334,11 +344,19 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                             };
                         }
                     }
-                    configToSet = {
-                        serviceType: (upcomingOrderData as any)[Object.keys(upcomingOrderData)[0]]?.serviceType || c.serviceType,
-                        caseId: (upcomingOrderData as any)[Object.keys(upcomingOrderData)[0]]?.caseId,
-                        deliveryDayOrders
-                    };
+                    // Check if it's Boxes - if so, flatten it to single order config
+                    const firstDayKey = Object.keys(upcomingOrderData)[0];
+                    const firstDayOrder = (upcomingOrderData as any)[firstDayKey];
+
+                    if (firstDayOrder?.serviceType === 'Boxes') {
+                        configToSet = firstDayOrder;
+                    } else {
+                        configToSet = {
+                            serviceType: firstDayOrder?.serviceType || c.serviceType,
+                            caseId: firstDayOrder?.caseId,
+                            deliveryDayOrders
+                        };
+                    }
                 } else if (upcomingOrderData.serviceType === 'Food' && !upcomingOrderData.vendorSelections && !upcomingOrderData.deliveryDayOrders) {
                     // Migration/Safety: Ensure vendorSelections exists for Food
                     if (upcomingOrderData.vendorId) {
@@ -372,29 +390,16 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
         }
     }
 
-    // Effect: Load quotas when boxTypeId changes, or auto-select first box type for Boxes service
+    // Effect: Initialize box quantity when Boxes service is selected
     useEffect(() => {
-        // If Boxes service is selected and no boxTypeId, auto-set it to first active box type
-        if (formData.serviceType === 'Boxes' && !orderConfig.boxTypeId && boxTypes.length > 0) {
-            const firstActiveBoxType = boxTypes.find(bt => bt.isActive);
-            if (firstActiveBoxType) {
-                setOrderConfig((prev: any) => ({
-                    ...prev,
-                    boxTypeId: firstActiveBoxType.id,
-                    boxQuantity: 1
-                }));
-            }
+        // If Boxes service is selected and no boxQuantity, set default to 1
+        if (formData.serviceType === 'Boxes' && !orderConfig.boxQuantity) {
+            setOrderConfig((prev: any) => ({
+                ...prev,
+                boxQuantity: 1
+            }));
         }
-
-        // Load quotas for the current boxTypeId
-        if (orderConfig.boxTypeId) {
-            getBoxQuotas(orderConfig.boxTypeId).then(quotas => {
-                setActiveBoxQuotas(quotas);
-            });
-        } else {
-            setActiveBoxQuotas([]);
-        }
-    }, [orderConfig.boxTypeId, formData.serviceType, boxTypes]);
+    }, [formData.serviceType]);
 
     // Extract dependencies with defaults to ensure consistent array size
     const caseId = useMemo(() => orderConfig?.caseId ?? null, [orderConfig?.caseId]);
@@ -541,9 +546,9 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
         }, 500); // 500ms debounce for check
 
         return () => clearTimeout(timeoutId);
-    }, [caseId, vendorSelections, vendorId, boxTypeId, boxQuantity, items, itemPrices, serviceType, client, clientId]);
+    }, [caseId, vendorSelections, vendorId, boxTypeId, boxQuantity, items, itemPrices, serviceType, clientId]);
 
-    // Effect: Load quotas when boxTypeId changes (duplicate - keeping in sync with above)
+    // Effect: Load quotas when boxTypeId changes
     useEffect(() => {
         // If Boxes service is selected and no boxTypeId, auto-set it to first active box type
         if (formData.serviceType === 'Boxes' && !orderConfig.boxTypeId && boxTypes.length > 0) {
@@ -557,15 +562,18 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
             }
         }
 
-        // Load quotas for the current boxTypeId
-        if (orderConfig.boxTypeId) {
+        // Load box quotas when boxTypeId changes
+        if (formData.serviceType === 'Boxes' && orderConfig.boxTypeId) {
             getBoxQuotas(orderConfig.boxTypeId).then(quotas => {
-                setActiveBoxQuotas(quotas);
+                setBoxQuotas(quotas);
+            }).catch(err => {
+                console.error('Error loading box quotas:', err);
+                setBoxQuotas([]);
             });
         } else {
-            setActiveBoxQuotas([]);
+            setBoxQuotas([]);
         }
-    }, [orderConfig.boxTypeId, formData.serviceType, boxTypes]);
+    }, [formData.serviceType, orderConfig.boxTypeId, boxTypes]);
 
 
     // -- Logic Helpers --
@@ -711,8 +719,9 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
     function getNextDeliveryDateObject(vendorId: string): Date | null {
         if (!vendorId) return null;
 
-        const vendor = vendors.find(v => v.id === vendorId);
-        if (!vendor || !vendor.deliveryDays || vendor.deliveryDays.length === 0) {
+        const vendor: any = vendors.find(v => v.id === vendorId);
+        const days = vendor?.deliveryDays || vendor?.delivery_days;
+        if (!vendor || !days || days.length === 0) {
             return null;
         }
 
@@ -729,9 +738,9 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
             'Saturday': 6
         };
 
-        const deliveryDayNumbers = vendor.deliveryDays
-            .map(day => dayNameToNumber[day])
-            .filter(num => num !== undefined) as number[];
+        const deliveryDayNumbers = days
+            .map((day: any) => dayNameToNumber[day])
+            .filter((num: any) => num !== undefined) as number[];
 
         if (deliveryDayNumbers.length === 0) return null;
 
@@ -753,8 +762,9 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
     function getTakeEffectDateObject(vendorId: string): Date | null {
         if (!vendorId) return null;
 
-        const vendor = vendors.find(v => v.id === vendorId);
-        if (!vendor || !vendor.deliveryDays || vendor.deliveryDays.length === 0) {
+        const vendor: any = vendors.find(v => v.id === vendorId);
+        const days = vendor?.deliveryDays || vendor?.delivery_days;
+        if (!vendor || !days || days.length === 0) {
             return null;
         }
 
@@ -771,9 +781,9 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
             'Saturday': 6
         };
 
-        const deliveryDayNumbers = vendor.deliveryDays
-            .map(day => dayNameToNumber[day])
-            .filter(num => num !== undefined) as number[];
+        const deliveryDayNumbers = days
+            .map((day: any) => dayNameToNumber[day])
+            .filter((num: any) => num !== undefined) as number[];
 
         if (deliveryDayNumbers.length === 0) return null;
 
@@ -876,7 +886,7 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
         while (daysBack < 14) {
             const checkDate = new Date(nextDeliveryDate);
             checkDate.setDate(nextDeliveryDate.getDate() - daysBack);
-            
+
             if (checkDate.getDay() === cutoffDayNumber) {
                 cutoffDate.setTime(checkDate.getTime());
                 cutoffDate.setHours(cutoffHours, cutoffMinutes, 0, 0);
@@ -919,8 +929,10 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
             if (!vendorsSummary) return '';
             content = `: ${vendorsSummary} [Max ${limit}]`;
         } else if (st === 'Boxes') {
+            // Check vendorId from order config first, then fall back to boxType
             const box = boxTypes.find(b => b.id === conf.boxTypeId);
-            const vendorName = vendors.find(v => v.id === box?.vendorId)?.name || '-';
+            const vendorId = conf.vendorId || box?.vendorId;
+            const vendorName = vendors.find(v => v.id === vendorId)?.name || '-';
 
             const itemDetails = Object.entries(conf.items || {}).map(([id, qty]) => {
                 const item = menuItems.find(i => i.id === id);
@@ -1054,32 +1066,9 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
 
     // Box Logic Helpers
     function getBoxValidationSummary() {
-        if (!activeBoxQuotas.length) return { isValid: true, messages: [] };
-
-        const summary: string[] = [];
-        let allValid = true;
-        const selectedItems = orderConfig.items || {};
-
-        activeBoxQuotas.forEach(quota => {
-            const category = categories.find(c => c.id === quota.categoryId);
-            if (!category) return;
-
-            // Calculate current total for this category
-            let currentTotal = 0;
-            Object.entries(selectedItems).forEach(([itemId, qty]) => {
-                const item = menuItems.find(i => i.id === itemId);
-                if (item && item.categoryId === quota.categoryId) {
-                    currentTotal += (item.quotaValue || 1) * (qty as number);
-                }
-            });
-
-            if (currentTotal !== quota.targetValue) {
-                allValid = false;
-                summary.push(`${category.name}: Selected ${currentTotal} / Target ${quota.targetValue}`);
-            }
-        });
-
-        return { isValid: allValid, messages: summary };
+        // No quota validation needed - removed box types
+        // Users can select any items they want without quota requirements
+        return { isValid: true, messages: [] };
     }
 
     function validateOrder(): { isValid: boolean, messages: string[] } {
@@ -1139,20 +1128,68 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
         if (formData.serviceType === 'Boxes') {
             const messages: string[] = [];
 
-            // Validate that vendorId is set
-            if (!orderConfig.vendorId) {
-                messages.push('Vendor is required for Boxes orders.');
+            // Validate box category quotas - each category must have exactly the required quota value
+            if (orderConfig.boxTypeId && boxQuotas.length > 0 && orderConfig.items) {
+                const selectedItems = orderConfig.items || {};
+                const boxQuantity = orderConfig.boxQuantity || 1;
+
+                // Check each quota requirement
+                for (const quota of boxQuotas) {
+                    // Calculate total quota value for this category
+                    let categoryQuotaValue = 0;
+
+                    // Sum up (item quantity * item quotaValue) for all items in this category
+                    for (const [itemId, qty] of Object.entries(selectedItems)) {
+                        const item = menuItems.find(i => i.id === itemId);
+                        if (item && item.categoryId === quota.categoryId) {
+                            const itemQuotaValue = item.quotaValue || 1;
+                            categoryQuotaValue += (qty as number) * itemQuotaValue;
+                        }
+                    }
+
+                    // Calculate required quota value (targetValue * boxQuantity)
+                    const requiredQuotaValue = quota.targetValue * boxQuantity;
+
+                    // Check if it matches exactly
+                    if (categoryQuotaValue !== requiredQuotaValue) {
+                        const category = categories.find(c => c.id === quota.categoryId);
+                        const categoryName = category?.name || 'Unknown Category';
+                        messages.push(
+                            `Category "${categoryName}" requires exactly ${requiredQuotaValue} quota value, but you have ${categoryQuotaValue}. ` +
+                            `Please adjust items in this category to match exactly.`
+                        );
+                    }
+                }
             }
 
-            // Validate that boxTypeId is set
-            if (!orderConfig.boxTypeId) {
-                messages.push('Box Type is required for Boxes orders.');
-            }
+            // Validate category set values - categories with setValue must have exactly that quota value
+            if (orderConfig.items) {
+                const selectedItems = orderConfig.items || {};
+                
+                // Check each category that has a setValue
+                for (const category of categories) {
+                    if (category.setValue !== undefined && category.setValue !== null) {
+                        // Calculate total quota value for this category
+                        let categoryQuotaValue = 0;
 
-            // Get box validation summary (quota validation)
-            const boxValidation = getBoxValidationSummary();
-            if (!boxValidation.isValid) {
-                messages.push(...boxValidation.messages);
+                        // Sum up (item quantity * item quotaValue) for all items in this category
+                        for (const [itemId, qty] of Object.entries(selectedItems)) {
+                            const item = menuItems.find(i => i.id === itemId);
+                            if (item && item.categoryId === category.id) {
+                                const itemQuotaValue = item.quotaValue || 1;
+                                categoryQuotaValue += (qty as number) * itemQuotaValue;
+                            }
+                        }
+
+                        // Check if it matches exactly the setValue
+                        if (categoryQuotaValue !== category.setValue) {
+                            messages.push(
+                                `You must have a total of ${category.setValue} ${category.name} points, but you have ${categoryQuotaValue}. ` +
+                                `Please adjust items in this category to match exactly.`
+                            );
+                        }
+                    }
+                }
             }
 
             if (messages.length > 0) {
@@ -2369,7 +2406,26 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                                                     </div>
                                                 );
                                             }
-                                            return null;
+
+                                            return (
+                                                <div style={{
+                                                    marginTop: 'var(--spacing-md)',
+                                                    padding: '0.75rem',
+                                                    backgroundColor: 'rgba(239, 68, 68, 0.1)',
+                                                    borderRadius: 'var(--radius-sm)',
+                                                    border: '1px solid var(--color-danger)',
+                                                    fontSize: '0.85rem',
+                                                    color: 'var(--color-danger)',
+                                                    display: 'flex',
+                                                    alignItems: 'center',
+                                                    gap: '0.5rem',
+                                                    textAlign: 'center',
+                                                    justifyContent: 'center'
+                                                }}>
+                                                    <AlertTriangle size={16} />
+                                                    <span><strong>Warning:</strong> This vendor has no delivery days configured. Orders will NOT be created.</span>
+                                                </div>
+                                            );
                                         })()}
 
                                         <div style={{ display: 'none' }}>
@@ -2384,246 +2440,395 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                                         </div>
 
                                         {/* Box Content Selection */}
-                                        {orderConfig.boxTypeId && activeBoxQuotas.length > 0 && (
-                                            <div style={{ marginTop: '1rem', borderTop: '1px solid var(--border-color)', paddingTop: '1rem' }}>
-                                                <h4 style={{ fontSize: '0.9rem', marginBottom: '0.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                                                    <Package size={14} /> Box Contents
-                                                </h4>
+                                        <div style={{ marginTop: '1rem', borderTop: '1px solid var(--border-color)', paddingTop: '1rem' }}>
+                                            <h4 style={{ fontSize: '0.9rem', marginBottom: '0.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                                <Package size={14} /> Box Contents
+                                            </h4>
 
-                                                {activeBoxQuotas.map(quota => {
-                                                    const category = categories.find(c => c.id === quota.categoryId);
-                                                    if (!category) return null;
+                                            {/* Check if vendor has delivery days */}
+                                            {orderConfig.vendorId && !getNextDeliveryDateForVendor(orderConfig.vendorId) ? (
+                                                <div style={{
+                                                    padding: '1.5rem',
+                                                    backgroundColor: 'var(--bg-surface-active)',
+                                                    borderRadius: 'var(--radius-md)',
+                                                    border: '1px dashed var(--color-danger)',
+                                                    color: 'var(--text-secondary)',
+                                                    textAlign: 'center',
+                                                    display: 'flex',
+                                                    flexDirection: 'column',
+                                                    alignItems: 'center',
+                                                    gap: '0.5rem',
+                                                    opacity: 0.7
+                                                }}>
+                                                    <AlertTriangle size={24} color="var(--color-danger)" />
+                                                    <span style={{ color: 'var(--color-danger)', fontWeight: 600 }}>Action Required</span>
+                                                    <span style={{ fontSize: '0.9rem' }}>
+                                                        Please configure <strong>Delivery Days</strong> for this vendor in Settings before adding items.
+                                                    </span>
+                                                </div>
+                                            ) : (
+                                                <>
+                                                    {/* Show all categories with box items */}
+                                                    {categories.map(category => {
+                                                        // Filter items for this category
+                                                        const availableItems = menuItems.filter(i =>
+                                                            (i.vendorId === null || i.vendorId === '') &&
+                                                            i.isActive &&
+                                                            i.categoryId === category.id
+                                                        );
 
-                                                    // Filter items for this category - box items are universal (vendorId is null/empty)
-                                                    const availableItems = menuItems.filter(i =>
-                                                        (i.vendorId === null || i.vendorId === '') &&
-                                                        i.isActive &&
-                                                        i.categoryId === quota.categoryId
-                                                    );
+                                                        if (availableItems.length === 0) return null;
 
-                                                    // Calculate current count
-                                                    let currentCount = 0;
-                                                    const selectedItems = orderConfig.items || {};
-                                                    Object.entries(selectedItems).forEach(([itemId, qty]) => {
-                                                        const item = menuItems.find(i => i.id === itemId);
-                                                        if (item && item.categoryId === quota.categoryId) {
-                                                            currentCount += (item.quotaValue || 1) * (qty as number);
-                                                        }
-                                                    });
+                                                        const selectedItems = orderConfig.items || {};
 
-                                                    const isMet = currentCount === quota.targetValue;
-                                                    const isOver = currentCount > quota.targetValue;
+                                                        // Calculate total quota value for this category
+                                                        let categoryQuotaValue = 0;
+                                                        Object.entries(selectedItems).forEach(([itemId, qty]) => {
+                                                            const item = menuItems.find(i => i.id === itemId);
+                                                            if (item && item.categoryId === category.id) {
+                                                                const itemQuotaValue = item.quotaValue || 1;
+                                                                categoryQuotaValue += (qty as number) * itemQuotaValue;
+                                                            }
+                                                        });
 
-                                                    return (
-                                                        <div key={quota.id} style={{ marginBottom: '1rem', background: 'var(--bg-surface-hover)', padding: '0.75rem', borderRadius: '6px' }}>
-                                                            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem', fontSize: '0.85rem' }}>
-                                                                <span style={{ fontWeight: 600 }}>{category.name}</span>
-                                                                <span style={{
-                                                                    color: isMet ? 'var(--color-success)' : (isOver ? 'var(--color-danger)' : 'var(--color-warning)'),
-                                                                    fontWeight: 600
-                                                                }}>
-                                                                    {currentCount} / {quota.targetValue}
-                                                                </span>
-                                                            </div>
+                                                        // Find quota requirement for this category (from box quotas)
+                                                        const quota = boxQuotas.find(q => q.categoryId === category.id);
+                                                        const boxQuantity = orderConfig.boxQuantity || 1;
+                                                        const requiredQuotaValueFromBox = quota ? quota.targetValue * boxQuantity : null;
+                                                        
+                                                        // Check if category has a setValue requirement
+                                                        const requiredQuotaValueFromCategory = category.setValue !== undefined && category.setValue !== null ? category.setValue : null;
+                                                        
+                                                        // Use setValue if present, otherwise use box quota requirement
+                                                        const requiredQuotaValue = requiredQuotaValueFromCategory !== null ? requiredQuotaValueFromCategory : requiredQuotaValueFromBox;
+                                                        
+                                                        const meetsQuota = requiredQuotaValue !== null ? categoryQuotaValue === requiredQuotaValue : true;
 
-                                                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
-                                                                {availableItems.map(item => {
-                                                                    const qty = Number(selectedItems[item.id] || 0);
-                                                                    return (
-                                                                        <div key={item.id} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', background: 'var(--bg-app)', padding: '4px 8px', borderRadius: '4px', border: '1px solid var(--border-color)' }}>
-                                                                            <span style={{ fontSize: '0.8rem' }}>{item.name} <span style={{ color: 'var(--text-tertiary)' }}>({item.quotaValue || 1})</span></span>
-                                                                            <div className={styles.quantityControl} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                                                                <button onClick={() => handleBoxItemChange(item.id, Math.max(0, qty - 1))} className="btn btn-secondary" style={{ padding: '2px 8px' }}>-</button>
-                                                                                <span style={{ width: '20px', textAlign: 'center' }}>{qty}</span>
-                                                                                <button onClick={() => handleBoxItemChange(item.id, qty + 1)} className="btn btn-secondary" style={{ padding: '2px 8px' }}>+</button>
+                                                        return (
+                                                            <div key={category.id} style={{ marginBottom: '1rem', background: 'var(--bg-surface-hover)', padding: '0.75rem', borderRadius: '6px', border: requiredQuotaValue !== null && !meetsQuota ? '2px solid var(--color-danger)' : '1px solid var(--border-color)' }}>
+                                                                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem', fontSize: '0.85rem' }}>
+                                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                                                        <span style={{ fontWeight: 600 }}>{category.name}</span>
+                                                                        {requiredQuotaValueFromCategory !== null && (
+                                                                            <span style={{ 
+                                                                                fontSize: '0.7rem', 
+                                                                                color: 'var(--color-primary)', 
+                                                                                background: 'var(--bg-app)',
+                                                                                padding: '2px 6px',
+                                                                                borderRadius: '4px',
+                                                                                fontWeight: 500
+                                                                            }}>
+                                                                                Set Value: {requiredQuotaValueFromCategory}
+                                                                            </span>
+                                                                        )}
+                                                                    </div>
+                                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                                                        {requiredQuotaValue !== null && (
+                                                                            <span style={{
+                                                                                color: meetsQuota ? 'var(--color-success)' : 'var(--color-danger)',
+                                                                                fontSize: '0.8rem',
+                                                                                fontWeight: 500
+                                                                            }}>
+                                                                                Quota: {categoryQuotaValue} / {requiredQuotaValue}
+                                                                            </span>
+                                                                        )}
+                                                                        {categoryQuotaValue > 0 && requiredQuotaValue === null && (
+                                                                            <span style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>
+                                                                                Total: {categoryQuotaValue}
+                                                                            </span>
+                                                                        )}
+                                                                    </div>
+                                                                </div>
+                                                                {requiredQuotaValue !== null && !meetsQuota && (
+                                                                    <div style={{
+                                                                        marginBottom: '0.5rem',
+                                                                        padding: '0.5rem',
+                                                                        backgroundColor: 'rgba(239, 68, 68, 0.1)',
+                                                                        borderRadius: '4px',
+                                                                        fontSize: '0.75rem',
+                                                                        color: 'var(--color-danger)',
+                                                                        display: 'flex',
+                                                                        alignItems: 'center',
+                                                                        gap: '0.25rem'
+                                                                    }}>
+                                                                        <AlertTriangle size={12} />
+                                                                        <span>You must have a total of {requiredQuotaValue} {category.name} points</span>
+                                                                    </div>
+                                                                )}
+
+                                                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
+                                                                    {availableItems.map(item => {
+                                                                        const qty = Number(selectedItems[item.id] || 0);
+                                                                        return (
+                                                                            <div key={item.id} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', background: 'var(--bg-app)', padding: '4px 8px', borderRadius: '4px', border: '1px solid var(--border-color)' }}>
+                                                                                <span style={{ fontSize: '0.8rem' }}>{item.name}</span>
+                                                                                <div className={styles.quantityControl} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                                                                    <button onClick={() => handleBoxItemChange(item.id, Math.max(0, qty - 1))} className="btn btn-secondary" style={{ padding: '2px 8px' }}>-</button>
+                                                                                    <span style={{ width: '20px', textAlign: 'center' }}>{qty}</span>
+                                                                                    <button onClick={() => handleBoxItemChange(item.id, qty + 1)} className="btn btn-secondary" style={{ padding: '2px 8px' }}>+</button>
+                                                                                </div>
                                                                             </div>
-                                                                        </div>
-                                                                    );
-                                                                })}
-                                                                {availableItems.length === 0 && <span style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)' }}>No items available.</span>}
+                                                                        );
+                                                                    })}
+                                                                </div>
                                                             </div>
-                                                        </div>
-                                                    );
-                                                })}
-                                            </div>
-                                        )}
+                                                        );
+                                                    })}
+
+                                                    {/* Show uncategorized items if any */}
+                                                    {(() => {
+                                                        const uncategorizedItems = menuItems.filter(i =>
+                                                            (i.vendorId === null || i.vendorId === '') &&
+                                                            i.isActive &&
+                                                            (!i.categoryId || i.categoryId === '')
+                                                        );
+
+                                                        if (uncategorizedItems.length === 0) return null;
+
+                                                        const selectedItems = orderConfig.items || {};
+
+                                                        return (
+                                                            <div style={{ marginBottom: '1rem', background: 'var(--bg-surface-hover)', padding: '0.75rem', borderRadius: '6px' }}>
+                                                                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem', fontSize: '0.85rem' }}>
+                                                                    <span style={{ fontWeight: 600 }}>Uncategorized</span>
+                                                                </div>
+
+                                                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
+                                                                    {uncategorizedItems.map(item => {
+                                                                        const qty = Number(selectedItems[item.id] || 0);
+                                                                        return (
+                                                                            <div key={item.id} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', background: 'var(--bg-app)', padding: '4px 8px', borderRadius: '4px', border: '1px solid var(--border-color)' }}>
+                                                                                <span style={{ fontSize: '0.8rem' }}>{item.name}</span>
+                                                                                <div className={styles.quantityControl} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                                                                    <button onClick={() => handleBoxItemChange(item.id, Math.max(0, qty - 1))} className="btn btn-secondary" style={{ padding: '2px 8px' }}>-</button>
+                                                                                    <span style={{ width: '20px', textAlign: 'center' }}>{qty}</span>
+                                                                                    <button onClick={() => handleBoxItemChange(item.id, qty + 1)} className="btn btn-secondary" style={{ padding: '2px 8px' }}>+</button>
+                                                                                </div>
+                                                                            </div>
+                                                                        );
+                                                                    })}
+                                                                </div>
+                                                            </div>
+                                                        );
+                                                    })()}
+                                                </>
+                                            )}
+                                        </div>
                                     </div>
                                 )}
                             </>
                         )}
                     </section>
 
-                    {/* Recent Orders Panel */}
-                    <section className={styles.card} style={{ marginTop: 'var(--spacing-lg)' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: 'var(--spacing-md)' }}>
-                            <Calendar size={18} />
-                            <h3 className={styles.sectionTitle} style={{ marginBottom: 0, borderBottom: 'none', paddingBottom: 0 }}>
-                                Recent Orders
-                            </h3>
-                        </div>
-                        {loadingOrderDetails ? (
-                            <div className={styles.loadingContainer}>
-                                <div className={styles.spinner}></div>
-                                <p className={styles.loadingText}>Loading order details...</p>
+                        {/* Recent Orders Panel */}
+                        <section className={styles.card} style={{ marginTop: 'var(--spacing-lg)' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: 'var(--spacing-md)' }}>
+                                <Calendar size={18} />
+                                <h3 className={styles.sectionTitle} style={{ marginBottom: 0, borderBottom: 'none', paddingBottom: 0 }}>
+                                    Recent Orders
+                                </h3>
                             </div>
-                        ) : activeOrder ? (
-                            <div>
-                                {(() => {
-                                    // Handle both single order (backward compatibility) and multiple orders
-                                    const isMultiple = activeOrder.multiple === true && Array.isArray(activeOrder.orders);
-                                    const ordersToDisplay = isMultiple ? activeOrder.orders : [activeOrder];
+                            {loadingOrderDetails ? (
+                                <div className={styles.loadingContainer}>
+                                    <div className={styles.spinner}></div>
+                                    <p className={styles.loadingText}>Loading order details...</p>
+                                </div>
+                            ) : activeOrder ? (
+                                <div>
+                                    {(() => {
+                                        // Handle both single order (backward compatibility) and multiple orders
+                                        const isMultiple = activeOrder.multiple === true && Array.isArray(activeOrder.orders);
+                                        const ordersToDisplay = isMultiple ? activeOrder.orders : [activeOrder];
 
-                                    return (
-                                        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--spacing-md)' }}>
-                                            {ordersToDisplay.map((order: any, orderIdx: number) => {
-                                                const isFood = order.serviceType === 'Food';
-                                                const isBoxes = order.serviceType === 'Boxes';
+                                        return (
+                                            <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--spacing-md)' }}>
+                                                {ordersToDisplay.map((order: any, orderIdx: number) => {
+                                                    const isFood = order.serviceType === 'Food';
+                                                    const isBoxes = order.serviceType === 'Boxes';
 
-                                                return (
-                                                    <div key={orderIdx} style={isMultiple ? {
-                                                        padding: 'var(--spacing-md)',
-                                                        backgroundColor: 'var(--bg-surface)',
-                                                        borderRadius: 'var(--radius-md)',
-                                                        border: '1px solid var(--border-color)'
-                                                    } : {}}>
-                                                        {isMultiple && (
+                                                    return (
+                                                        <div key={orderIdx} style={isMultiple ? {
+                                                            padding: 'var(--spacing-md)',
+                                                            backgroundColor: 'var(--bg-surface)',
+                                                            borderRadius: 'var(--radius-md)',
+                                                            border: '1px solid var(--border-color)'
+                                                        } : {}}>
                                                             <div style={{
                                                                 marginBottom: 'var(--spacing-md)',
                                                                 paddingBottom: 'var(--spacing-sm)',
                                                                 borderBottom: '1px solid var(--border-color)',
-                                                                fontSize: '0.9rem',
-                                                                fontWeight: 600,
-                                                                color: 'var(--text-secondary)'
+                                                                display: 'flex',
+                                                                justifyContent: 'space-between',
+                                                                alignItems: 'center',
+                                                                flexWrap: 'wrap',
+                                                                gap: '8px'
                                                             }}>
-                                                                Order {orderIdx + 1} of {ordersToDisplay.length}
-                                                                {order.scheduledDeliveryDate && (
-                                                                    <span style={{ marginLeft: 'var(--spacing-sm)', fontSize: '0.85rem', fontWeight: 400 }}>
-                                                                        • Scheduled: {new Date(order.scheduledDeliveryDate).toLocaleDateString()}
-                                                                    </span>
-                                                                )}
-                                                            </div>
-                                                        )}
-                                                        <div>
-                                                            {/* Service Type Header */}
-                                                            <div style={{ marginBottom: 'var(--spacing-sm)', fontSize: '0.9rem', fontWeight: 600, color: 'var(--text-primary)' }}>
-                                                                {isFood ? 'Food' : isBoxes ? 'Boxes' : 'Unknown Service'}
-                                                            </div>
-
-                                                            {/* Food Order Display - Show vendors first, then items grouped by vendor */}
-                                                            {isFood && (
-                                                                <div style={{ padding: 'var(--spacing-md)', backgroundColor: 'var(--bg-surface)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)' }}>
-                                                                    {order.vendorSelections && order.vendorSelections.length > 0 ? (
-                                                                        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--spacing-md)' }}>
-                                                                            {order.vendorSelections.map((vendorSelection: any, idx: number) => {
-                                                                                const vendor = vendors.find(v => v.id === vendorSelection.vendorId);
-                                                                                const vendorName = vendor?.name || 'Unassigned';
-                                                                                const nextDelivery = getNextDeliveryDate(vendorSelection.vendorId);
-                                                                                const items = vendorSelection.items || {};
-
-                                                                                return (
-                                                                                    <div key={idx} style={{ padding: 'var(--spacing-md)', backgroundColor: 'var(--bg-surface)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)' }}>
-                                                                                        {/* Vendor Header */}
-                                                                                        <div style={{ marginBottom: 'var(--spacing-sm)', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                                                                                            {vendorName}
-                                                                                        </div>
-                                                                                        {/* Items List */}
-                                                                                        {Object.keys(items).length > 0 ? (
-                                                                                            <div style={{ fontSize: '0.85rem', color: 'var(--text-primary)' }}>
-                                                                                                {Object.entries(items).map(([itemId, qty]: [string, any]) => {
-                                                                                                    const item = menuItems.find(i => i.id === itemId);
-                                                                                                    return item ? (
-                                                                                                        <div key={itemId} style={{ marginBottom: '4px' }}>
-                                                                                                            {item.name} × {qty}
-                                                                                                        </div>
-                                                                                                    ) : null;
-                                                                                                })}
-                                                                                            </div>
-                                                                                        ) : (
-                                                                                            <div style={{ fontSize: '0.85rem', color: 'var(--text-tertiary)', fontStyle: 'italic' }}>
-                                                                                                No items selected
-                                                                                            </div>
-                                                                                        )}
-                                                                                        {nextDelivery && (
-                                                                                            <div style={{ marginTop: 'var(--spacing-sm)', fontSize: '0.8rem', color: 'var(--text-secondary)', fontWeight: 500 }}>
-                                                                                                Next delivery: {nextDelivery.dayOfWeek}, {nextDelivery.date}
-                                                                                            </div>
-                                                                                        )}
-                                                                                    </div>
-                                                                                );
-                                                                            })}
-                                                                        </div>
-                                                                    ) : (
-                                                                        <div style={{ fontSize: '0.85rem', color: 'var(--text-tertiary)', fontStyle: 'italic' }}>
-                                                                            No vendors or items selected
-                                                                        </div>
+                                                                <div style={{
+                                                                    fontSize: '0.9rem',
+                                                                    fontWeight: 600,
+                                                                    color: 'var(--text-secondary)'
+                                                                }}>
+                                                                    {order.orderNumber ? `Order #${order.orderNumber}` : `Order ${orderIdx + 1}`}
+                                                                    {isMultiple && !order.orderNumber && ` of ${ordersToDisplay.length}`}
+                                                                    {order.scheduledDeliveryDate && (
+                                                                        <span style={{ marginLeft: 'var(--spacing-sm)', fontSize: '0.85rem', fontWeight: 400 }}>
+                                                                            • Scheduled: {new Date(order.scheduledDeliveryDate).toLocaleDateString()}
+                                                                        </span>
                                                                     )}
                                                                 </div>
-                                                            )}
 
-                                                            {/* Boxes Order Display - Show vendor, box type, and all items */}
-                                                            {isBoxes && order.boxTypeId && (
-                                                                <div style={{ padding: 'var(--spacing-md)', backgroundColor: 'var(--bg-surface)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)' }}>
-                                                                    {(() => {
-                                                                        const box = boxTypes.find(b => b.id === order.boxTypeId);
-                                                                        // Get vendorId from order first, then fall back to box.vendorId
-                                                                        const boxVendorId = order.vendorId || box?.vendorId || null;
-                                                                        const vendor = boxVendorId ? vendors.find(v => v.id === boxVendorId) : null;
-                                                                        const vendorName = vendor?.name || 'Unassigned';
-                                                                        const boxName = box?.name || 'Unknown Box';
-                                                                        const nextDelivery = boxVendorId ? getNextDeliveryDate(boxVendorId) : null;
-                                                                        const items = order.items || {};
-
-                                                                        return (
-                                                                            <>
-                                                                                {/* Vendor */}
-                                                                                <div style={{ marginBottom: 'var(--spacing-sm)', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                                                                                    {vendorName}
-                                                                                </div>
-                                                                                {/* Box Type and Quantity */}
-                                                                                <div style={{ marginBottom: 'var(--spacing-sm)', fontSize: '0.85rem', color: 'var(--text-primary)' }}>
-                                                                                    {boxName} × {order.boxQuantity || 1}
-                                                                                </div>
-                                                                                {/* Items List */}
-                                                                                {Object.keys(items).length > 0 ? (
-                                                                                    <div style={{ fontSize: '0.85rem', color: 'var(--text-primary)' }}>
-                                                                                        {Object.entries(items).map(([itemId, qty]: [string, any]) => {
-                                                                                            const item = menuItems.find(i => i.id === itemId);
-                                                                                            return item ? (
-                                                                                                <div key={itemId} style={{ marginBottom: '4px' }}>
-                                                                                                    {item.name} × {qty}
-                                                                                                </div>
-                                                                                            ) : null;
-                                                                                        })}
-                                                                                    </div>
-                                                                                ) : (
-                                                                                    <div style={{ fontSize: '0.85rem', color: 'var(--text-tertiary)', fontStyle: 'italic' }}>
-                                                                                        No items selected
-                                                                                    </div>
-                                                                                )}
-                                                                                {nextDelivery && (
-                                                                                    <div style={{ marginTop: 'var(--spacing-sm)', fontSize: '0.8rem', color: 'var(--text-secondary)', fontWeight: 500 }}>
-                                                                                        Next delivery: {nextDelivery.dayOfWeek}, {nextDelivery.date}
-                                                                                    </div>
-                                                                                )}
-                                                                            </>
-                                                                        );
-                                                                    })()}
+                                                                {/* Proof of Delivery / Status */}
+                                                                <div style={{ fontSize: '0.85rem' }}>
+                                                                    {order.proofOfDelivery ? (
+                                                                        <a
+                                                                            href={order.proofOfDelivery}
+                                                                            target="_blank"
+                                                                            rel="noopener noreferrer"
+                                                                            style={{
+                                                                                display: 'flex',
+                                                                                alignItems: 'center',
+                                                                                gap: '4px',
+                                                                                color: 'var(--color-primary)',
+                                                                                fontWeight: 500,
+                                                                                textDecoration: 'none'
+                                                                            }}
+                                                                        >
+                                                                            View Proof of Delivery
+                                                                        </a>
+                                                                    ) : (
+                                                                        <span style={{
+                                                                            color: 'var(--text-tertiary)',
+                                                                            fontStyle: 'italic',
+                                                                            display: 'flex',
+                                                                            alignItems: 'center',
+                                                                            gap: '4px'
+                                                                        }}>
+                                                                            Not yet delivered
+                                                                        </span>
+                                                                    )}
                                                                 </div>
-                                                            )}
+                                                            </div>
+                                                            <div>
+                                                                {/* Service Type Header */}
+                                                                <div style={{ marginBottom: 'var(--spacing-sm)', fontSize: '0.9rem', fontWeight: 600, color: 'var(--text-primary)' }}>
+                                                                    {isFood ? 'Food' : isBoxes ? 'Boxes' : 'Unknown Service'}
+                                                                </div>
+
+                                                                {/* Food Order Display - Show vendors first, then items grouped by vendor */}
+                                                                {isFood && (
+                                                                    <div style={{ padding: 'var(--spacing-md)', backgroundColor: 'var(--bg-surface)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)' }}>
+                                                                        {order.vendorSelections && order.vendorSelections.length > 0 ? (
+                                                                            <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--spacing-md)' }}>
+                                                                                {order.vendorSelections.map((vendorSelection: any, idx: number) => {
+                                                                                    const vendor = vendors.find(v => v.id === vendorSelection.vendorId);
+                                                                                    const vendorName = vendor?.name || 'Unassigned';
+                                                                                    const nextDelivery = getNextDeliveryDate(vendorSelection.vendorId);
+                                                                                    const items = vendorSelection.items || {};
+
+                                                                                    return (
+                                                                                        <div key={idx} style={{ padding: 'var(--spacing-md)', backgroundColor: 'var(--bg-surface)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)' }}>
+                                                                                            {/* Vendor Header */}
+                                                                                            <div style={{ marginBottom: 'var(--spacing-sm)', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                                                                                                {vendorName}
+                                                                                            </div>
+                                                                                            {/* Items List */}
+                                                                                            {Object.keys(items).length > 0 ? (
+                                                                                                <div style={{ fontSize: '0.85rem', color: 'var(--text-primary)' }}>
+                                                                                                    {Object.entries(items).map(([itemId, qty]: [string, any]) => {
+                                                                                                        const item = menuItems.find(i => i.id === itemId);
+                                                                                                        return item ? (
+                                                                                                            <div key={itemId} style={{ marginBottom: '4px' }}>
+                                                                                                                {item.name} × {qty}
+                                                                                                            </div>
+                                                                                                        ) : null;
+                                                                                                    })}
+                                                                                                </div>
+                                                                                            ) : (
+                                                                                                <div style={{ fontSize: '0.85rem', color: 'var(--text-tertiary)', fontStyle: 'italic' }}>
+                                                                                                    No items selected
+                                                                                                </div>
+                                                                                            )}
+                                                                                            {nextDelivery && (
+                                                                                                <div style={{ marginTop: 'var(--spacing-sm)', fontSize: '0.8rem', color: 'var(--text-secondary)', fontWeight: 500 }}>
+                                                                                                    Next delivery: {nextDelivery.dayOfWeek}, {nextDelivery.date}
+                                                                                                </div>
+                                                                                            )}
+                                                                                        </div>
+                                                                                    );
+                                                                                })}
+                                                                            </div>
+                                                                        ) : (
+                                                                            <div style={{ fontSize: '0.85rem', color: 'var(--text-tertiary)', fontStyle: 'italic' }}>
+                                                                                No vendors or items selected
+                                                                            </div>
+                                                                        )}
+                                                                    </div>
+                                                                )}
+
+                                                                {/* Boxes Order Display - Show vendor, box type, and all items */}
+                                                                {isBoxes && order.boxTypeId && (
+                                                                    <div style={{ padding: 'var(--spacing-md)', backgroundColor: 'var(--bg-surface)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)' }}>
+                                                                        {(() => {
+                                                                            const box = boxTypes.find(b => b.id === order.boxTypeId);
+                                                                            // Get vendorId from order first, then fall back to box.vendorId
+                                                                            const boxVendorId = order.vendorId || box?.vendorId || null;
+                                                                            const vendor = boxVendorId ? vendors.find(v => v.id === boxVendorId) : null;
+                                                                            const vendorName = vendor?.name || 'Unassigned';
+                                                                            const boxName = box?.name || 'Unknown Box';
+                                                                            const nextDelivery = boxVendorId ? getNextDeliveryDate(boxVendorId) : null;
+                                                                            const items = order.items || {};
+
+                                                                            return (
+                                                                                <>
+                                                                                    {/* Vendor */}
+                                                                                    <div style={{ marginBottom: 'var(--spacing-sm)', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                                                                                        {vendorName}
+                                                                                    </div>
+                                                                                    {/* Box Type and Quantity */}
+                                                                                    <div style={{ marginBottom: 'var(--spacing-sm)', fontSize: '0.85rem', color: 'var(--text-primary)' }}>
+                                                                                        {boxName} × {order.boxQuantity || 1}
+                                                                                    </div>
+                                                                                    {/* Items List */}
+                                                                                    {Object.keys(items).length > 0 ? (
+                                                                                        <div style={{ fontSize: '0.85rem', color: 'var(--text-primary)' }}>
+                                                                                            {Object.entries(items).map(([itemId, qty]: [string, any]) => {
+                                                                                                const item = menuItems.find(i => i.id === itemId);
+                                                                                                return item ? (
+                                                                                                    <div key={itemId} style={{ marginBottom: '4px' }}>
+                                                                                                        {item.name} × {qty}
+                                                                                                    </div>
+                                                                                                ) : null;
+                                                                                            })}
+                                                                                        </div>
+                                                                                    ) : (
+                                                                                        <div style={{ fontSize: '0.85rem', color: 'var(--text-tertiary)', fontStyle: 'italic' }}>
+                                                                                            No items selected
+                                                                                        </div>
+                                                                                    )}
+                                                                                    {nextDelivery && (
+                                                                                        <div style={{ marginTop: 'var(--spacing-sm)', fontSize: '0.8rem', color: 'var(--text-secondary)', fontWeight: 500 }}>
+                                                                                            Next delivery: {nextDelivery.dayOfWeek}, {nextDelivery.date}
+                                                                                        </div>
+                                                                                    )}
+                                                                                </>
+                                                                            );
+                                                                        })()}
+                                                                    </div>
+                                                                )}
+                                                            </div>
                                                         </div>
-                                                    </div>
-                                                );
-                                            })}
-                                        </div>
-                                    );
-                                })()}
-                            </div>
-                        ) : (
-                            <div className={styles.empty}>
-                                No recent orders.
-                            </div>
-                        )}
-                    </section>
+                                                    );
+                                                })}
+                                            </div>
+                                        );
+                                    })()}
+                                </div>
+                            ) : (
+                                <div className={styles.empty}>
+                                    No recent orders.
+                                </div>
+                            )}
+                        </section>
                 </div >
             </div >
             {
@@ -2695,22 +2900,22 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
         // Validate approvedMealsPerWeek min/max bounds
         // Allow 0/undefined (can be under min), but if > 0, must be within min/max bounds
         const approvedMeals = formData.approvedMealsPerWeek ?? 0;
-        
+
         // If value is > 0, validate it's within bounds (0 is always allowed)
         if (approvedMeals > 0) {
             if (approvedMeals < MIN_APPROVED_MEALS_PER_WEEK) {
-                setValidationError({ 
-                    show: true, 
-                    messages: [`Approved meals per week (${approvedMeals}) must be at least ${MIN_APPROVED_MEALS_PER_WEEK}.`] 
+                setValidationError({
+                    show: true,
+                    messages: [`Approved meals per week (${approvedMeals}) must be at least ${MIN_APPROVED_MEALS_PER_WEEK}.`]
                 });
                 console.timeEnd('handleSave:pre-check');
                 console.timeEnd('handleSave:total');
                 return false;
             }
             if (approvedMeals > MAX_APPROVED_MEALS_PER_WEEK) {
-                setValidationError({ 
-                    show: true, 
-                    messages: [`Approved meals per week (${approvedMeals}) must be at most ${MAX_APPROVED_MEALS_PER_WEEK}.`] 
+                setValidationError({
+                    show: true,
+                    messages: [`Approved meals per week (${approvedMeals}) must be at most ${MAX_APPROVED_MEALS_PER_WEEK}.`]
                 });
                 console.timeEnd('handleSave:pre-check');
                 console.timeEnd('handleSave:total');

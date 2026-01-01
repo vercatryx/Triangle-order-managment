@@ -118,7 +118,7 @@ export async function triggerSyncInBackground(): Promise<void> {
 export async function syncLocalDBFromSupabase(): Promise<void> {
     try {
         console.log('Starting local DB sync from Supabase...');
-        
+
         // Fetch all orders with status pending, confirmed, or processing
         const { data: orders, error: ordersError } = await supabase
             .from('orders')
@@ -241,7 +241,7 @@ export async function getActiveOrderForClientLocal(clientId: string) {
         if (await needsSync()) {
             triggerSyncInBackground();
         }
-        
+
         const db = await readLocalDB();
 
         // Calculate current week range (Sunday to Saturday)
@@ -262,7 +262,7 @@ export async function getActiveOrderForClientLocal(clientId: string) {
 
         // Try to get all orders with scheduled_delivery_date in current week
         // Now supports multiple orders per client (one per delivery day)
-        let orders = db.orders.filter(o => 
+        let orders = db.orders.filter(o =>
             o.client_id === clientId &&
             ['pending', 'confirmed', 'processing'].includes(o.status) &&
             o.scheduled_delivery_date >= startOfWeekStr &&
@@ -278,18 +278,18 @@ export async function getActiveOrderForClientLocal(clientId: string) {
                 const createdAt = new Date(o.created_at);
                 const lastUpdated = new Date(o.last_updated);
                 return (createdAt >= startOfWeek && createdAt <= endOfWeek) ||
-                       (lastUpdated >= startOfWeek && lastUpdated <= endOfWeek);
+                    (lastUpdated >= startOfWeek && lastUpdated <= endOfWeek);
             });
         }
 
         // If no orders found in orders table, check upcoming_orders as fallback
         // This handles cases where orders haven't been processed yet
         if (orders.length === 0) {
-            const upcomingOrders = db.upcomingOrders.filter(o => 
+            const upcomingOrders = db.upcomingOrders.filter(o =>
                 o.client_id === clientId &&
                 o.status === 'scheduled'
             );
-            
+
             if (upcomingOrders.length > 0) {
                 // Convert upcoming orders to order format for display
                 orders = upcomingOrders.map((uo: any) => ({
@@ -311,11 +311,11 @@ export async function getActiveOrderForClientLocal(clientId: string) {
                 }));
             }
         }
-        
+
         if (orders.length === 0) {
             return null;
         }
-        
+
         // Sort by created_at descending
         orders.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
 
@@ -351,7 +351,7 @@ export async function getActiveOrderForClientLocal(clientId: string) {
 
             if (order.service_type === 'Food') {
                 // Get vendor selections for this order
-                
+
                 if (vendorSelections.length > 0) {
                     orderConfig.vendorSelections = [];
                     for (const vs of vendorSelections) {
@@ -403,17 +403,17 @@ export async function getActiveOrderForClientLocal(clientId: string) {
                     }
                 }
             }
-            
+
             return orderConfig;
         };
 
         const processedOrders = orders.map(processOrder);
-        
+
         // If only one order, return it in the old format for backward compatibility
         if (processedOrders.length === 1) {
             return processedOrders[0];
         }
-        
+
         // If multiple orders, return them as an object with multiple flag
         return {
             multiple: true,
@@ -434,7 +434,7 @@ export async function getUpcomingOrderForClientLocal(clientId: string) {
         if (await needsSync()) {
             triggerSyncInBackground();
         }
-        
+
         const db = await readLocalDB();
 
         // Get all scheduled upcoming orders for this client
@@ -488,6 +488,8 @@ export async function getUpcomingOrderForClientLocal(clientId: string) {
             } else if (data.service_type === 'Boxes') {
                 const boxSelection = db.upcomingOrderBoxSelections.find(bs => bs.upcoming_order_id === data.id);
                 if (boxSelection) {
+
+
                     orderConfig.vendorId = boxSelection.vendor_id;
                     orderConfig.boxTypeId = boxSelection.box_type_id;
                     orderConfig.boxQuantity = boxSelection.quantity;
@@ -519,7 +521,7 @@ export async function getUpcomingOrderForClientLocal(clientId: string) {
 
         for (const data of upcomingOrders) {
             const deliveryDay = data.delivery_day || 'default';
-            
+
             const orderConfig: any = {
                 id: data.id,
                 serviceType: data.service_type,

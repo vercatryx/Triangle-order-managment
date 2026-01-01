@@ -64,6 +64,7 @@ export interface OrderConfiguration {
 
   // Display Helpers
   orderNumber?: number;
+  proofOfDelivery?: string;
 }
 
 export interface DeliveryRecord {
@@ -104,6 +105,7 @@ export interface Vendor {
 export interface ItemCategory {
   id: string;
   name: string;
+  setValue?: number | null; // Required quota value for this category (enforces exact amount)
 }
 
 export interface MenuItem {

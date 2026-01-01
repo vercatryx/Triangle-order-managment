@@ -188,6 +188,31 @@ async function precheckAndTransferUpcomingOrders() {
                             }
                         }
 
+                        // Calculate scheduled_delivery_date from delivery_day if available
+                        let scheduledDeliveryDate: string | null = null;
+                        if (upcomingOrder.delivery_day) {
+                            // Import the function if needed, or calculate inline
+                            const deliveryDay = upcomingOrder.delivery_day;
+                            const today = new Date();
+                            today.setHours(0, 0, 0, 0);
+                            const dayNameToNumber: { [key: string]: number } = {
+                                'Sunday': 0, 'Monday': 1, 'Tuesday': 2, 'Wednesday': 3,
+                                'Thursday': 4, 'Friday': 5, 'Saturday': 6
+                            };
+                            const targetDayNumber = dayNameToNumber[deliveryDay];
+                            if (targetDayNumber !== undefined) {
+                                // Find next occurrence of this day
+                                for (let i = 1; i <= 7; i++) {
+                                    const checkDate = new Date(today);
+                                    checkDate.setDate(today.getDate() + i);
+                                    if (checkDate.getDay() === targetDayNumber) {
+                                        scheduledDeliveryDate = checkDate.toISOString().split('T')[0];
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+
                         // Create order in orders table
                         const orderData: any = {
                             client_id: upcomingOrder.client_id,
@@ -196,8 +221,8 @@ async function precheckAndTransferUpcomingOrders() {
                             status: 'pending',
                             last_updated: new Date().toISOString(),
                             updated_by: upcomingOrder.updated_by,
-                            scheduled_delivery_date: upcomingOrder.scheduled_delivery_date,
-                            delivery_distribution: upcomingOrder.delivery_distribution,
+                            scheduled_delivery_date: scheduledDeliveryDate,
+                            delivery_distribution: null, // Can be set later if needed
                             total_value: upcomingOrder.total_value,
                             total_items: upcomingOrder.total_items,
                             notes: upcomingOrder.notes || null
@@ -267,9 +292,12 @@ async function precheckAndTransferUpcomingOrders() {
                                 for (const bs of boxSelections) {
                                     await supabase.from('order_box_selections').insert({
                                         order_id: newOrder.id,
-                                        box_type_id: bs.box_type_id,
                                         vendor_id: bs.vendor_id,
-                                        quantity: bs.quantity
+                                        box_type_id: bs.box_type_id || null,
+                                        quantity: bs.quantity,
+                                        unit_value: bs.unit_value || 0,
+                                        total_value: bs.total_value || 0,
+                                        items: bs.items || {}
                                     });
                                 }
                             }
@@ -482,6 +510,32 @@ export async function GET(request: NextRequest) {
                 }
 
                 // Fetch order details based on service type
+                // Calculate scheduled_delivery_date from delivery_day if order is from upcoming_orders
+                let scheduledDeliveryDate: string | null = null;
+                if (isFromUpcomingOrders && (order as any).delivery_day) {
+                    const deliveryDay = (order as any).delivery_day;
+                    const today = new Date();
+                    today.setHours(0, 0, 0, 0);
+                    const dayNameToNumber: { [key: string]: number } = {
+                        'Sunday': 0, 'Monday': 1, 'Tuesday': 2, 'Wednesday': 3,
+                        'Thursday': 4, 'Friday': 5, 'Saturday': 6
+                    };
+                    const targetDayNumber = dayNameToNumber[deliveryDay];
+                    if (targetDayNumber !== undefined) {
+                        // Find next occurrence of this day
+                        for (let i = 1; i <= 7; i++) {
+                            const checkDate = new Date(today);
+                            checkDate.setDate(today.getDate() + i);
+                            if (checkDate.getDay() === targetDayNumber) {
+                                scheduledDeliveryDate = checkDate.toISOString().split('T')[0];
+                                break;
+                            }
+                        }
+                    }
+                } else if (!isFromUpcomingOrders) {
+                    scheduledDeliveryDate = (order as any).scheduled_delivery_date || null;
+                }
+
                 let orderSummary: any = {
                     orderId: order.id,
                     clientId: order.client_id,
@@ -489,9 +543,9 @@ export async function GET(request: NextRequest) {
                     serviceType: order.service_type,
                     status: order.status,
                     caseId: order.case_id || null,
-                    scheduledDeliveryDate: order.scheduled_delivery_date,
-                    actualDeliveryDate: order.actual_delivery_date || null, // May not exist in upcoming_orders
-                    deliveryDistribution: order.delivery_distribution || {},
+                    scheduledDeliveryDate: scheduledDeliveryDate,
+                    actualDeliveryDate: (order as any).actual_delivery_date || null, // May not exist in upcoming_orders
+                    deliveryDistribution: (!isFromUpcomingOrders ? (order as any).delivery_distribution : null) || {},
                     totalValue: parseFloat(order.total_value?.toString() || '0'),
                     totalItems: parseInt(order.total_items?.toString() || '0'),
                     notes: order.notes || null,
@@ -565,14 +619,11 @@ export async function GET(request: NextRequest) {
 
                     if (boxSelections && boxSelections.length > 0) {
                         for (const bs of boxSelections) {
-                            const boxType = boxTypes.find(b => b.id === bs.box_type_id);
                             const vendor = vendors.find(v => v.id === bs.vendor_id);
 
                             orderSummary.vendorDetails.push({
                                 vendorId: bs.vendor_id || null,
                                 vendorName: vendor?.name || 'Unknown Vendor',
-                                boxTypeId: bs.box_type_id,
-                                boxTypeName: boxType?.name || 'Unknown Box Type',
                                 quantity: bs.quantity
                             });
                         }
@@ -584,6 +635,30 @@ export async function GET(request: NextRequest) {
                 // If processing from upcoming_orders, copy to orders table (don't transfer)
                 if (isFromUpcomingOrders) {
                     try {
+                        // Calculate scheduled_delivery_date from delivery_day if available
+                        let scheduledDeliveryDate: string | null = null;
+                        if ((order as any).delivery_day) {
+                            const deliveryDay = (order as any).delivery_day;
+                            const today = new Date();
+                            today.setHours(0, 0, 0, 0);
+                            const dayNameToNumber: { [key: string]: number } = {
+                                'Sunday': 0, 'Monday': 1, 'Tuesday': 2, 'Wednesday': 3,
+                                'Thursday': 4, 'Friday': 5, 'Saturday': 6
+                            };
+                            const targetDayNumber = dayNameToNumber[deliveryDay];
+                            if (targetDayNumber !== undefined) {
+                                // Find next occurrence of this day
+                                for (let i = 1; i <= 7; i++) {
+                                    const checkDate = new Date(today);
+                                    checkDate.setDate(today.getDate() + i);
+                                    if (checkDate.getDay() === targetDayNumber) {
+                                        scheduledDeliveryDate = checkDate.toISOString().split('T')[0];
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+
                         // Create order in orders table (copy, not transfer)
                         const orderData: any = {
                             client_id: order.client_id,
@@ -592,8 +667,8 @@ export async function GET(request: NextRequest) {
                             status: 'pending',
                             last_updated: new Date().toISOString(),
                             updated_by: order.updated_by,
-                            scheduled_delivery_date: order.scheduled_delivery_date,
-                            delivery_distribution: order.delivery_distribution,
+                            scheduled_delivery_date: scheduledDeliveryDate,
+                            delivery_distribution: null, // Can be set later if needed
                             total_value: order.total_value,
                             total_items: order.total_items,
                             notes: order.notes || null
@@ -688,11 +763,11 @@ export async function GET(request: NextRequest) {
                                     for (const bs of boxSelections) {
                                         const { error: bsError } = await supabase.from('order_box_selections').insert({
                                             order_id: newOrder.id,
-                                            box_type_id: bs.box_type_id,
                                             vendor_id: bs.vendor_id,
                                             quantity: bs.quantity,
                                             unit_value: bs.unit_value || 0,
-                                            total_value: bs.total_value || 0
+                                            total_value: bs.total_value || 0,
+                                            items: bs.items || {}
                                         });
 
                                         if (bsError) {
@@ -816,13 +891,16 @@ export async function GET(request: NextRequest) {
                                 status: 'scheduled',
                                 last_updated: new Date().toISOString(),
                                 updated_by: order.updated_by || 'System',
-                                scheduled_delivery_date: scheduledDeliveryDate.toISOString().split('T')[0],
                                 take_effect_date: takeEffectDate.toISOString().split('T')[0],
-                                delivery_distribution: order.delivery_distribution || null,
                                 total_value: vendorDetail.totalValue || 0,
                                 total_items: vendorDetail.totalQuantity || 0,
                                 notes: order.notes || null
                             };
+
+                            // Add delivery_day if we can determine it from the vendor
+                            if (vendor && vendor.deliveryDays && vendor.deliveryDays.length > 0) {
+                                upcomingOrderData.delivery_day = vendor.deliveryDays[0]; // Use first delivery day
+                            }
 
                             const { data: newUpcomingOrder, error: upcomingOrderError } = await supabase
                                 .from('upcoming_orders')
@@ -905,13 +983,16 @@ export async function GET(request: NextRequest) {
                                 status: 'scheduled',
                                 last_updated: new Date().toISOString(),
                                 updated_by: order.updated_by || 'System',
-                                scheduled_delivery_date: scheduledDeliveryDate.toISOString().split('T')[0],
                                 take_effect_date: takeEffectDate.toISOString().split('T')[0],
-                                delivery_distribution: order.delivery_distribution || null,
                                 total_value: totalValue,
                                 total_items: boxQuantity,
                                 notes: order.notes || null
                             };
+
+                            // Add delivery_day if we can determine it from the vendor
+                            if (vendorDetail.deliveryDays && vendorDetail.deliveryDays.length > 0) {
+                                upcomingOrderData.delivery_day = vendorDetail.deliveryDays[0]; // Use first delivery day
+                            }
 
                             const { data: newUpcomingOrder, error: upcomingOrderError } = await supabase
                                 .from('upcoming_orders')
@@ -925,13 +1006,16 @@ export async function GET(request: NextRequest) {
                             }
 
                             // Create box selection for this upcoming order
+                            // Note: items should be copied from the original order's box selection if available
                             const { error: bsError } = await supabase
                                 .from('upcoming_order_box_selections')
                                 .insert({
                                     upcoming_order_id: newUpcomingOrder.id,
-                                    box_type_id: vendorDetail.boxTypeId,
                                     vendor_id: vendorId,
-                                    quantity: boxQuantity
+                                    quantity: boxQuantity,
+                                    unit_value: 0,
+                                    total_value: 0,
+                                    items: {} // Items should be copied from original order if needed
                                 });
 
                             if (bsError) {

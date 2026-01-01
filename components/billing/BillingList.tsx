@@ -80,6 +80,12 @@ export function BillingList() {
                         >
                             Billing
                         </button>
+                        <button
+                            className={styles.viewBtn}
+                            onClick={() => router.push('/orders')}
+                        >
+                            Orders
+                        </button>
                     </div>
                     <button className="btn btn-secondary">
                         <Download size={16} /> Export CSV

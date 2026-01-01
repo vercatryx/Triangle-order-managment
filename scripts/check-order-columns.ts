@@ -7,7 +7,7 @@ import path from 'path';
 // Load env
 const envPath = path.resolve(process.cwd(), '.env.local');
 const envFile = fs.readFileSync(envPath, 'utf8');
-const envConfig = {};
+const envConfig: Record<string, string> = {};
 envFile.split('\n').forEach(line => {
     const [key, ...values] = line.split('=');
     if (key && values) {

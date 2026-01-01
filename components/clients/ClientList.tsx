@@ -6,7 +6,7 @@ import { useState, useEffect, useRef } from 'react';
 import { ClientProfile, ClientStatus, Navigator, Vendor, BoxType, ClientFullDetails, MenuItem } from '@/lib/types';
 import { getClientsPaginated, getClientFullDetails, getStatuses, getNavigators, addClient, getVendors, getBoxTypes, getMenuItems } from '@/lib/actions';
 import { invalidateClientData } from '@/lib/cached-data';
-import { Plus, Search, ChevronRight, CheckSquare, Square, StickyNote, Package, ArrowUpDown, ArrowUp, ArrowDown, Filter, Eye, EyeOff, Loader2 } from 'lucide-react';
+import { Plus, Search, ChevronRight, CheckSquare, Square, StickyNote, Package, ArrowUpDown, ArrowUp, ArrowDown, Filter, Eye, EyeOff, Loader2, AlertCircle } from 'lucide-react';
 import styles from './ClientList.module.css';
 import { useRouter } from 'next/navigation';
 
@@ -48,6 +48,7 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
     const [navigatorFilter, setNavigatorFilter] = useState<string | null>(null);
     const [screeningFilter, setScreeningFilter] = useState<string | null>(null);
     const [serviceTypeFilter, setServiceTypeFilter] = useState<string | null>(null);
+    const [needsVendorFilter, setNeedsVendorFilter] = useState<boolean>(false);
     const [openFilterMenu, setOpenFilterMenu] = useState<string | null>(null);
 
     // New Client Modal state
@@ -64,6 +65,13 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
         loadInitialData();
     }, []);
 
+    // Reload data when view changes
+    useEffect(() => {
+        if (!isLoading) {
+            loadInitialData();
+        }
+    }, [currentView]);
+
     // Progressive Loading Effect
     useEffect(() => {
         if (!isLoading && clients.length < totalClients && !isFetchingMore) {
@@ -71,7 +79,7 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
             const nextPage = page + 1;
             fetchMoreClients(nextPage);
         }
-    }, [clients.length, totalClients, isLoading, isFetchingMore, page]);
+    }, [clients.length, totalClients, isLoading, isFetchingMore, page, currentView]);
 
     // Background Prefetching Effect
     useEffect(() => {
@@ -113,7 +121,7 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
                 getVendors(),
                 getBoxTypes(),
                 getMenuItems(),
-                getClientsPaginated(1, PAGE_SIZE)
+                getClientsPaginated(1, PAGE_SIZE, '')
             ]);
 
             setStatuses(sData);
@@ -136,7 +144,7 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
         try {
             // Invalidate cache to ensure fresh data
             invalidateClientData();
-            
+
             // Fetch fresh data
             const [sData, nData, vData, bData, mData, cRes] = await Promise.all([
                 getStatuses(),
@@ -144,7 +152,7 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
                 getVendors(),
                 getBoxTypes(),
                 getMenuItems(),
-                getClientsPaginated(1, PAGE_SIZE)
+                getClientsPaginated(1, PAGE_SIZE, '')
             ]);
 
             // Update all data
@@ -166,7 +174,7 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
     async function fetchMoreClients(nextPage: number) {
         setIsFetchingMore(true);
         try {
-            const res = await getClientsPaginated(nextPage, PAGE_SIZE);
+            const res = await getClientsPaginated(nextPage, PAGE_SIZE, '');
             setClients(prev => {
                 // Deduplicate just in case
                 const existingIds = new Set(prev.map(c => c.id));
@@ -227,8 +235,35 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
         // Filter by Service Type (Active Order)
         const matchesServiceTypeFilter = !serviceTypeFilter || c.serviceType === serviceTypeFilter;
 
-        return matchesSearch && matchesView && matchesStatusFilter && matchesNavigatorFilter && matchesScreeningFilter && matchesServiceTypeFilter;
+        // Filter by Needs Vendor (for Boxes clients without vendor)
+        let matchesNeedsVendorFilter = true;
+        if (needsVendorFilter) {
+            if (c.serviceType !== 'Boxes') {
+                matchesNeedsVendorFilter = false;
+            } else {
+                // Check if client has vendor set in their active order (same logic as getOrderSummary)
+                if (c.activeOrder && c.activeOrder.serviceType === 'Boxes') {
+                    const box = boxTypes.find(b => b.id === c.activeOrder?.boxTypeId);
+                    const vendorId = c.activeOrder.vendorId || box?.vendorId;
+                    // If vendor is set, exclude from needs-vendor filter
+                    matchesNeedsVendorFilter = !vendorId;
+                } else {
+                    // If no active order or not Boxes, they need vendor assignment
+                    matchesNeedsVendorFilter = true;
+                }
+            }
+        }
+
+        return matchesSearch && matchesView && matchesStatusFilter && matchesNavigatorFilter && matchesScreeningFilter && matchesServiceTypeFilter && matchesNeedsVendorFilter;
     }).sort((a, b) => {
+        // Always sort clients needing vendor assignment to the top
+        const aNeedsVendor = a.serviceType === 'Boxes' && (!a.activeOrder || (a.activeOrder.serviceType === 'Boxes' && !a.activeOrder.vendorId && !boxTypes.find(bt => bt.id === a.activeOrder?.boxTypeId)?.vendorId));
+        const bNeedsVendor = b.serviceType === 'Boxes' && (!b.activeOrder || (b.activeOrder.serviceType === 'Boxes' && !b.activeOrder.vendorId && !boxTypes.find(bt => bt.id === b.activeOrder?.boxTypeId)?.vendorId));
+        
+        if (aNeedsVendor !== bNeedsVendor) {
+            return aNeedsVendor ? -1 : 1; // Clients needing vendor come first
+        }
+
         if (!sortColumn) return 0;
 
         let comparison = 0;
@@ -370,8 +405,19 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
             if (!vendorsSummary) return '';
             content = `: ${vendorsSummary} [Max ${limit}]`;
         } else if (st === 'Boxes') {
+            // Check vendorId from order config first, then fall back to boxType
             const box = boxTypes.find(b => b.id === conf.boxTypeId);
-            const vendorName = vendors.find(v => v.id === box?.vendorId)?.name || '-';
+            const vendorId = conf.vendorId || box?.vendorId;
+            const vendorName = vendors.find(v => v.id === vendorId)?.name || '-';
+
+            console.log('[ClientList.getOrderSummaryText] Box order display:', {
+                clientId: client.id,
+                confVendorId: conf.vendorId,
+                boxTypeId: conf.boxTypeId,
+                boxVendorId: box?.vendorId,
+                resolvedVendorId: vendorId,
+                vendorName
+            });
 
             const itemDetails = Object.entries(conf.items || {}).map(([id, qty]) => {
                 const item = menuItems.find(i => i.id === id);
@@ -419,8 +465,44 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
                     vendorSummary = Array.from(uniqueVendors).join(', ');
                 }
             } else if (st === 'Boxes') {
+                // Check vendorId from order config first, then fall back to boxType
+                // Also handle multi-day format fallthrough (where data is nested under delivery day)
+                let computedVendorId = conf.vendorId;
+
+                if (!computedVendorId && !conf.boxTypeId && typeof conf === 'object') {
+                    // Check if it's nested (e.g. { "Thursday": { vendorId: ... } })
+                    const possibleDayKeys = Object.keys(conf).filter(k =>
+                        k !== 'id' && k !== 'serviceType' && k !== 'caseId' && typeof (conf as any)[k] === 'object' && (conf as any)[k]?.vendorId
+                    );
+
+                    if (possibleDayKeys.length > 0) {
+                        computedVendorId = (conf as any)[possibleDayKeys[0]].vendorId;
+                        // Also try to get boxTypeId from there if needed
+                        if (!conf.boxTypeId) {
+                            conf.boxTypeId = (conf as any)[possibleDayKeys[0]].boxTypeId;
+                        }
+                    }
+                }
+
                 const box = boxTypes.find(b => b.id === conf.boxTypeId);
-                const vendorName = vendors.find(v => v.id === box?.vendorId)?.name;
+                const vendorId = computedVendorId || box?.vendorId;
+                const vendorName = vendors.find(v => v.id === vendorId)?.name;
+
+                if (!vendorId) {
+                    console.log('[ClientList] Error - Vendor ID is missing in config:', {
+                        clientId: client.id,
+                        conf: JSON.stringify(conf),
+                        boxTypeId: conf.boxTypeId,
+                        serviceType: st
+                    });
+                } else if (!vendorName) {
+                    console.log('[ClientList] Warning - Vendor ID not found in list:', {
+                        clientId: client.id,
+                        orderVendorId: vendorId,
+                        availableVendorsCount: vendors.length
+                    });
+                }
+
                 if (vendorName) vendorSummary = vendorName;
             }
 
@@ -571,7 +653,8 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
             }
         } else if (st === 'Boxes') {
             const box = boxTypes.find(b => b.id === conf.boxTypeId);
-            const vendorName = vendors.find(v => v.id === box?.vendorId)?.name || 'Not Set';
+            const vendorId = conf.vendorId || box?.vendorId;
+            const vendorName = vendors.find(v => v.id === vendorId)?.name || 'Not Set';
 
             const items = conf.items || {};
             const itemDetails = Object.entries(items)
@@ -586,7 +669,7 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
             return (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                     <div>
-                        <strong style={{ fontWeight: 600 }}>Boxes</strong> - Vendor: {vendorName}
+                        <strong style={{ fontWeight: 600 }}>Boxes</strong> - Vendor: <span style={{ color: vendorName === 'Not Set' ? 'var(--color-danger)' : 'inherit' }}>{vendorName}</span>
                     </div>
                     {itemDetails && (
                         <div style={{ fontSize: '0.85em', color: 'var(--text-secondary)' }}>
@@ -737,6 +820,12 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
                         >
                             Billing
                         </button>
+                        <button
+                            className={styles.viewBtn}
+                            onClick={() => router.push('/orders')}
+                        >
+                            Orders
+                        </button>
                     </div>
 
                     <button className="btn btn-primary" onClick={() => setIsCreating(true)}>
@@ -760,7 +849,7 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
 
 
                 {/* Clear All Filters Button */}
-                {(statusFilter || navigatorFilter || screeningFilter || serviceTypeFilter) && (
+                {(statusFilter || navigatorFilter || screeningFilter || serviceTypeFilter || needsVendorFilter) && (
                     <button
                         className="btn btn-secondary"
                         onClick={() => {
@@ -768,6 +857,7 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
                             setNavigatorFilter(null);
                             setScreeningFilter(null);
                             setServiceTypeFilter(null);
+                            setNeedsVendorFilter(false);
                         }}
                         style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.9rem' }}
                     >
@@ -938,7 +1028,7 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
                         </span>
                         <Filter
                             size={14}
-                            style={{ cursor: 'pointer', opacity: serviceTypeFilter ? 1 : 0.5, color: serviceTypeFilter ? '#3b82f6' : 'inherit', filter: serviceTypeFilter ? 'drop-shadow(0 0 3px #3b82f6)' : 'none' }}
+                            style={{ cursor: 'pointer', opacity: (serviceTypeFilter || needsVendorFilter) ? 1 : 0.5, color: (serviceTypeFilter || needsVendorFilter) ? '#3b82f6' : 'inherit', filter: (serviceTypeFilter || needsVendorFilter) ? 'drop-shadow(0 0 3px #3b82f6)' : 'none' }}
                             onClick={(e) => { e.stopPropagation(); setOpenFilterMenu(openFilterMenu === 'serviceType' ? null : 'serviceType'); }}
                         />
                         {openFilterMenu === 'serviceType' && (
@@ -971,6 +1061,19 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
                                         fontWeight: serviceTypeFilter === 'Boxes' ? 600 : 400
                                     }}>
                                     Boxes
+                                </div>
+                                <div style={{ height: '1px', backgroundColor: 'var(--border-color)', margin: '4px 0' }}></div>
+                                <div onClick={() => { setNeedsVendorFilter(!needsVendorFilter); setOpenFilterMenu(null); }}
+                                    style={{
+                                        padding: '8px 12px', cursor: 'pointer',
+                                        backgroundColor: needsVendorFilter ? 'var(--bg-surface-hover)' : 'transparent',
+                                        fontWeight: needsVendorFilter ? 600 : 400,
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        gap: '8px'
+                                    }}>
+                                    <AlertCircle size={14} />
+                                    Needs Vendor Assignment
                                 </div>
                             </div>
                         )}
@@ -1037,9 +1140,10 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
                 })}
                 {filteredClients.length === 0 && !isLoading && (
                     <div className={styles.empty}>
-                        {currentView === 'ineligible' ? 'No ineligible clients found.' :
-                            currentView === 'eligible' ? 'No eligible clients found.' :
-                                'No clients found.'}
+                        {needsVendorFilter ? 'No clients with box orders needing vendor assignment.' :
+                            currentView === 'ineligible' ? 'No ineligible clients found.' :
+                                currentView === 'eligible' ? 'No eligible clients found.' :
+                                    'No clients found.'}
                     </div>
                 )}
             </div>

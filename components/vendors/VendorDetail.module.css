@@ -1,6 +1,9 @@
 .container {
     width: 100%;
+    max-width: 100%;
     padding: var(--spacing-lg);
+    box-sizing: border-box;
+    overflow-x: hidden;
 }
 
 .header {
@@ -156,7 +159,8 @@
 }
 
 .ordersList {
-    overflow-x: auto;
+    width: 100%;
+    overflow-x: hidden;
 }
 
 .ordersHeader {
@@ -167,8 +171,9 @@
     font-weight: 600;
     color: var(--text-secondary);
     font-size: 0.875rem;
-    min-width: 1600px;
+    width: 100%;
     gap: 1rem;
+    box-sizing: border-box;
 }
 
 .orderRow {
@@ -178,9 +183,10 @@
     align-items: center;
     color: var(--text-primary);
     transition: background-color 0.2s;
-    min-width: 1600px;
-    white-space: nowrap;
+    width: 100%;
     gap: 1rem;
+    box-sizing: border-box;
+    flex-wrap: wrap;
 }
 
 .orderRow:last-child {
@@ -241,7 +247,8 @@
     background-color: var(--bg-surface);
     border: 1px solid var(--border-color);
     border-radius: var(--radius-md);
-    overflow-x: auto;
+    overflow-x: hidden;
+    width: 100%;
 }
 
 .itemsHeader {
@@ -252,8 +259,9 @@
     font-weight: 600;
     color: var(--text-secondary);
     font-size: 0.875rem;
-    min-width: 700px;
+    width: 100%;
     gap: 1rem;
+    box-sizing: border-box;
 }
 
 .itemRow {
@@ -263,10 +271,11 @@
     align-items: center;
     color: var(--text-primary);
     transition: background-color 0.2s;
-    min-width: 700px;
-    white-space: nowrap;
+    width: 100%;
     gap: 1rem;
     font-size: 0.9rem;
+    box-sizing: border-box;
+    flex-wrap: wrap;
 }
 
 .itemRow:last-child {

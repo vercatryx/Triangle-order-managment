@@ -23,7 +23,6 @@ export function VendorDetail({ vendorId, isVendorView, vendor: initialVendor }: 
     const [boxTypes, setBoxTypes] = useState<BoxType[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const [expandedOrders, setExpandedOrders] = useState<Set<string>>(new Set());
-    const [activeTab, setActiveTab] = useState<'all' | 'upcoming' | 'completed'>('upcoming');
 
     // CSV Import Progress State
     const [importProgress, setImportProgress] = useState<{
@@ -211,7 +210,20 @@ export function VendorDetail({ vendorId, isVendorView, vendor: initialVendor }: 
             const items = boxSelection.items || {};
             const itemEntries = Object.entries(items);
 
-            if (itemEntries.length === 0) {
+            // Filter out entries with zero quantity to avoid showing empty items
+            const validItemEntries = itemEntries.filter(([itemId, quantityOrObj]: [string, any]) => {
+                let qty = 0;
+                if (typeof quantityOrObj === 'number') {
+                    qty = quantityOrObj;
+                } else if (quantityOrObj && typeof quantityOrObj === 'object' && 'quantity' in quantityOrObj) {
+                    qty = typeof quantityOrObj.quantity === 'number' ? quantityOrObj.quantity : parseInt(quantityOrObj.quantity) || 0;
+                } else {
+                    qty = parseInt(quantityOrObj) || 0;
+                }
+                return qty > 0;
+            });
+
+            if (validItemEntries.length === 0) {
                 return (
                     <div className={styles.noItems}>
                         Box Type: {getBoxTypeName(boxSelection.box_type_id)} (Quantity: {boxSelection.quantity || 1})
@@ -229,9 +241,21 @@ export function VendorDetail({ vendorId, isVendorView, vendor: initialVendor }: 
                         <span style={{ minWidth: '300px', flex: 3 }}>Item Name</span>
                         <span style={{ minWidth: '100px', flex: 1 }}>Quantity</span>
                     </div>
-                    {itemEntries.map(([itemId, quantity]: [string, any]) => {
+                    {validItemEntries.map(([itemId, quantityOrObj]: [string, any]) => {
                         const menuItem = menuItems.find(mi => mi.id === itemId);
-                        const qty = typeof quantity === 'number' ? quantity : parseInt(quantity) || 0;
+                        
+                        // Handle both formats: { itemId: quantity } or { itemId: { quantity: X, price: Y } }
+                        let qty = 0;
+                        if (typeof quantityOrObj === 'number') {
+                            // Simple format: just a number
+                            qty = quantityOrObj;
+                        } else if (quantityOrObj && typeof quantityOrObj === 'object' && 'quantity' in quantityOrObj) {
+                            // Complex format: { quantity: X, price?: Y }
+                            qty = typeof quantityOrObj.quantity === 'number' ? quantityOrObj.quantity : parseInt(quantityOrObj.quantity) || 0;
+                        } else {
+                            // Try to parse as number string
+                            qty = parseInt(quantityOrObj) || 0;
+                        }
 
                         return (
                             <div key={itemId} className={styles.itemRow}>
@@ -280,15 +304,39 @@ export function VendorDetail({ vendorId, isVendorView, vendor: initialVendor }: 
             }
             const items = boxSelection.items || {};
             const itemEntries = Object.entries(items);
-            if (itemEntries.length === 0) {
+            
+            // Filter out entries with zero quantity and handle both formats
+            const validItemEntries = itemEntries.filter(([itemId, quantityOrObj]: [string, any]) => {
+                let qty = 0;
+                if (typeof quantityOrObj === 'number') {
+                    qty = quantityOrObj;
+                } else if (quantityOrObj && typeof quantityOrObj === 'object' && 'quantity' in quantityOrObj) {
+                    qty = typeof quantityOrObj.quantity === 'number' ? quantityOrObj.quantity : parseInt(quantityOrObj.quantity) || 0;
+                } else {
+                    qty = parseInt(quantityOrObj) || 0;
+                }
+                return qty > 0;
+            });
+            
+            if (validItemEntries.length === 0) {
                 const boxTypeName = getBoxTypeName(boxSelection.box_type_id);
                 return `Box Type: ${boxTypeName} (Quantity: ${boxSelection.quantity || 1})`;
             }
             const boxTypeName = getBoxTypeName(boxSelection.box_type_id);
-            const itemStrings = itemEntries.map(([itemId, quantity]: [string, any]) => {
+            const itemStrings = validItemEntries.map(([itemId, quantityOrObj]: [string, any]) => {
                 const menuItem = menuItems.find(mi => mi.id === itemId);
                 const itemName = menuItem?.name || 'Unknown Item';
-                const qty = typeof quantity === 'number' ? quantity : parseInt(quantity) || 0;
+                
+                // Handle both formats: { itemId: quantity } or { itemId: { quantity: X, price: Y } }
+                let qty = 0;
+                if (typeof quantityOrObj === 'number') {
+                    qty = quantityOrObj;
+                } else if (quantityOrObj && typeof quantityOrObj === 'object' && 'quantity' in quantityOrObj) {
+                    qty = typeof quantityOrObj.quantity === 'number' ? quantityOrObj.quantity : parseInt(quantityOrObj.quantity) || 0;
+                } else {
+                    qty = parseInt(quantityOrObj) || 0;
+                }
+                
                 return `${itemName} (Qty: ${qty})`;
             });
             return `Box Type: ${boxTypeName} (Box Qty: ${boxSelection.quantity || 1}); Items: ${itemStrings.join('; ')}`;
@@ -847,9 +895,6 @@ export function VendorDetail({ vendorId, isVendorView, vendor: initialVendor }: 
         );
     }
 
-    const completedOrders = orders.filter(o => o.orderType === 'completed');
-    const upcomingOrders = orders.filter(o => o.orderType === 'upcoming');
-
     return (
         <div className={styles.container}>
             <div className={styles.header}>
@@ -886,62 +931,28 @@ export function VendorDetail({ vendorId, isVendorView, vendor: initialVendor }: 
             <div className={styles.ordersSection}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 'var(--spacing-lg)' }}>
                     <h2 className={styles.sectionTitle}>Orders</h2>
-                    <div className={styles.tabs}>
-                        <button
-                            className={`${styles.tab} ${activeTab === 'upcoming' ? styles.tabActive : ''}`}
-                            onClick={() => setActiveTab('upcoming')}
-                        >
-                            <Clock size={14} style={{ marginRight: '4px', verticalAlign: 'middle' }} />
-                            Upcoming ({upcomingOrders.length})
-                        </button>
-                        <button
-                            className={`${styles.tab} ${activeTab === 'completed' ? styles.tabActive : ''}`}
-                            onClick={() => setActiveTab('completed')}
-                        >
-                            Completed ({completedOrders.length})
-                        </button>
-                        <button
-                            className={`${styles.tab} ${activeTab === 'all' ? styles.tabActive : ''}`}
-                            onClick={() => setActiveTab('all')}
-                        >
-                            All Orders ({orders.length})
-                        </button>
-                    </div>
                 </div>
 
                 {(() => {
-                    let filteredOrders = orders;
-                    if (activeTab === 'completed') {
-                        filteredOrders = completedOrders;
-                    } else if (activeTab === 'upcoming') {
-                        filteredOrders = upcomingOrders;
-                    }
-
-                    if (filteredOrders.length === 0) {
+                    if (orders.length === 0) {
                         return (
                             <div className={styles.emptyState}>
                                 <Package size={48} style={{ color: 'var(--text-tertiary)', marginBottom: '1rem' }} />
-                                <p>
-                                    {activeTab === 'all'
-                                        ? 'No orders found for this vendor'
-                                        : activeTab === 'completed'
-                                            ? 'No completed orders found'
-                                            : 'No upcoming orders found'}
-                                </p>
+                                <p>No orders found for this vendor</p>
                             </div>
                         );
                     }
 
-                    const { grouped, sortedDates, noDate } = groupOrdersByDeliveryDate(filteredOrders);
+                    const { grouped, sortedDates, noDate } = groupOrdersByDeliveryDate(orders);
 
                     return (
                         <div className={styles.ordersList}>
                             <div className={styles.ordersHeader}>
-                                <span style={{ width: '40px', flex: 'none' }}></span>
-                                <span style={{ minWidth: '200px', flex: 2 }}>Delivery Date</span>
-                                <span style={{ minWidth: '120px', flex: 1 }}>Orders Count</span>
-                                <span style={{ minWidth: '150px', flex: 1.2 }}>Total Items</span>
-                                <span style={{ minWidth: '200px', flex: 1.5 }}>Actions</span>
+                                <span style={{ width: '40px', flexShrink: 0 }}></span>
+                                <span style={{ flex: '2 1 150px', minWidth: 0 }}>Delivery Date</span>
+                                <span style={{ flex: '1 1 100px', minWidth: 0 }}>Orders Count</span>
+                                <span style={{ flex: '1.2 1 120px', minWidth: 0 }}>Total Items</span>
+                                <span style={{ flex: '1.5 1 150px', minWidth: 0 }}>Actions</span>
                             </div>
 
                             {/* Orders grouped by delivery date */}
@@ -956,21 +967,21 @@ export function VendorDetail({ vendorId, isVendorView, vendor: initialVendor }: 
                                             onClick={() => router.push(isVendorView ? `/vendor/delivery/${dateKey}` : `/vendors/${vendorId}/delivery/${dateKey}`)}
                                             style={{ cursor: 'pointer' }}
                                         >
-                                            <span style={{ width: '40px', flex: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                            <span style={{ width: '40px', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                                                 <ChevronDown size={16} />
                                             </span>
-                                            <span style={{ minWidth: '200px', flex: 2, fontWeight: 600, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                            <span style={{ flex: '2 1 150px', minWidth: 0, fontWeight: 600, display: 'flex', alignItems: 'center', gap: '8px' }}>
                                                 <Calendar size={16} style={{ color: 'var(--color-primary)' }} />
                                                 {formatDate(dateKey)}
                                             </span>
-                                            <span style={{ minWidth: '120px', flex: 1 }}>
+                                            <span style={{ flex: '1 1 100px', minWidth: 0 }}>
                                                 <span className="badge badge-info">{dateOrders.length} order{dateOrders.length !== 1 ? 's' : ''}</span>
                                             </span>
-                                            <span style={{ minWidth: '150px', flex: 1.2, fontSize: '0.9rem' }}>
+                                            <span style={{ flex: '1.2 1 120px', minWidth: 0, fontSize: '0.9rem' }}>
                                                 {dateTotalItems}
                                             </span>
                                             <span
-                                                style={{ minWidth: '200px', flex: 1.5, display: 'flex', alignItems: 'center', gap: '0.5rem' }}
+                                                style={{ flex: '1.5 1 150px', minWidth: 0, display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}
                                                 onClick={(e) => e.stopPropagation()}
                                             >
                                                 <button
@@ -1009,21 +1020,21 @@ export function VendorDetail({ vendorId, isVendorView, vendor: initialVendor }: 
                                         onClick={() => router.push(isVendorView ? `/vendor/delivery/no-date` : `/vendors/${vendorId}/delivery/no-date`)}
                                         style={{ cursor: 'pointer' }}
                                     >
-                                        <span style={{ width: '40px', flex: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                        <span style={{ width: '40px', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                                             <ChevronDown size={16} />
                                         </span>
-                                        <span style={{ minWidth: '200px', flex: 2, fontWeight: 600, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                        <span style={{ flex: '2 1 150px', minWidth: 0, fontWeight: 600, display: 'flex', alignItems: 'center', gap: '8px' }}>
                                             <Calendar size={16} style={{ color: 'var(--text-tertiary)' }} />
                                             No Delivery Date
                                         </span>
-                                        <span style={{ minWidth: '120px', flex: 1 }}>
+                                        <span style={{ flex: '1 1 100px', minWidth: 0 }}>
                                             <span className="badge">{noDate.length} order{noDate.length !== 1 ? 's' : ''}</span>
                                         </span>
-                                        <span style={{ minWidth: '150px', flex: 1.2, fontSize: '0.9rem' }}>
+                                        <span style={{ flex: '1.2 1 120px', minWidth: 0, fontSize: '0.9rem' }}>
                                             {noDate.reduce((sum, o) => sum + (o.total_items || 0), 0)}
                                         </span>
                                         <span
-                                            style={{ minWidth: '200px', flex: 1.5, display: 'flex', alignItems: 'center', gap: '0.5rem' }}
+                                            style={{ flex: '1.5 1 150px', minWidth: 0, display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}
                                             onClick={(e) => e.stopPropagation()}
                                         >
                                             <button

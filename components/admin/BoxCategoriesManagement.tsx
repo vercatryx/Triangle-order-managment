@@ -15,6 +15,7 @@ export function BoxCategoriesManagement() {
     // Category Creation
     const [isAddingCategory, setIsAddingCategory] = useState(false);
     const [newCategoryName, setNewCategoryName] = useState('');
+    const [newCategorySetValue, setNewCategorySetValue] = useState<string>('');
 
     // Inline Item Creation
     const [newItemName, setNewItemName] = useState('');
@@ -25,6 +26,7 @@ export function BoxCategoriesManagement() {
     // Category Editing States
     const [editingCategoryId, setEditingCategoryId] = useState<string | null>(null);
     const [tempCategoryName, setTempCategoryName] = useState('');
+    const [tempCategorySetValue, setTempCategorySetValue] = useState<string>('');
 
     // Item Editing States
     const [editingItemId, setEditingItemId] = useState<string | null>(null);
@@ -44,12 +46,18 @@ export function BoxCategoriesManagement() {
 
     async function handleAddCategory() {
         if (!newCategoryName.trim()) return;
-        await addCategory(newCategoryName);
+        const setValue = newCategorySetValue.trim() === '' ? null : parseInt(newCategorySetValue, 10);
+        if (setValue !== null && (isNaN(setValue) || setValue <= 0)) {
+            alert('Set value must be a positive number or empty');
+            return;
+        }
+        await addCategory(newCategoryName, setValue);
         invalidateReferenceData();
         const cData = await getCategories();
         setCategories(cData);
         setIsAddingCategory(false);
         setNewCategoryName('');
+        setNewCategorySetValue('');
     }
 
     async function handleDeleteCategory(id: string) {
@@ -70,16 +78,23 @@ export function BoxCategoriesManagement() {
     function handleEditCategory(category: ItemCategory) {
         setEditingCategoryId(category.id);
         setTempCategoryName(category.name);
+        setTempCategorySetValue(category.setValue?.toString() || '');
     }
 
     function handleCancelEditCategory() {
         setEditingCategoryId(null);
         setTempCategoryName('');
+        setTempCategorySetValue('');
     }
 
     async function handleSaveEditCategory() {
         if (!editingCategoryId || !tempCategoryName.trim()) return;
-        await updateCategory(editingCategoryId, tempCategoryName);
+        const setValue = tempCategorySetValue.trim() === '' ? null : parseInt(tempCategorySetValue, 10);
+        if (setValue !== null && (isNaN(setValue) || setValue <= 0)) {
+            alert('Set value must be a positive number or empty');
+            return;
+        }
+        await updateCategory(editingCategoryId, tempCategoryName, setValue);
         invalidateReferenceData();
         const cData = await getCategories();
         setCategories(cData);
@@ -177,22 +192,38 @@ export function BoxCategoriesManagement() {
             {/* Add Category Form */}
             {isAddingCategory && (
                 <div style={{ marginBottom: '1rem', padding: '1rem', background: 'var(--bg-surface-hover)', borderRadius: '6px', border: '1px solid var(--color-primary)' }}>
-                    <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-                        <input
-                            className="input"
-                            placeholder="Category Name (e.g., Fruits, Dairy, Proteins)"
-                            value={newCategoryName}
-                            onChange={e => setNewCategoryName(e.target.value)}
-                            onKeyDown={e => e.key === 'Enter' && handleAddCategory()}
-                            autoFocus
-                            style={{ flex: 1 }}
-                        />
-                        <button className="btn btn-primary" onClick={handleAddCategory}>
-                            <Check size={16} /> Save
-                        </button>
-                        <button className="btn btn-secondary" onClick={() => { setIsAddingCategory(false); setNewCategoryName(''); }}>
-                            <X size={16} /> Cancel
-                        </button>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                            <input
+                                className="input"
+                                placeholder="Category Name (e.g., Fruits, Dairy, Proteins)"
+                                value={newCategoryName}
+                                onChange={e => setNewCategoryName(e.target.value)}
+                                onKeyDown={e => e.key === 'Enter' && handleAddCategory()}
+                                autoFocus
+                                style={{ flex: 1 }}
+                            />
+                            <input
+                                type="number"
+                                className="input"
+                                placeholder="Set Value (optional)"
+                                value={newCategorySetValue}
+                                onChange={e => setNewCategorySetValue(e.target.value)}
+                                onKeyDown={e => e.key === 'Enter' && handleAddCategory()}
+                                min="1"
+                                style={{ width: '120px' }}
+                                title="Required quota value - users must select items that sum to exactly this value"
+                            />
+                            <button className="btn btn-primary" onClick={handleAddCategory}>
+                                <Check size={16} /> Save
+                            </button>
+                            <button className="btn btn-secondary" onClick={() => { setIsAddingCategory(false); setNewCategoryName(''); setNewCategorySetValue(''); }}>
+                                <X size={16} /> Cancel
+                            </button>
+                        </div>
+                        <div style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)', marginLeft: '0.25rem' }}>
+                            Set Value: Required quota value for this category. Leave empty for no requirement.
+                        </div>
                     </div>
                 </div>
             )}
@@ -210,29 +241,42 @@ export function BoxCategoriesManagement() {
                         {/* Category Header */}
                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.75rem' }}>
                             {editingCategoryId === cat.id ? (
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flex: 1 }}>
-                                    <input
-                                        className="input"
-                                        value={tempCategoryName}
-                                        onChange={e => setTempCategoryName(e.target.value)}
-                                        onKeyDown={e => e.key === 'Enter' && handleSaveEditCategory()}
-                                        style={{ fontSize: '1rem', fontWeight: 600 }}
-                                        autoFocus
-                                    />
-                                    <button
-                                        onClick={handleSaveEditCategory}
-                                        style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: 'var(--color-success)' }}
-                                        title="Save"
-                                    >
-                                        <Check size={18} />
-                                    </button>
-                                    <button
-                                        onClick={handleCancelEditCategory}
-                                        style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: 'var(--text-secondary)' }}
-                                        title="Cancel"
-                                    >
-                                        <X size={18} />
-                                    </button>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', flex: 1 }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                        <input
+                                            className="input"
+                                            value={tempCategoryName}
+                                            onChange={e => setTempCategoryName(e.target.value)}
+                                            onKeyDown={e => e.key === 'Enter' && handleSaveEditCategory()}
+                                            style={{ fontSize: '1rem', fontWeight: 600, flex: 1 }}
+                                            autoFocus
+                                        />
+                                        <input
+                                            type="number"
+                                            className="input"
+                                            placeholder="Set Value"
+                                            value={tempCategorySetValue}
+                                            onChange={e => setTempCategorySetValue(e.target.value)}
+                                            onKeyDown={e => e.key === 'Enter' && handleSaveEditCategory()}
+                                            min="1"
+                                            style={{ width: '120px' }}
+                                            title="Required quota value - users must select items that sum to exactly this value"
+                                        />
+                                        <button
+                                            onClick={handleSaveEditCategory}
+                                            style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: 'var(--color-success)' }}
+                                            title="Save"
+                                        >
+                                            <Check size={18} />
+                                        </button>
+                                        <button
+                                            onClick={handleCancelEditCategory}
+                                            style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: 'var(--text-secondary)' }}
+                                            title="Cancel"
+                                        >
+                                            <X size={18} />
+                                        </button>
+                                    </div>
                                 </div>
                             ) : (
                                 <>
@@ -242,6 +286,18 @@ export function BoxCategoriesManagement() {
                                         <span style={{ color: 'var(--text-tertiary)', fontSize: '0.85rem' }}>
                                             ({getBoxItemsForCategory(cat.id).length} items)
                                         </span>
+                                        {cat.setValue !== undefined && cat.setValue !== null && (
+                                            <span style={{ 
+                                                color: 'var(--color-primary)', 
+                                                fontSize: '0.75rem', 
+                                                fontWeight: 500,
+                                                background: 'var(--bg-surface)',
+                                                padding: '2px 6px',
+                                                borderRadius: '4px'
+                                            }}>
+                                                Set Value: {cat.setValue}
+                                            </span>
+                                        )}
                                     </div>
                                     <div style={{ display: 'flex', gap: '0.25rem' }}>
                                         <button

@@ -2,8 +2,8 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { Vendor, ClientProfile, MenuItem, BoxType } from '@/lib/types';
-import { getVendors, getClients, getMenuItems, getBoxTypes } from '@/lib/cached-data';
+import { Vendor, ClientProfile, MenuItem, BoxType, ItemCategory } from '@/lib/types';
+import { getVendors, getClients, getMenuItems, getBoxTypes, getCategories } from '@/lib/cached-data';
 import { getOrdersByVendor, saveDeliveryProofUrlAndProcessOrder, updateOrderDeliveryProof, isOrderUnderVendor, orderHasDeliveryProof } from '@/lib/actions';
 import { ArrowLeft, Calendar, Package, Clock, ShoppingCart, Upload, ChevronDown, ChevronUp, Save, X, CheckCircle, AlertCircle, Download, XCircle, FileText } from 'lucide-react';
 import { jsPDF } from 'jspdf';
@@ -23,6 +23,7 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate, isVendorView }: P
     const [clients, setClients] = useState<ClientProfile[]>([]);
     const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
     const [boxTypes, setBoxTypes] = useState<BoxType[]>([]);
+    const [categories, setCategories] = useState<ItemCategory[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const [expandedOrders, setExpandedOrders] = useState<Set<string>>(new Set());
     const [proofUrls, setProofUrls] = useState<Record<string, string>>({});
@@ -72,12 +73,13 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate, isVendorView }: P
     async function loadData() {
         setIsLoading(true);
         try {
-            const [vendorsData, ordersData, clientsData, menuItemsData, boxTypesData] = await Promise.all([
+            const [vendorsData, ordersData, clientsData, menuItemsData, boxTypesData, categoriesData] = await Promise.all([
                 getVendors(),
                 getOrdersByVendor(vendorId),
                 getClients(),
                 getMenuItems(),
-                getBoxTypes()
+                getBoxTypes(),
+                getCategories()
             ]);
 
             const foundVendor = vendorsData.find(v => v.id === vendorId);
@@ -103,6 +105,7 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate, isVendorView }: P
             setClients(clientsData);
             setMenuItems(menuItemsData);
             setBoxTypes(boxTypesData);
+            setCategories(categoriesData);
 
             // Initialize proof URLs from orders
             const initialProofUrls: Record<string, string> = {};
@@ -201,18 +204,65 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate, isVendorView }: P
             }
             const items = boxSelection.items || {};
             const itemEntries = Object.entries(items);
-            if (itemEntries.length === 0) {
-                const boxTypeName = getBoxTypeName(boxSelection.box_type_id);
-                return `Box Type: ${boxTypeName} (Quantity: ${boxSelection.quantity || 1})`;
-            }
-            const boxTypeName = getBoxTypeName(boxSelection.box_type_id);
-            const itemStrings = itemEntries.map(([itemId, quantity]: [string, any]) => {
+            
+            // Process items and filter out zero-quantity items, group by category
+            const itemsByCategory: { [categoryId: string]: string[] } = {};
+            const uncategorizedItems: string[] = [];
+            
+            for (const [itemId, quantityOrObj] of itemEntries) {
                 const menuItem = menuItems.find(mi => mi.id === itemId);
                 const itemName = menuItem?.name || 'Unknown Item';
-                const qty = typeof quantity === 'number' ? quantity : parseInt(quantity) || 0;
-                return `${itemName} (Qty: ${qty})`;
+                
+                // Handle both formats: { itemId: quantity } or { itemId: { quantity: X, price: Y } }
+                let qty = 0;
+                if (typeof quantityOrObj === 'number') {
+                    qty = quantityOrObj;
+                } else if (quantityOrObj && typeof quantityOrObj === 'object' && 'quantity' in quantityOrObj) {
+                    qty = typeof quantityOrObj.quantity === 'number' ? quantityOrObj.quantity : parseInt(String(quantityOrObj.quantity)) || 0;
+                } else {
+                    qty = parseInt(String(quantityOrObj)) || 0;
+                }
+                
+                if (qty > 0) {
+                    const itemString = `${itemName} (Qty: ${qty})`;
+                    const categoryId = menuItem?.categoryId || null;
+                    
+                    if (categoryId) {
+                        if (!itemsByCategory[categoryId]) {
+                            itemsByCategory[categoryId] = [];
+                        }
+                        itemsByCategory[categoryId].push(itemString);
+                    } else {
+                        uncategorizedItems.push(itemString);
+                    }
+                }
+            }
+            
+            const boxQuantity = boxSelection.quantity || 1;
+            const parts: string[] = [];
+            
+            // Add items by category
+            const sortedCategoryIds = Object.keys(itemsByCategory).sort((a, b) => {
+                const catA = categories.find(c => c.id === a);
+                const catB = categories.find(c => c.id === b);
+                return (catA?.name || '').localeCompare(catB?.name || '');
             });
-            return `Box Type: ${boxTypeName} (Box Qty: ${boxSelection.quantity || 1}); Items: ${itemStrings.join('; ')}`;
+            
+            for (const categoryId of sortedCategoryIds) {
+                const category = categories.find(c => c.id === categoryId);
+                const categoryName = category?.name || 'Unknown Category';
+                parts.push(`${categoryName}: ${itemsByCategory[categoryId].join(', ')}`);
+            }
+            
+            if (uncategorizedItems.length > 0) {
+                parts.push(`Uncategorized: ${uncategorizedItems.join(', ')}`);
+            }
+            
+            if (parts.length === 0) {
+                return '(No items)';
+            }
+            
+            return parts.join('; ');
         }
         return 'No items available';
     }
@@ -738,9 +788,10 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate, isVendorView }: P
         }
     }
 
-    function getBoxTypeName(boxTypeId: string) {
-        const boxType = boxTypes.find(bt => bt.id === boxTypeId);
-        return boxType?.name || 'Unknown Box Type';
+    function getCategoryName(categoryId: string | null | undefined) {
+        if (!categoryId) return 'Uncategorized';
+        const category = categories.find(c => c.id === categoryId);
+        return category?.name || 'Uncategorized';
     }
 
     function renderOrderItems(order: any) {
@@ -818,65 +869,170 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate, isVendorView }: P
                 );
             }
 
-            const items = boxSelection.items || {};
-            const itemEntries = Object.entries(items);
+            // Handle items - could be object, JSON string, null, undefined, or array
+            let items: any = boxSelection.items;
+            if (!items) {
+                items = {};
+            } else if (typeof items === 'string') {
+                // If items is a JSON string, parse it
+                try {
+                    items = JSON.parse(items);
+                } catch (e) {
+                    console.error('Failed to parse boxSelection.items as JSON:', e);
+                    items = {};
+                }
+            } else if (Array.isArray(items)) {
+                // If items is an array, convert to object format { itemId: quantity }
+                const itemsObj: any = {};
+                for (const item of items) {
+                    if (item && typeof item === 'object' && 'menu_item_id' in item) {
+                        itemsObj[item.menu_item_id] = item.quantity || 0;
+                    } else if (item && typeof item === 'object' && 'id' in item) {
+                        itemsObj[item.id] = item.quantity || item.qty || 1;
+                    }
+                }
+                items = itemsObj;
+            }
 
-            const boxTypeName = getBoxTypeName(boxSelection.box_type_id);
+            const itemEntries = Object.entries(items || {});
+
             const boxQuantity = boxSelection.quantity || 1;
 
-            // Calculate totals
+            // Process items and filter out zero-quantity items, group by category
+            const itemsByCategory: { [categoryId: string]: Array<{ itemId: string; menuItem: MenuItem | undefined; qty: number }> } = {};
+            const uncategorizedItems: Array<{ itemId: string; menuItem: MenuItem | undefined; qty: number }> = [];
             let totalItems = 0;
 
-            if (!items || itemEntries.length === 0) {
+            for (const [itemId, quantityOrObj] of itemEntries) {
+                // Handle both formats: { itemId: quantity } or { itemId: { quantity: X, price: Y } }
+                let qty = 0;
+
+                if (typeof quantityOrObj === 'number') {
+                    // Simple format: just a number
+                    qty = quantityOrObj;
+                } else if (quantityOrObj && typeof quantityOrObj === 'object' && 'quantity' in quantityOrObj) {
+                    // Complex format: { quantity: X, price?: Y }
+                    qty = typeof quantityOrObj.quantity === 'number' ? quantityOrObj.quantity : parseInt(String(quantityOrObj.quantity)) || 0;
+                } else if (quantityOrObj !== null && quantityOrObj !== undefined) {
+                    // Try to parse as number string
+                    qty = parseInt(String(quantityOrObj)) || 0;
+                }
+
+                if (qty > 0) {
+                    const menuItem = menuItems.find(mi => mi.id === itemId);
+                    const categoryId = menuItem?.categoryId || null;
+                    const itemData = { itemId, menuItem, qty };
+                    
+                    if (categoryId) {
+                        if (!itemsByCategory[categoryId]) {
+                            itemsByCategory[categoryId] = [];
+                        }
+                        itemsByCategory[categoryId].push(itemData);
+                    } else {
+                        uncategorizedItems.push(itemData);
+                    }
+                    
+                    totalItems += qty;
+                }
+            }
+
+            // Only show generic message if there are truly no items with quantity > 0
+            if (totalItems === 0) {
+                const hasItemsButAllZero = itemEntries.length > 0;
                 return (
                     <div className={styles.boxDetails}>
-                        <div><strong>Box Type:</strong> {boxTypeName}</div>
-                        <div><strong>Quantity:</strong> {boxQuantity}</div>
+                        {hasItemsButAllZero && (
+                            <div style={{ marginTop: '0.5rem', fontSize: '0.85rem', color: 'var(--text-tertiary)', fontStyle: 'italic' }}>
+                                Note: Box items are configured but all quantities are zero
+                            </div>
+                        )}
+                        {!hasItemsButAllZero && (
+                            <div style={{ marginTop: '0.5rem', fontSize: '0.85rem', color: 'var(--text-tertiary)', fontStyle: 'italic' }}>
+                                Note: No items configured for this box order
+                            </div>
+                        )}
                     </div>
                 );
             }
 
+            // Sort categories by name for display
+            const sortedCategoryIds = Object.keys(itemsByCategory).sort((a, b) => {
+                const catA = categories.find(c => c.id === a);
+                const catB = categories.find(c => c.id === b);
+                return (catA?.name || '').localeCompare(catB?.name || '');
+            });
+
             return (
                 <div className={styles.vendorSection}>
-                    <div className={styles.vendorName}>
-                        <strong>Box Type:</strong> {boxTypeName} × {boxQuantity}
-                    </div>
-                    <table className={styles.itemsTable}>
-                        <thead>
-                            <tr>
-                                <th>Item</th>
-                                <th>Quantity</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {itemEntries.map(([itemId, quantityOrObj]: [string, any]) => {
-                                const menuItem = menuItems.find(mi => mi.id === itemId);
-
-                                // Handle both formats: { itemId: quantity } or { itemId: { quantity: X, price: Y } }
-                                let qty = 0;
-
-                                if (typeof quantityOrObj === 'number') {
-                                    // Simple format: just a number
-                                    qty = quantityOrObj;
-                                } else if (quantityOrObj && typeof quantityOrObj === 'object' && 'quantity' in quantityOrObj) {
-                                    // Complex format: { quantity: X, price?: Y }
-                                    qty = typeof quantityOrObj.quantity === 'number' ? quantityOrObj.quantity : parseInt(quantityOrObj.quantity) || 0;
-                                } else {
-                                    // Try to parse as number string
-                                    qty = parseInt(quantityOrObj) || 0;
-                                }
-
-                                totalItems += qty;
-
-                                return (
-                                    <tr key={itemId}>
-                                        <td>{menuItem?.name || 'Unknown Item'}</td>
-                                        <td>{qty}</td>
+                    {/* Display items grouped by category */}
+                    {sortedCategoryIds.map((categoryId) => {
+                        const categoryItems = itemsByCategory[categoryId];
+                        const category = categories.find(c => c.id === categoryId);
+                        
+                        return (
+                            <div key={categoryId} style={{ marginBottom: '1.5rem' }}>
+                                <h4 style={{ 
+                                    fontSize: '0.95rem', 
+                                    fontWeight: 600, 
+                                    color: 'var(--text-primary)',
+                                    marginBottom: '0.5rem',
+                                    paddingBottom: '0.25rem',
+                                    borderBottom: '1px solid var(--border-color)'
+                                }}>
+                                    {category?.name || 'Unknown Category'}
+                                </h4>
+                                <table className={styles.itemsTable}>
+                                    <thead>
+                                        <tr>
+                                            <th>Item</th>
+                                            <th>Quantity</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {categoryItems.map(({ itemId, menuItem, qty }) => (
+                                            <tr key={itemId}>
+                                                <td>{menuItem?.name || 'Unknown Item'}</td>
+                                                <td>{qty}</td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                        );
+                    })}
+                    
+                    {/* Display uncategorized items if any */}
+                    {uncategorizedItems.length > 0 && (
+                        <div style={{ marginBottom: '1.5rem' }}>
+                            <h4 style={{ 
+                                fontSize: '0.95rem', 
+                                fontWeight: 600, 
+                                color: 'var(--text-primary)',
+                                marginBottom: '0.5rem',
+                                paddingBottom: '0.25rem',
+                                borderBottom: '1px solid var(--border-color)'
+                            }}>
+                                Uncategorized
+                            </h4>
+                            <table className={styles.itemsTable}>
+                                <thead>
+                                    <tr>
+                                        <th>Item</th>
+                                        <th>Quantity</th>
                                     </tr>
-                                );
-                            })}
-                        </tbody>
-                    </table>
+                                </thead>
+                                <tbody>
+                                    {uncategorizedItems.map(({ itemId, menuItem, qty }) => (
+                                        <tr key={itemId}>
+                                            <td>{menuItem?.name || 'Unknown Item'}</td>
+                                            <td>{qty}</td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    )}
+                    
                     <div className={styles.orderSummary}>
                         <div><strong>Total Items:</strong> {totalItems}</div>
                     </div>

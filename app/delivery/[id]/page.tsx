@@ -19,13 +19,7 @@ export default async function OrderDeliveryPage({ params }: { params: Promise<{ 
     // Fetch order details
     let query = supabaseAdmin
         .from('orders')
-        .select(`
-            id, 
-            order_number, 
-            client_id, 
-            scheduled_delivery_date,
-            delivery_proof_url
-        `);
+        .select('id, order_number, client_id, scheduled_delivery_date, delivery_proof_url');
 
     if (isUuid) {
         query = query.eq('id', id);
@@ -50,13 +44,7 @@ export default async function OrderDeliveryPage({ params }: { params: Promise<{ 
         // Try upcoming_orders
         let upcomingQuery = supabaseAdmin
             .from('upcoming_orders')
-            .select(`
-                id, 
-                order_number, 
-                client_id, 
-                scheduled_delivery_date,
-                delivery_proof_url
-            `);
+            .select('id, order_number, client_id, scheduled_delivery_date, delivery_proof_url');
 
         if (isUuid) {
             upcomingQuery = upcomingQuery.eq('id', id);

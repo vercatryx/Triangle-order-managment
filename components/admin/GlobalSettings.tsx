@@ -4,8 +4,88 @@ import { useState, useEffect } from 'react';
 import { AppSettings } from '@/lib/types';
 import { updateSettings } from '@/lib/actions';
 import { useDataCache } from '@/lib/data-cache';
-import { Save, PlayCircle, AlertCircle, RefreshCw, Truck } from 'lucide-react';
+import { Save, PlayCircle, AlertCircle, RefreshCw, Truck, Clock } from 'lucide-react';
 import styles from './GlobalSettings.module.css';
+import { useTime } from '@/lib/time-context';
+
+function TimeOverrideControl() {
+    const { isFakeTime, currentTime, setFakeTime } = useTime();
+
+    // Local state for the input so we don't update context on every keystroke if we wanted, 
+    // but dealing with date-time-local input, it's easier to just sync or have a "Set" button.
+    // Let's use a "Set" button approach for clarity.
+
+    // Format for datetime-local: YYYY-MM-DDThh:mm
+    const formatForInput = (date: Date) => {
+        const offset = date.getTimezoneOffset() * 60000;
+        const localISOTime = (new Date(date.getTime() - offset)).toISOString().slice(0, 16);
+        return localISOTime;
+    };
+
+    const [inputValue, setInputValue] = useState(formatForInput(currentTime));
+
+    // When context changes (e.g. initial load), sync input if we aren't editing? 
+    // Actually, if isFakeTime is true, input should reflect it.
+    useEffect(() => {
+        setInputValue(formatForInput(currentTime));
+    }, [currentTime]);
+
+    const handleToggle = () => {
+        if (isFakeTime) {
+            setFakeTime(null); // Reset to real time
+        } else {
+            // Enable with current input value or current time
+            const date = new Date(inputValue);
+            setFakeTime(date);
+        }
+    };
+
+    const handleDateChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        setInputValue(e.target.value);
+        if (isFakeTime) {
+            // Update immediately if already enabled? Or wait for set?
+            // "The user might have a settings switch" implies toggle.
+            // Let's update immediately if enabled to see feedback.
+            const date = new Date(e.target.value);
+            if (!isNaN(date.getTime())) {
+                setFakeTime(date);
+            }
+        }
+    };
+
+    return (
+        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginTop: '0.5rem' }}>
+            <div className="flex items-center gap-2">
+                <label className="relative inline-flex items-center cursor-pointer">
+                    <input
+                        type="checkbox"
+                        className="sr-only peer"
+                        checked={isFakeTime}
+                        onChange={handleToggle}
+                    />
+                    <div className="w-11 h-6 bg-gray-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+                    <span className="ml-3 text-sm font-medium text-gray-300">
+                        {isFakeTime ? 'Enabled' : 'Disabled (Using Real Time)'}
+                    </span>
+                </label>
+            </div>
+
+            {isFakeTime && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    <Clock size={16} className="text-blue-400" />
+                    <input
+                        type="datetime-local"
+                        className="input"
+                        value={inputValue}
+                        onChange={handleDateChange}
+                        style={{ maxWidth: '250px' }}
+                    />
+                </div>
+            )}
+        </div>
+    );
+}
+
 
 const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 
@@ -40,20 +120,42 @@ export function GlobalSettings() {
     }
 
     async function handleSimulateRun() {
-        if (!confirm('This will create orders for all scheduled upcoming orders due today or earlier. The original Upcoming Orders will be preserved. Proceed?')) return;
+        if (!confirm('This will create orders for all scheduled upcoming orders. The original Upcoming Orders will be preserved. Proceed?')) return;
 
         setSimulating(true);
         setSimulationResult(null);
 
         try {
+            console.log('[Simulate Delivery] Starting simulation...');
             const res = await fetch('/api/simulate-delivery-cycle', { method: 'POST' });
             const data = await res.json();
+
+            // Log detailed results to browser console
+            console.log('[Simulate Delivery] Response:', data);
+            console.log(`[Simulate Delivery] Summary: Found ${data.totalFound || 0} upcoming orders, Created ${data.processedCount || 0} orders, Skipped ${data.skippedCount || 0} orders`);
+            
+            if (data.skippedReasons && data.skippedReasons.length > 0) {
+                console.group('[Simulate Delivery] Skipped Orders:');
+                data.skippedReasons.forEach((reason: string, index: number) => {
+                    console.warn(`${index + 1}. ${reason}`);
+                });
+                console.groupEnd();
+            }
+            
+            if (data.errors && data.errors.length > 0) {
+                console.group('[Simulate Delivery] Errors:');
+                data.errors.forEach((error: string, index: number) => {
+                    console.error(`${index + 1}. ${error}`);
+                });
+                console.groupEnd();
+            }
 
             setSimulationResult({
                 success: data.success,
                 message: data.message || (data.success ? 'Simulation completed successfully.' : 'Simulation failed.')
             });
         } catch (error) {
+            console.error('[Simulate Delivery] Exception:', error);
             setSimulationResult({ success: false, message: 'An error occurred during simulation.' });
         } finally {
             setSimulating(false);
@@ -103,6 +205,23 @@ export function GlobalSettings() {
             </div>
 
             <div className={styles.card} style={{ marginTop: 'var(--spacing-lg)' }}>
+                <h3 className={styles.sectionTitle}>Testing & Debugging</h3>
+                <p className={styles.description}>
+                    Override system behavior for testing purposes.
+                </p>
+
+                <div className={styles.row} style={{ alignItems: 'flex-end' }}>
+                    <div className={styles.formGroup}>
+                        <label className="label">Fake System Time</label>
+                        <p style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)', marginBottom: '0.5rem' }}>
+                            Force the application to perceive the current time as:
+                        </p>
+                        <TimeOverrideControl />
+                    </div>
+                </div>
+            </div>
+
+            <div className={styles.card} style={{ marginTop: 'var(--spacing-lg)' }}>
                 <h3 className={styles.sectionTitle}>Simulate Delivery Cycle</h3>
                 <p className={styles.description}>
                     Manually trigger the delivery generation cycle for today. This will:
@@ -139,6 +258,6 @@ export function GlobalSettings() {
                     )}
                 </div>
             </div>
-        </div>
+        </div >
     );
 }
