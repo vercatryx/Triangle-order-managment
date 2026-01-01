@@ -725,19 +725,19 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
                                             </div>
 
                                             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
-                                                {availableItems.map(item => (
-                                                    <div key={item.id} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', background: 'var(--bg-app)', padding: '4px 8px', borderRadius: '4px', border: '1px solid var(--border-color)' }}>
-                                                        <span style={{ fontSize: '0.8rem' }}>{item.name} <span style={{ color: 'var(--text-tertiary)' }}>({item.quotaValue || 1})</span></span>
-                                                        <input
-                                                            type="number"
-                                                            min="0"
-                                                            style={{ width: '40px', padding: '2px', fontSize: '0.8rem', textAlign: 'center' }}
-                                                            value={selectedItems[item.id] || ''}
-                                                            placeholder="0"
-                                                            onChange={e => handleBoxItemChange(item.id, Number(e.target.value))}
-                                                        />
-                                                    </div>
-                                                ))}
+                                                {availableItems.map(item => {
+                                                    const qty = Number(selectedItems[item.id] || 0);
+                                                    return (
+                                                        <div key={item.id} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', background: 'var(--bg-app)', padding: '4px 8px', borderRadius: '4px', border: '1px solid var(--border-color)' }}>
+                                                            <span style={{ fontSize: '0.8rem' }}>{item.name} <span style={{ color: 'var(--text-tertiary)' }}>({item.quotaValue || 1})</span></span>
+                                                            <div className={styles.quantityControl} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                                                <button onClick={() => handleBoxItemChange(item.id, Math.max(0, qty - 1))} className="btn btn-secondary" style={{ padding: '2px 8px' }}>-</button>
+                                                                <span style={{ width: '20px', textAlign: 'center' }}>{qty}</span>
+                                                                <button onClick={() => handleBoxItemChange(item.id, qty + 1)} className="btn btn-secondary" style={{ padding: '2px 8px' }}>+</button>
+                                                            </div>
+                                                        </div>
+                                                    );
+                                                })}
                                                 {availableItems.length === 0 && <span style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)' }}>No items available.</span>}
                                             </div>
                                         </div>

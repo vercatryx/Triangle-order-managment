@@ -9,3 +9,4 @@ CREATE TABLE IF NOT EXISTS nutritionists (
 -- Add comment for documentation
 COMMENT ON TABLE nutritionists IS 'Stores nutritionist information with name and email';
 
+

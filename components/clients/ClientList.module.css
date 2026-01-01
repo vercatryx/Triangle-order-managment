@@ -229,7 +229,7 @@
     flex-shrink: 0;
 }
 
-/* This Week's Orders Section */
+/* Recent Orders Section */
 .weekOrdersSection {
     margin-bottom: var(--spacing-xl);
 }

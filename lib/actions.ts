@@ -2012,7 +2012,7 @@ export async function processUpcomingOrders() {
 
 /**
  * Get active order from orders table for a client
- * This is used for "This Week's Order" display
+ * This is used for "Recent Orders" display
  * Returns orders with scheduled_delivery_date in the current week, or orders created/updated this week
  * Now uses local database for fast access
  */

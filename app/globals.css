@@ -185,3 +185,7 @@ a {
   animation: spin 1s linear infinite;
   display: inline-block;
 }
+
+.animate-spin {
+  animation: spin 1s linear infinite;
+}

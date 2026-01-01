@@ -116,25 +116,11 @@ export default function FormBuilder({ onSave }: FormBuilderProps) {
     };
 
     const handleSave = async () => {
-        // Check if there's an existing form
-        const existingFormResult = await getSingleForm();
-        const hasExistingForm = existingFormResult.success && existingFormResult.data !== null;
-
-        // If there's an existing form, ask for confirmation to delete it
-        let deleteOldForms = false;
-        if (hasExistingForm) {
-            const confirmed = window.confirm(
-                'A screening form already exists. Creating a new form will replace the old one.\n\n' +
-                'Do you want to delete the old form once the new one is created?\n\n' +
-                'Click OK to delete the old form, or Cancel to keep both forms.'
-            );
-            deleteOldForms = confirmed;
-        }
-
         setIsSaving(true);
         setError(null);
         try {
-            const result = await saveSingleForm(questions, deleteOldForms);
+            // Always delete old forms when creating a new one (only one screening form at a time)
+            const result = await saveSingleForm(questions, true);
 
             if (result.success) {
                 const schema: FormSchema = {

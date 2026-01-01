@@ -17,3 +17,4 @@ export default async function NavigatorHistoryPage() {
     return <NavigatorHistory navigatorId={session.userId} />;
 }
 
+

@@ -20,10 +20,11 @@ export function LayoutShell({ children, userName, userRole }: { children: React.
     const currentSidebarWidth = isCollapsed ? SIDEBAR_COLLAPSED_WIDTH : SIDEBAR_WIDTH;
 
     // Hide sidebar only for vendor portal (singular /vendor), not admin vendor management (plural /vendors)
-    // Hide sidebar only for vendor portal (singular /vendor) and client portal
+    // Hide sidebar only for vendor portal (singular /vendor), client portal, and verify-order routes
     const isVendorPortal = pathname === '/vendor' || pathname.startsWith('/vendor/');
     const isClientPortal = pathname.startsWith('/client-portal');
-    const showSidebar = !isVendorPortal && !isClientPortal;
+    const isVerifyOrder = pathname.startsWith('/verify-order');
+    const showSidebar = !isVendorPortal && !isClientPortal && !isVerifyOrder;
 
     return (
         <DataCacheProvider>

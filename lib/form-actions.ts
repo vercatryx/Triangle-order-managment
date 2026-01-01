@@ -167,7 +167,7 @@ export async function submitForm(formId: string, answers: Record<string, string>
 
 const SCREENING_FORM_TITLE = "Screening Form";
 
-export async function saveSingleForm(questions: any[], deleteOldForms: boolean = false) {
+export async function saveSingleForm(questions: any[], deleteOldForms: boolean = true) {
     try {
         // Always create a new form
         const timestamp = new Date().toISOString().replace('T', ' ').substring(0, 19);
@@ -319,6 +319,21 @@ export async function createSubmission(data: Record<string, string>, clientId?: 
             throw new Error('Screening Form not found');
         }
 
+        // Delete old pending submissions for this client and form before creating a new one
+        if (clientId) {
+            const { error: deleteError } = await supabase
+                .from('form_submissions')
+                .delete()
+                .eq('client_id', clientId)
+                .eq('form_id', formResult.data.id)
+                .eq('status', 'pending');
+
+            if (deleteError) {
+                console.error('Error deleting old pending submissions:', deleteError);
+                // Don't fail the whole operation if deletion fails, but log it
+            }
+        }
+
         const { data: submission, error } = await supabase
             .from('form_submissions')
             .insert({
@@ -368,11 +383,18 @@ export async function getSubmissionByToken(token: string) {
             throw new Error('Form not found');
         }
 
+        // Fetch client info if client_id exists
+        let client = null;
+        if (submission.client_id) {
+            client = await getClient(submission.client_id);
+        }
+
         return {
             success: true,
             data: {
                 submission,
-                formSchema: formResult.data
+                formSchema: formResult.data,
+                client
             }
         };
     } catch (error: any) {
@@ -488,7 +510,8 @@ import { getClient } from './actions';
 export async function sendSubmissionToNutritionist(
     nutritionistId: string,
     submissionData: Record<string, string>,
-    clientId?: string
+    clientId?: string,
+    token?: string
 ): Promise<{ success: boolean; error?: string }> {
     try {
         // Get nutritionist
@@ -554,6 +577,27 @@ export async function sendSubmissionToNutritionist(
         submissionHtml += '</ul>';
         submissionHtml += '<hr style="margin: 20px 0;">';
         submissionHtml += `<p style="color: #666; font-size: 12px;">Submitted at: ${new Date().toLocaleString()}</p>`;
+
+        // Add approval/denial link if token is provided
+        if (token) {
+            // Get base URL from environment variable or use a default
+            let baseUrl = process.env.NEXT_PUBLIC_APP_URL;
+            if (!baseUrl && process.env.NEXT_PUBLIC_VERCEL_URL) {
+                baseUrl = `https://${process.env.NEXT_PUBLIC_VERCEL_URL}`;
+            }
+            if (!baseUrl) {
+                baseUrl = 'http://localhost:3000';
+            }
+            const approvalUrl = `${baseUrl}/verify-order/${token}`;
+            
+            submissionHtml += '<hr style="margin: 20px 0;">';
+            submissionHtml += '<div style="text-align: center; padding: 20px; background-color: #f0f9ff; border-radius: 8px; margin-top: 30px;">';
+            submissionHtml += '<h3 style="margin-top: 0; color: #1e40af;">Review & Approve Submission</h3>';
+            submissionHtml += '<p style="margin-bottom: 20px; color: #1f2937;">Click the link below to review and approve or deny this submission:</p>';
+            submissionHtml += `<a href="${approvalUrl}" style="display: inline-block; padding: 12px 24px; background-color: #3b82f6; color: white; text-decoration: none; border-radius: 6px; font-weight: bold; font-size: 16px;">Review Submission</a>`;
+            submissionHtml += `<p style="margin-top: 15px; font-size: 12px; color: #6b7280;">Or copy and paste this link into your browser:<br><span style="word-break: break-all;">${approvalUrl}</span></p>`;
+            submissionHtml += '</div>';
+        }
 
         // Send email
         const emailResult = await sendEmail({

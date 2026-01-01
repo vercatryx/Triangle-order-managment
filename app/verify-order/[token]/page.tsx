@@ -4,7 +4,7 @@ import { useEffect, useState, useRef } from 'react';
 import { useParams } from 'next/navigation';
 import { getSubmissionByToken, updateSubmissionStatus, finalizeSubmission } from '@/lib/form-actions';
 import { FormSchema } from '@/lib/form-types';
-import { CheckCircle, XCircle, Loader2, Edit, MessageSquare } from 'lucide-react';
+import { CheckCircle, XCircle, Loader2, Edit, MessageSquare, User } from 'lucide-react';
 import SignatureCanvas from 'react-signature-canvas';
 import { jsPDF } from 'jspdf';
 
@@ -16,6 +16,7 @@ export default function VerifyOrderPage() {
     const [error, setError] = useState<string | null>(null);
     const [submission, setSubmission] = useState<any>(null);
     const [formSchema, setFormSchema] = useState<FormSchema | null>(null);
+    const [client, setClient] = useState<any>(null);
     const [showSignature, setShowSignature] = useState(false);
     const [processing, setProcessing] = useState(false);
     const [completed, setCompleted] = useState(false);
@@ -33,6 +34,7 @@ export default function VerifyOrderPage() {
             if (result.success && result.data) {
                 setSubmission(result.data.submission);
                 setFormSchema(result.data.formSchema);
+                setClient(result.data.client || null);
 
                 // If already processed, show completion
                 if (result.data.submission.status !== 'pending') {
@@ -219,9 +221,40 @@ export default function VerifyOrderPage() {
                     <>
                         <CheckCircle size={64} color="#10b981" />
                         <h1 style={{ fontSize: '24px', fontWeight: 'bold' }}>Screening Form Accepted!</h1>
+                        {client && (
+                            <p style={{ fontSize: '18px', fontWeight: '600', color: 'var(--text-primary)', marginTop: '8px' }}>
+                                Client: {client.fullName}
+                            </p>
+                        )}
                         <p>The screening form has been signed and submitted successfully.</p>
+                        {client && (
+                            <div style={{ marginTop: '20px', padding: '20px', background: 'var(--bg-secondary)', borderRadius: '8px', maxWidth: '600px', width: '100%' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '16px' }}>
+                                    <User size={18} style={{ color: 'var(--text-primary)' }} />
+                                    <h2 style={{ fontSize: '16px', fontWeight: 'bold', margin: 0 }}>Client Information</h2>
+                                </div>
+                                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '12px' }}>
+                                    <div>
+                                        <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '4px' }}>Full Name</div>
+                                        <div style={{ fontSize: '14px', fontWeight: '500' }}>{client.fullName}</div>
+                                    </div>
+                                    {client.email && (
+                                        <div>
+                                            <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '4px' }}>Email</div>
+                                            <div style={{ fontSize: '14px', fontWeight: '500' }}>{client.email}</div>
+                                        </div>
+                                    )}
+                                    {client.phoneNumber && (
+                                        <div>
+                                            <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '4px' }}>Phone</div>
+                                            <div style={{ fontSize: '14px', fontWeight: '500' }}>{client.phoneNumber}</div>
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        )}
                         {comments && (
-                            <div style={{ marginTop: '20px', padding: '16px', background: 'var(--bg-secondary)', borderRadius: '8px', maxWidth: '600px' }}>
+                            <div style={{ marginTop: '20px', padding: '16px', background: 'var(--bg-secondary)', borderRadius: '8px', maxWidth: '600px', width: '100%' }}>
                                 <div style={{ fontWeight: 'bold', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '8px' }}>
                                     <MessageSquare size={16} />
                                     Comments:
@@ -234,9 +267,40 @@ export default function VerifyOrderPage() {
                     <>
                         <XCircle size={64} color="#ef4444" />
                         <h1 style={{ fontSize: '24px', fontWeight: 'bold' }}>Screening Form Rejected</h1>
+                        {client && (
+                            <p style={{ fontSize: '18px', fontWeight: '600', color: 'var(--text-primary)', marginTop: '8px' }}>
+                                Client: {client.fullName}
+                            </p>
+                        )}
                         <p>This screening form has been rejected.</p>
+                        {client && (
+                            <div style={{ marginTop: '20px', padding: '20px', background: 'var(--bg-secondary)', borderRadius: '8px', maxWidth: '600px', width: '100%' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '16px' }}>
+                                    <User size={18} style={{ color: 'var(--text-primary)' }} />
+                                    <h2 style={{ fontSize: '16px', fontWeight: 'bold', margin: 0 }}>Client Information</h2>
+                                </div>
+                                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '12px' }}>
+                                    <div>
+                                        <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '4px' }}>Full Name</div>
+                                        <div style={{ fontSize: '14px', fontWeight: '500' }}>{client.fullName}</div>
+                                    </div>
+                                    {client.email && (
+                                        <div>
+                                            <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '4px' }}>Email</div>
+                                            <div style={{ fontSize: '14px', fontWeight: '500' }}>{client.email}</div>
+                                        </div>
+                                    )}
+                                    {client.phoneNumber && (
+                                        <div>
+                                            <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '4px' }}>Phone</div>
+                                            <div style={{ fontSize: '14px', fontWeight: '500' }}>{client.phoneNumber}</div>
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        )}
                         {comments && (
-                            <div style={{ marginTop: '20px', padding: '16px', background: 'var(--bg-secondary)', borderRadius: '8px', maxWidth: '600px' }}>
+                            <div style={{ marginTop: '20px', padding: '16px', background: 'var(--bg-secondary)', borderRadius: '8px', maxWidth: '600px', width: '100%' }}>
                                 <div style={{ fontWeight: 'bold', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '8px' }}>
                                     <MessageSquare size={16} />
                                     Reason:
@@ -255,8 +319,50 @@ export default function VerifyOrderPage() {
             <div style={{ maxWidth: '800px', margin: '0 auto' }}>
                 <div style={{ background: 'var(--bg-secondary)', padding: '30px', borderRadius: '12px', marginBottom: '30px' }}>
                     <h1 style={{ fontSize: '28px', fontWeight: 'bold', marginBottom: '10px' }}>{formSchema?.title}</h1>
+                    {client && (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px' }}>
+                            <User size={18} style={{ color: 'var(--text-primary)' }} />
+                            <p style={{ fontSize: '18px', fontWeight: '600', color: 'var(--text-primary)', margin: 0 }}>
+                                Client: {client.fullName}
+                            </p>
+                        </div>
+                    )}
                     <p style={{ color: 'var(--text-secondary)' }}>Review the screening form details below</p>
                 </div>
+
+                {/* Client Information */}
+                {client && (
+                    <div style={{ background: 'var(--bg-secondary)', padding: '24px', borderRadius: '12px', marginBottom: '30px', border: '1px solid var(--border-color)' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '16px' }}>
+                            <User size={20} style={{ color: 'var(--text-primary)' }} />
+                            <h2 style={{ fontSize: '18px', fontWeight: 'bold', margin: 0 }}>Client Information</h2>
+                        </div>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '16px' }}>
+                            <div>
+                                <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '4px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Full Name</div>
+                                <div style={{ fontSize: '16px', fontWeight: '500', color: 'var(--text-primary)' }}>{client.fullName}</div>
+                            </div>
+                            {client.email && (
+                                <div>
+                                    <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '4px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Email</div>
+                                    <div style={{ fontSize: '16px', fontWeight: '500', color: 'var(--text-primary)' }}>{client.email}</div>
+                                </div>
+                            )}
+                            {client.phoneNumber && (
+                                <div>
+                                    <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '4px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Phone</div>
+                                    <div style={{ fontSize: '16px', fontWeight: '500', color: 'var(--text-primary)' }}>{client.phoneNumber}</div>
+                                </div>
+                            )}
+                            {client.address && (
+                                <div style={{ gridColumn: '1 / -1' }}>
+                                    <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '4px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Address</div>
+                                    <div style={{ fontSize: '16px', fontWeight: '500', color: 'var(--text-primary)' }}>{client.address}</div>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                )}
 
                 {/* Questions and Answers */}
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', marginBottom: '30px' }}>

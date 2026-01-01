@@ -73,11 +73,12 @@ export default function FormFiller({ schema, onBack, clientId }: FormFillerProps
                 throw new Error(result.error || 'Failed to create submission');
             }
 
-            // Send email to nutritionist
+            // Send email to nutritionist with token for approval link
             const emailResult = await sendSubmissionToNutritionist(
                 selectedNutritionistId,
                 answers,
-                clientId
+                clientId,
+                result.token
             );
 
             if (emailResult.success) {

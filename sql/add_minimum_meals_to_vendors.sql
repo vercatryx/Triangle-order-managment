@@ -12,3 +12,4 @@ COMMENT ON COLUMN vendors.minimum_meals IS 'Minimum number of meals required whe
 
 
 
+

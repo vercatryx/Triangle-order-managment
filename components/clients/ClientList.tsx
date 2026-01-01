@@ -6,7 +6,7 @@ import { useState, useEffect, useRef } from 'react';
 import { ClientProfile, ClientStatus, Navigator, Vendor, BoxType, ClientFullDetails, MenuItem } from '@/lib/types';
 import { getClientsPaginated, getClientFullDetails, getStatuses, getNavigators, addClient, getVendors, getBoxTypes, getMenuItems } from '@/lib/actions';
 import { invalidateClientData } from '@/lib/cached-data';
-import { Plus, Search, ChevronRight, CheckSquare, Square, StickyNote, Package, ArrowUpDown, ArrowUp, ArrowDown, Filter, Eye, EyeOff } from 'lucide-react';
+import { Plus, Search, ChevronRight, CheckSquare, Square, StickyNote, Package, ArrowUpDown, ArrowUp, ArrowDown, Filter, Eye, EyeOff, Loader2 } from 'lucide-react';
 import styles from './ClientList.module.css';
 import { useRouter } from 'next/navigation';
 
@@ -24,6 +24,7 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
     const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
     const [search, setSearch] = useState('');
     const [isLoading, setIsLoading] = useState(true);
+    const [isRefreshing, setIsRefreshing] = useState(false);
 
     // Pagination State
     const [page, setPage] = useState(1);
@@ -127,6 +128,38 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
             console.error("Error loading initial data:", error);
         } finally {
             setIsLoading(false);
+        }
+    }
+
+    async function refreshDataInBackground() {
+        setIsRefreshing(true);
+        try {
+            // Invalidate cache to ensure fresh data
+            invalidateClientData();
+            
+            // Fetch fresh data
+            const [sData, nData, vData, bData, mData, cRes] = await Promise.all([
+                getStatuses(),
+                getNavigators(),
+                getVendors(),
+                getBoxTypes(),
+                getMenuItems(),
+                getClientsPaginated(1, PAGE_SIZE)
+            ]);
+
+            // Update all data
+            setStatuses(sData);
+            setNavigators(nData);
+            setVendors(vData);
+            setBoxTypes(bData);
+            setMenuItems(mData);
+            setClients(cRes.clients);
+            setTotalClients(cRes.total);
+            setPage(1);
+        } catch (error) {
+            console.error("Error refreshing data:", error);
+        } finally {
+            setIsRefreshing(false);
         }
     }
 
@@ -671,6 +704,12 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
                             {clients.length} / {totalClients} loaded
                         </span>
                     )}
+                    {isRefreshing && (
+                        <div className={styles.refreshIndicator}>
+                            <Loader2 size={14} className="animate-spin" />
+                            <span>Refreshing...</span>
+                        </div>
+                    )}
                 </div>
                 <div className={styles.headerActions}>
                     <div className={styles.viewToggle}>
@@ -1012,25 +1051,31 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
                             clientId={selectedClientId}
                             initialData={detailsCache[selectedClientId]}
                             onClose={() => {
+                                const closedClientId = selectedClientId;
                                 setSelectedClientId(null);
-                                // We might want to refresh only this client in the list?
-                                // For now, let's just let it be. If they edit, cache might be stale, 
-                                // but we re-fetch effectively on mount of ClientProfile anyway if initialData is stale?
-                                // Actually, I passed initialData only. If they edit and close, 
-                                // valid logic dictates we should maybe invalidate the cache for this ID.
+                                // Clear the cache for this client
                                 setDetailsCache(prev => {
                                     const next = { ...prev };
-                                    delete next[selectedClientId];
+                                    delete next[closedClientId];
                                     return next;
                                 });
-                                // We also should probably update the list row if things changed (like name).
-                                // Implementing full re-fetch of list or just this item is tricky without prop drilling.
-                                // For MVP, we can re-fetch page 1 or just leave it.
-                                // Let's just invalidate cache so next open is fresh.
+                                // Trigger background refresh to update the list with any changes
+                                refreshDataInBackground();
                             }}
                         />
                     </div>
-                    <div className={styles.overlay} onClick={() => setSelectedClientId(null)}></div>
+                    <div className={styles.overlay} onClick={() => {
+                        const closedClientId = selectedClientId;
+                        setSelectedClientId(null);
+                        // Clear the cache for this client
+                        setDetailsCache(prev => {
+                            const next = { ...prev };
+                            delete next[closedClientId];
+                            return next;
+                        });
+                        // Trigger background refresh to update the list with any changes
+                        refreshDataInBackground();
+                    }}></div>
                 </div>
             )}
         </div>

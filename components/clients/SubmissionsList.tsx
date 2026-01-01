@@ -1,5 +1,7 @@
 import { CheckCircle, XCircle, Clock, Download, ExternalLink, MessageSquare } from 'lucide-react';
 
+const R2_DOMAIN = process.env.NEXT_PUBLIC_R2_DOMAIN;
+
 interface Submission {
     id: string;
     status: 'pending' | 'accepted' | 'rejected';
@@ -100,7 +102,17 @@ export default function SubmissionsList({ submissions }: SubmissionsListProps) {
 
                             {submission.status === 'accepted' && submission.pdf_url && (
                                 <button
-                                    onClick={() => window.open(`https://your-r2-domain/${submission.pdf_url}`, '_blank')}
+                                    onClick={() => {
+                                        if (!R2_DOMAIN) {
+                                            console.error('NEXT_PUBLIC_R2_DOMAIN is not configured');
+                                            alert('R2 domain is not configured. Please contact an administrator.');
+                                            return;
+                                        }
+                                        const url = R2_DOMAIN.startsWith('http') 
+                                            ? `${R2_DOMAIN}/${submission.pdf_url}`
+                                            : `https://${R2_DOMAIN}/${submission.pdf_url}`;
+                                        window.open(url, '_blank');
+                                    }}
                                     className="btn btn-primary"
                                     style={{ fontSize: '14px', padding: '6px 12px' }}
                                 >
