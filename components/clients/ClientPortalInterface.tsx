@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { ClientProfile, ClientStatus, Navigator, Vendor, MenuItem, BoxType, ItemCategory, BoxQuota } from '@/lib/types';
 import { syncCurrentOrderToUpcoming, getBoxQuotas, invalidateOrderData, updateClient } from '@/lib/actions';
 import { Package, Truck, User, Loader2, Info, Plus, Calendar, AlertTriangle, Check, Trash2, History, ChevronDown, ChevronUp, Clock } from 'lucide-react';
@@ -70,27 +70,60 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
         setClient(initialClient);
     }, [initialClient]);
 
-    // Initialize state
-    useEffect(() => {
-        // Use a ref to track if we've already initialized to prevent overwriting user changes
-        const currentItems = (orderConfig as any)?.items;
-        const hasExistingItems = currentItems && typeof currentItems === 'object' && Object.keys(currentItems).length > 0;
-        
-        console.log('[ClientPortal] Initialization useEffect triggered', {
-            hasUpcomingOrder: !!upcomingOrder,
-            upcomingOrderType: typeof upcomingOrder,
-            upcomingOrderKeys: upcomingOrder ? Object.keys(upcomingOrder) : [],
-            currentOrderConfigItems: hasExistingItems ? Object.keys(currentItems).length : 0,
-            currentOrderConfigItemsData: currentItems,
-            upcomingOrderItems: upcomingOrder?.items ? Object.keys(upcomingOrder.items).length : 0,
-            upcomingOrderItemsData: upcomingOrder?.items,
-            willPreserveItems: hasExistingItems && (!upcomingOrder || !upcomingOrder.items || Object.keys(upcomingOrder.items || {}).length === 0)
-        });
-        
-        let configToSet: any = {};
+    // Track if we've already initialized to prevent overwriting user changes
+    const hasInitializedRef = useRef(false);
+    const lastSavedTimestampRef = useRef<string | null>(null);
+    const lastUpcomingOrderIdRef = useRef<string | null>(null);
 
+    // Initialize order config - matching ClientProfile logic exactly
+    useEffect(() => {
+        if (!client) {
+            return;
+        }
+
+        // Get the upcoming order ID and timestamp for comparison
+        const upcomingOrderId = upcomingOrder ? (
+            typeof upcomingOrder === 'object' && !(upcomingOrder as any).serviceType ? 
+                (upcomingOrder as any)['default']?.id : 
+                (upcomingOrder as any)?.id
+        ) : null;
+        
+        const upcomingOrderTimestamp = upcomingOrder ? (
+            typeof upcomingOrder === 'object' && !(upcomingOrder as any).serviceType ? 
+                (upcomingOrder as any)['default']?.lastUpdated : 
+                (upcomingOrder as any)?.lastUpdated
+        ) : null;
+
+        // If we've already initialized and client.activeOrder is more recent than upcomingOrder,
+        // prefer client.activeOrder to prevent overwriting recent saves
+        const clientActiveOrderTimestamp = (client?.activeOrder as any)?.lastUpdated;
+        const upcomingOrderUnchanged = upcomingOrderId === lastUpcomingOrderIdRef.current;
+        const clientActiveOrderIsNewer = clientActiveOrderTimestamp && upcomingOrderTimestamp && 
+            new Date(clientActiveOrderTimestamp) > new Date(upcomingOrderTimestamp);
+        
+        const shouldPreferClientActiveOrder = hasInitializedRef.current && 
+            upcomingOrderUnchanged &&
+            clientActiveOrderIsNewer &&
+            client.activeOrder;
+
+        if (shouldPreferClientActiveOrder) {
+            const configToSet = { ...client.activeOrder };
+            if (!configToSet.serviceType) {
+                configToSet.serviceType = client.serviceType;
+            }
+            setOrderConfig(configToSet);
+            setOriginalOrderConfig(JSON.parse(JSON.stringify(configToSet)));
+            return;
+        }
+
+        let configToSet: any = {};
+        let source = '';
+
+        // Priority 1: Use upcomingOrder from upcoming_orders table
         if (upcomingOrder) {
-            // Logic copied from ClientProfile.tsx - handle multi-day format only for Food
+            source = 'upcomingOrder';
+            
+            // Check if it's the multi-day format (object keyed by delivery day, not deliveryDayOrders)
             const isMultiDayFormat = upcomingOrder && typeof upcomingOrder === 'object' &&
                 !upcomingOrder.serviceType &&
                 !upcomingOrder.deliveryDayOrders &&
@@ -100,7 +133,7 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
                 });
 
             if (isMultiDayFormat) {
-                // Convert to deliveryDayOrders format (copied from ClientProfile)
+                // Convert to deliveryDayOrders format
                 const deliveryDayOrders: any = {};
                 for (const day of Object.keys(upcomingOrder)) {
                     const dayOrder = (upcomingOrder as any)[day];
@@ -110,7 +143,7 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
                         };
                     }
                 }
-                // Check if it's Boxes - if so, flatten it to single order config (like ClientProfile does)
+                // Check if it's Boxes - if so, flatten it to single order config
                 const firstDayKey = Object.keys(upcomingOrder)[0];
                 const firstDayOrder = (upcomingOrder as any)[firstDayKey];
 
@@ -123,28 +156,37 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
                         deliveryDayOrders
                     };
                 }
-            } else if (upcomingOrder.serviceType === 'Food' && !upcomingOrder.vendorSelections && !upcomingOrder.deliveryDayOrders) {
+            } else if ((upcomingOrder as any).serviceType === 'Food' && !(upcomingOrder as any).vendorSelections && !(upcomingOrder as any).deliveryDayOrders) {
                 // Migration/Safety: Ensure vendorSelections exists for Food
-                if (upcomingOrder.vendorId) {
-                    upcomingOrder.vendorSelections = [{ vendorId: upcomingOrder.vendorId, items: upcomingOrder.menuSelections || {} }];
+                if ((upcomingOrder as any).vendorId) {
+                    (upcomingOrder as any).vendorSelections = [{ vendorId: (upcomingOrder as any).vendorId, items: (upcomingOrder as any).menuSelections || {} }];
                 } else {
-                    upcomingOrder.vendorSelections = [{ vendorId: '', items: {} }];
+                    (upcomingOrder as any).vendorSelections = [{ vendorId: '', items: {} }];
                 }
                 configToSet = upcomingOrder;
             } else {
-                // For Boxes or other service types, use upcomingOrder directly (like ClientProfile does)
+                // For Boxes or other service types, use upcomingOrder directly
                 configToSet = upcomingOrder;
             }
         } else if (activeOrder) {
-            // No upcoming order, but we have active_order from clients table - use that
+            source = 'activeOrder';
+            // Priority 2: No upcoming order, but we have active_order from clients table - use that
             // This ensures vendorId, items, and other Boxes data are preserved even if sync to upcoming_orders failed
             configToSet = { ...activeOrder };
             // Ensure serviceType matches client's service type
             if (!configToSet.serviceType) {
                 configToSet.serviceType = client.serviceType;
             }
+        } else if (client.activeOrder) {
+            source = 'client.activeOrder';
+            // Priority 3: Fallback to client.activeOrder if available
+            configToSet = { ...client.activeOrder };
+            if (!configToSet.serviceType) {
+                configToSet.serviceType = client.serviceType;
+            }
         } else {
-            // No upcoming order and no active_order, initialize with default
+            source = 'default';
+            // Priority 4: No order data, initialize with default
             const defaultOrder: any = { serviceType: client.serviceType };
             if (client.serviceType === 'Food') {
                 defaultOrder.vendorSelections = [{ vendorId: '', items: {} }];
@@ -152,16 +194,19 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
             configToSet = defaultOrder;
         }
 
-        console.log('[ClientPortal] Setting orderConfig:', {
-            serviceType: configToSet.serviceType,
-            itemsCount: configToSet.items ? Object.keys(configToSet.items).length : 0,
-            items: configToSet.items,
-            fullConfig: JSON.stringify(configToSet, null, 2)
-        });
-        
         setOrderConfig(configToSet);
-        setOriginalOrderConfig(JSON.parse(JSON.stringify(configToSet)));
-    }, [upcomingOrder, client.serviceType, boxTypes]);
+        const deepCopy = JSON.parse(JSON.stringify(configToSet));
+        setOriginalOrderConfig(deepCopy);
+        hasInitializedRef.current = true;
+        
+        // Track the upcoming order ID we just initialized from
+        const currentUpcomingOrderId = upcomingOrder ? (
+            typeof upcomingOrder === 'object' && !(upcomingOrder as any).serviceType ? 
+                (upcomingOrder as any)['default']?.id : 
+                (upcomingOrder as any)?.id
+        ) : null;
+        lastUpcomingOrderIdRef.current = currentUpcomingOrderId;
+    }, [upcomingOrder, activeOrder, client]);
 
     // Box Logic - Load quotas if boxTypeId is set (optional for box contents)
     useEffect(() => {
@@ -187,20 +232,36 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
     const itemPrices = useMemo(() => (orderConfig as any)?.itemPrices ?? {}, [(orderConfig as any)?.itemPrices]);
     const serviceType = client.serviceType;
 
-    // Auto-Save Logic
+    // Auto-Save Logic - matching ClientProfile exactly
     useEffect(() => {
-        if (!client || !orderConfig) return;
+        if (!client || !orderConfig) {
+            return;
+        }
+        
+        // For Food clients, caseId is required. For Boxes, it's optional
+        if (serviceType === 'Food' && !caseId) {
+            return;
+        }
 
-        const simpleCheck = JSON.stringify(orderConfig) === JSON.stringify(originalOrderConfig);
-        if (simpleCheck) return;
+        // Check if config has changed
+        const configChanged = JSON.stringify(orderConfig) !== JSON.stringify(originalOrderConfig);
 
+        if (!configChanged) {
+            return;
+        }
+
+        // Debounce check to avoid too many calls
         const timeoutId = setTimeout(async () => {
             try {
+                // Ensure structure is correct and convert per-vendor delivery days to deliveryDayOrders format
                 const cleanedOrderConfig = { ...orderConfig };
-                cleanedOrderConfig.updatedBy = 'Client';
+
+                // CRITICAL: Always preserve caseId at the top level for both Food and Boxes
+                cleanedOrderConfig.caseId = orderConfig.caseId;
 
                 if (serviceType === 'Food') {
                     if (cleanedOrderConfig.deliveryDayOrders) {
+                        // Clean multi-day format (already in deliveryDayOrders)
                         for (const day of Object.keys(cleanedOrderConfig.deliveryDayOrders)) {
                             cleanedOrderConfig.deliveryDayOrders[day].vendorSelections = (cleanedOrderConfig.deliveryDayOrders[day].vendorSelections || [])
                                 .filter((s: any) => s.vendorId)
@@ -210,27 +271,35 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
                                 }));
                         }
                     } else if (cleanedOrderConfig.vendorSelections) {
+                        // Check if any vendor has per-vendor delivery days (itemsByDay)
                         const hasPerVendorDeliveryDays = cleanedOrderConfig.vendorSelections.some((s: any) =>
                             s.selectedDeliveryDays && s.selectedDeliveryDays.length > 0 && s.itemsByDay
                         );
 
                         if (hasPerVendorDeliveryDays) {
+                            // Convert per-vendor delivery days to deliveryDayOrders format
                             const deliveryDayOrders: any = {};
+
                             for (const selection of cleanedOrderConfig.vendorSelections) {
                                 if (!selection.vendorId || !selection.selectedDeliveryDays || !selection.itemsByDay) continue;
+
                                 for (const day of selection.selectedDeliveryDays) {
                                     if (!deliveryDayOrders[day]) {
                                         deliveryDayOrders[day] = { vendorSelections: [] };
                                     }
+
+                                    // Add this vendor to this day with its items
                                     deliveryDayOrders[day].vendorSelections.push({
                                         vendorId: selection.vendorId,
                                         items: selection.itemsByDay[day] || {}
                                     });
                                 }
                             }
+
                             cleanedOrderConfig.deliveryDayOrders = deliveryDayOrders;
                             cleanedOrderConfig.vendorSelections = undefined;
                         } else {
+                            // Clean single-day format (normal items, not itemsByDay)
                             cleanedOrderConfig.vendorSelections = (cleanedOrderConfig.vendorSelections || [])
                                 .filter((s: any) => s.vendorId)
                                 .map((s: any) => ({
@@ -240,28 +309,16 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
                         }
                     }
                 } else if (serviceType === 'Boxes') {
-                    // For Boxes: Preserve items, boxTypeId, boxQuantity, and itemPrices
-                    cleanedOrderConfig.items = cleanedOrderConfig.items || {};
-                    cleanedOrderConfig.boxQuantity = cleanedOrderConfig.boxQuantity || 1;
-                    // Preserve boxTypeId and itemPrices if they exist
-                    if (cleanedOrderConfig.boxTypeId !== undefined) {
-                        cleanedOrderConfig.boxTypeId = cleanedOrderConfig.boxTypeId;
-                    }
-                    if (cleanedOrderConfig.itemPrices !== undefined) {
-                        cleanedOrderConfig.itemPrices = cleanedOrderConfig.itemPrices;
-                    }
-                    // Debug: Log box items being saved
-                    console.log('[ClientPortal] Saving Boxes order:', {
-                        itemsCount: Object.keys(cleanedOrderConfig.items || {}).length,
-                        items: cleanedOrderConfig.items,
-                        boxTypeId: cleanedOrderConfig.boxTypeId,
-                        boxQuantity: cleanedOrderConfig.boxQuantity
-                    });
+                    // For Boxes: Explicitly preserve all critical fields
+                    cleanedOrderConfig.vendorId = orderConfig.vendorId;
+                    cleanedOrderConfig.caseId = orderConfig.caseId; // Also set above
+                    cleanedOrderConfig.boxTypeId = orderConfig.boxTypeId;
+                    cleanedOrderConfig.boxQuantity = orderConfig.boxQuantity || 1;
+                    cleanedOrderConfig.items = orderConfig.items || {};
+                    cleanedOrderConfig.itemPrices = orderConfig.itemPrices || {};
                 }
 
-                setSaving(true);
-                setMessage('Saving...');
-
+                // Create a temporary client object for syncCurrentOrderToUpcoming
                 const tempClient: ClientProfile = {
                     ...client,
                     activeOrder: {
@@ -272,14 +329,19 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
                     }
                 } as ClientProfile;
 
+                setSaving(true);
+                setMessage('Saving...');
+
+                // Sync to upcoming_orders table
                 await syncCurrentOrderToUpcoming(client.id, tempClient);
 
                 // After saving, update originalOrderConfig to prevent re-saving
-                // But keep the current orderConfig with items intact
                 const savedConfig = JSON.parse(JSON.stringify(orderConfig));
                 setOriginalOrderConfig(savedConfig);
-                console.log('[ClientPortal] After save - orderConfig:', JSON.stringify(orderConfig, null, 2));
-                console.log('[ClientPortal] After save - originalOrderConfig:', JSON.stringify(savedConfig, null, 2));
+                
+                // Track the save timestamp to prevent re-initialization from stale data
+                const saveTimestamp = new Date().toISOString();
+                lastSavedTimestampRef.current = saveTimestamp;
                 
                 setSaving(false);
                 setMessage('Saved');
@@ -289,10 +351,12 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
                 setSaving(false);
                 setMessage('Error saving');
             }
-        }, 1000);
+        }, 500); // 500ms debounce for check
 
-        return () => clearTimeout(timeoutId);
-    }, [caseId, vendorSelections, vendorId, boxTypeId, boxQuantity, items, itemPrices, serviceType, client, JSON.stringify(orderConfig), JSON.stringify(originalOrderConfig)]);
+        return () => {
+            clearTimeout(timeoutId);
+        };
+    }, [caseId, vendorSelections, vendorId, boxTypeId, boxQuantity, items, itemPrices, serviceType, client.id]);
 
     // Auto-Save Profile Logic
     useEffect(() => {

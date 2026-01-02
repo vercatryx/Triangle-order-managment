@@ -1,11 +1,11 @@
-import { getPublicClient, getStatuses, getNavigators, getVendors, getMenuItems, getBoxTypes, getCategories, getUpcomingOrderForClient, getActiveOrderForClient, getPreviousOrdersForClient } from '@/lib/actions';
+import { getPublicClient, getStatuses, getNavigators, getVendors, getMenuItems, getBoxTypes, getCategories, getUpcomingOrderForClient, getActiveOrderForClient, getOrderHistory } from '@/lib/actions';
 import { ClientPortalInterface } from '@/components/clients/ClientPortalInterface';
 import { notFound } from 'next/navigation';
 
 export default async function ClientPortalPage({ params }: { params: { id: string } }) {
     const { id } = await params;
 
-    // Fetch all data in parallel
+    // Fetch all data in parallel - matching ClientProfile pattern
     const [
         client,
         statuses,
@@ -27,22 +27,11 @@ export default async function ClientPortalPage({ params }: { params: { id: strin
         getCategories(),
         getUpcomingOrderForClient(id),
         getActiveOrderForClient(id),
-        getPreviousOrdersForClient(id)
+        getOrderHistory(id)
     ]);
 
     if (!client) {
         notFound();
-    }
-
-    // Debug: Log what we're passing to the component
-    if (upcomingOrder && (upcomingOrder as any).serviceType === 'Boxes') {
-        console.log('[ClientPortalPage] Upcoming order data being passed:', {
-            serviceType: (upcomingOrder as any).serviceType,
-            hasItems: !!(upcomingOrder as any).items,
-            itemsCount: (upcomingOrder as any).items ? Object.keys((upcomingOrder as any).items).length : 0,
-            items: (upcomingOrder as any).items,
-            fullUpcomingOrder: JSON.stringify(upcomingOrder, null, 2).substring(0, 500)
-        });
     }
 
     return (
@@ -67,7 +56,7 @@ export default async function ClientPortalPage({ params }: { params: { id: strin
                 categories={categories}
                 upcomingOrder={upcomingOrder}
                 activeOrder={activeOrder}
-                previousOrders={previousOrders}
+                previousOrders={previousOrders || []}
             />
         </div>
     );
