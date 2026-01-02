@@ -6,6 +6,7 @@ import { Vendor, ClientProfile, MenuItem, BoxType } from '@/lib/types';
 import { getVendors, getClients, getMenuItems, getBoxTypes } from '@/lib/cached-data';
 import { getOrdersByVendor, isOrderUnderVendor, updateOrderDeliveryProof, orderHasDeliveryProof, resolveOrderId } from '@/lib/actions';
 import { ArrowLeft, Truck, Calendar, Package, CheckCircle, XCircle, Clock, User, DollarSign, ShoppingCart, Download, ChevronDown, ChevronUp, FileText, Upload, X, AlertCircle } from 'lucide-react';
+import { generateLabelsPDF } from '@/lib/label-utils';
 import styles from './VendorDetail.module.css';
 
 interface Props {
@@ -92,6 +93,16 @@ export function VendorDetail({ vendorId, isVendorView, vendor: initialVendor }: 
     function getClientName(clientId: string) {
         const client = clients.find(c => c.id === clientId);
         return client?.fullName || 'Unknown Client';
+    }
+
+    function getClientAddress(clientId: string) {
+        const client = clients.find(c => c.id === clientId);
+        return client?.address || '-';
+    }
+
+    function getClientPhone(clientId: string) {
+        const client = clients.find(c => c.id === clientId);
+        return client?.phoneNumber || '-';
     }
 
     function formatDate(dateString: string | null | undefined) {
@@ -500,6 +511,23 @@ export function VendorDetail({ vendorId, isVendorView, vendor: initialVendor }: 
         link.click();
         document.body.removeChild(link);
         URL.revokeObjectURL(url);
+    }
+
+    async function exportLabelsPDFForDate(dateKey: string, dateOrders: any[]) {
+        if (dateOrders.length === 0) {
+            alert('No orders to export for this date');
+            return;
+        }
+
+        await generateLabelsPDF({
+            orders: dateOrders,
+            getClientName,
+            getClientAddress,
+            formatOrderedItemsForCSV,
+            formatDate,
+            vendorName: vendor?.name,
+            deliveryDate: dateKey === 'no-date' ? undefined : dateKey
+        });
     }
 
     async function handleCSVImportForDate(event: React.ChangeEvent<HTMLInputElement>, dateKey: string) {
@@ -991,22 +1019,6 @@ export function VendorDetail({ vendorId, isVendorView, vendor: initialVendor }: 
                         <Truck size={24} style={{ marginRight: '12px', verticalAlign: 'middle' }} />
                         {vendor.name}
                     </h1>
-                    {orders.length > 0 && (
-                        <div style={{ display: 'flex', gap: '0.5rem', marginLeft: '1rem' }}>
-                            <button className="btn btn-secondary" onClick={exportOrdersToCSV}>
-                                <Download size={16} /> Export CSV
-                            </button>
-                            <label className="btn btn-secondary" style={{ cursor: 'pointer' }}>
-                                <Upload size={16} /> Import CSV
-                                <input
-                                    type="file"
-                                    accept=".csv"
-                                    onChange={handleCSVImport}
-                                    style={{ display: 'none' }}
-                                />
-                            </label>
-                        </div>
-                    )}
                 </div>
             </div>
 
@@ -1072,6 +1084,16 @@ export function VendorDetail({ vendorId, isVendorView, vendor: initialVendor }: 
                                                     style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem' }}
                                                     onClick={(e) => {
                                                         e.stopPropagation();
+                                                        exportLabelsPDFForDate(dateKey, dateOrders);
+                                                    }}
+                                                >
+                                                    <FileText size={14} /> Download Labels
+                                                </button>
+                                                <button
+                                                    className="btn btn-secondary"
+                                                    style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem' }}
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
                                                         exportOrdersByDateToCSV(dateKey, dateOrders);
                                                     }}
                                                 >
@@ -1120,6 +1142,16 @@ export function VendorDetail({ vendorId, isVendorView, vendor: initialVendor }: 
                                             style={{ flex: '1.5 1 150px', minWidth: 0, display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}
                                             onClick={(e) => e.stopPropagation()}
                                         >
+                                            <button
+                                                className="btn btn-secondary"
+                                                style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem' }}
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    exportLabelsPDFForDate('no-date', noDate);
+                                                }}
+                                            >
+                                                <FileText size={14} /> Download Labels
+                                            </button>
                                             <button
                                                 className="btn btn-secondary"
                                                 style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem' }}

@@ -441,6 +441,7 @@ async function handleSubmit(e) {
             navigatorId: document.getElementById('navigator').value,
             address: address,
             phone: document.getElementById('phone').value.trim(),
+            secondaryPhone: document.getElementById('secondary-phone').value.trim() || null,
             email: document.getElementById('email').value.trim() || null,
             notes: document.getElementById('notes').value.trim() || null,
             serviceType: serviceType,

@@ -46,6 +46,10 @@ function UnitsModal({
 }) {
     const [units, setUnits] = useState<string>('0');
 
+    useEffect(() => {
+        console.log('[UnitsModal] isOpen changed to:', isOpen);
+    }, [isOpen]);
+
     if (!isOpen) return null;
 
     return (
@@ -177,6 +181,11 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
     
     // Delete Confirmation Modal
     const [showDeleteModal, setShowDeleteModal] = useState(false);
+
+    // Debug: Log when modal state changes
+    useEffect(() => {
+        console.log('[ClientProfile] showUnitsModal changed to:', showUnitsModal);
+    }, [showUnitsModal]);
 
     useEffect(() => {
         // If we have initialData AND we have the necessary lookups (passed as props), we can hydrate instantly without loading state.
@@ -1673,6 +1682,9 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                             <div className={styles.formGroup}>
                                 <label className="label">Phone</label>
                                 <input className="input" value={formData.phoneNumber} onChange={e => setFormData({ ...formData, phoneNumber: e.target.value })} />
+                                <div style={{ height: '1rem' }} /> {/* Spacer */}
+                                <label className="label">Secondary Phone</label>
+                                <input className="input" value={formData.secondaryPhoneNumber || ''} onChange={e => setFormData({ ...formData, secondaryPhoneNumber: e.target.value })} />
                                 <div style={{ height: '1rem' }} /> {/* Spacer */}
                                 <label className="label">Email</label>
                                 <input className="input" value={formData.email || ''} onChange={e => setFormData({ ...formData, email: e.target.value })} />
@@ -3369,27 +3381,51 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
 
         // Check for Status Change by Navigator
         // Only show units modal if the new status requires units on change
+        console.log('[handleSave] Status change check:', {
+            userRole: currentUser?.role,
+            isNavigator: currentUser?.role === 'navigator',
+            oldStatusId: client.statusId,
+            newStatusId: formData.statusId,
+            statusChanged: formData.statusId !== client.statusId,
+            statusesCount: statuses.length,
+            allStatuses: statuses.map(s => ({ id: s.id, name: s.name, requiresUnitsOnChange: s.requiresUnitsOnChange }))
+        });
+
         if (currentUser?.role === 'navigator' && formData.statusId !== client.statusId) {
             const newStatus = statuses.find(s => s.id === formData.statusId);
+            console.log('[handleSave] Found new status:', {
+                statusId: formData.statusId,
+                statusFound: !!newStatus,
+                statusName: newStatus?.name,
+                requiresUnitsOnChange: newStatus?.requiresUnitsOnChange,
+                fullStatus: newStatus
+            });
 
             // Only show modal if the new status has requiresUnitsOnChange enabled
             if (newStatus?.requiresUnitsOnChange) {
                 console.timeEnd('handleSave:pre-check');
-                console.log('Detected status change to status that requires units, showing modal');
+                console.log('[handleSave] Detected status change to status that requires units, showing modal');
 
                 try {
                     const oldStatusName = getStatusName(client.statusId);
                     const newStatusName = getStatusName(formData.statusId!);
                     setPendingStatusChange({ oldStatus: oldStatusName, newStatus: newStatusName });
                     setShowUnitsModal(true);
+                    console.log('[handleSave] Modal state set to true, returning false to intercept');
                     return false; // Intercepted
                 } catch (e) {
-                    console.error('Error in status change logic:', e);
+                    console.error('[handleSave] Error in status change logic:', e);
                 }
             } else {
                 // Status change doesn't require units, proceed with save
-                console.log('Status change detected but new status does not require units');
+                console.log('[handleSave] Status change detected but new status does not require units. requiresUnitsOnChange:', newStatus?.requiresUnitsOnChange);
             }
+        } else {
+            console.log('[handleSave] Status change check failed:', {
+                userRole: currentUser?.role,
+                isNavigator: currentUser?.role === 'navigator',
+                statusChanged: formData.statusId !== client.statusId
+            });
         }
 
 
@@ -3419,6 +3455,9 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
             if (client.address !== formData.address) changes.push(`Address: "${client.address}" -> "${formData.address}"`);
             if (client.email !== formData.email) changes.push(`Email: "${client.email}" -> "${formData.email}"`);
             if (client.phoneNumber !== formData.phoneNumber) changes.push(`Phone: "${client.phoneNumber}" -> "${formData.phoneNumber}"`);
+            if ((client.secondaryPhoneNumber || '') !== (formData.secondaryPhoneNumber || '')) {
+                changes.push(`Secondary Phone: "${client.secondaryPhoneNumber || ''}" -> "${formData.secondaryPhoneNumber || ''}"`);
+            }
             if (client.notes !== formData.notes) changes.push('Notes updated');
             if (client.statusId !== formData.statusId) {
                 const oldStatus = statuses.find(s => s.id === client.statusId)?.name || 'Unknown';
@@ -3644,7 +3683,10 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                 )}
                 <UnitsModal
                     isOpen={showUnitsModal}
-                    onClose={() => setShowUnitsModal(false)}
+                    onClose={() => {
+                        setShowUnitsModal(false);
+                        setPendingStatusChange(null);
+                    }}
                     onConfirm={executeSave}
                     saving={saving}
                 />
@@ -3710,7 +3752,10 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                 )}
                 <UnitsModal
                     isOpen={showUnitsModal}
-                    onClose={() => setShowUnitsModal(false)}
+                    onClose={() => {
+                        setShowUnitsModal(false);
+                        setPendingStatusChange(null);
+                    }}
                     onConfirm={executeSave}
                     saving={saving}
                 />

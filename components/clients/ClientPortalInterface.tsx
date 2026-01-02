@@ -29,12 +29,14 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
         fullName: initialClient.fullName,
         email: initialClient.email || '',
         phoneNumber: initialClient.phoneNumber || '',
+        secondaryPhoneNumber: initialClient.secondaryPhoneNumber || '',
         address: initialClient.address || ''
     });
     const [originalProfileData, setOriginalProfileData] = useState({
         fullName: initialClient.fullName,
         email: initialClient.email || '',
         phoneNumber: initialClient.phoneNumber || '',
+        secondaryPhoneNumber: initialClient.secondaryPhoneNumber || '',
         address: initialClient.address || ''
     });
 
@@ -55,12 +57,14 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
             fullName: initialClient.fullName,
             email: initialClient.email || '',
             phoneNumber: initialClient.phoneNumber || '',
+            secondaryPhoneNumber: initialClient.secondaryPhoneNumber || '',
             address: initialClient.address || ''
         });
         setOriginalProfileData({
             fullName: initialClient.fullName,
             email: initialClient.email || '',
             phoneNumber: initialClient.phoneNumber || '',
+            secondaryPhoneNumber: initialClient.secondaryPhoneNumber || '',
             address: initialClient.address || ''
         });
         setClient(initialClient);
@@ -298,6 +302,7 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
             profileData.fullName !== originalProfileData.fullName ||
             profileData.email !== originalProfileData.email ||
             profileData.phoneNumber !== originalProfileData.phoneNumber ||
+            profileData.secondaryPhoneNumber !== originalProfileData.secondaryPhoneNumber ||
             profileData.address !== originalProfileData.address;
 
         if (!profileChanged) return;
@@ -311,6 +316,7 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
                     fullName: profileData.fullName,
                     email: profileData.email || null,
                     phoneNumber: profileData.phoneNumber || '',
+                    secondaryPhoneNumber: profileData.secondaryPhoneNumber || null,
                     address: profileData.address || ''
                 });
 
@@ -756,6 +762,15 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
                                     className="input"
                                     value={profileData.phoneNumber}
                                     onChange={(e) => setProfileData({ ...profileData, phoneNumber: e.target.value })}
+                                />
+                            </div>
+                            <div>
+                                <label className="label">Secondary Phone Number</label>
+                                <input
+                                    type="tel"
+                                    className="input"
+                                    value={profileData.secondaryPhoneNumber}
+                                    onChange={(e) => setProfileData({ ...profileData, secondaryPhoneNumber: e.target.value })}
                                 />
                             </div>
                         </div>

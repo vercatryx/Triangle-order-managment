@@ -668,6 +668,7 @@ function mapClientFromDB(c: any): ClientProfile {
         email: c.email || '',
         address: c.address || '',
         phoneNumber: c.phone_number || '',
+        secondaryPhoneNumber: c.secondary_phone_number || null,
         navigatorId: c.navigator_id || '',
         endDate: c.end_date || '',
         screeningTookPlace: c.screening_took_place,
@@ -719,6 +720,7 @@ export async function addClient(data: Omit<ClientProfile, 'id' | 'createdAt' | '
         email: data.email,
         address: data.address,
         phone_number: data.phoneNumber,
+        secondary_phone_number: data.secondaryPhoneNumber || null,
         navigator_id: data.navigatorId || null,
         end_date: data.endDate,
         screening_took_place: data.screeningTookPlace,
@@ -855,6 +857,7 @@ export async function updateClient(id: string, data: Partial<ClientProfile>) {
     if (data.email !== undefined) payload.email = data.email;
     if (data.address !== undefined) payload.address = data.address;
     if (data.phoneNumber !== undefined) payload.phone_number = data.phoneNumber;
+    if (data.secondaryPhoneNumber !== undefined) payload.secondary_phone_number = data.secondaryPhoneNumber || null;
     if (data.navigatorId !== undefined) payload.navigator_id = data.navigatorId || null;
     if (data.endDate !== undefined) payload.end_date = data.endDate;
     if (data.screeningTookPlace !== undefined) payload.screening_took_place = data.screeningTookPlace;

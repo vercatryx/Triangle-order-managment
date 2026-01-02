@@ -250,6 +250,12 @@ export default function VerifyOrderPage() {
                                             <div style={{ fontSize: '14px', fontWeight: '500' }}>{client.phoneNumber}</div>
                                         </div>
                                     )}
+                                    {client.secondaryPhoneNumber && (
+                                        <div>
+                                            <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '4px' }}>Secondary Phone</div>
+                                            <div style={{ fontSize: '14px', fontWeight: '500' }}>{client.secondaryPhoneNumber}</div>
+                                        </div>
+                                    )}
                                 </div>
                             </div>
                         )}
@@ -294,6 +300,12 @@ export default function VerifyOrderPage() {
                                         <div>
                                             <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '4px' }}>Phone</div>
                                             <div style={{ fontSize: '14px', fontWeight: '500' }}>{client.phoneNumber}</div>
+                                        </div>
+                                    )}
+                                    {client.secondaryPhoneNumber && (
+                                        <div>
+                                            <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '4px' }}>Secondary Phone</div>
+                                            <div style={{ fontSize: '14px', fontWeight: '500' }}>{client.secondaryPhoneNumber}</div>
                                         </div>
                                     )}
                                 </div>
@@ -352,6 +364,12 @@ export default function VerifyOrderPage() {
                                 <div>
                                     <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '4px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Phone</div>
                                     <div style={{ fontSize: '16px', fontWeight: '500', color: 'var(--text-primary)' }}>{client.phoneNumber}</div>
+                                </div>
+                            )}
+                            {client.secondaryPhoneNumber && (
+                                <div>
+                                    <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '4px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Secondary Phone</div>
+                                    <div style={{ fontSize: '16px', fontWeight: '500', color: 'var(--text-primary)' }}>{client.secondaryPhoneNumber}</div>
                                 </div>
                             )}
                             {client.address && (

@@ -317,6 +317,11 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
                 const phoneB = b.phoneNumber || '';
                 comparison = phoneA.localeCompare(phoneB);
                 break;
+            case 'secondaryPhone':
+                const secondaryPhoneA = a.secondaryPhoneNumber || '';
+                const secondaryPhoneB = b.secondaryPhoneNumber || '';
+                comparison = secondaryPhoneA.localeCompare(secondaryPhoneB);
+                break;
             case 'address':
                 const addressA = a.address || '';
                 const addressB = b.address || '';
@@ -345,6 +350,7 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
             email: '',
             address: '',
             phoneNumber: '',
+            secondaryPhoneNumber: null,
             navigatorId: navigators.find(n => n.isActive)?.id || '',
             endDate: '',
             screeningTookPlace: false,
@@ -1272,6 +1278,10 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
                         onClick={() => handleSort('phone')}>
                         Phone {getSortIcon('phone')}
                     </span>
+                    <span style={{ minWidth: '140px', flex: 1, paddingRight: '16px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}
+                        onClick={() => handleSort('secondaryPhone')}>
+                        Secondary Phone {getSortIcon('secondaryPhone')}
+                    </span>
                     <span style={{ minWidth: '250px', flex: 2, paddingRight: '16px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}
                         onClick={() => handleSort('address')}>
                         Address {getSortIcon('address')}
@@ -1338,6 +1348,9 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
                             <span title={isDependent ? undefined : client.phoneNumber} style={{ minWidth: '140px', flex: 1, fontSize: '0.85rem', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: '16px' }}>
                                 {isDependent ? '-' : (client.phoneNumber || '-')}
                             </span>
+                            <span title={isDependent ? undefined : client.secondaryPhoneNumber} style={{ minWidth: '140px', flex: 1, fontSize: '0.85rem', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: '16px' }}>
+                                {isDependent ? '-' : (client.secondaryPhoneNumber || '-')}
+                            </span>
                             <span title={isDependent ? undefined : client.address} style={{ minWidth: '250px', flex: 2, fontSize: '0.85rem', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: '16px' }}>
                                 {isDependent ? '-' : (client.address || '-')}
                             </span>
@@ -1364,6 +1377,12 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
                         <ClientProfileDetail
                             clientId={selectedClientId}
                             initialData={detailsCache[selectedClientId]}
+                            statuses={statuses}
+                            navigators={navigators}
+                            vendors={vendors}
+                            menuItems={menuItems}
+                            boxTypes={boxTypes}
+                            currentUser={currentUser}
                             onClose={() => {
                                 const closedClientId = selectedClientId;
                                 setSelectedClientId(null);

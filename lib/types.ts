@@ -9,6 +9,7 @@ export interface ClientProfile {
   email: string | null;
   address: string;
   phoneNumber: string;
+  secondaryPhoneNumber?: string | null;
   navigatorId: string;
   endDate: string; // ISO Date
   screeningTookPlace: boolean;
