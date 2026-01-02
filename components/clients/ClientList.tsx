@@ -65,13 +65,13 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
     const [editingDependentId, setEditingDependentId] = useState<string | null>(null);
 
     // Show/Hide Dependents Toggle
-    const [showDependents, setShowDependents] = useState(true);
+    const [showDependents, setShowDependents] = useState(false);
 
     // Selected Client for Modal
     const [selectedClientId, setSelectedClientId] = useState<string | null>(null);
 
     // Order Details Visibility Toggle
-    const [showOrderDetails, setShowOrderDetails] = useState(true);
+    const [showOrderDetails, setShowOrderDetails] = useState(false);
 
     useEffect(() => {
         loadInitialData();
@@ -914,17 +914,13 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
             </div>
 
             <div className={styles.filters}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                    <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', fontSize: '0.9rem' }}>
-                        <input
-                            type="checkbox"
-                            checked={showDependents}
-                            onChange={(e) => setShowDependents(e.target.checked)}
-                            style={{ cursor: 'pointer' }}
-                        />
-                        <span>Show Dependents</span>
-                    </label>
-                </div>
+                <button
+                    className={`btn ${showDependents ? 'btn-primary' : 'btn-secondary'}`}
+                    onClick={() => setShowDependents(!showDependents)}
+                    style={{ fontSize: '0.9rem' }}
+                >
+                    {showDependents ? <Eye size={16} /> : <EyeOff size={16} />} {showDependents ? 'Hide' : 'Show'} Dependents
+                </button>
                 <div className={styles.searchBox}>
                     <Search size={18} className={styles.searchIcon} />
                     <input
