@@ -2,6 +2,7 @@
 
 import { useActionState, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import Image from 'next/image';
 import { login, checkEmailIdentity } from '@/lib/auth-actions';
 import styles from './page.module.css';
 
@@ -57,6 +58,16 @@ export default function LoginPage() {
         <div className={styles.container}>
             <div className={styles.card}>
                 <div className="text-center">
+                    <div className={styles.logoContainer}>
+                        <Image
+                            src="/mainLogo.jpg"
+                            alt="Logo"
+                            width={200}
+                            height={200}
+                            className={styles.logo}
+                            priority
+                        />
+                    </div>
                     <h2 className={styles.title}>
                         Welcome Back
                     </h2>

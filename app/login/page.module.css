@@ -17,6 +17,19 @@
     border: 1px solid var(--border-color);
 }
 
+.logoContainer {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    margin-bottom: 2rem;
+}
+
+.logo {
+    max-width: 200px;
+    height: auto;
+    object-fit: contain;
+}
+
 .title {
     color: var(--text-primary);
     font-size: 2.25rem;

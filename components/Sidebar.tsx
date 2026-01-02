@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import Image from 'next/image';
 import { Users, Truck, Utensils, Box as BoxIcon, Settings, LayoutDashboard, ChevronLeft, ChevronRight, LogOut, Store, History } from 'lucide-react';
 import styles from './Sidebar.module.css';
 import { logout } from '@/lib/auth-actions';
@@ -183,13 +184,26 @@ export function Sidebar({
             <div className={styles.header}>
                 {!isCollapsed && (
                     <div className={styles.logo}>
-                        <LayoutDashboard className={styles.logoIcon} />
-                        <span>Admin Portal</span>
+                        <Image
+                            src="/mainLogo.jpg"
+                            alt="Logo"
+                            width={240}
+                            height={240}
+                            className={styles.logoImage}
+                            priority
+                        />
                     </div>
                 )}
                 {isCollapsed && (
                     <div className={styles.logoCollapsed}>
-                        <LayoutDashboard className={styles.logoIcon} size={24} />
+                        <Image
+                            src="/mainLogo.jpg"
+                            alt="Logo"
+                            width={48}
+                            height={48}
+                            className={styles.logoImageCollapsed}
+                            priority
+                        />
                     </div>
                 )}
                 <button onClick={toggle} className={styles.toggleBtn}>

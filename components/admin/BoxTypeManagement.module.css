@@ -51,10 +51,10 @@
 }
 
 .activeVendor {
-    background-color: var(--bg-app);
-    border-color: var(--border-color);
-    color: var(--color-primary);
-    font-weight: 500;
+    background-color: var(--color-primary);
+    border-color: var(--color-primary);
+    color: #000000;
+    font-weight: 600;
     box-shadow: var(--shadow-sm);
 }
 
@@ -175,7 +175,7 @@
 
 .vendorActive {
     background-color: var(--color-primary);
-    color: white;
+    color: #000000;
     border-color: var(--color-primary);
 }
 

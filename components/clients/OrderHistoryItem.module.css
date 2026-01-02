@@ -44,8 +44,8 @@
 .iconWrapper {
     width: 24px;
     height: 24px;
-    background: var(--color-primary-low);
-    color: var(--color-primary);
+    background: var(--color-primary);
+    color: #000000;
     border-radius: 50%;
     display: flex;
     align-items: center;
@@ -73,8 +73,9 @@
 }
 
 .summaryIcon {
-    color: var(--color-primary);
-    opacity: 0.5;
+    color: #854d0e;
+    /* Darker yellow/brown for visibility */
+    opacity: 1;
     flex-shrink: 0;
     margin-top: 2px;
 }

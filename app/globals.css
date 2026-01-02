@@ -1,7 +1,10 @@
 /* Tailwind directives removed as per visual overhaul plan */
 
 :root {
-  /* Color Palette - Premium Indigo Theme */
+  /* Color Palette - High Contrast Brand Theme */
+  --color-brand: #fdeb23;
+  /* Triangle Yellow */
+
   --bg-app: #f8fafc;
   /* Slate 50 */
   --bg-surface: #ffffff;
@@ -9,34 +12,32 @@
   /* Slate 100 */
   --bg-panel: #ffffff;
 
-  --text-primary: #0f172a;
-  /* Slate 900 */
-  --text-secondary: #475569;
-  /* Slate 600 */
-  --text-tertiary: #94a3b8;
-  /* Slate 400 */
+  --text-primary: #020617;
+  /* Slate 950 - Almost Black for max contrast */
+  --text-secondary: #334155;
+  /* Slate 700 - Much darker than before */
+  --text-tertiary: #64748b;
+  /* Slate 500 */
 
-  --color-primary: #4f46e5;
-  /* Indigo 600 */
-  --color-primary-hover: #4338ca;
-  /* Indigo 700 */
-  --color-accent: #8b5cf6;
-  /* Violet 500 */
+  --color-primary: #fdeb23;
+  /* Brand Yellow */
+  --color-primary-hover: #facc15;
+  /* Slightly Darker Yellow */
+  --color-accent: #4f46e5;
+  /* Keep Indigo as accent */
   --color-danger: #ef4444;
-  /* Red 500 */
-  --color-success: #10b981;
-  /* Emerald 500 */
-  --color-warning: #f59e0b;
-  /* Amber 500 */
+  --color-success: #15803d;
+  /* Darker Emerald for text contrast */
+  --color-warning: #b45309;
+  /* Dark Amber */
 
-  --border-color: #e2e8f0;
+  --border-color: #cbd5e1;
+  /* Slate 300 - Visible borders */
+  --border-color-light: #e2e8f0;
   /* Slate 200 */
-  --border-color-light: #f1f5f9;
-  /* Slate 100 */
 
   /* Typography */
   --font-sans: inherit;
-  /* Inherits from Inter applied in layout */
 
   /* Spacing */
   --spacing-xs: 0.25rem;
@@ -57,9 +58,8 @@
   --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
   --shadow-xl: 0 20px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.1);
 
-  /* Glassmorphism */
-  --glass-bg: rgba(255, 255, 255, 0.8);
-  --glass-border: rgba(255, 255, 255, 0.5);
+  --glass-bg: rgba(255, 255, 255, 0.9);
+  --glass-border: rgba(0, 0, 0, 0.1);
   --backdrop-blur: 12px;
 }
 
@@ -109,7 +109,8 @@ a {
   padding: 0.75rem 1.5rem;
   /* Bigger touch target */
   border-radius: var(--radius-md);
-  font-weight: 600;
+  font-weight: 700;
+  /* Bolder text */
   cursor: pointer;
   transition: all 0.2s ease;
   border: none;
@@ -124,14 +125,17 @@ a {
 
 .btn-primary {
   background-color: var(--color-primary);
-  color: white;
-  box-shadow: 0 2px 4px rgba(79, 70, 229, 0.2);
-  /* Indigo shadow */
+  /* Yellow */
+  color: #000000;
+  /* BLACK TEXT for contrast on yellow */
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  border: 1px solid rgba(0, 0, 0, 0.05);
+  /* Subtle border for definition */
 }
 
 .btn-primary:hover {
   background-color: var(--color-primary-hover);
-  box-shadow: 0 4px 6px rgba(79, 70, 229, 0.3);
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
   transform: translateY(-1px);
 }
 
@@ -172,13 +176,15 @@ a {
 .input:focus {
   outline: none;
   border-color: var(--color-primary);
-  box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.1);
+  box-shadow: 0 0 0 3px rgba(253, 235, 35, 0.4);
+  /* Yellow glow */
 }
 
 .label {
   display: block;
   font-size: 0.875rem;
-  font-weight: 600;
+  font-weight: 700;
+  /* Bolder labels */
   color: var(--text-secondary);
   margin-bottom: 0.375rem;
 }
@@ -189,26 +195,25 @@ a {
   padding: 0.25rem 0.75rem;
   border-radius: 9999px;
   font-size: 0.75rem;
-  font-weight: 600;
+  font-weight: 700;
   line-height: 1;
   text-transform: uppercase;
   letter-spacing: 0.05em;
 }
 
 .badge-success {
-  background-color: #d1fae5;
-  /* Emerald 100 */
-  color: #065f46;
-  /* Emerald 800 */
-  border: 1px solid transparent;
+  background-color: #dcfce7;
+  color: #14532d;
+  /* Dark green */
+  border: 1px solid #bbf7d0;
 }
 
 .badge-info {
-  background-color: #e0e7ff;
-  /* Indigo 100 */
-  color: #3730a3;
-  /* Indigo 800 */
-  border: 1px solid transparent;
+  background-color: var(--color-primary);
+  /* Brand Yellow */
+  color: #000000;
+  /* Black for contrast */
+  border: 1px solid rgba(0, 0, 0, 0.1);
 }
 
 /* Animations */
@@ -244,6 +249,7 @@ a {
   border: 2px solid #e2e8f0;
   border-radius: 50%;
   border-top-color: var(--color-primary);
+  /* Yellow spinner */
   animation: spin 0.8s linear infinite;
   display: inline-block;
 }

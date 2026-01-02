@@ -46,9 +46,10 @@
 }
 
 .viewBtnActive {
-    background-color: var(--bg-app);
-    color: var(--color-primary);
+    background-color: var(--color-primary);
+    color: #000000;
     box-shadow: var(--shadow-sm);
+    font-weight: 600;
 }
 
 .filters {
@@ -259,8 +260,9 @@
     align-items: center;
     gap: 8px;
     font-size: 0.85rem;
-    color: var(--color-primary);
-    background-color: rgba(37, 99, 235, 0.1);
+    color: #422006;
+    /* Dark brown/black for contrast on yellow */
+    background-color: rgba(253, 235, 35, 0.2);
     padding: 4px 10px;
     border-radius: var(--radius-sm);
     animation: fadeIn 0.3s ease-out;
@@ -274,7 +276,7 @@
     gap: 8px;
 }
 
-.columnHeader > span {
+.columnHeader>span {
     flex: 1;
     min-width: 0;
     overflow: hidden;
@@ -308,12 +310,14 @@
 }
 
 .sortButtonActive {
-    color: var(--color-primary);
-    background-color: rgba(37, 99, 235, 0.1);
+    color: #000000;
+    /* Black */
+    background-color: rgba(253, 235, 35, 0.4);
+    /* Stronger yellow tint */
 }
 
 .sortButtonActive:hover {
-    background-color: rgba(37, 99, 235, 0.15);
+    background-color: rgba(253, 235, 35, 0.5);
 }
 
 .filterDropdown {
@@ -340,12 +344,12 @@
 }
 
 .filterButtonActive {
-    color: var(--color-primary);
-    background-color: rgba(37, 99, 235, 0.1);
+    color: #000000;
+    background-color: rgba(253, 235, 35, 0.4);
 }
 
 .filterButtonActive:hover {
-    background-color: rgba(37, 99, 235, 0.15);
+    background-color: rgba(253, 235, 35, 0.5);
 }
 
 .filterMenu {
@@ -384,11 +388,11 @@
 }
 
 .filterOptionActive {
-    background-color: rgba(37, 99, 235, 0.15);
-    color: var(--color-primary);
-    font-weight: 500;
+    background-color: rgba(253, 235, 35, 0.2);
+    color: #000000;
+    font-weight: 600;
 }
 
 .filterOptionActive:hover {
-    background-color: rgba(37, 99, 235, 0.2);
+    background-color: rgba(253, 235, 35, 0.3);
 }

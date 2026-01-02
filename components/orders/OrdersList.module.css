@@ -46,9 +46,10 @@
 }
 
 .viewBtnActive {
-    background-color: var(--bg-app);
-    color: var(--color-primary);
+    background-color: var(--color-primary);
+    color: #000000;
     box-shadow: var(--shadow-sm);
+    font-weight: 600;
 }
 
 .filters {
@@ -136,8 +137,8 @@
 }
 
 .statusConfirmed {
-    background-color: rgba(37, 99, 235, 0.1);
-    color: var(--color-primary);
+    background-color: rgba(253, 235, 35, 0.4);
+    color: #000000;
     padding: 2px 8px;
     border-radius: 4px;
     font-size: 0.75rem;

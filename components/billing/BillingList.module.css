@@ -39,9 +39,10 @@
 }
 
 .viewBtnActive {
-    background-color: var(--bg-app);
-    color: var(--color-primary);
+    background-color: var(--color-primary);
+    color: #000000;
     box-shadow: var(--shadow-sm);
+    font-weight: 600;
 }
 
 .headerActions {
