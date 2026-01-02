@@ -505,6 +505,22 @@
     }
 }
 
+.deleteButton {
+    background-color: #dc2626 !important;
+    color: white !important;
+    border: none !important;
+}
+
+.deleteButton:hover {
+    background-color: #b91c1c !important;
+}
+
+.deleteButton:disabled {
+    background-color: #991b1b !important;
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
 .bottomAction {
     display: flex;
     justify-content: center;
@@ -962,4 +978,20 @@
         opacity: 1;
         transform: translateY(0);
     }
+}
+
+.deleteButton {
+    background-color: #dc2626 !important;
+    color: white !important;
+    border: none !important;
+}
+
+.deleteButton:hover {
+    background-color: #b91c1c !important;
+}
+
+.deleteButton:disabled {
+    background-color: #991b1b !important;
+    opacity: 0.6;
+    cursor: not-allowed;
 }

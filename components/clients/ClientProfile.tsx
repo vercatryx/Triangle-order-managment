@@ -3,10 +3,10 @@
 import { useState, useEffect, Fragment, useMemo } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import { ClientProfile, ClientStatus, Navigator, Vendor, MenuItem, BoxType, ServiceType, AppSettings, DeliveryRecord, ItemCategory, ClientFullDetails, BoxQuota } from '@/lib/types';
-import { updateClient, deleteClient, updateDeliveryProof, recordClientChange, syncCurrentOrderToUpcoming, logNavigatorAction, getBoxQuotas } from '@/lib/actions';
+import { updateClient, deleteClient, updateDeliveryProof, recordClientChange, syncCurrentOrderToUpcoming, logNavigatorAction, getBoxQuotas, saveEquipmentOrder, getRegularClients, getDependentsByParentId } from '@/lib/actions';
 import { getSingleForm, getClientSubmissions } from '@/lib/form-actions';
-import { getClient, getStatuses, getNavigators, getVendors, getMenuItems, getBoxTypes, getSettings, getCategories, getClients, invalidateClientData, invalidateReferenceData, getActiveOrderForClient, getUpcomingOrderForClient, getOrderHistory, getClientHistory, getBillingHistory, invalidateOrderData } from '@/lib/cached-data';
-import { Save, ArrowLeft, Truck, Package, AlertTriangle, Upload, Trash2, Plus, Check, ClipboardList, History, CreditCard, Calendar, ChevronDown, ChevronUp, ShoppingCart, Loader2, FileText, Square, CheckSquare } from 'lucide-react';
+import { getClient, getStatuses, getNavigators, getVendors, getMenuItems, getBoxTypes, getSettings, getCategories, getEquipment, getClients, invalidateClientData, invalidateReferenceData, getActiveOrderForClient, getUpcomingOrderForClient, getOrderHistory, getClientHistory, getBillingHistory, invalidateOrderData } from '@/lib/cached-data';
+import { Save, ArrowLeft, Truck, Package, AlertTriangle, Upload, Trash2, Plus, Check, ClipboardList, History, CreditCard, Calendar, ChevronDown, ChevronUp, ShoppingCart, Loader2, FileText, Square, CheckSquare, Wrench } from 'lucide-react';
 import FormFiller from '@/components/forms/FormFiller';
 import { FormSchema } from '@/lib/form-types';
 import SubmissionsList from './SubmissionsList';
@@ -80,6 +80,43 @@ function UnitsModal({
     );
 }
 
+function DeleteConfirmationModal({
+    isOpen,
+    onClose,
+    onConfirm,
+    clientName,
+    deleting
+}: {
+    isOpen: boolean;
+    onClose: () => void;
+    onConfirm: () => void;
+    clientName: string;
+    deleting: boolean;
+}) {
+    if (!isOpen) return null;
+
+    return (
+        <div className={styles.modalOverlay} style={{ zIndex: 1000 }}>
+            <div className={styles.modalContent} style={{ maxWidth: '400px', height: 'auto', padding: '24px' }}>
+                <h2 style={{ fontSize: '1.25rem', fontWeight: 600, marginBottom: '16px', color: '#dc2626' }}>Delete Client</h2>
+                <p style={{ marginBottom: '24px', color: 'var(--text-secondary)' }}>
+                    Are you sure you want to delete <strong>{clientName}</strong>? This action cannot be undone and will permanently remove all client data.
+                </p>
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px' }}>
+                    <button className="btn" onClick={onClose} disabled={deleting}>Cancel</button>
+                    <button
+                        className={`btn ${styles.deleteButton}`}
+                        onClick={onConfirm}
+                        disabled={deleting}
+                    >
+                        {deleting ? <Loader2 className="spin" size={16} /> : <><Trash2 size={16} /> Delete Client</>}
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+}
+
 export function ClientProfileDetail({ clientId: propClientId, onClose, initialData, statuses: initialStatuses, navigators: initialNavigators, vendors: initialVendors, menuItems: initialMenuItems, boxTypes: initialBoxTypes, currentUser }: Props) {
     const router = useRouter();
     const params = useParams();
@@ -93,6 +130,17 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
     const [boxTypes, setBoxTypes] = useState<BoxType[]>(initialBoxTypes || []);
     const [categories, setCategories] = useState<ItemCategory[]>([]);
     const [boxQuotas, setBoxQuotas] = useState<BoxQuota[]>([]);
+    const [equipment, setEquipment] = useState<any[]>([]);
+    const [showEquipmentOrder, setShowEquipmentOrder] = useState(false);
+    const [equipmentOrder, setEquipmentOrder] = useState<{ vendorId: string; equipmentId: string } | null>(null);
+    const [submittingEquipmentOrder, setSubmittingEquipmentOrder] = useState(false);
+
+    // Refresh vendors when equipment order section is opened to ensure we have latest data
+    useEffect(() => {
+        if (showEquipmentOrder) {
+            getVendors().then(v => setVendors(v));
+        }
+    }, [showEquipmentOrder]);
     const [settings, setSettings] = useState<AppSettings | null>(null);
     const [history, setHistory] = useState<DeliveryRecord[]>([]);
     const [orderHistory, setOrderHistory] = useState<any[]>([]);
@@ -100,6 +148,9 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
     const [activeHistoryTab, setActiveHistoryTab] = useState<'deliveries' | 'audit' | 'billing'>('deliveries');
     const [allClients, setAllClients] = useState<ClientProfile[]>([]);
     const [expandedBillingRows, setExpandedBillingRows] = useState<Set<string>>(new Set());
+    const [regularClients, setRegularClients] = useState<ClientProfile[]>([]);
+    const [parentClientSearch, setParentClientSearch] = useState('');
+    const [dependents, setDependents] = useState<ClientProfile[]>([]);
 
     const [formData, setFormData] = useState<Partial<ClientProfile>>({});
     const [orderConfig, setOrderConfig] = useState<any>({}); // Current Order Request (from upcoming_orders)
@@ -123,6 +174,9 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
     // Status Change Logic
     const [showUnitsModal, setShowUnitsModal] = useState(false);
     const [pendingStatusChange, setPendingStatusChange] = useState<{ oldStatus: string, newStatus: string } | null>(null);
+    
+    // Delete Confirmation Modal
+    const [showDeleteModal, setShowDeleteModal] = useState(false);
 
     useEffect(() => {
         // If we have initialData AND we have the necessary lookups (passed as props), we can hydrate instantly without loading state.
@@ -143,7 +197,7 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                 // Still fetch auxiliary data that might not be in props (settings, categories, allClients)
                 // But do NOT block UI
                 setLoading(false);
-                loadAuxiliaryData();
+                loadAuxiliaryData(initialData.client);
             }
         } else {
             setLoading(true);
@@ -173,15 +227,24 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
     }
 
 
-    async function loadAuxiliaryData() {
-        const [appSettings, catData, allClientsData] = await Promise.all([
+    async function loadAuxiliaryData(clientToCheck?: ClientProfile) {
+        const [appSettings, catData, allClientsData, regularClientsData] = await Promise.all([
             getSettings(),
             getCategories(),
-            getClients()
+            getClients(),
+            getRegularClients()
         ]);
         setSettings(appSettings);
         setCategories(catData);
         setAllClients(allClientsData);
+        setRegularClients(regularClientsData);
+        
+        // Load dependents if this is a regular client (not a dependent)
+        const clientForDependents = clientToCheck || client;
+        if (clientForDependents && !clientForDependents.parentClientId) {
+            const dependentsData = await getDependentsByParentId(clientForDependents.id);
+            setDependents(dependentsData);
+        }
     }
 
     function hydrateFromInitialData(data: ClientFullDetails) {
@@ -260,7 +323,7 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
     }
 
     async function loadLookups() {
-        const [s, n, v, m, b, appSettings, catData, allClientsData] = await Promise.all([
+        const [s, n, v, m, b, appSettings, catData, eData, allClientsData, regularClientsData] = await Promise.all([
             getStatuses(),
             getNavigators(),
             getVendors(),
@@ -268,7 +331,9 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
             getBoxTypes(),
             getSettings(),
             getCategories(),
-            getClients()
+            getEquipment(),
+            getClients(),
+            getRegularClients()
         ]);
         setStatuses(s);
         setNavigators(n);
@@ -277,12 +342,14 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
         setBoxTypes(b);
         setSettings(appSettings);
         setCategories(catData);
+        setEquipment(eData);
         setAllClients(allClientsData);
+        setRegularClients(regularClientsData);
     }
 
     async function loadData() {
         setLoadingOrderDetails(true);
-        const [c, s, n, v, m, b, appSettings, catData, allClientsData, upcomingOrderData, activeOrderData, historyData, orderHistoryData, billingHistoryData] = await Promise.all([
+        const [c, s, n, v, m, b, appSettings, catData, eData, allClientsData, regularClientsData, upcomingOrderData, activeOrderData, historyData, orderHistoryData, billingHistoryData] = await Promise.all([
             getClient(clientId),
             getStatuses(),
             getNavigators(),
@@ -291,7 +358,9 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
             getBoxTypes(),
             getSettings(),
             getCategories(),
+            getEquipment(),
             getClients(),
+            getRegularClients(),
             getUpcomingOrderForClient(clientId),
             getActiveOrderForClient(clientId),
             getClientHistory(clientId),
@@ -309,12 +378,20 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
         setBoxTypes(b);
         setSettings(appSettings);
         setCategories(catData);
+        setEquipment(eData);
         setAllClients(allClientsData);
+        setRegularClients(regularClientsData);
         setActiveOrder(activeOrderData);
         setHistory(historyData || []);
         setOrderHistory(orderHistoryData || []);
         setBillingHistory(billingHistoryData || []);
         setLoadingOrderDetails(false);
+
+        // Load dependents if this is a regular client (not a dependent)
+        if (c && !c.parentClientId) {
+            const dependentsData = await getDependentsByParentId(c.id);
+            setDependents(dependentsData);
+        }
 
         // Set order config from upcoming_orders table (Current Order Request)
         // If no upcoming order exists, fall back to active_order from clients table
@@ -547,6 +624,16 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
 
         return () => clearTimeout(timeoutId);
     }, [caseId, vendorSelections, vendorId, boxTypeId, boxQuantity, items, itemPrices, serviceType, clientId]);
+
+    // Initialize parentClientSearch when formData changes (always call this hook before any conditional returns)
+    useEffect(() => {
+        if (client?.parentClientId && formData.parentClientId && !parentClientSearch) {
+            const parent = regularClients.find(c => c.id === formData.parentClientId);
+            if (parent) {
+                setParentClientSearch(parent.fullName);
+            }
+        }
+    }, [formData.parentClientId, client?.parentClientId, regularClients, parentClientSearch]);
 
     // Effect: Load quotas when boxTypeId changes
     useEffect(() => {
@@ -1213,11 +1300,10 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
     }
 
     async function handleDelete() {
-        if (!confirm('Are you sure you want to delete this client? This action cannot be undone.')) return;
-
         setSaving(true);
         await deleteClient(clientId);
         setSaving(false);
+        setShowDeleteModal(false);
 
         if (onClose) {
             onClose();
@@ -1438,6 +1524,12 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
         );
     }
 
+    const isDependent = !!client?.parentClientId;
+    const filteredRegularClients = regularClients.filter(c =>
+        c.fullName.toLowerCase().includes(parentClientSearch.toLowerCase()) && c.id !== clientId
+    );
+    const selectedParentClient = formData.parentClientId ? regularClients.find(c => c.id === formData.parentClientId) : null;
+
     const content = (
         <div className={`${styles.container} ${onClose ? styles.inModal : ''}`}>
             <header className={styles.header}>
@@ -1452,11 +1544,15 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                                 <ArrowLeft size={16} /> Back
                             </button>
                         )}
-                        <h1 className={styles.title}>{formData.fullName || 'Client Profile'}</h1>
+                        <h1 className={styles.title}>{formData.fullName || (isDependent ? 'Dependent Profile' : 'Client Profile')}</h1>
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                        <button className="btn btn-secondary" onClick={() => router.push(`/clients/${clientId}/billing`)} style={{ marginRight: '8px' }}>
-                            <CreditCard size={16} /> Billing
+                        <button 
+                            className={`btn ${styles.deleteButton}`}
+                            onClick={() => setShowDeleteModal(true)} 
+                            style={{ marginRight: '8px' }}
+                        >
+                            <Trash2 size={16} /> Delete {isDependent ? 'Dependent' : 'Client'}
                         </button>
                         {!onClose && (
                             <button className="btn btn-primary" onClick={handleSave} disabled={saving}>
@@ -1467,49 +1563,165 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                 </div>
             </header>
 
-            <div className={styles.grid}>
-                <div className={styles.column}>
-                    <section className={styles.card}>
-                        <h3 className={styles.sectionTitle}>Client Details</h3>
+            {isDependent ? (
+                // Simplified view for dependents
+                <div className={styles.grid}>
+                    <div className={styles.column}>
+                        <section className={styles.card}>
+                            <h3 className={styles.sectionTitle}>Dependent Details</h3>
 
-                        <div className={styles.formGroup}>
-                            <label className="label">Full Name</label>
-                            <input className="input" value={formData.fullName} onChange={e => setFormData({ ...formData, fullName: e.target.value })} />
-                        </div>
+                            <div className={styles.formGroup}>
+                                <label className="label">Dependent Name</label>
+                                <input className="input" value={formData.fullName || ''} onChange={e => setFormData({ ...formData, fullName: e.target.value })} />
+                            </div>
 
-                        <div className={styles.formGroup}>
-                            <label className="label">Status</label>
-                            <select className="input" value={formData.statusId} onChange={e => setFormData({ ...formData, statusId: e.target.value })}>
-                                {statuses.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-                            </select>
-                        </div>
+                            <div className={styles.formGroup}>
+                                <label className="label">Parent Client</label>
+                                <div style={{ position: 'relative' }}>
+                                    <input
+                                        className="input"
+                                        placeholder="Search for client..."
+                                        value={parentClientSearch}
+                                        onChange={e => setParentClientSearch(e.target.value)}
+                                        style={{ marginBottom: '0.5rem' }}
+                                    />
+                                    <div style={{
+                                        maxHeight: '300px',
+                                        overflowY: 'auto',
+                                        overflowX: 'hidden',
+                                        border: '1px solid var(--border-color)',
+                                        borderRadius: 'var(--radius-md)',
+                                        backgroundColor: 'var(--bg-surface)'
+                                    }}>
+                                        {filteredRegularClients.length === 0 ? (
+                                            <div style={{ padding: '0.75rem', color: 'var(--text-secondary)', textAlign: 'center' }}>
+                                                No clients found
+                                            </div>
+                                        ) : (
+                                            filteredRegularClients.map(c => (
+                                                <div
+                                                    key={c.id}
+                                                    onClick={() => {
+                                                        setFormData({ ...formData, parentClientId: c.id });
+                                                        setParentClientSearch(c.fullName);
+                                                    }}
+                                                    style={{
+                                                        padding: '0.75rem',
+                                                        cursor: 'pointer',
+                                                        backgroundColor: formData.parentClientId === c.id ? 'var(--bg-surface-hover)' : 'transparent',
+                                                        borderBottom: '1px solid var(--border-color)',
+                                                        transition: 'background-color 0.2s'
+                                                    }}
+                                                    onMouseEnter={(e) => {
+                                                        if (formData.parentClientId !== c.id) {
+                                                            e.currentTarget.style.backgroundColor = 'var(--bg-surface-hover)';
+                                                        }
+                                                    }}
+                                                    onMouseLeave={(e) => {
+                                                        if (formData.parentClientId !== c.id) {
+                                                            e.currentTarget.style.backgroundColor = 'transparent';
+                                                        }
+                                                    }}
+                                                >
+                                                    {c.fullName}
+                                                </div>
+                                            ))
+                                        )}
+                                    </div>
+                                    {selectedParentClient && (
+                                        <div style={{ marginTop: '0.5rem', fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
+                                            Selected: {selectedParentClient.fullName}
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        </section>
+                    </div>
+                </div>
+            ) : (
+                // Regular client view
+                <div className={styles.grid}>
+                    <div className={styles.column}>
+                        <section className={styles.card}>
+                            <h3 className={styles.sectionTitle}>Client Details</h3>
 
-                        <div className={styles.formGroup}>
-                            <label className="label">Assigned Navigator</label>
-                            <select className="input" value={formData.navigatorId} onChange={e => setFormData({ ...formData, navigatorId: e.target.value })}>
-                                <option value="">Unassigned</option>
-                                {navigators.map(n => <option key={n.id} value={n.id}>{n.name}</option>)}
-                            </select>
-                        </div>
+                            <div className={styles.formGroup}>
+                                <label className="label">Full Name</label>
+                                <input className="input" value={formData.fullName} onChange={e => setFormData({ ...formData, fullName: e.target.value })} />
+                            </div>
 
-                        <div className={styles.formGroup}>
-                            <label className="label">Address</label>
-                            <input className="input" value={formData.address} onChange={e => setFormData({ ...formData, address: e.target.value })} />
-                        </div>
+                            <div className={styles.formGroup}>
+                                <label className="label">Status</label>
+                                <select className="input" value={formData.statusId} onChange={e => setFormData({ ...formData, statusId: e.target.value })}>
+                                    {statuses.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                                </select>
+                            </div>
 
-                        <div className={styles.formGroup}>
-                            <label className="label">Phone</label>
-                            <input className="input" value={formData.phoneNumber} onChange={e => setFormData({ ...formData, phoneNumber: e.target.value })} />
-                            <div style={{ height: '1rem' }} /> {/* Spacer */}
-                            <label className="label">Email</label>
-                            <input className="input" value={formData.email || ''} onChange={e => setFormData({ ...formData, email: e.target.value })} />
-                        </div>
+                            <div className={styles.formGroup}>
+                                <label className="label">Assigned Navigator</label>
+                                <select className="input" value={formData.navigatorId} onChange={e => setFormData({ ...formData, navigatorId: e.target.value })}>
+                                    <option value="">Unassigned</option>
+                                    {navigators.map(n => <option key={n.id} value={n.id}>{n.name}</option>)}
+                                </select>
+                            </div>
 
-                        <div className={styles.formGroup}>
-                            <label className="label">General Notes</label>
-                            <textarea className="input" style={{ height: '100px' }} value={formData.notes} onChange={e => setFormData({ ...formData, notes: e.target.value })} />
-                        </div>
+                            <div className={styles.formGroup}>
+                                <label className="label">Address</label>
+                                <input className="input" value={formData.address} onChange={e => setFormData({ ...formData, address: e.target.value })} />
+                            </div>
 
+                            <div className={styles.formGroup}>
+                                <label className="label">Phone</label>
+                                <input className="input" value={formData.phoneNumber} onChange={e => setFormData({ ...formData, phoneNumber: e.target.value })} />
+                                <div style={{ height: '1rem' }} /> {/* Spacer */}
+                                <label className="label">Email</label>
+                                <input className="input" value={formData.email || ''} onChange={e => setFormData({ ...formData, email: e.target.value })} />
+                            </div>
+
+                            <div className={styles.formGroup}>
+                                <label className="label">General Notes</label>
+                                <textarea className="input" style={{ height: '100px' }} value={formData.notes} onChange={e => setFormData({ ...formData, notes: e.target.value })} />
+                            </div>
+
+                            {dependents.length > 0 && (
+                                <div className={styles.formGroup}>
+                                    <label className="label">Dependents ({dependents.length})</label>
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                                        {dependents.map(dependent => (
+                                            <div
+                                                key={dependent.id}
+                                                onClick={() => {
+                                                    if (onClose) {
+                                                        onClose();
+                                                        // Navigate to dependent in a new view or update the current view
+                                                        // For now, we'll just close and let the user click on it from the list
+                                                    } else {
+                                                        router.push(`/clients/${dependent.id}`);
+                                                    }
+                                                }}
+                                                style={{
+                                                    padding: '0.75rem',
+                                                    border: '1px solid var(--border-color)',
+                                                    borderRadius: 'var(--radius-md)',
+                                                    backgroundColor: 'var(--bg-surface)',
+                                                    cursor: 'pointer',
+                                                    transition: 'background-color 0.2s'
+                                                }}
+                                                onMouseEnter={(e) => {
+                                                    e.currentTarget.style.backgroundColor = 'var(--bg-surface-hover)';
+                                                }}
+                                                onMouseLeave={(e) => {
+                                                    e.currentTarget.style.backgroundColor = 'var(--bg-surface)';
+                                                }}
+                                            >
+                                                <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>
+                                                    {dependent.fullName}
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
 
                         <div className={styles.formGroup}>
                             <label className="label">Screening Status</label>
@@ -1563,6 +1775,46 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                         </div>
 
                     </section>
+
+                    {dependents.length > 0 && (
+                        <section className={styles.card}>
+                            <h3 className={styles.sectionTitle}>Dependents ({dependents.length})</h3>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                                {dependents.map(dependent => (
+                                    <div
+                                        key={dependent.id}
+                                        onClick={() => {
+                                            if (onClose) {
+                                                onClose();
+                                                // Navigate to dependent in a new view or update the current view
+                                                // For now, we'll just close and let the user click on it from the list
+                                            } else {
+                                                router.push(`/clients/${dependent.id}`);
+                                            }
+                                        }}
+                                        style={{
+                                            padding: '0.75rem',
+                                            border: '1px solid var(--border-color)',
+                                            borderRadius: 'var(--radius-md)',
+                                            backgroundColor: 'var(--bg-surface)',
+                                            cursor: 'pointer',
+                                            transition: 'background-color 0.2s'
+                                        }}
+                                        onMouseEnter={(e) => {
+                                            e.currentTarget.style.backgroundColor = 'var(--bg-surface-hover)';
+                                        }}
+                                        onMouseLeave={(e) => {
+                                            e.currentTarget.style.backgroundColor = 'var(--bg-surface)';
+                                        }}
+                                    >
+                                        <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>
+                                            {dependent.fullName}
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        </section>
+                    )}
 
                     {/* Screening Form Submissions */}
                     <section className={styles.card}>
@@ -2616,6 +2868,132 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                                         </div>
                                     </div>
                                 )}
+
+                                {/* Equipment Order Section - Always visible */}
+                                <div className={styles.divider} style={{ marginTop: '2rem', marginBottom: '1rem' }} />
+                                <div style={{ marginTop: '1rem' }}>
+                                    <h4 style={{ fontSize: '0.9rem', marginBottom: '0.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                        <Wrench size={14} /> Equipment Order
+                                    </h4>
+                                    {!showEquipmentOrder ? (
+                                        <button
+                                            className="btn btn-secondary"
+                                            onClick={() => setShowEquipmentOrder(true)}
+                                            style={{ width: '100%' }}
+                                        >
+                                            Equipment Order
+                                        </button>
+                                    ) : (
+                                        <div style={{
+                                            padding: '1rem',
+                                            backgroundColor: 'var(--bg-surface-hover)',
+                                            borderRadius: 'var(--radius-md)',
+                                            border: '1px solid var(--border-color)'
+                                        }}>
+                                            <div className={styles.formGroup}>
+                                                <label className="label">Vendor</label>
+                                                <select
+                                                    className="input"
+                                                    value={equipmentOrder?.vendorId || ''}
+                                                    onChange={e => setEquipmentOrder({
+                                                        ...equipmentOrder,
+                                                        vendorId: e.target.value,
+                                                        equipmentId: '' // Reset equipment selection when vendor changes
+                                                    })}
+                                                >
+                                                    <option value="">Select Vendor...</option>
+                                                    {vendors
+                                                        .filter(v => {
+                                                            const hasEquipment = v.serviceTypes && v.serviceTypes.includes('Equipment');
+                                                            const isActive = v.isActive;
+                                                            return hasEquipment && isActive;
+                                                        })
+                                                        .map(v => (
+                                                            <option key={v.id} value={v.id}>{v.name}</option>
+                                                        ))}
+                                                </select>
+                                                {vendors.filter(v => v.serviceTypes && v.serviceTypes.includes('Equipment') && v.isActive).length === 0 && (
+                                                    <p style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)', marginTop: '0.5rem', fontStyle: 'italic' }}>
+                                                        No active vendors with Equipment service type found. Please create a vendor with Equipment service type in the admin panel.
+                                                    </p>
+                                                )}
+                                            </div>
+
+                                            {equipmentOrder?.vendorId && (
+                                                <div className={styles.formGroup}>
+                                                    <label className="label">Equipment Item</label>
+                                                    <select
+                                                        className="input"
+                                                        value={equipmentOrder?.equipmentId || ''}
+                                                        onChange={e => setEquipmentOrder({
+                                                            ...equipmentOrder,
+                                                            equipmentId: e.target.value
+                                                        })}
+                                                    >
+                                                        <option value="">Select Equipment Item...</option>
+                                                        {equipment.map(eq => (
+                                                            <option key={eq.id} value={eq.id}>
+                                                                {eq.name} - ${eq.price.toFixed(2)}
+                                                            </option>
+                                                        ))}
+                                                    </select>
+                                                </div>
+                                            )}
+
+                                            {equipmentOrder?.equipmentId && (
+                                                <div style={{ marginTop: '1rem', display: 'flex', gap: '0.5rem' }}>
+                                                    <button
+                                                        className="btn btn-primary"
+                                                        onClick={async () => {
+                                                            if (!equipmentOrder.vendorId || !equipmentOrder.equipmentId) {
+                                                                alert('Please select both vendor and equipment item');
+                                                                return;
+                                                            }
+                                                            try {
+                                                                setSubmittingEquipmentOrder(true);
+                                                                await saveEquipmentOrder(
+                                                                    clientId,
+                                                                    equipmentOrder.vendorId,
+                                                                    equipmentOrder.equipmentId,
+                                                                    orderConfig.caseId
+                                                                );
+                                                                setMessage('Equipment order submitted successfully!');
+                                                                setTimeout(() => setMessage(null), 3000);
+                                                                setShowEquipmentOrder(false);
+                                                                setEquipmentOrder(null);
+                                                                // Reload data to show the new order in Recent Orders section
+                                                                setLoadingOrderDetails(true);
+                                                                const [activeOrderData, orderHistoryData] = await Promise.all([
+                                                                    getActiveOrderForClient(clientId),
+                                                                    getOrderHistory(clientId)
+                                                                ]);
+                                                                setActiveOrder(activeOrderData);
+                                                                setOrderHistory(orderHistoryData || []);
+                                                                setLoadingOrderDetails(false);
+                                                            } catch (error: any) {
+                                                                alert(`Error submitting equipment order: ${error.message || 'Unknown error'}`);
+                                                            } finally {
+                                                                setSubmittingEquipmentOrder(false);
+                                                            }
+                                                        }}
+                                                        disabled={submittingEquipmentOrder}
+                                                    >
+                                                        {submittingEquipmentOrder ? 'Submitting...' : 'Submit Equipment Order'}
+                                                    </button>
+                                                    <button
+                                                        className="btn btn-secondary"
+                                                        onClick={() => {
+                                                            setShowEquipmentOrder(false);
+                                                            setEquipmentOrder(null);
+                                                        }}
+                                                    >
+                                                        Cancel
+                                                    </button>
+                                                </div>
+                                            )}
+                                        </div>
+                                    )}
+                                </div>
                             </>
                         )}
                     </section>
@@ -2645,6 +3023,7 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                                                 {ordersToDisplay.map((order: any, orderIdx: number) => {
                                                     const isFood = order.serviceType === 'Food';
                                                     const isBoxes = order.serviceType === 'Boxes';
+                                                    const isEquipment = order.serviceType === 'Equipment';
 
                                                     return (
                                                         <div key={orderIdx} style={isMultiple ? {
@@ -2711,7 +3090,7 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                                                             <div>
                                                                 {/* Service Type Header */}
                                                                 <div style={{ marginBottom: 'var(--spacing-sm)', fontSize: '0.9rem', fontWeight: 600, color: 'var(--text-primary)' }}>
-                                                                    {isFood ? 'Food' : isBoxes ? 'Boxes' : 'Unknown Service'}
+                                                                    {isFood ? 'Food' : isBoxes ? 'Boxes' : isEquipment ? 'Equipment' : 'Unknown Service'}
                                                                 </div>
 
                                                                 {/* Food Order Display - Show vendors first, then items grouped by vendor */}
@@ -2815,6 +3194,57 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                                                                         })()}
                                                                     </div>
                                                                 )}
+
+                                                                {/* Equipment Order Display */}
+                                                                {isEquipment && (
+                                                                    <div style={{ padding: 'var(--spacing-md)', backgroundColor: 'var(--bg-surface)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)' }}>
+                                                                        {(() => {
+                                                                            // Parse equipment details from order notes or orderDetails
+                                                                            let equipmentDetails: any = null;
+                                                                            try {
+                                                                                if (order.orderDetails?.equipmentSelection) {
+                                                                                    equipmentDetails = order.orderDetails.equipmentSelection;
+                                                                                } else if (order.notes) {
+                                                                                    const parsed = JSON.parse(order.notes);
+                                                                                    if (parsed.equipmentName) {
+                                                                                        equipmentDetails = parsed;
+                                                                                    }
+                                                                                }
+                                                                            } catch (e) {
+                                                                                console.error('Error parsing equipment order:', e);
+                                                                            }
+
+                                                                            const vendorId = equipmentDetails?.vendorId;
+                                                                            const vendor = vendorId ? vendors.find(v => v.id === vendorId) : null;
+                                                                            const vendorName = vendor?.name || 'Unknown Vendor';
+                                                                            const equipmentName = equipmentDetails?.equipmentName || 'Unknown Equipment';
+                                                                            const price = equipmentDetails?.price || order.totalValue || 0;
+                                                                            const nextDelivery = vendorId ? getNextDeliveryDate(vendorId) : null;
+
+                                                                            return (
+                                                                                <>
+                                                                                    {/* Vendor */}
+                                                                                    <div style={{ marginBottom: 'var(--spacing-sm)', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                                                                                        {vendorName}
+                                                                                    </div>
+                                                                                    {/* Equipment Item */}
+                                                                                    <div style={{ marginBottom: 'var(--spacing-sm)', fontSize: '0.85rem', color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                                                                        <Wrench size={14} />
+                                                                                        <span>{equipmentName}</span>
+                                                                                        <span style={{ marginLeft: 'auto', fontWeight: 600, color: 'var(--color-primary)' }}>
+                                                                                            ${price.toFixed(2)}
+                                                                                        </span>
+                                                                                    </div>
+                                                                                    {nextDelivery && (
+                                                                                        <div style={{ marginTop: 'var(--spacing-sm)', fontSize: '0.8rem', color: 'var(--text-secondary)', fontWeight: 500 }}>
+                                                                                            Next delivery: {nextDelivery.dayOfWeek}, {nextDelivery.date}
+                                                                                        </div>
+                                                                                    )}
+                                                                                </>
+                                                                            );
+                                                                        })()}
+                                                                    </div>
+                                                                )}
                                                             </div>
                                                         </div>
                                                     );
@@ -2829,8 +3259,9 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                                 </div>
                             )}
                         </section>
-                </div >
-            </div >
+                </div>
+            </div>
+            )}
             {
                 onClose && (
                     <div className={styles.bottomAction} style={{ display: 'flex', gap: '12px', justifyContent: 'center' }}>
@@ -3217,6 +3648,13 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                     onConfirm={executeSave}
                     saving={saving}
                 />
+                <DeleteConfirmationModal
+                    isOpen={showDeleteModal}
+                    onClose={() => setShowDeleteModal(false)}
+                    onConfirm={handleDelete}
+                    clientName={formData.fullName || 'this client'}
+                    deleting={saving}
+                />
             </>
         );
     } else {
@@ -3275,6 +3713,13 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                     onClose={() => setShowUnitsModal(false)}
                     onConfirm={executeSave}
                     saving={saving}
+                />
+                <DeleteConfirmationModal
+                    isOpen={showDeleteModal}
+                    onClose={() => setShowDeleteModal(false)}
+                    onConfirm={handleDelete}
+                    clientName={formData.fullName || 'this client'}
+                    deleting={saving}
                 />
             </>
         );

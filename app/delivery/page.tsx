@@ -21,7 +21,7 @@ export default function DeliveryManualEntryPage() {
             <div className="delivery-container">
                 <div className="delivery-card">
                     <div className="text-center">
-                        <div className="avatar" style={{ margin: '0 auto 1rem auto', width: '5rem', height: '5rem', backgroundColor: 'rgba(37, 99, 235, 0.2)', color: '#3b82f6' }}>
+                        <div className="avatar" style={{ margin: '0 auto 1rem auto', width: '5rem', height: '5rem', backgroundColor: 'rgba(37, 99, 235, 0.1)', color: 'var(--color-primary)' }}>
                             <Package size={40} />
                         </div>
                         <h1 className="text-title">Driver Delivery</h1>
@@ -37,15 +37,15 @@ export default function DeliveryManualEntryPage() {
                                 placeholder="Enter Order #"
                                 style={{
                                     width: '100%',
-                                    backgroundColor: '#1f2937', // gray-800
-                                    border: '1px solid #374151', // gray-700
+                                    backgroundColor: 'var(--bg-panel)',
+                                    border: '1px solid var(--border-color)',
                                     borderRadius: '0.75rem',
                                     padding: '1rem',
                                     textAlign: 'center',
                                     fontSize: '1.25rem',
                                     fontWeight: 'bold',
                                     letterSpacing: '0.05em',
-                                    color: 'white',
+                                    color: 'var(--text-primary)',
                                     outline: 'none'
                                 }}
                                 autoFocus

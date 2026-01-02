@@ -129,15 +129,19 @@ export function OrdersList() {
                     <span style={{ width: '100px' }}>Order #</span>
                     <span style={{ flex: 2 }}>Client</span>
                     <span style={{ flex: 1 }}>Service</span>
+                    <span style={{ flex: 1 }}>Items</span>
                     <span style={{ flex: 1.5 }}>Status</span>
                     <span style={{ flex: 1.5 }}>Delivery Date</span>
                     <span style={{ width: '40px' }}></span>
                 </div>
                 {filteredOrders.map(order => (
-                    <Link key={order.id} href={`/clients/${order.client_id}`} className={styles.row}>
+                    <Link key={order.id} href={`/orders/${order.id}`} className={styles.row}>
                         <span style={{ width: '100px', fontWeight: 600 }}>{order.order_number || 'N/A'}</span>
                         <span style={{ flex: 2 }}>{order.clientName}</span>
                         <span style={{ flex: 1 }}>{order.service_type}</span>
+                        <span style={{ flex: 1, fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
+                            {order.total_items !== null && order.total_items !== undefined ? `${order.total_items} item${order.total_items !== 1 ? 's' : ''}` : '-'}
+                        </span>
                         <span style={{ flex: 1.5 }}>
                             <span className={getStatusStyle(order.status)}>
                                 {formatStatus(order.status)}

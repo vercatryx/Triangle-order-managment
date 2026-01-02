@@ -173,7 +173,7 @@ export function OrderDeliveryFlow({ order }: { order: OrderDetails }) {
                             setStep('CAPTURE');
                         }}
                         className="btn-secondary"
-                        style={{ backgroundColor: '#1f2937' }}
+                        style={{ backgroundColor: 'var(--bg-surface)' }}
                     >
                         Retake
                     </button>
@@ -185,7 +185,7 @@ export function OrderDeliveryFlow({ order }: { order: OrderDetails }) {
     if (step === 'UPLOADING') {
         return (
             <div className="delivery-card text-center" style={{ marginTop: '2.5rem' }}>
-                <div className="spinner" style={{ margin: '0 auto', width: '4rem', height: '4rem', borderTopColor: '#3b82f6' }}></div>
+                <div className="spinner" style={{ margin: '0 auto', width: '4rem', height: '4rem', borderTopColor: 'var(--color-primary)' }}></div>
                 <div>
                     <h3 className="text-title" style={{ fontSize: '1.25rem' }}>Uploading...</h3>
                     <p className="text-subtitle">Saving proof of delivery</p>

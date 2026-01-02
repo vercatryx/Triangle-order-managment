@@ -6,6 +6,7 @@ import { StatusManagement } from '@/components/admin/StatusManagement';
 import { VendorManagement } from '@/components/admin/VendorManagement';
 import { MenuManagement } from '@/components/admin/MenuManagement';
 import { BoxCategoriesManagement } from '@/components/admin/BoxCategoriesManagement';
+import { EquipmentManagement } from '@/components/admin/EquipmentManagement';
 import { NavigatorManagement } from '@/components/admin/NavigatorManagement';
 import { AdminManagement } from '@/components/admin/AdminManagement';
 import { NutritionistManagement } from '@/components/admin/NutritionistManagement';
@@ -14,10 +15,10 @@ import { saveSingleForm } from '@/lib/form-actions';
 
 import { GlobalSettings } from '@/components/admin/GlobalSettings';
 
-type Tab = 'vendors' | 'menus' | 'statuses' | 'boxes' | 'navigators' | 'nutritionists' | 'settings' | 'admins' | 'form';
+type Tab = 'vendors' | 'menus' | 'statuses' | 'boxes' | 'equipment' | 'navigators' | 'nutritionists' | 'settings' | 'admins' | 'form';
 
 export default function AdminPage() {
-    const [activeTab, setActiveTab] = useState<Tab>('admins');
+    const [activeTab, setActiveTab] = useState<Tab>('menus');
 
     return (
         <div className={styles.container}>
@@ -38,6 +39,12 @@ export default function AdminPage() {
                     onClick={() => setActiveTab('boxes')}
                 >
                     Box Categories
+                </button>
+                <button
+                    className={`${styles.tab} ${activeTab === 'equipment' ? styles.activeTab : ''}`}
+                    onClick={() => setActiveTab('equipment')}
+                >
+                    Equipment
                 </button>
                 <button
                     className={`${styles.tab} ${activeTab === 'vendors' ? styles.activeTab : ''}`}
@@ -86,6 +93,7 @@ export default function AdminPage() {
             <div className={styles.content}>
                 {activeTab === 'menus' && <MenuManagement />}
                 {activeTab === 'boxes' && <BoxCategoriesManagement />}
+                {activeTab === 'equipment' && <EquipmentManagement />}
 
                 {activeTab === 'vendors' && <VendorManagement />}
                 {activeTab === 'navigators' && <NavigatorManagement />}

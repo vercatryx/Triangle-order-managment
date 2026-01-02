@@ -5,7 +5,7 @@ import { decrypt } from '@/lib/session';
 // 1. Specify protected and public routes
 const protectedRoutes = ['/admin', '/clients', '/billing', '/vendors', '/'];
 const vendorRoutes = ['/vendor'];
-const publicRoutes = ['/login', '/vendor-login', '/api/auth/login', '/api/process-weekly-orders', '/verify-order', '/delivery'];
+const publicRoutes = ['/login', '/api/auth/login', '/api/process-weekly-orders', '/api/extension', '/verify-order', '/delivery'];
 
 export default async function middleware(req: NextRequest) {
     // 2. Check if the current route is protected or public
@@ -16,7 +16,7 @@ export default async function middleware(req: NextRequest) {
         return NextResponse.next();
     }
 
-    const isPublicRoute = publicRoutes.includes(path) || path.startsWith('/verify-order/') || path.startsWith('/client-portal') || path.startsWith('/delivery/');
+    const isPublicRoute = publicRoutes.includes(path) || path.startsWith('/verify-order/') || path.startsWith('/client-portal') || path.startsWith('/delivery/') || path.startsWith('/api/extension');
     const isVendorRoute = vendorRoutes.some(route => path.startsWith(route));
     // Check protected routes - handle root path separately to avoid matching all paths
     const isProtectedRoute = protectedRoutes.some(route =>
@@ -31,11 +31,15 @@ export default async function middleware(req: NextRequest) {
     // 4. Redirect to appropriate login if the user is not authenticated
     if (!isPublicRoute && !session?.userId) {
         // Prevent redirect loop - don't redirect if already on login page
-        if (path === '/login' || path === '/vendor-login') {
+        if (path === '/login') {
             return NextResponse.next();
         }
+        // Redirect vendor-login to regular login
+        if (path === '/vendor-login') {
+            return NextResponse.redirect(new URL('/login', req.url));
+        }
         if (isVendorRoute) {
-            return NextResponse.redirect(new URL('/vendor-login', req.url));
+            return NextResponse.redirect(new URL('/login', req.url));
         }
         return NextResponse.redirect(new URL('/login', req.url));
     }
@@ -75,8 +79,12 @@ export default async function middleware(req: NextRequest) {
             }
             return NextResponse.redirect(new URL('/clients', req.url));
         }
-        if (path === '/vendor-login' && session.role === 'vendor') {
-            return NextResponse.redirect(new URL('/vendor', req.url));
+        // Redirect vendor-login to regular login, then handle authenticated vendors
+        if (path === '/vendor-login') {
+            if (session.role === 'vendor') {
+                return NextResponse.redirect(new URL('/vendor', req.url));
+            }
+            return NextResponse.redirect(new URL('/login', req.url));
         }
     }
 

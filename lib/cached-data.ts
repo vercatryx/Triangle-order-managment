@@ -12,6 +12,7 @@ import {
     getMenuItems as serverGetMenuItems,
     getBoxTypes as serverGetBoxTypes,
     getCategories as serverGetCategories,
+    getEquipment as serverGetEquipment,
     getSettings as serverGetSettings,
     getClients as serverGetClients,
     getClient as serverGetClient,
@@ -23,7 +24,7 @@ import {
     getCompletedOrdersWithDeliveryProof as serverGetCompletedOrdersWithDeliveryProof,
 } from './actions';
 
-import { ClientProfile, ClientStatus, Navigator, Vendor, MenuItem, BoxType, AppSettings, ItemCategory, DeliveryRecord, CompletedOrderWithDeliveryProof } from './types';
+import { ClientProfile, ClientStatus, Navigator, Vendor, MenuItem, BoxType, AppSettings, ItemCategory, DeliveryRecord, CompletedOrderWithDeliveryProof, Equipment } from './types';
 
 // Cache entry with timestamp
 interface CacheEntry<T> {
@@ -115,6 +116,16 @@ export async function getCategories(): Promise<ItemCategory[]> {
     }
     const data = await serverGetCategories();
     referenceCache.set('categories', { data, timestamp: Date.now() });
+    return data;
+}
+
+export async function getEquipment(): Promise<Equipment[]> {
+    const cached = referenceCache.get('equipment');
+    if (!isStale(cached, CACHE_DURATION.REFERENCE_DATA)) {
+        return cached!.data;
+    }
+    const data = await serverGetEquipment();
+    referenceCache.set('equipment', { data, timestamp: Date.now() });
     return data;
 }
 

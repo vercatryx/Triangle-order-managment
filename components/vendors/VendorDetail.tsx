@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { Vendor, ClientProfile, MenuItem, BoxType } from '@/lib/types';
 import { getVendors, getClients, getMenuItems, getBoxTypes } from '@/lib/cached-data';
-import { getOrdersByVendor, isOrderUnderVendor, updateOrderDeliveryProof, orderHasDeliveryProof } from '@/lib/actions';
+import { getOrdersByVendor, isOrderUnderVendor, updateOrderDeliveryProof, orderHasDeliveryProof, resolveOrderId } from '@/lib/actions';
 import { ArrowLeft, Truck, Calendar, Package, CheckCircle, XCircle, Clock, User, DollarSign, ShoppingCart, Download, ChevronDown, ChevronUp, FileText, Upload, X, AlertCircle } from 'lucide-react';
 import styles from './VendorDetail.module.css';
 
@@ -268,9 +268,45 @@ export function VendorDetail({ vendorId, isVendorView, vendor: initialVendor }: 
                     })}
                 </div>
             );
+        } else if (order.service_type === 'Equipment') {
+            // Equipment orders - details from equipmentSelection or notes
+            let equipmentDetails = order.equipmentSelection;
+            
+            // If not in equipmentSelection, try to parse from notes
+            if (!equipmentDetails && order.notes) {
+                try {
+                    const parsed = JSON.parse(order.notes);
+                    if (parsed.equipmentName) {
+                        equipmentDetails = parsed;
+                    }
+                } catch (e) {
+                    console.error('Error parsing equipment order notes:', e);
+                }
+            }
+
+            if (!equipmentDetails) {
+                return <div className={styles.noItems}>No equipment details found for this order</div>;
+            }
+
+            return (
+                <div className={styles.itemsList}>
+                    <div className={styles.itemsHeader}>
+                        <span style={{ minWidth: '300px', flex: 3 }}>Equipment Name</span>
+                        <span style={{ minWidth: '100px', flex: 1 }}>Price</span>
+                    </div>
+                    <div className={styles.itemRow}>
+                        <span style={{ minWidth: '300px', flex: 3 }}>
+                            {equipmentDetails.equipmentName || 'Unknown Equipment'}
+                        </span>
+                        <span style={{ minWidth: '100px', flex: 1 }}>
+                            ${(equipmentDetails.price || 0).toFixed(2)}
+                        </span>
+                    </div>
+                </div>
+            );
         }
 
-        return <div className={styles.noItems}>No items available</div>;
+        return <div className={styles.noItems}>No items available for service type: {order.service_type || 'Unknown'}</div>;
     }
 
     function escapeCSV(value: any): string {
@@ -340,6 +376,27 @@ export function VendorDetail({ vendorId, isVendorView, vendor: initialVendor }: 
                 return `${itemName} (Qty: ${qty})`;
             });
             return `Box Type: ${boxTypeName} (Box Qty: ${boxSelection.quantity || 1}); Items: ${itemStrings.join('; ')}`;
+        } else if (order.service_type === 'Equipment') {
+            // Equipment orders - details from equipmentSelection or notes
+            let equipmentDetails = order.equipmentSelection;
+            
+            // If not in equipmentSelection, try to parse from notes
+            if (!equipmentDetails && order.notes) {
+                try {
+                    const parsed = JSON.parse(order.notes);
+                    if (parsed.equipmentName) {
+                        equipmentDetails = parsed;
+                    }
+                } catch (e) {
+                    console.error('Error parsing equipment order notes:', e);
+                }
+            }
+
+            if (!equipmentDetails) {
+                return 'No equipment details';
+            }
+
+            return `${equipmentDetails.equipmentName || 'Unknown Equipment'} - $${(equipmentDetails.price || 0).toFixed(2)}`;
         }
         return 'No items available';
     }
@@ -350,8 +407,9 @@ export function VendorDetail({ vendorId, isVendorView, vendor: initialVendor }: 
             return;
         }
 
-        // Define CSV headers
+        // Define CSV headers (standardized for all order types)
         const headers = [
+            'Order Number',
             'Order ID',
             'Client ID',
             'Client Name',
@@ -363,6 +421,7 @@ export function VendorDetail({ vendorId, isVendorView, vendor: initialVendor }: 
 
         // Convert orders to CSV rows
         const rows = orders.map(order => [
+            order.orderNumber || '',
             order.id || '',
             order.client_id || '',
             getClientName(order.client_id),
@@ -397,8 +456,9 @@ export function VendorDetail({ vendorId, isVendorView, vendor: initialVendor }: 
             return;
         }
 
-        // Define CSV headers
+        // Define CSV headers (standardized for all order types)
         const headers = [
+            'Order Number',
             'Order ID',
             'Client ID',
             'Client Name',
@@ -410,6 +470,7 @@ export function VendorDetail({ vendorId, isVendorView, vendor: initialVendor }: 
 
         // Convert orders to CSV rows
         const rows = dateOrders.map(order => [
+            order.orderNumber || '',
             order.id || '',
             order.client_id || '',
             getClientName(order.client_id),
@@ -464,16 +525,18 @@ export function VendorDetail({ vendorId, isVendorView, vendor: initialVendor }: 
 
             // Parse header row
             const headers = parseCSVRow(lines[0]);
-            const orderIdIndex = headers.findIndex(h => h.toLowerCase() === 'order id');
-            const deliveryProofUrlIndex = headers.findIndex(h => h.toLowerCase() === 'delivery_proof_url');
+            // Normalize header names for flexible matching (case-insensitive, handle spaces/underscores)
+            const normalizedHeaders = headers.map(h => h.toLowerCase().replace(/[_\s]/g, ''));
+            const orderIdIndex = normalizedHeaders.findIndex(h => h === 'orderid' || h === 'ordernumber');
+            const deliveryProofUrlIndex = normalizedHeaders.findIndex(h => h === 'deliveryproofurl');
 
             if (orderIdIndex === -1) {
-                alert('CSV file must contain an "Order ID" column');
+                alert('CSV file must contain an "Order ID" or "Order Number" column');
                 return;
             }
 
             if (deliveryProofUrlIndex === -1) {
-                alert('CSV file must contain a "delivery_proof_url" column');
+                alert('CSV file must contain a "Delivery Proof URL" or "delivery_proof_url" column');
                 return;
             }
 
@@ -501,7 +564,7 @@ export function VendorDetail({ vendorId, isVendorView, vendor: initialVendor }: 
 
             for (let i = 1; i < lines.length; i++) {
                 const row = parseCSVRow(lines[i]);
-                const orderId = row[orderIdIndex]?.trim();
+                const orderIdentifier = row[orderIdIndex]?.trim();
                 const deliveryProofUrl = row[deliveryProofUrlIndex]?.trim();
 
                 // Update progress - current row
@@ -511,9 +574,9 @@ export function VendorDetail({ vendorId, isVendorView, vendor: initialVendor }: 
                     currentStatus: `Processing row ${i} of ${totalRows}...`
                 }));
 
-                if (!orderId) {
+                if (!orderIdentifier) {
                     errorCount++;
-                    const errorMsg = `Row ${i + 1}: Missing Order ID`;
+                    const errorMsg = `Row ${i + 1}: Missing Order ID or Order Number`;
                     errors.push(errorMsg);
                     setImportProgress(prev => ({
                         ...prev,
@@ -525,7 +588,25 @@ export function VendorDetail({ vendorId, isVendorView, vendor: initialVendor }: 
 
                 if (!deliveryProofUrl) {
                     errorCount++;
-                    const errorMsg = `Row ${i + 1} (Order ${orderId}): Missing delivery_proof_url`;
+                    const errorMsg = `Row ${i + 1} (Order ${orderIdentifier}): Missing delivery_proof_url`;
+                    errors.push(errorMsg);
+                    setImportProgress(prev => ({
+                        ...prev,
+                        errorCount,
+                        errors: [...prev.errors, errorMsg]
+                    }));
+                    continue;
+                }
+
+                // Resolve order ID from order number or UUID
+                setImportProgress(prev => ({
+                    ...prev,
+                    currentStatus: `Row ${i}: Looking up order ${orderIdentifier}...`
+                }));
+                const orderId = await resolveOrderId(orderIdentifier);
+                if (!orderId) {
+                    errorCount++;
+                    const errorMsg = `Row ${i + 1} (Order ${orderIdentifier}): Order not found`;
                     errors.push(errorMsg);
                     setImportProgress(prev => ({
                         ...prev,
@@ -543,7 +624,7 @@ export function VendorDetail({ vendorId, isVendorView, vendor: initialVendor }: 
                 const belongsToVendor = await isOrderUnderVendor(orderId, vendorId);
                 if (!belongsToVendor) {
                     errorCount++;
-                    const errorMsg = `Row ${i + 1} (Order ${orderId}): Order does not belong to this vendor`;
+                    const errorMsg = `Row ${i + 1} (Order ${orderIdentifier}): Order does not belong to this vendor`;
                     errors.push(errorMsg);
                     setImportProgress(prev => ({
                         ...prev,
@@ -560,7 +641,7 @@ export function VendorDetail({ vendorId, isVendorView, vendor: initialVendor }: 
                         // For 'no-date', check that order has no scheduled_delivery_date
                         if (order.scheduled_delivery_date) {
                             errorCount++;
-                            const errorMsg = `Row ${i + 1} (Order ${orderId}): Order has a delivery date, but was imported for "No Delivery Date"`;
+                            const errorMsg = `Row ${i + 1} (Order ${orderIdentifier}): Order has a delivery date, but was imported for "No Delivery Date"`;
                             errors.push(errorMsg);
                             setImportProgress(prev => ({
                                 ...prev,
@@ -576,7 +657,7 @@ export function VendorDetail({ vendorId, isVendorView, vendor: initialVendor }: 
                             : null;
                         if (orderDateKey !== dateKey) {
                             errorCount++;
-                            const errorMsg = `Row ${i + 1} (Order ${orderId}): Order does not match the selected delivery date`;
+                            const errorMsg = `Row ${i + 1} (Order ${orderIdentifier}): Order does not match the selected delivery date`;
                             errors.push(errorMsg);
                             setImportProgress(prev => ({
                                 ...prev,
@@ -596,7 +677,7 @@ export function VendorDetail({ vendorId, isVendorView, vendor: initialVendor }: 
                 const alreadyHasProof = await orderHasDeliveryProof(orderId);
                 if (alreadyHasProof) {
                     skippedCount++;
-                    const skippedMsg = `Row ${i + 1} (Order ${orderId}): Already has delivery proof URL, skipping`;
+                    const skippedMsg = `Row ${i + 1} (Order ${orderIdentifier}): Already has delivery proof URL, skipping`;
                     skipped.push(skippedMsg);
                     setImportProgress(prev => ({
                         ...prev,
@@ -620,7 +701,7 @@ export function VendorDetail({ vendorId, isVendorView, vendor: initialVendor }: 
                     }));
                 } else {
                     errorCount++;
-                    const errorMsg = `Row ${i + 1} (Order ${orderId}): ${result.error || 'Failed to update order'}`;
+                    const errorMsg = `Row ${i + 1} (Order ${orderIdentifier}): ${result.error || 'Failed to update order'}`;
                     errors.push(errorMsg);
                     setImportProgress(prev => ({
                         ...prev,
@@ -701,16 +782,18 @@ export function VendorDetail({ vendorId, isVendorView, vendor: initialVendor }: 
 
             // Parse header row
             const headers = parseCSVRow(lines[0]);
-            const orderIdIndex = headers.findIndex(h => h.toLowerCase() === 'order id');
-            const deliveryProofUrlIndex = headers.findIndex(h => h.toLowerCase() === 'delivery_proof_url');
+            // Normalize header names for flexible matching (case-insensitive, handle spaces/underscores)
+            const normalizedHeaders = headers.map(h => h.toLowerCase().replace(/[_\s]/g, ''));
+            const orderIdIndex = normalizedHeaders.findIndex(h => h === 'orderid' || h === 'ordernumber');
+            const deliveryProofUrlIndex = normalizedHeaders.findIndex(h => h === 'deliveryproofurl');
 
             if (orderIdIndex === -1) {
-                alert('CSV file must contain an "Order ID" column');
+                alert('CSV file must contain an "Order ID" or "Order Number" column');
                 return;
             }
 
             if (deliveryProofUrlIndex === -1) {
-                alert('CSV file must contain a "delivery_proof_url" column');
+                alert('CSV file must contain a "Delivery Proof URL" or "delivery_proof_url" column');
                 return;
             }
 

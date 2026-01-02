@@ -556,11 +556,23 @@ export async function getUpcomingOrderForClientLocal(clientId: string) {
                 }
             } else if (data.service_type === 'Boxes') {
                 const boxSelection = db.upcomingOrderBoxSelections.find(bs => bs.upcoming_order_id === data.id);
+                console.log('[getUpcomingOrderForClientLocal] Loading Boxes order:', {
+                    upcomingOrderId: data.id,
+                    foundBoxSelection: !!boxSelection,
+                    boxSelectionItems: boxSelection?.items,
+                    boxSelectionItemsType: typeof boxSelection?.items,
+                    boxSelectionItemsKeys: boxSelection?.items ? Object.keys(boxSelection.items) : []
+                });
                 if (boxSelection) {
                     orderConfig.vendorId = boxSelection.vendor_id;
                     orderConfig.boxTypeId = boxSelection.box_type_id;
                     orderConfig.boxQuantity = boxSelection.quantity;
                     const itemsRaw = boxSelection.items || {};
+                    console.log('[getUpcomingOrderForClientLocal] Processing box items:', {
+                        itemsRaw,
+                        itemsRawType: typeof itemsRaw,
+                        itemsRawKeys: Object.keys(itemsRaw)
+                    });
                     const items: any = {};
                     const itemPrices: any = {};
                     for (const [itemId, value] of Object.entries(itemsRaw)) {
@@ -574,9 +586,16 @@ export async function getUpcomingOrderForClientLocal(clientId: string) {
                         }
                     }
                     orderConfig.items = items;
+                    console.log('[getUpcomingOrderForClientLocal] Final box items:', {
+                        itemsCount: Object.keys(items).length,
+                        items,
+                        itemPrices
+                    });
                     if (Object.keys(itemPrices).length > 0) {
                         orderConfig.itemPrices = itemPrices;
                     }
+                } else {
+                    console.warn('[getUpcomingOrderForClientLocal] No box selection found for upcoming order:', data.id);
                 }
             }
 

@@ -8,7 +8,7 @@ import { Plus, Edit2, Trash2, X, Check, Truck } from 'lucide-react';
 import styles from './VendorManagement.module.css';
 
 const DAYS_OF_WEEK = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
-const SERVICE_TYPES: ServiceType[] = ['Food', 'Boxes']; // Only managing relevant vendors here
+const SERVICE_TYPES: ServiceType[] = ['Food', 'Boxes', 'Equipment'];
 
 export function VendorManagement() {
     const { getVendors, invalidateReferenceData } = useDataCache();
@@ -229,16 +229,25 @@ export function VendorManagement() {
                     <div className={styles.row}>
                         <div className={styles.formGroup} style={{ flex: 2 }}>
                             <label className="label">Service Types</label>
-                            <div style={{ display: 'flex', gap: '1rem', marginTop: '0.5rem' }}>
+                            <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem', flexWrap: 'wrap' }}>
                                 {SERVICE_TYPES.map(t => (
-                                    <label key={t} className={styles.checkboxLabel}>
-                                        <input
-                                            type="checkbox"
-                                            checked={formData.serviceTypes?.includes(t)}
-                                            onChange={() => toggleServiceType(t)}
-                                        />
+                                    <button
+                                        key={t}
+                                        type="button"
+                                        className={`btn ${formData.serviceTypes?.includes(t) ? 'btn-primary' : 'btn-secondary'}`}
+                                        onClick={() => toggleServiceType(t)}
+                                        style={{
+                                            padding: '0.5rem 1rem',
+                                            fontSize: '0.875rem',
+                                            border: formData.serviceTypes?.includes(t) ? '2px solid var(--color-primary)' : '1px solid var(--border-color)',
+                                            backgroundColor: formData.serviceTypes?.includes(t) ? 'var(--color-primary)' : 'var(--bg-surface)',
+                                            color: formData.serviceTypes?.includes(t) ? 'white' : 'var(--text-primary)',
+                                            cursor: 'pointer',
+                                            transition: 'all 0.2s ease'
+                                        }}
+                                    >
                                         {t}
-                                    </label>
+                                    </button>
                                 ))}
                             </div>
                         </div>

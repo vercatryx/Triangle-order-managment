@@ -39,7 +39,7 @@
 
 .adminName {
     font-weight: 500;
-    color: #374151;
+    color: var(--text-primary);
     /* gray-700 */
 }
 
@@ -79,7 +79,7 @@
 .formTitle {
     font-size: 1rem;
     font-weight: 500;
-    color: #374151;
+    color: var(--text-primary);
 }
 
 .inputGroup {
@@ -91,7 +91,7 @@
 .label {
     font-size: 0.875rem;
     font-weight: 500;
-    color: #374151;
+    color: var(--text-primary);
 }
 
 .input {
@@ -147,7 +147,7 @@
 .editButton {
     background-color: #f3f4f6;
     /* gray-100 */
-    color: #374151;
+    color: var(--text-primary);
     border: 1px solid #d1d5db;
     padding: 0.5rem 1rem;
     border-radius: 0.375rem;

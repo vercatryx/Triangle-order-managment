@@ -4,7 +4,7 @@ import { ClientProfileDetail } from './ClientProfile';
 
 import { useState, useEffect, useRef } from 'react';
 import { ClientProfile, ClientStatus, Navigator, Vendor, BoxType, ClientFullDetails, MenuItem } from '@/lib/types';
-import { getClientsPaginated, getClientFullDetails, getStatuses, getNavigators, addClient, getVendors, getBoxTypes, getMenuItems } from '@/lib/actions';
+import { getClientsPaginated, getClientFullDetails, getStatuses, getNavigators, addClient, addDependent, getRegularClients, getVendors, getBoxTypes, getMenuItems, getClients, updateClient } from '@/lib/actions';
 import { invalidateClientData } from '@/lib/cached-data';
 import { Plus, Search, ChevronRight, CheckSquare, Square, StickyNote, Package, ArrowUpDown, ArrowUp, ArrowDown, Filter, Eye, EyeOff, Loader2, AlertCircle } from 'lucide-react';
 import styles from './ClientList.module.css';
@@ -22,6 +22,7 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
     const [vendors, setVendors] = useState<Vendor[]>([]);
     const [boxTypes, setBoxTypes] = useState<BoxType[]>([]);
     const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
+    const [allClientsForLookup, setAllClientsForLookup] = useState<ClientProfile[]>([]);
     const [search, setSearch] = useState('');
     const [isLoading, setIsLoading] = useState(true);
     const [isRefreshing, setIsRefreshing] = useState(false);
@@ -54,6 +55,17 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
     // New Client Modal state
     const [isCreating, setIsCreating] = useState(false);
     const [newClientName, setNewClientName] = useState('');
+
+    // Add Dependent Modal state
+    const [isAddingDependent, setIsAddingDependent] = useState(false);
+    const [dependentName, setDependentName] = useState('');
+    const [selectedParentClientId, setSelectedParentClientId] = useState<string>('');
+    const [regularClients, setRegularClients] = useState<ClientProfile[]>([]);
+    const [parentClientSearch, setParentClientSearch] = useState('');
+    const [editingDependentId, setEditingDependentId] = useState<string | null>(null);
+
+    // Show/Hide Dependents Toggle
+    const [showDependents, setShowDependents] = useState(true);
 
     // Selected Client for Modal
     const [selectedClientId, setSelectedClientId] = useState<string | null>(null);
@@ -115,13 +127,14 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
     async function loadInitialData() {
         setIsLoading(true);
         try {
-            const [sData, nData, vData, bData, mData, cRes] = await Promise.all([
+            const [sData, nData, vData, bData, mData, cRes, allClientsData] = await Promise.all([
                 getStatuses(),
                 getNavigators(),
                 getVendors(),
                 getBoxTypes(),
                 getMenuItems(),
-                getClientsPaginated(1, PAGE_SIZE, '')
+                getClientsPaginated(1, PAGE_SIZE, ''),
+                getClients() // Load all clients for parent client lookup
             ]);
 
             setStatuses(sData);
@@ -131,6 +144,7 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
             setMenuItems(mData);
             setClients(cRes.clients);
             setTotalClients(cRes.total);
+            setAllClientsForLookup(allClientsData);
             setPage(1);
         } catch (error) {
             console.error("Error loading initial data:", error);
@@ -163,6 +177,9 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
             setMenuItems(mData);
             setClients(cRes.clients);
             setTotalClients(cRes.total);
+            // Refresh all clients lookup when refreshing
+            const allClientsData = await getClients();
+            setAllClientsForLookup(allClientsData);
             setPage(1);
         } catch (error) {
             console.error("Error refreshing data:", error);
@@ -254,7 +271,10 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
             }
         }
 
-        return matchesSearch && matchesView && matchesStatusFilter && matchesNavigatorFilter && matchesScreeningFilter && matchesServiceTypeFilter && matchesNeedsVendorFilter;
+        // Filter by Dependents visibility
+        const matchesDependentsFilter = showDependents || !c.parentClientId;
+
+        return matchesSearch && matchesView && matchesStatusFilter && matchesNavigatorFilter && matchesScreeningFilter && matchesServiceTypeFilter && matchesNeedsVendorFilter && matchesDependentsFilter;
     }).sort((a, b) => {
         // Always sort clients needing vendor assignment to the top
         const aNeedsVendor = a.serviceType === 'Boxes' && (!a.activeOrder || (a.activeOrder.serviceType === 'Boxes' && !a.activeOrder.vendorId && !boxTypes.find(bt => bt.id === a.activeOrder?.boxTypeId)?.vendorId));
@@ -345,12 +365,61 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
         }
     }
 
+    async function handleAddDependent() {
+        if (!dependentName.trim() || !selectedParentClientId) return;
+
+        try {
+            if (editingDependentId) {
+                // Update existing dependent
+                await updateClient(editingDependentId, {
+                    fullName: dependentName.trim(),
+                    parentClientId: selectedParentClientId
+                });
+            } else {
+                // Create new dependent
+                const newDependent = await addDependent(dependentName.trim(), selectedParentClientId);
+                if (!newDependent) return;
+            }
+            
+            invalidateClientData(); // Invalidate cache
+            setIsAddingDependent(false);
+            setDependentName('');
+            setSelectedParentClientId('');
+            setParentClientSearch('');
+            setEditingDependentId(null);
+            window.location.reload(); // Reload to refresh the list
+        } catch (error) {
+            console.error('Error saving dependent:', error);
+            alert(error instanceof Error ? error.message : 'Failed to save dependent');
+        }
+    }
+
+    // Load regular clients when dependent modal opens
+    useEffect(() => {
+        if (isAddingDependent) {
+            getRegularClients().then(setRegularClients).catch(console.error);
+        }
+    }, [isAddingDependent]);
+
+    const filteredRegularClients = regularClients.filter(c =>
+        c.fullName.toLowerCase().includes(parentClientSearch.toLowerCase())
+    );
+
+    // Calculate total clients (excluding dependents)
+    const totalRegularClients = clients.filter(c => !c.parentClientId).length;
+
     function getStatusName(id: string) {
         return statuses.find(s => s.id === id)?.name || 'Unknown';
     }
 
     function getNavigatorName(id: string) {
         return navigators.find(n => n.id === id)?.name || 'Unassigned';
+    }
+
+    function getParentClientName(client: ClientProfile) {
+        if (!client.parentClientId) return null;
+        const parentClient = allClientsForLookup.find(c => c.id === client.parentClientId);
+        return parentClient?.fullName || 'Unknown Parent';
     }
 
     function handleSort(column: string) {
@@ -508,7 +577,7 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
 
             return (
                 <div>
-                    <strong style={{ fontWeight: 600, color: '#2563eb' }}>{st}</strong>
+                    <strong style={{ fontWeight: 600, color: 'var(--color-primary)' }}>{st}</strong>
                     <span style={{ color: 'var(--text-primary)', marginLeft: '4px' }}>
                         - {vendorSummary}
                     </span>
@@ -783,9 +852,14 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
                 <div style={{ display: 'flex', alignItems: 'baseline', gap: '12px' }}>
                     <h1 className={styles.title}>Clients</h1>
                     {!isLoading && (
-                        <span style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
-                            {clients.length} / {totalClients} loaded
-                        </span>
+                        <>
+                            <span style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
+                                Total: {totalRegularClients} clients
+                            </span>
+                            <span style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
+                                ({clients.length} / {totalClients} loaded)
+                            </span>
+                        </>
                     )}
                     {isRefreshing && (
                         <div className={styles.refreshIndicator}>
@@ -828,13 +902,29 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
                         </button>
                     </div>
 
-                    <button className="btn btn-primary" onClick={() => setIsCreating(true)}>
-                        <Plus size={16} /> New Client
-                    </button>
+                    <div style={{ display: 'flex', gap: '0.5rem' }}>
+                        <button className="btn btn-primary" onClick={() => setIsCreating(true)}>
+                            <Plus size={16} /> New Client
+                        </button>
+                        <button className="btn btn-secondary" onClick={() => setIsAddingDependent(true)}>
+                            <Plus size={16} /> Add Dependent
+                        </button>
+                    </div>
                 </div>
             </div>
 
             <div className={styles.filters}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', fontSize: '0.9rem' }}>
+                        <input
+                            type="checkbox"
+                            checked={showDependents}
+                            onChange={(e) => setShowDependents(e.target.checked)}
+                            style={{ cursor: 'pointer' }}
+                        />
+                        <span>Show Dependents</span>
+                    </label>
+                </div>
                 <div className={styles.searchBox}>
                     <Search size={18} className={styles.searchIcon} />
                     <input
@@ -889,8 +979,107 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
                 </div>
             )}
 
+            {isAddingDependent && (
+                <div className={styles.createModal}>
+                    <div className={styles.createCard} style={{ width: '500px' }}>
+                        <h3>{editingDependentId ? 'Edit Dependent' : 'Add Dependent'}</h3>
+                        <div className={styles.formGroup}>
+                            <label className="label">Dependent Name</label>
+                            <input
+                                className="input"
+                                placeholder="Full Name"
+                                value={dependentName}
+                                onChange={e => setDependentName(e.target.value)}
+                                autoFocus
+                            />
+                        </div>
+                        <div className={styles.formGroup}>
+                            <label className="label">Parent Client</label>
+                            <div style={{ position: 'relative' }}>
+                                <input
+                                    className="input"
+                                    placeholder="Search for client..."
+                                    value={parentClientSearch}
+                                    onChange={e => setParentClientSearch(e.target.value)}
+                                    style={{ marginBottom: '0.5rem' }}
+                                />
+                                <div style={{
+                                    maxHeight: '300px',
+                                    overflowY: 'auto',
+                                    overflowX: 'hidden',
+                                    border: '1px solid var(--border-color)',
+                                    borderRadius: 'var(--radius-md)',
+                                    backgroundColor: 'var(--bg-surface)'
+                                }}>
+                                    {filteredRegularClients.length === 0 ? (
+                                        <div style={{ padding: '0.75rem', color: 'var(--text-secondary)', textAlign: 'center' }}>
+                                            No clients found
+                                        </div>
+                                    ) : (
+                                        filteredRegularClients.map(client => (
+                                            <div
+                                                key={client.id}
+                                                onClick={() => {
+                                                    setSelectedParentClientId(client.id);
+                                                    setParentClientSearch(client.fullName);
+                                                }}
+                                                style={{
+                                                    padding: '0.75rem',
+                                                    cursor: 'pointer',
+                                                    backgroundColor: selectedParentClientId === client.id ? 'var(--bg-surface-hover)' : 'transparent',
+                                                    borderBottom: '1px solid var(--border-color)',
+                                                    transition: 'background-color 0.2s'
+                                                }}
+                                                onMouseEnter={(e) => {
+                                                    if (selectedParentClientId !== client.id) {
+                                                        e.currentTarget.style.backgroundColor = 'var(--bg-surface-hover)';
+                                                    }
+                                                }}
+                                                onMouseLeave={(e) => {
+                                                    if (selectedParentClientId !== client.id) {
+                                                        e.currentTarget.style.backgroundColor = 'transparent';
+                                                    }
+                                                }}
+                                            >
+                                                {client.fullName}
+                                            </div>
+                                        ))
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+                        <div className={styles.modalActions}>
+                            <button 
+                                className="btn btn-primary" 
+                                onClick={handleAddDependent}
+                                disabled={!dependentName.trim() || !selectedParentClientId}
+                            >
+                                {editingDependentId ? 'Save Changes' : 'Create Dependent'}
+                            </button>
+                            <button className="btn btn-secondary" onClick={() => {
+                                setIsAddingDependent(false);
+                                setDependentName('');
+                                setSelectedParentClientId('');
+                                setParentClientSearch('');
+                                setEditingDependentId(null);
+                            }}>Cancel</button>
+                        </div>
+                    </div>
+                    <div className={styles.overlay} onClick={() => {
+                        setIsAddingDependent(false);
+                        setDependentName('');
+                        setSelectedParentClientId('');
+                        setParentClientSearch('');
+                        setEditingDependentId(null);
+                    }}></div>
+                </div>
+            )}
+
             <div className={styles.list}>
                 <div className={styles.listHeader}>
+                    <span style={{ minWidth: '60px', flex: 0.3, paddingRight: '16px', display: 'flex', alignItems: 'center' }}>
+                        #
+                    </span>
                     <span style={{ minWidth: '200px', flex: 2, paddingRight: '16px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}
                         onClick={() => handleSort('name')}>
                         Name {getSortIcon('name')}
@@ -903,7 +1092,7 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
                         </span>
                         <Filter
                             size={14}
-                            style={{ cursor: 'pointer', opacity: statusFilter ? 1 : 0.5, color: statusFilter ? '#3b82f6' : 'inherit', filter: statusFilter ? 'drop-shadow(0 0 3px #3b82f6)' : 'none' }}
+                            style={{ cursor: 'pointer', opacity: statusFilter ? 1 : 0.5, color: statusFilter ? 'var(--color-primary)' : 'inherit', filter: statusFilter ? 'drop-shadow(0 0 3px var(--color-primary))' : 'none' }}
                             onClick={(e) => { e.stopPropagation(); setOpenFilterMenu(openFilterMenu === 'status' ? null : 'status'); }}
                         />
                         {openFilterMenu === 'status' && (
@@ -943,7 +1132,7 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
                         </span>
                         <Filter
                             size={14}
-                            style={{ cursor: 'pointer', opacity: navigatorFilter ? 1 : 0.5, color: navigatorFilter ? '#3b82f6' : 'inherit', filter: navigatorFilter ? 'drop-shadow(0 0 3px #3b82f6)' : 'none' }}
+                            style={{ cursor: 'pointer', opacity: navigatorFilter ? 1 : 0.5, color: navigatorFilter ? 'var(--color-primary)' : 'inherit', filter: navigatorFilter ? 'drop-shadow(0 0 3px var(--color-primary))' : 'none' }}
                             onClick={(e) => { e.stopPropagation(); setOpenFilterMenu(openFilterMenu === 'navigator' ? null : 'navigator'); }}
                         />
                         {openFilterMenu === 'navigator' && (
@@ -983,7 +1172,7 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
                         </span>
                         <Filter
                             size={14}
-                            style={{ cursor: 'pointer', opacity: screeningFilter ? 1 : 0.5, color: screeningFilter ? '#3b82f6' : 'inherit', filter: screeningFilter ? 'drop-shadow(0 0 3px #3b82f6)' : 'none' }}
+                            style={{ cursor: 'pointer', opacity: screeningFilter ? 1 : 0.5, color: screeningFilter ? 'var(--color-primary)' : 'inherit', filter: screeningFilter ? 'drop-shadow(0 0 3px var(--color-primary))' : 'none' }}
                             onClick={(e) => { e.stopPropagation(); setOpenFilterMenu(openFilterMenu === 'screening' ? null : 'screening'); }}
                         />
                         {openFilterMenu === 'screening' && (
@@ -1028,7 +1217,7 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
                         </span>
                         <Filter
                             size={14}
-                            style={{ cursor: 'pointer', opacity: (serviceTypeFilter || needsVendorFilter) ? 1 : 0.5, color: (serviceTypeFilter || needsVendorFilter) ? '#3b82f6' : 'inherit', filter: (serviceTypeFilter || needsVendorFilter) ? 'drop-shadow(0 0 3px #3b82f6)' : 'none' }}
+                            style={{ cursor: 'pointer', opacity: (serviceTypeFilter || needsVendorFilter) ? 1 : 0.5, color: (serviceTypeFilter || needsVendorFilter) ? 'var(--color-primary)' : 'inherit', filter: (serviceTypeFilter || needsVendorFilter) ? 'drop-shadow(0 0 3px var(--color-primary))' : 'none' }}
                             onClick={(e) => { e.stopPropagation(); setOpenFilterMenu(openFilterMenu === 'serviceType' ? null : 'serviceType'); }}
                         />
                         {openFilterMenu === 'serviceType' && (
@@ -1097,42 +1286,67 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
                     </span>
                     <span style={{ width: '40px' }}></span>
                 </div>
-                {filteredClients.map(client => {
+                {filteredClients.map((client, index) => {
                     const status = statuses.find(s => s.id === client.statusId);
                     const isNotAllowed = status ? status.deliveriesAllowed === false : false;
+                    const isDependent = !!client.parentClientId;
 
                     return (
                         <div
                             key={client.id}
-                            onClick={() => setSelectedClientId(client.id)}
+                            onClick={() => {
+                                if (isDependent) {
+                                    // For dependents, open the Add Dependent modal in edit mode
+                                    setEditingDependentId(client.id);
+                                    setDependentName(client.fullName);
+                                    setSelectedParentClientId(client.parentClientId || '');
+                                    // Find parent client name for search field
+                                    const parentClient = allClientsForLookup.find(c => c.id === client.parentClientId);
+                                    if (parentClient) {
+                                        setParentClientSearch(parentClient.fullName);
+                                    }
+                                    setIsAddingDependent(true);
+                                } else {
+                                    setSelectedClientId(client.id);
+                                }
+                            }}
                             className={styles.clientRow}
                             style={{ cursor: 'pointer' }}
                         >
+                            <span style={{ minWidth: '60px', flex: 0.3, paddingRight: '16px', color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
+                                {index + 1}
+                            </span>
                             <span title={client.fullName} style={{ minWidth: '200px', flex: 2, fontWeight: 600, paddingRight: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
                                 {isNotAllowed && <span className={styles.redTab}></span>}
                                 <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1, minWidth: 0 }}>{client.fullName}</span>
                             </span>
-                            <span title={getStatusName(client.statusId)} style={{ minWidth: '140px', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: '16px' }}>
-                                <span className={`badge ${getStatusName(client.statusId) === 'Active' ? 'badge-success' : ''}`}>
-                                    {getStatusName(client.statusId)}
-                                </span>
+                            <span title={client.parentClientId ? `Parent: ${getParentClientName(client)}` : getStatusName(client.statusId)} style={{ minWidth: '140px', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: '16px' }}>
+                                {client.parentClientId ? (
+                                    <span style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', fontStyle: 'italic' }}>
+                                        Parent: {getParentClientName(client)}
+                                    </span>
+                                ) : (
+                                    <span className={`badge ${getStatusName(client.statusId) === 'Active' ? 'badge-success' : ''}`}>
+                                        {getStatusName(client.statusId)}
+                                    </span>
+                                )}
                             </span>
-                            <span title={getNavigatorName(client.navigatorId)} style={{ minWidth: '160px', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: '16px' }}>{getNavigatorName(client.navigatorId)}</span>
-                            <span style={{ minWidth: '140px', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: '16px' }}>{getScreeningStatus(client)}</span>
+                            <span title={isDependent ? '' : getNavigatorName(client.navigatorId)} style={{ minWidth: '160px', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: '16px' }}>{isDependent ? '-' : getNavigatorName(client.navigatorId)}</span>
+                            <span style={{ minWidth: '140px', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: '16px' }}>{isDependent ? '-' : getScreeningStatus(client)}</span>
                             <span style={{ minWidth: '350px', flex: 3, fontSize: '0.9rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: '16px' }}>
-                                {getOrderSummary(client)}
+                                {isDependent ? '-' : getOrderSummary(client)}
                             </span>
-                            <span title={client.email || undefined} style={{ minWidth: '180px', flex: 1.2, fontSize: '0.85rem', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: '16px' }}>
-                                {client.email || '-'}
+                            <span title={isDependent ? undefined : (client.email || undefined)} style={{ minWidth: '180px', flex: 1.2, fontSize: '0.85rem', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: '16px' }}>
+                                {isDependent ? '-' : (client.email || '-')}
                             </span>
-                            <span title={client.phoneNumber} style={{ minWidth: '140px', flex: 1, fontSize: '0.85rem', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: '16px' }}>
-                                {client.phoneNumber || '-'}
+                            <span title={isDependent ? undefined : client.phoneNumber} style={{ minWidth: '140px', flex: 1, fontSize: '0.85rem', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: '16px' }}>
+                                {isDependent ? '-' : (client.phoneNumber || '-')}
                             </span>
-                            <span title={client.address} style={{ minWidth: '250px', flex: 2, fontSize: '0.85rem', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: '16px' }}>
-                                {client.address || '-'}
+                            <span title={isDependent ? undefined : client.address} style={{ minWidth: '250px', flex: 2, fontSize: '0.85rem', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: '16px' }}>
+                                {isDependent ? '-' : (client.address || '-')}
                             </span>
-                            <span title={client.notes} style={{ minWidth: '200px', flex: 2, fontSize: '0.85rem', color: 'var(--text-tertiary)', fontStyle: 'italic', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: '16px' }}>
-                                {client.notes || '-'}
+                            <span title={isDependent ? undefined : client.notes} style={{ minWidth: '200px', flex: 2, fontSize: '0.85rem', color: 'var(--text-tertiary)', fontStyle: 'italic', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: '16px' }}>
+                                {isDependent ? '-' : (client.notes || '-')}
                             </span>
                             <span style={{ width: '40px' }}><ChevronRight size={16} /></span>
                         </div>

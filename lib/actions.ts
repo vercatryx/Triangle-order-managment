@@ -2,7 +2,7 @@
 
 import { revalidatePath } from 'next/cache';
 import { supabase } from './supabase';
-import { ClientStatus, Vendor, MenuItem, BoxType, AppSettings, Navigator, Nutritionist, ClientProfile, DeliveryRecord, ItemCategory, BoxQuota, ServiceType } from './types';
+import { ClientStatus, Vendor, MenuItem, BoxType, AppSettings, Navigator, Nutritionist, ClientProfile, DeliveryRecord, ItemCategory, BoxQuota, ServiceType, Equipment } from './types';
 import { randomUUID } from 'crypto';
 import { getSession } from './session';
 import { createClient } from '@supabase/supabase-js';
@@ -277,6 +277,156 @@ export async function updateCategory(id: string, name: string, setValue?: number
     revalidatePath('/admin');
 }
 
+// --- EQUIPMENT ACTIONS ---
+
+export async function getEquipment() {
+    const { data, error } = await supabase.from('equipment').select('*').order('name');
+    if (error) return [];
+    return data.map((e: any) => ({
+        id: e.id,
+        name: e.name,
+        price: parseFloat(e.price)
+    }));
+}
+
+export async function addEquipment(data: Omit<Equipment, 'id'>) {
+    const payload = {
+        name: data.name,
+        price: data.price
+    };
+    const { data: res, error } = await supabase.from('equipment').insert([payload]).select().single();
+    handleError(error);
+    revalidatePath('/admin');
+    return { ...data, id: res.id };
+}
+
+export async function updateEquipment(id: string, data: Partial<Equipment>) {
+    const payload: any = {};
+    if (data.name) payload.name = data.name;
+    if (data.price !== undefined) payload.price = data.price;
+    const { error } = await supabase.from('equipment').update(payload).eq('id', id);
+    handleError(error);
+    revalidatePath('/admin');
+}
+
+export async function deleteEquipment(id: string) {
+    const { error } = await supabase.from('equipment').delete().eq('id', id);
+    handleError(error);
+    revalidatePath('/admin');
+}
+
+export async function saveEquipmentOrder(clientId: string, vendorId: string, equipmentId: string, caseId?: string) {
+    // Get equipment item to calculate price
+    const equipmentList = await getEquipment();
+    const equipmentItem = equipmentList.find(e => e.id === equipmentId);
+    if (!equipmentItem) {
+        throw new Error('Equipment item not found');
+    }
+
+    // Get current user for updated_by
+    const session = await getSession();
+    const currentUserName = session?.name || 'Admin';
+
+    // Calculate scheduled delivery date for vendor
+    const vendors = await getVendors();
+    const vendor = vendors.find(v => v.id === vendorId);
+    let scheduledDeliveryDate: Date | null = null;
+    
+    if (vendor && vendor.deliveryDays && vendor.deliveryDays.length > 0) {
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const dayNameToNumber: { [key: string]: number } = {
+            'Sunday': 0, 'Monday': 1, 'Tuesday': 2, 'Wednesday': 3,
+            'Thursday': 4, 'Friday': 5, 'Saturday': 6
+        };
+        const deliveryDayNumbers = vendor.deliveryDays
+            .map((day: string) => dayNameToNumber[day])
+            .filter((num: number | undefined): num is number => num !== undefined);
+
+        // Find next occurrence of any delivery day
+        for (let i = 1; i <= 14; i++) {
+            const checkDate = new Date(today);
+            checkDate.setDate(today.getDate() + i);
+            if (deliveryDayNumbers.includes(checkDate.getDay())) {
+                scheduledDeliveryDate = checkDate;
+                break;
+            }
+        }
+    }
+
+    // Store equipment selection in notes as JSON
+    const equipmentSelection = {
+        vendorId,
+        equipmentId,
+        equipmentName: equipmentItem.name,
+        price: equipmentItem.price
+    };
+
+    // Create actual order in orders table (not upcoming_orders)
+    const orderData: any = {
+        client_id: clientId,
+        service_type: 'Equipment',
+        case_id: caseId || null,
+        status: 'pending',
+        last_updated: new Date().toISOString(),
+        updated_by: currentUserName,
+        scheduled_delivery_date: scheduledDeliveryDate ? scheduledDeliveryDate.toISOString().split('T')[0] : null,
+        total_value: equipmentItem.price,
+        total_items: 1,
+        notes: JSON.stringify(equipmentSelection)
+    };
+
+    const { data: newOrder, error: orderError } = await supabase
+        .from('orders')
+        .insert([orderData])
+        .select()
+        .single();
+
+    handleError(orderError);
+    
+    // Ensure order_number is at least 6 digits (100000+)
+    // The database default should handle this, but we'll verify and fix if needed
+    if (newOrder && (!newOrder.order_number || newOrder.order_number < 100000)) {
+        // Get the max order_number and ensure next is at least 6 digits
+        const { data: maxOrder } = await supabase
+            .from('orders')
+            .select('order_number')
+            .order('order_number', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+        
+        const nextNumber = Math.max((maxOrder?.order_number || 99999) + 1, 100000);
+        const { error: updateError } = await supabase
+            .from('orders')
+            .update({ order_number: nextNumber })
+            .eq('id', newOrder.id);
+        
+        if (!updateError) {
+            newOrder.order_number = nextNumber;
+        }
+    }
+    
+    // Also create a vendor selection record so it shows up in vendor tab
+    // We'll use order_vendor_selections table for Equipment orders too
+    if (newOrder) {
+        const { error: vsError } = await supabase
+            .from('order_vendor_selections')
+            .insert({
+                order_id: newOrder.id,
+                vendor_id: vendorId
+            });
+
+        if (vsError) {
+            console.error('Error creating vendor selection for equipment order:', vsError);
+            // Don't fail the whole operation if this fails
+        }
+    }
+
+    revalidatePath(`/clients/${clientId}`);
+    revalidatePath(`/vendor`);
+    return { success: true, orderId: newOrder.id };
+}
+
 // --- BOX QUOTA ACTIONS ---
 
 export async function getBoxQuotas(boxTypeId: string) {
@@ -527,6 +677,7 @@ function mapClientFromDB(c: any): ClientProfile {
         statusId: c.status_id || '',
         serviceType: c.service_type as any,
         approvedMealsPerWeek: c.approved_meals_per_week,
+        parentClientId: c.parent_client_id || null,
         activeOrder: c.active_order, // Metadata matches structure
         createdAt: c.created_at,
         updatedAt: c.updated_at
@@ -576,7 +727,7 @@ export async function addClient(data: Omit<ClientProfile, 'id' | 'createdAt' | '
         status_id: data.statusId || null,
         service_type: data.serviceType,
         approved_meals_per_week: data.approvedMealsPerWeek || 0,
-        active_order: {}
+        active_order: data.activeOrder || {}
     };
 
     const { data: res, error } = await supabase.from('clients').insert([payload]).select().single();
@@ -602,6 +753,102 @@ export async function addClient(data: Omit<ClientProfile, 'id' | 'createdAt' | '
     return newClient;
 }
 
+export async function addDependent(name: string, parentClientId: string) {
+    if (!name.trim() || !parentClientId) {
+        throw new Error('Dependent name and parent client are required');
+    }
+
+    // Verify parent client exists and is not itself a dependent
+    const parentClient = await getClient(parentClientId);
+    if (!parentClient) {
+        throw new Error('Parent client not found');
+    }
+    if (parentClient.parentClientId) {
+        throw new Error('Cannot attach dependent to another dependent');
+    }
+
+    const payload = {
+        full_name: name.trim(),
+        email: null,
+        address: '',
+        phone_number: '',
+        navigator_id: null,
+        end_date: '',
+        screening_took_place: false,
+        screening_signed: false,
+        notes: '',
+        status_id: null,
+        service_type: 'Food' as ServiceType, // Default service type
+        approved_meals_per_week: 0,
+        active_order: {},
+        parent_client_id: parentClientId
+    };
+
+    const { data: res, error } = await supabase.from('clients').insert([payload]).select().single();
+    handleError(error);
+
+    if (!res) {
+        throw new Error('Failed to create dependent: no data returned');
+    }
+
+    const newDependent = mapClientFromDB(res);
+
+    revalidatePath('/clients');
+
+    // Trigger local DB sync in background after mutation
+    const { triggerSyncInBackground } = await import('./local-db');
+    triggerSyncInBackground();
+
+    return newDependent;
+}
+
+export async function getRegularClients() {
+    // Get all clients that are not dependents (parent_client_id is NULL)
+    // If the column doesn't exist yet (migration not run), return all clients
+    const { data, error } = await supabase
+        .from('clients')
+        .select('*')
+        .is('parent_client_id', null)
+        .order('full_name');
+    
+    if (error) {
+        // If error (e.g., column doesn't exist), fall back to getting all clients
+        // This handles the case where the migration hasn't been run yet
+        const { data: allData, error: allError } = await supabase
+            .from('clients')
+            .select('*')
+            .order('full_name');
+        
+        if (allError) return [];
+        return allData.map(mapClientFromDB);
+    }
+    
+    return data.map(mapClientFromDB);
+}
+
+export async function getDependentsByParentId(parentClientId: string) {
+    try {
+        const { data, error } = await supabase
+            .from('clients')
+            .select('*')
+            .eq('parent_client_id', parentClientId)
+            .order('full_name');
+        
+        if (error) {
+            // If the column doesn't exist, return empty array
+            if (error.code === '42703') {
+                return [];
+            }
+            handleError(error);
+        }
+        if (!data) return [];
+        return data.map(mapClientFromDB);
+    } catch (e) {
+        console.error("Error in getDependentsByParentId:", e);
+        return [];
+    }
+}
+
 export async function updateClient(id: string, data: Partial<ClientProfile>) {
     const payload: any = {};
     if (data.fullName) payload.full_name = data.fullName;
@@ -616,6 +863,7 @@ export async function updateClient(id: string, data: Partial<ClientProfile>) {
     if (data.statusId !== undefined) payload.status_id = data.statusId || null;
     if (data.serviceType) payload.service_type = data.serviceType;
     if (data.approvedMealsPerWeek !== undefined) payload.approved_meals_per_week = data.approvedMealsPerWeek;
+    if (data.parentClientId !== undefined) payload.parent_client_id = data.parentClientId || null;
     if (data.activeOrder) payload.active_order = data.activeOrder;
 
     payload.updated_at = new Date().toISOString();
@@ -1434,38 +1682,25 @@ async function syncSingleOrderForDeliveryDay(
                 }
             }
         } else {
-            // If no vendorId, we can't calculate dates, but log a warning
-            console.warn(`[syncSingleOrderForDeliveryDay] No vendorId found for Boxes order with boxTypeId ${orderConfig.boxTypeId}`);
+            // If no vendorId, don't calculate dates - they can be set later
+            // Boxes orders can be saved without dates
+            console.log(`[syncSingleOrderForDeliveryDay] No vendorId for Boxes order - dates will be null (can be set later)`);
+            takeEffectDate = null;
+            scheduledDeliveryDate = null;
         }
     }
 
-    // If we can't calculate dates, we still want to save the order data to active_order
-    // But we need dates for upcoming_orders, so use fallback dates if needed
-    if (!takeEffectDate || !scheduledDeliveryDate) {
-        console.warn(`[syncSingleOrderForDeliveryDay] Missing dates. takeEffectDate: ${takeEffectDate}, scheduledDeliveryDate: ${scheduledDeliveryDate}. boxVendorId: ${orderConfig.vendorId || 'none'}`);
+    // For Boxes orders, dates are optional - they can be set later
+    // Only require dates for Food orders
+    if (orderConfig.serviceType === 'Food' && (!takeEffectDate || !scheduledDeliveryDate)) {
+        console.warn(`[syncSingleOrderForDeliveryDay] Skipping sync - missing dates for Food order`);
+        return;
+    }
 
-        // For Boxes orders, if we have vendorId, we should still try to save (boxTypeId is optional)
-        // Use fallback dates (today + 7 days for take effect, today + 14 days for delivery)
-        if (orderConfig.serviceType === 'Boxes' && orderConfig.vendorId) {
-            const today = new Date();
-            today.setHours(0, 0, 0, 0);
-
-            if (!takeEffectDate) {
-                takeEffectDate = new Date(today);
-                takeEffectDate.setDate(today.getDate() + 7); // Default to 7 days from now
-            }
-
-            if (!scheduledDeliveryDate) {
-                scheduledDeliveryDate = new Date(today);
-                scheduledDeliveryDate.setDate(today.getDate() + 14); // Default to 14 days from now
-            }
-
-            console.log(`[syncSingleOrderForDeliveryDay] Using fallback dates for Boxes order: takeEffectDate=${takeEffectDate.toISOString()}, scheduledDeliveryDate=${scheduledDeliveryDate.toISOString()}`);
-        } else {
-            // For other cases or if we don't have required Boxes data, skip
-            console.warn(`[syncSingleOrderForDeliveryDay] Skipping sync - missing dates and no fallback available`);
-            return;
-        }
+    // For Boxes orders without dates, we'll save with null dates (can be set later)
+    if (orderConfig.serviceType === 'Boxes' && (!takeEffectDate || !scheduledDeliveryDate)) {
+        console.log(`[syncSingleOrderForDeliveryDay] Boxes order without dates - will save with null dates (can be set later)`);
+        // Allow null dates for Boxes orders
     }
 
     // Calculate totals
@@ -1520,7 +1755,9 @@ async function syncSingleOrderForDeliveryDay(
         status: 'scheduled',
         last_updated: orderConfig.lastUpdated || new Date().toISOString(),
         updated_by: updatedBy,
-        take_effect_date: takeEffectDate.toISOString().split('T')[0],
+        // For Boxes orders, dates are optional (can be null)
+        // Note: scheduled_delivery_date column doesn't exist in upcoming_orders table
+        take_effect_date: takeEffectDate ? takeEffectDate.toISOString().split('T')[0] : null,
         total_value: totalValue,
         total_items: totalItems,
         notes: null
@@ -1639,6 +1876,8 @@ async function syncSingleOrderForDeliveryDay(
 
         const boxItemsRaw = (orderConfig as any).items || {};
         const boxItemPrices = (orderConfig as any).itemPrices || {};
+        console.log('[syncSingleOrderForDeliveryDay] Box items raw:', boxItemsRaw);
+        console.log('[syncSingleOrderForDeliveryDay] Box item prices:', boxItemPrices);
         const boxItems: any = {};
         for (const [itemId, qty] of Object.entries(boxItemsRaw)) {
             const price = boxItemPrices[itemId];
@@ -1648,6 +1887,8 @@ async function syncSingleOrderForDeliveryDay(
                 boxItems[itemId] = qty;
             }
         }
+        console.log('[syncSingleOrderForDeliveryDay] Box items formatted:', boxItems);
+        console.log('[syncSingleOrderForDeliveryDay] Box items count:', Object.keys(boxItems).length);
 
         // Calculate total from item prices
         let calculatedTotal = 0;
@@ -1687,7 +1928,7 @@ async function syncSingleOrderForDeliveryDay(
             });
             throw boxSelectionError;
         } else {
-            console.log(`[syncSingleOrderForDeliveryDay] Successfully inserted box selection for upcoming_order_id=${upcomingOrderId}, vendor_id=${boxVendorId}`);
+            console.log(`[syncSingleOrderForDeliveryDay] Successfully inserted box selection for upcoming_order_id=${upcomingOrderId}, vendor_id=${boxVendorId}, items_count=${Object.keys(boxItems).length}, items=${JSON.stringify(boxItems)}`);
         }
     }
 }
@@ -1882,7 +2123,9 @@ export async function syncCurrentOrderToUpcoming(clientId: string, client: Clien
                     console.warn(`[syncCurrentOrderToUpcoming] Vendor ${boxVendorId} has no delivery days configured, will attempt sync anyway`);
                 }
             } else {
-                console.warn(`[syncCurrentOrderToUpcoming] No vendorId found for Boxes order${orderConfig.boxTypeId ? ` with boxTypeId ${orderConfig.boxTypeId}` : ''}, will attempt sync anyway`);
+                // No vendorId for boxes - will use default delivery day from settings in syncSingleOrderForDeliveryDay
+                console.log(`[syncCurrentOrderToUpcoming] No vendorId found for Boxes order${orderConfig.boxTypeId ? ` with boxTypeId ${orderConfig.boxTypeId}` : ''}, will calculate dates based on settings`);
+                deliveryDays = []; // Empty array - syncSingleOrderForDeliveryDay will handle it with settings
             }
         }
 
@@ -2347,6 +2590,22 @@ export async function getActiveOrderForClient(clientId: string) {
                         }
                     }
                 }
+            } else if (orderData.service_type === 'Equipment') {
+                // Parse equipment details from notes
+                try {
+                    const notes = orderData.notes ? JSON.parse(orderData.notes) : null;
+                    if (notes) {
+                        orderConfig.equipmentSelection = {
+                            vendorId: notes.vendorId,
+                            equipmentId: notes.equipmentId,
+                            equipmentName: notes.equipmentName,
+                            price: notes.price
+                        };
+                        orderConfig.vendorId = notes.vendorId; // For consistency
+                    }
+                } catch (e) {
+                    console.error('Error parsing equipment order notes:', e);
+                }
             }
 
             return orderConfig;
@@ -2697,6 +2956,7 @@ export async function getOrdersByVendor(vendorId: string) {
 
     try {
         // 1. Fetch completed orders (from orders table)
+        // Include Food, Boxes, and Equipment orders
         const { data: foodOrderIds } = await supabase
             .from('order_vendor_selections')
             .select('order_id')
@@ -2707,6 +2967,8 @@ export async function getOrdersByVendor(vendorId: string) {
             .select('order_id')
             .eq('vendor_id', vendorId);
 
+        // Also get Equipment orders - they use order_vendor_selections too
+        // But we need to filter by service_type='Equipment' in the orders table
         const orderIds = Array.from(new Set([
             ...(foodOrderIds?.map(o => o.order_id) || []),
             ...(boxOrderIds?.map(o => o.order_id) || [])
@@ -2721,7 +2983,22 @@ export async function getOrdersByVendor(vendorId: string) {
                 .order('created_at', { ascending: false });
 
             if (ordersData) {
-                orders = await Promise.all(ordersData.map(async (order) => {
+                // Filter to only include orders for this vendor
+                // For Equipment orders, check if vendor_id matches in notes
+                const filteredOrders = ordersData.filter(order => {
+                    if (order.service_type === 'Equipment') {
+                        try {
+                            const notes = order.notes ? JSON.parse(order.notes) : null;
+                            return notes && notes.vendorId === vendorId;
+                        } catch {
+                            return false;
+                        }
+                    }
+                    // For Food and Boxes, they're already filtered by vendor_selections/box_selections
+                    return true;
+                });
+
+                orders = await Promise.all(filteredOrders.map(async (order) => {
                     const processed = await processVendorOrderDetails(order, vendorId, false);
                     return { ...processed, orderType: 'completed' };
                 }));
@@ -2765,6 +3042,22 @@ async function processVendorOrderDetails(order: any, vendorId: string, isUpcomin
                 .eq('vendor_selection_id', vs.id);
 
             result.items = items || [];
+        }
+    } else if (order.service_type === 'Equipment') {
+        // Parse equipment details from notes
+        // Note: Orders are already filtered by vendor in getOrdersByVendor, so we can trust the vendorId
+        try {
+            const notes = order.notes ? JSON.parse(order.notes) : null;
+            if (notes && notes.equipmentName) {
+                result.equipmentSelection = {
+                    vendorId: notes.vendorId,
+                    equipmentId: notes.equipmentId,
+                    equipmentName: notes.equipmentName,
+                    price: notes.price
+                };
+            }
+        } catch (e) {
+            console.error('Error parsing equipment order notes:', e);
         }
     } else if (order.service_type === 'Boxes') {
         const { data: bs } = await supabase
@@ -2838,6 +3131,40 @@ async function processVendorOrderDetails(order: any, vendorId: string, isUpcomin
     return result;
 }
 
+/**
+ * Resolve order ID from either order number (numeric) or UUID order ID
+ * Returns the UUID order ID
+ */
+export async function resolveOrderId(orderIdentifier: string): Promise<string | null> {
+    if (!orderIdentifier) return null;
+    
+    // Check if it's a UUID (contains hyphens and is 36 chars)
+    const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(orderIdentifier);
+    
+    if (isUUID) {
+        // Already a UUID, verify it exists
+        const { data } = await supabase
+            .from('orders')
+            .select('id')
+            .eq('id', orderIdentifier)
+            .maybeSingle();
+        return data?.id || null;
+    }
+    
+    // Try as order number (numeric)
+    const orderNumber = parseInt(orderIdentifier, 10);
+    if (!isNaN(orderNumber)) {
+        const { data } = await supabase
+            .from('orders')
+            .select('id')
+            .eq('order_number', orderNumber)
+            .maybeSingle();
+        return data?.id || null;
+    }
+    
+    return null;
+}
+
 export async function isOrderUnderVendor(orderId: string, vendorId: string) {
     // Quick check if order is in list
     // Optimization: check DB directly
@@ -2857,7 +3184,28 @@ export async function isOrderUnderVendor(orderId: string, vendorId: string) {
         .eq('vendor_id', vendorId)
         .maybeSingle();
 
-    return !!boxOrder;
+    if (boxOrder) return true;
+
+    // Check Equipment orders - vendor ID is stored in notes JSON
+    const { data: equipmentOrder } = await supabase
+        .from('orders')
+        .select('service_type, notes')
+        .eq('id', orderId)
+        .eq('service_type', 'Equipment')
+        .maybeSingle();
+
+    if (equipmentOrder && equipmentOrder.notes) {
+        try {
+            const notes = JSON.parse(equipmentOrder.notes);
+            if (notes && notes.vendorId === vendorId) {
+                return true;
+            }
+        } catch (e) {
+            // Invalid JSON, skip
+        }
+    }
+
+    return false;
 }
 
 export async function orderHasDeliveryProof(orderId: string) {
@@ -3559,5 +3907,173 @@ export async function getOrdersPaginated(page: number, pageSize: number, filter?
             clientName: o.clients?.full_name || 'Unknown'
         })),
         total: count || 0
+    };
+}
+
+export async function getOrderById(orderId: string) {
+    if (!orderId) return null;
+
+    // Fetch the order
+    const { data: orderData, error: orderError } = await supabase
+        .from('orders')
+        .select('*')
+        .eq('id', orderId)
+        .single();
+
+    if (orderError || !orderData) {
+        console.error('Error fetching order:', orderError);
+        return null;
+    }
+
+    // Fetch client information
+    const { data: clientData } = await supabase
+        .from('clients')
+        .select('id, full_name, address, email, phone_number')
+        .eq('id', orderData.client_id)
+        .single();
+
+    // Fetch reference data
+    const [menuItems, vendors, boxTypes, equipmentList] = await Promise.all([
+        getMenuItems(),
+        getVendors(),
+        getBoxTypes(),
+        getEquipment()
+    ]);
+
+    let orderDetails: any = undefined;
+
+    if (orderData.service_type === 'Food') {
+        // Fetch vendor selections and items
+        const { data: vendorSelections } = await supabase
+            .from('order_vendor_selections')
+            .select('*')
+            .eq('order_id', orderId);
+
+        if (vendorSelections && vendorSelections.length > 0) {
+            const vendorSelectionsWithItems = await Promise.all(
+                vendorSelections.map(async (vs: any) => {
+                    const { data: items } = await supabase
+                        .from('order_items')
+                        .select('*')
+                        .eq('vendor_selection_id', vs.id);
+
+                    const vendor = vendors.find(v => v.id === vs.vendor_id);
+                    const itemsWithDetails = (items || []).map((item: any) => {
+                        const menuItem = menuItems.find(mi => mi.id === item.menu_item_id);
+                        const itemPrice = menuItem?.priceEach ?? parseFloat(item.unit_value);
+                        const quantity = item.quantity;
+                        const itemTotal = itemPrice * quantity;
+                        return {
+                            id: item.id,
+                            menuItemId: item.menu_item_id,
+                            menuItemName: menuItem?.name || 'Unknown Item',
+                            quantity: quantity,
+                            unitValue: itemPrice,
+                            totalValue: itemTotal
+                        };
+                    });
+
+                    return {
+                        vendorId: vs.vendor_id,
+                        vendorName: vendor?.name || 'Unknown Vendor',
+                        items: itemsWithDetails
+                    };
+                })
+            );
+
+            orderDetails = {
+                serviceType: orderData.service_type,
+                vendorSelections: vendorSelectionsWithItems,
+                totalItems: orderData.total_items,
+                totalValue: parseFloat(orderData.total_value || 0)
+            };
+        }
+    } else if (orderData.service_type === 'Boxes') {
+        // Fetch box selection
+        const { data: boxSelection } = await supabase
+            .from('order_box_selections')
+            .select('*')
+            .eq('order_id', orderId)
+            .maybeSingle();
+
+        if (boxSelection) {
+            const vendor = vendors.find(v => v.id === boxSelection.vendor_id);
+            const boxType = boxTypes.find(bt => bt.id === boxSelection.box_type_id);
+            const boxTotalValue = boxSelection.total_value
+                ? parseFloat(boxSelection.total_value)
+                : parseFloat(orderData.total_value || 0);
+
+            orderDetails = {
+                serviceType: orderData.service_type,
+                vendorId: boxSelection.vendor_id,
+                vendorName: vendor?.name || 'Unknown Vendor',
+                boxTypeId: boxSelection.box_type_id,
+                boxTypeName: boxType?.name || 'Unknown Box Type',
+                boxQuantity: boxSelection.quantity,
+                items: boxSelection.items || {},
+                totalValue: boxTotalValue
+            };
+        }
+    } else if (orderData.service_type === 'Equipment') {
+        // Parse equipment details from notes field
+        try {
+            const notes = orderData.notes ? JSON.parse(orderData.notes) : null;
+            if (notes) {
+                const vendor = vendors.find(v => v.id === notes.vendorId);
+                const equipment = equipmentList.find(e => e.id === notes.equipmentId);
+                
+                orderDetails = {
+                    serviceType: orderData.service_type,
+                    vendorId: notes.vendorId,
+                    vendorName: vendor?.name || 'Unknown Vendor',
+                    equipmentId: notes.equipmentId,
+                    equipmentName: notes.equipmentName || equipment?.name || 'Unknown Equipment',
+                    price: notes.price || equipment?.price || 0,
+                    totalValue: parseFloat(orderData.total_value || 0)
+                };
+            }
+        } catch (e) {
+            console.error('Error parsing equipment order notes:', e);
+            // Fallback: try to get vendor from order_vendor_selections
+            const { data: vendorSelections } = await supabase
+                .from('order_vendor_selections')
+                .select('*')
+                .eq('order_id', orderId)
+                .limit(1)
+                .maybeSingle();
+            
+            if (vendorSelections) {
+                const vendor = vendors.find(v => v.id === vendorSelections.vendor_id);
+                orderDetails = {
+                    serviceType: orderData.service_type,
+                    vendorId: vendorSelections.vendor_id,
+                    vendorName: vendor?.name || 'Unknown Vendor',
+                    totalValue: parseFloat(orderData.total_value || 0)
+                };
+            }
+        }
+    }
+
+    return {
+        id: orderData.id,
+        orderNumber: orderData.order_number,
+        clientId: orderData.client_id,
+        clientName: clientData?.full_name || 'Unknown Client',
+        clientAddress: clientData?.address || '',
+        clientEmail: clientData?.email || '',
+        clientPhone: clientData?.phone_number || '',
+        serviceType: orderData.service_type,
+        caseId: orderData.case_id,
+        status: orderData.status,
+        scheduledDeliveryDate: orderData.scheduled_delivery_date,
+        actualDeliveryDate: orderData.actual_delivery_date,
+        deliveryProofUrl: orderData.proof_of_delivery_image || '',
+        totalValue: parseFloat(orderData.total_value || 0),
+        totalItems: orderData.total_items,
+        notes: orderData.notes,
+        createdAt: orderData.created_at,
+        lastUpdated: orderData.updated_at,
+        updatedBy: orderData.updated_by,
+        orderDetails: orderDetails
     };
 }

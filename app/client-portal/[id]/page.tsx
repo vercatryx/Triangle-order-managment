@@ -34,6 +34,17 @@ export default async function ClientPortalPage({ params }: { params: { id: strin
         notFound();
     }
 
+    // Debug: Log what we're passing to the component
+    if (upcomingOrder && (upcomingOrder as any).serviceType === 'Boxes') {
+        console.log('[ClientPortalPage] Upcoming order data being passed:', {
+            serviceType: (upcomingOrder as any).serviceType,
+            hasItems: !!(upcomingOrder as any).items,
+            itemsCount: (upcomingOrder as any).items ? Object.keys((upcomingOrder as any).items).length : 0,
+            items: (upcomingOrder as any).items,
+            fullUpcomingOrder: JSON.stringify(upcomingOrder, null, 2).substring(0, 500)
+        });
+    }
+
     return (
         <div style={{ padding: '20px' }}>
             <div style={{ marginBottom: '20px', display: 'flex', alignItems: 'center', gap: '10px' }}>

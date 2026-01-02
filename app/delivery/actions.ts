@@ -3,6 +3,7 @@
 import { uploadFile } from '@/lib/storage';
 import { createClient } from '@supabase/supabase-js';
 import { revalidatePath } from 'next/cache';
+import { saveDeliveryProofUrlAndProcessOrder } from '@/lib/actions';
 
 export async function processDeliveryProof(formData: FormData) {
     const file = formData.get('file') as File;
@@ -27,18 +28,21 @@ export async function processDeliveryProof(formData: FormData) {
         // Actually, let's just query for order_number.
 
         // 1. Verify Order matches
-        let table = 'orders';
+        let table: 'orders' | 'upcoming_orders' = 'orders';
         let proofColumn = 'delivery_proof_url';
+        let foundOrder: { id: string } | null = null;
 
         // Try finding in orders
-        let { data: order, error: findError } = await supabaseAdmin
+        const { data: orderData } = await supabaseAdmin
             .from('orders')
             .select('id')
             .eq('order_number', orderNumber)
             .maybeSingle();
 
+        foundOrder = orderData;
+
         // If not found by number, try ID
-        if (!order) {
+        if (!foundOrder) {
             const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
             if (uuidRegex.test(orderNumber)) {
                 const { data: orderById } = await supabaseAdmin
@@ -46,12 +50,12 @@ export async function processDeliveryProof(formData: FormData) {
                     .select('id')
                     .eq('id', orderNumber)
                     .maybeSingle();
-                order = orderById;
+                foundOrder = orderById;
             }
         }
 
         // If still not found, try UPCOMING orders
-        if (!order) {
+        if (!foundOrder) {
             table = 'upcoming_orders';
             proofColumn = 'delivery_proof_url';
 
@@ -61,10 +65,10 @@ export async function processDeliveryProof(formData: FormData) {
                 .eq('order_number', orderNumber)
                 .maybeSingle();
 
-            order = upcomingOrder;
+            foundOrder = upcomingOrder;
 
             // Try ID for upcoming if number failed
-            if (!order) {
+            if (!foundOrder) {
                 const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
                 if (uuidRegex.test(orderNumber)) {
                     const { data: upcomingById } = await supabaseAdmin
@@ -72,16 +76,16 @@ export async function processDeliveryProof(formData: FormData) {
                         .select('id')
                         .eq('id', orderNumber)
                         .maybeSingle();
-                    order = upcomingById;
+                    foundOrder = upcomingById;
                 }
             }
         }
 
-        if (!order) {
+        if (!foundOrder) {
             return { success: false, error: 'Order not found' };
         }
 
-        const orderId = order.id;
+        const orderId = foundOrder.id;
 
         // 2. Upload File
         const buffer = Buffer.from(await file.arrayBuffer());
@@ -93,27 +97,67 @@ export async function processDeliveryProof(formData: FormData) {
         const publicUrl = `${process.env.R2_PUBLIC_URL_BASE || 'https://pub-820fa32211a14c0b8bdc7c41106bfa02.r2.dev'}/${key}`;
 
         // 3. Update Order in Supabase
-        const updateData: any = {};
-        updateData[proofColumn] = publicUrl;
-
-        // Only set status to delivered if it makes sense for the table? 
-        // For orders: yes. For upcoming: maybe 'completed' or stays scheduled but with proof?
-        // Let's assume delivered/completed status update for both for now to indicate success.
-        if (table === 'orders') {
-            updateData.status = 'delivered';
+        // For upcoming_orders, use saveDeliveryProofUrlAndProcessOrder to properly process the order
+        if (table === 'upcoming_orders') {
+            const result = await saveDeliveryProofUrlAndProcessOrder(orderId, 'upcoming', publicUrl);
+            if (!result.success) {
+                return { success: false, error: result.error || 'Failed to process order' };
+            }
+            revalidatePath('/admin');
+            return { success: true, url: publicUrl };
         }
-        // For upcoming_orders, we might not want to change status to 'delivered' if that status doesn't exist.
-        // upcoming_orders usually has 'scheduled', 'processed'. 
-        // Let's just update the proof URL for upcoming orders for now to be safe, or check status constraints.
+
+        // For orders table, update with billing_pending status (never 'pending' or 'delivered')
+        const updateData: any = {
+            delivery_proof_url: publicUrl,
+            status: 'billing_pending',
+            actual_delivery_date: new Date().toISOString()
+        };
 
         const { error: updateError } = await supabaseAdmin
-            .from(table)
+            .from('orders')
             .update(updateData)
             .eq('id', orderId);
 
         if (updateError) {
             console.error('Error updating order:', updateError);
             return { success: false, error: 'Failed to update order status' };
+        }
+
+        // Create billing record if it doesn't exist (similar to updateOrderDeliveryProof)
+        const { data: orderDetails } = await supabaseAdmin
+            .from('orders')
+            .select('client_id, total_value, actual_delivery_date')
+            .eq('id', orderId)
+            .single();
+
+        if (orderDetails) {
+            const { data: client } = await supabaseAdmin
+                .from('clients')
+                .select('navigator_id, fullName')
+                .eq('id', orderDetails.client_id)
+                .single();
+
+            const { data: existingBilling } = await supabaseAdmin
+                .from('billing_records')
+                .select('id')
+                .eq('order_id', orderId)
+                .maybeSingle();
+
+            if (!existingBilling) {
+                const billingPayload = {
+                    client_id: orderDetails.client_id,
+                    client_name: client?.fullName || 'Unknown Client',
+                    order_id: orderId,
+                    status: 'pending',
+                    amount: orderDetails.total_value || 0,
+                    navigator: client?.navigator_id || 'Unknown',
+                    delivery_date: orderDetails.actual_delivery_date,
+                    remarks: 'Auto-generated upon proof upload'
+                };
+
+                await supabaseAdmin.from('billing_records').insert([billingPayload]);
+            }
         }
 
         revalidatePath('/admin'); // Revalidate admin views

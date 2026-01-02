@@ -53,19 +53,19 @@ function TimeWidget() {
     if (isEditing) {
         return (
             <div style={{
-                backgroundColor: 'rgba(31, 41, 55, 0.95)',
-                border: '1px solid var(--primary-color)',
+                backgroundColor: 'var(--bg-panel)',
+                border: '1px solid var(--color-primary)',
                 borderRadius: '0.5rem',
                 padding: '0.75rem',
                 fontSize: '0.85rem',
-                color: 'white',
+                color: 'var(--text-primary)',
                 display: 'flex',
                 flexDirection: 'column',
                 gap: '0.5rem'
             }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
                     <span style={{ fontWeight: 600, color: 'var(--primary-color)' }}>Set System Time</span>
-                    <button onClick={() => setIsEditing(false)} style={{ background: 'none', border: 'none', color: '#9ca3af', cursor: 'pointer' }}>
+                    <button onClick={() => setIsEditing(false)} style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer' }}>
                         <X size={14} />
                     </button>
                 </div>
@@ -75,9 +75,9 @@ function TimeWidget() {
                     value={inputValue}
                     onChange={(e) => setInputValue(e.target.value)}
                     style={{
-                        background: '#374151',
-                        border: '1px solid #4b5563',
-                        color: 'white',
+                        background: 'var(--bg-panel)',
+                        border: '1px solid var(--border-color)',
+                        color: 'var(--text-primary)',
                         borderRadius: '0.25rem',
                         padding: '0.25rem',
                         fontSize: '0.8rem',
@@ -109,7 +109,7 @@ function TimeWidget() {
                         onClick={handleClear}
                         style={{
                             flex: 1,
-                            backgroundColor: '#ef4444',
+                            backgroundColor: 'var(--color-danger)',
                             color: 'white',
                             border: 'none',
                             borderRadius: '0.25rem',
@@ -129,12 +129,12 @@ function TimeWidget() {
         <div
             onClick={() => setIsEditing(true)}
             style={{
-                backgroundColor: isFakeTime ? 'rgba(239, 68, 68, 0.1)' : 'rgba(255, 255, 255, 0.05)',
-                border: isFakeTime ? '1px solid #ef4444' : '1px solid rgba(255, 255, 255, 0.1)',
+                backgroundColor: isFakeTime ? 'rgba(220, 38, 38, 0.1)' : 'var(--bg-surface)',
+                border: isFakeTime ? '1px solid var(--color-danger)' : '1px solid var(--border-color)',
                 borderRadius: '0.5rem',
                 padding: '0.75rem',
                 fontSize: '0.85rem',
-                color: isFakeTime ? '#ef4444' : '#9ca3af',
+                color: isFakeTime ? 'var(--color-danger)' : 'var(--text-secondary)',
                 display: 'flex',
                 flexDirection: 'column',
                 gap: '0.25rem',
@@ -142,7 +142,6 @@ function TimeWidget() {
                 transition: 'all 0.2s ease',
                 position: 'relative'
             }}
-            className="hover:bg-white/10"
             title="Click to override system time"
         >
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontWeight: 600 }}>
@@ -152,7 +151,7 @@ function TimeWidget() {
                 </div>
                 <Edit2 size={12} style={{ opacity: 0.5 }} />
             </div>
-            <div style={{ fontSize: '1.1rem', fontWeight: 500, color: isFakeTime ? '#ef4444' : 'white' }}>
+            <div style={{ fontSize: '1.1rem', fontWeight: 500, color: isFakeTime ? 'var(--color-danger)' : 'var(--text-primary)' }}>
                 {currentTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
             </div>
             <div style={{ fontSize: '0.75rem', opacity: 0.8 }}>
@@ -252,13 +251,14 @@ export function Sidebar({
                             bottom: '100%',
                             left: '0',
                             width: '100%',
-                            backgroundColor: '#1f2937',
-                            border: '1px solid #374151',
+                            backgroundColor: 'var(--bg-panel)',
+                            border: '1px solid var(--border-color)',
                             borderRadius: '0.375rem',
                             padding: '0.5rem',
                             marginBottom: '0.5rem',
                             zIndex: 50,
-                            minWidth: isCollapsed ? 'max-content' : 'auto'
+                            minWidth: isCollapsed ? 'max-content' : 'auto',
+                            boxShadow: 'var(--shadow-md)'
                         }}>
                             <button
                                 onClick={() => logout()}
@@ -267,7 +267,7 @@ export function Sidebar({
                                     alignItems: 'center',
                                     gap: '0.5rem',
                                     width: '100%',
-                                    color: '#ef4444',
+                                    color: 'var(--color-danger)',
                                     background: 'none',
                                     border: 'none',
                                     cursor: 'pointer',

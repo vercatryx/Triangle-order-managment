@@ -1,7 +1,7 @@
 
 export type OrderStatus = 'pending' | 'confirmed' | 'completed' | 'waiting_for_proof' | 'billing_pending' | 'cancelled';
 
-export type ServiceType = 'Food' | 'Boxes';
+export type ServiceType = 'Food' | 'Boxes' | 'Equipment';
 
 export interface ClientProfile {
   id: string;
@@ -20,6 +20,9 @@ export interface ClientProfile {
 
   // Food Specific
   approvedMealsPerWeek?: number;
+
+  // Dependent relationship - if set, this client is a dependent of another client
+  parentClientId?: string | null;
 
   // Order Configuration (Active Request)
   activeOrder?: OrderConfiguration;
@@ -150,6 +153,12 @@ export interface Nutritionist {
   email?: string | null;
 }
 
+export interface Equipment {
+  id: string;
+  name: string;
+  price: number;
+}
+
 export interface AppSettings {
   weeklyCutoffDay: string; // e.g. "Friday"
   weeklyCutoffTime: string; // e.g. "17:00"
@@ -238,3 +247,4 @@ export interface ClientFullDetails {
   activeOrder: any; // Using any to match existing usage in ClientProfile, but ideally typed
   upcomingOrder: any;
 }
+

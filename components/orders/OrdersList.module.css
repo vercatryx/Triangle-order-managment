@@ -127,8 +127,8 @@
 }
 
 .statusPending {
-    background-color: rgba(234, 179, 8, 0.1);
-    color: #eab308;
+    background-color: rgba(217, 119, 6, 0.1);
+    color: var(--color-warning);
     padding: 2px 8px;
     border-radius: 4px;
     font-size: 0.75rem;
@@ -137,7 +137,7 @@
 
 .statusConfirmed {
     background-color: rgba(37, 99, 235, 0.1);
-    color: #2563eb;
+    color: var(--color-primary);
     padding: 2px 8px;
     border-radius: 4px;
     font-size: 0.75rem;
@@ -145,8 +145,8 @@
 }
 
 .statusCompleted {
-    background-color: rgba(34, 197, 94, 0.1);
-    color: #22c55e;
+    background-color: rgba(22, 163, 74, 0.1);
+    color: var(--color-success);
     padding: 2px 8px;
     border-radius: 4px;
     font-size: 0.75rem;
@@ -154,8 +154,8 @@
 }
 
 .statusWaitProof {
-    background-color: rgba(168, 85, 247, 0.1);
-    color: #a855f7;
+    background-color: rgba(124, 58, 237, 0.1);
+    color: var(--color-accent);
     padding: 2px 8px;
     border-radius: 4px;
     font-size: 0.75rem;
@@ -163,8 +163,8 @@
 }
 
 .statusBilling {
-    background-color: rgba(249, 115, 22, 0.1);
-    color: #f97316;
+    background-color: rgba(217, 119, 6, 0.1);
+    color: var(--color-warning);
     padding: 2px 8px;
     border-radius: 4px;
     font-size: 0.75rem;
@@ -172,8 +172,8 @@
 }
 
 .statusCancelled {
-    background-color: rgba(239, 68, 68, 0.1);
-    color: #ef4444;
+    background-color: rgba(220, 38, 38, 0.1);
+    color: var(--color-danger);
     padding: 2px 8px;
     border-radius: 4px;
     font-size: 0.75rem;

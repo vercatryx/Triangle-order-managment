@@ -224,7 +224,7 @@
 .redTab {
     width: 4px;
     height: 20px;
-    background-color: #ef4444;
+    background-color: var(--color-danger);
     border-radius: 2px;
     flex-shrink: 0;
 }
@@ -260,7 +260,7 @@
     gap: 8px;
     font-size: 0.85rem;
     color: var(--color-primary);
-    background-color: rgba(59, 130, 246, 0.1);
+    background-color: rgba(37, 99, 235, 0.1);
     padding: 4px 10px;
     border-radius: var(--radius-sm);
     animation: fadeIn 0.3s ease-out;
@@ -309,11 +309,11 @@
 
 .sortButtonActive {
     color: var(--color-primary);
-    background-color: rgba(59, 130, 246, 0.1);
+    background-color: rgba(37, 99, 235, 0.1);
 }
 
 .sortButtonActive:hover {
-    background-color: rgba(59, 130, 246, 0.15);
+    background-color: rgba(37, 99, 235, 0.15);
 }
 
 .filterDropdown {
@@ -341,11 +341,11 @@
 
 .filterButtonActive {
     color: var(--color-primary);
-    background-color: rgba(59, 130, 246, 0.1);
+    background-color: rgba(37, 99, 235, 0.1);
 }
 
 .filterButtonActive:hover {
-    background-color: rgba(59, 130, 246, 0.15);
+    background-color: rgba(37, 99, 235, 0.15);
 }
 
 .filterMenu {
@@ -384,11 +384,11 @@
 }
 
 .filterOptionActive {
-    background-color: rgba(59, 130, 246, 0.15);
+    background-color: rgba(37, 99, 235, 0.15);
     color: var(--color-primary);
     font-weight: 500;
 }
 
 .filterOptionActive:hover {
-    background-color: rgba(59, 130, 246, 0.2);
+    background-color: rgba(37, 99, 235, 0.2);
 }

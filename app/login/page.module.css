@@ -57,7 +57,7 @@
 
 .inputLarge {
     width: 100%;
-    background-color: var(--bg-app);
+    background-color: var(--bg-panel);
     border: 1px solid var(--border-color);
     color: var(--text-primary);
     padding: 1rem 1.25rem;
@@ -69,7 +69,7 @@
 .inputLarge:focus {
     outline: none;
     border-color: var(--color-primary);
-    box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.1);
+    box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.1);
 }
 
 .inputLarge::placeholder {
@@ -77,8 +77,8 @@
 }
 
 .errorMessage {
-    background-color: rgba(239, 68, 68, 0.1);
-    border: 1px solid rgba(239, 68, 68, 0.2);
+    background-color: rgba(220, 38, 38, 0.1);
+    border: 1px solid rgba(220, 38, 38, 0.2);
     color: var(--color-danger);
     padding: 1rem;
     border-radius: var(--radius-md);
@@ -101,13 +101,13 @@
     border-radius: var(--radius-md);
     cursor: pointer;
     transition: all 0.2s ease;
-    box-shadow: 0 4px 6px -1px rgba(59, 130, 246, 0.2);
+    box-shadow: 0 4px 6px -1px rgba(37, 99, 235, 0.2);
 }
 
 .btnLarge:hover:not(:disabled) {
     background-color: var(--color-primary-hover);
     transform: translateY(-1px);
-    box-shadow: 0 6px 8px -1px rgba(59, 130, 246, 0.3);
+    box-shadow: 0 6px 8px -1px rgba(37, 99, 235, 0.3);
 }
 
 .btnLarge:active:not(:disabled) {
@@ -151,9 +151,9 @@
 .spinner {
     width: 1.5rem;
     height: 1.5rem;
-    border: 3px solid rgba(255, 255, 255, 0.3);
+    border: 3px solid rgba(226, 232, 240, 0.5);
     border-radius: 50%;
-    border-top-color: white;
+    border-top-color: var(--color-primary);
     animation: spin 1s linear infinite;
     margin-right: 0.75rem;
 }

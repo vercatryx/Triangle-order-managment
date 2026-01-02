@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useMemo } from 'react';
 import { ClientProfile, ClientStatus, Navigator, Vendor, MenuItem, BoxType, ItemCategory, BoxQuota } from '@/lib/types';
-import { syncCurrentOrderToUpcoming, getBoxQuotas, invalidateOrderData } from '@/lib/actions';
+import { syncCurrentOrderToUpcoming, getBoxQuotas, invalidateOrderData, updateClient } from '@/lib/actions';
 import { Package, Truck, User, Loader2, Info, Plus, Calendar, AlertTriangle, Check, Trash2, History, ChevronDown, ChevronUp, Clock } from 'lucide-react';
 import styles from './ClientProfile.module.css';
 
@@ -20,8 +20,23 @@ interface Props {
 }
 
 export function ClientPortalInterface({ client: initialClient, statuses, navigators, vendors, menuItems, boxTypes, categories, upcomingOrder, activeOrder, previousOrders }: Props) {
-    const [client] = useState<ClientProfile>(initialClient);
+    const [client, setClient] = useState<ClientProfile>(initialClient);
     const [activeBoxQuotas, setActiveBoxQuotas] = useState<BoxQuota[]>([]);
+
+
+    // Profile State
+    const [profileData, setProfileData] = useState({
+        fullName: initialClient.fullName,
+        email: initialClient.email || '',
+        phoneNumber: initialClient.phoneNumber || '',
+        address: initialClient.address || ''
+    });
+    const [originalProfileData, setOriginalProfileData] = useState({
+        fullName: initialClient.fullName,
+        email: initialClient.email || '',
+        phoneNumber: initialClient.phoneNumber || '',
+        address: initialClient.address || ''
+    });
 
     // Order Configuration State
     const [orderConfig, setOrderConfig] = useState<any>({});
@@ -29,15 +44,49 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
 
     // UI State
     const [saving, setSaving] = useState(false);
+    const [savingProfile, setSavingProfile] = useState(false);
     const [message, setMessage] = useState<string | null>('');
+    const [profileMessage, setProfileMessage] = useState<string | null>('');
     const [showPreviousOrders, setShowPreviousOrders] = useState(false);
+
+    // Sync profile data when initialClient changes
+    useEffect(() => {
+        setProfileData({
+            fullName: initialClient.fullName,
+            email: initialClient.email || '',
+            phoneNumber: initialClient.phoneNumber || '',
+            address: initialClient.address || ''
+        });
+        setOriginalProfileData({
+            fullName: initialClient.fullName,
+            email: initialClient.email || '',
+            phoneNumber: initialClient.phoneNumber || '',
+            address: initialClient.address || ''
+        });
+        setClient(initialClient);
+    }, [initialClient]);
 
     // Initialize state
     useEffect(() => {
+        // Use a ref to track if we've already initialized to prevent overwriting user changes
+        const currentItems = (orderConfig as any)?.items;
+        const hasExistingItems = currentItems && typeof currentItems === 'object' && Object.keys(currentItems).length > 0;
+        
+        console.log('[ClientPortal] Initialization useEffect triggered', {
+            hasUpcomingOrder: !!upcomingOrder,
+            upcomingOrderType: typeof upcomingOrder,
+            upcomingOrderKeys: upcomingOrder ? Object.keys(upcomingOrder) : [],
+            currentOrderConfigItems: hasExistingItems ? Object.keys(currentItems).length : 0,
+            currentOrderConfigItemsData: currentItems,
+            upcomingOrderItems: upcomingOrder?.items ? Object.keys(upcomingOrder.items).length : 0,
+            upcomingOrderItemsData: upcomingOrder?.items,
+            willPreserveItems: hasExistingItems && (!upcomingOrder || !upcomingOrder.items || Object.keys(upcomingOrder.items || {}).length === 0)
+        });
+        
         let configToSet: any = {};
 
         if (upcomingOrder) {
-            // Logic adapted from ClientProfile.tsx hydration
+            // Logic copied from ClientProfile.tsx - handle multi-day format only for Food
             const isMultiDayFormat = upcomingOrder && typeof upcomingOrder === 'object' &&
                 !upcomingOrder.serviceType &&
                 !upcomingOrder.deliveryDayOrders &&
@@ -47,6 +96,7 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
                 });
 
             if (isMultiDayFormat) {
+                // Convert to deliveryDayOrders format (copied from ClientProfile)
                 const deliveryDayOrders: any = {};
                 for (const day of Object.keys(upcomingOrder)) {
                     const dayOrder = (upcomingOrder as any)[day];
@@ -56,12 +106,21 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
                         };
                     }
                 }
-                configToSet = {
-                    serviceType: (upcomingOrder as any)[Object.keys(upcomingOrder)[0]]?.serviceType || client.serviceType,
-                    caseId: (upcomingOrder as any)[Object.keys(upcomingOrder)[0]]?.caseId,
-                    deliveryDayOrders
-                };
+                // Check if it's Boxes - if so, flatten it to single order config (like ClientProfile does)
+                const firstDayKey = Object.keys(upcomingOrder)[0];
+                const firstDayOrder = (upcomingOrder as any)[firstDayKey];
+
+                if (firstDayOrder?.serviceType === 'Boxes') {
+                    configToSet = firstDayOrder;
+                } else {
+                    configToSet = {
+                        serviceType: firstDayOrder?.serviceType || client.serviceType,
+                        caseId: firstDayOrder?.caseId,
+                        deliveryDayOrders
+                    };
+                }
             } else if (upcomingOrder.serviceType === 'Food' && !upcomingOrder.vendorSelections && !upcomingOrder.deliveryDayOrders) {
+                // Migration/Safety: Ensure vendorSelections exists for Food
                 if (upcomingOrder.vendorId) {
                     upcomingOrder.vendorSelections = [{ vendorId: upcomingOrder.vendorId, items: upcomingOrder.menuSelections || {} }];
                 } else {
@@ -69,10 +128,19 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
                 }
                 configToSet = upcomingOrder;
             } else {
+                // For Boxes or other service types, use upcomingOrder directly (like ClientProfile does)
                 configToSet = upcomingOrder;
             }
+        } else if (activeOrder) {
+            // No upcoming order, but we have active_order from clients table - use that
+            // This ensures vendorId, items, and other Boxes data are preserved even if sync to upcoming_orders failed
+            configToSet = { ...activeOrder };
+            // Ensure serviceType matches client's service type
+            if (!configToSet.serviceType) {
+                configToSet.serviceType = client.serviceType;
+            }
         } else {
-            // Default active order as fallback or init
+            // No upcoming order and no active_order, initialize with default
             const defaultOrder: any = { serviceType: client.serviceType };
             if (client.serviceType === 'Food') {
                 defaultOrder.vendorSelections = [{ vendorId: '', items: {} }];
@@ -80,31 +148,30 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
             configToSet = defaultOrder;
         }
 
+        console.log('[ClientPortal] Setting orderConfig:', {
+            serviceType: configToSet.serviceType,
+            itemsCount: configToSet.items ? Object.keys(configToSet.items).length : 0,
+            items: configToSet.items,
+            fullConfig: JSON.stringify(configToSet, null, 2)
+        });
+        
         setOrderConfig(configToSet);
         setOriginalOrderConfig(JSON.parse(JSON.stringify(configToSet)));
-    }, [upcomingOrder, client.serviceType]);
+    }, [upcomingOrder, client.serviceType, boxTypes]);
 
-    // Box Logic
+    // Box Logic - Load quotas if boxTypeId is set (optional for box contents)
     useEffect(() => {
-        if (client.serviceType === 'Boxes' && !orderConfig.boxTypeId && boxTypes.length > 0) {
-            const firstActiveBoxType = boxTypes.find(bt => bt.isActive);
-            if (firstActiveBoxType) {
-                setOrderConfig((prev: any) => ({
-                    ...prev,
-                    boxTypeId: firstActiveBoxType.id,
-                    boxQuantity: 1
-                }));
-            }
-        }
-
-        if (orderConfig.boxTypeId) {
+        if (client.serviceType === 'Boxes' && orderConfig.boxTypeId) {
             getBoxQuotas(orderConfig.boxTypeId).then(quotas => {
                 setActiveBoxQuotas(quotas);
+            }).catch(err => {
+                console.error('Error loading box quotas:', err);
+                setActiveBoxQuotas([]);
             });
         } else {
             setActiveBoxQuotas([]);
         }
-    }, [orderConfig.boxTypeId, client.serviceType, boxTypes]);
+    }, [orderConfig.boxTypeId, client.serviceType]);
 
     // Extract dependencies for auto-save
     const caseId = useMemo(() => orderConfig?.caseId ?? null, [orderConfig?.caseId]);
@@ -112,7 +179,7 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
     const vendorId = useMemo(() => orderConfig?.vendorId ?? null, [orderConfig?.vendorId]);
     const boxTypeId = useMemo(() => orderConfig?.boxTypeId ?? null, [orderConfig?.boxTypeId]);
     const boxQuantity = useMemo(() => orderConfig?.boxQuantity ?? null, [orderConfig?.boxQuantity]);
-    const items = useMemo(() => (orderConfig as any)?.items ?? {}, [(orderConfig as any)?.items]);
+    const items = useMemo(() => (orderConfig as any)?.items ?? {}, [JSON.stringify((orderConfig as any)?.items)]);
     const itemPrices = useMemo(() => (orderConfig as any)?.itemPrices ?? {}, [(orderConfig as any)?.itemPrices]);
     const serviceType = client.serviceType;
 
@@ -168,6 +235,24 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
                                 }));
                         }
                     }
+                } else if (serviceType === 'Boxes') {
+                    // For Boxes: Preserve items, boxTypeId, boxQuantity, and itemPrices
+                    cleanedOrderConfig.items = cleanedOrderConfig.items || {};
+                    cleanedOrderConfig.boxQuantity = cleanedOrderConfig.boxQuantity || 1;
+                    // Preserve boxTypeId and itemPrices if they exist
+                    if (cleanedOrderConfig.boxTypeId !== undefined) {
+                        cleanedOrderConfig.boxTypeId = cleanedOrderConfig.boxTypeId;
+                    }
+                    if (cleanedOrderConfig.itemPrices !== undefined) {
+                        cleanedOrderConfig.itemPrices = cleanedOrderConfig.itemPrices;
+                    }
+                    // Debug: Log box items being saved
+                    console.log('[ClientPortal] Saving Boxes order:', {
+                        itemsCount: Object.keys(cleanedOrderConfig.items || {}).length,
+                        items: cleanedOrderConfig.items,
+                        boxTypeId: cleanedOrderConfig.boxTypeId,
+                        boxQuantity: cleanedOrderConfig.boxQuantity
+                    });
                 }
 
                 setSaving(true);
@@ -185,7 +270,13 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
 
                 await syncCurrentOrderToUpcoming(client.id, tempClient);
 
-                setOriginalOrderConfig(JSON.parse(JSON.stringify(orderConfig)));
+                // After saving, update originalOrderConfig to prevent re-saving
+                // But keep the current orderConfig with items intact
+                const savedConfig = JSON.parse(JSON.stringify(orderConfig));
+                setOriginalOrderConfig(savedConfig);
+                console.log('[ClientPortal] After save - orderConfig:', JSON.stringify(orderConfig, null, 2));
+                console.log('[ClientPortal] After save - originalOrderConfig:', JSON.stringify(savedConfig, null, 2));
+                
                 setSaving(false);
                 setMessage('Saved');
                 setTimeout(() => setMessage(null), 2000);
@@ -198,6 +289,44 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
 
         return () => clearTimeout(timeoutId);
     }, [caseId, vendorSelections, vendorId, boxTypeId, boxQuantity, items, itemPrices, serviceType, client, JSON.stringify(orderConfig), JSON.stringify(originalOrderConfig)]);
+
+    // Auto-Save Profile Logic
+    useEffect(() => {
+        if (!client) return;
+
+        const profileChanged = 
+            profileData.fullName !== originalProfileData.fullName ||
+            profileData.email !== originalProfileData.email ||
+            profileData.phoneNumber !== originalProfileData.phoneNumber ||
+            profileData.address !== originalProfileData.address;
+
+        if (!profileChanged) return;
+
+        const timeoutId = setTimeout(async () => {
+            try {
+                setSavingProfile(true);
+                setProfileMessage('Saving...');
+
+                await updateClient(client.id, {
+                    fullName: profileData.fullName,
+                    email: profileData.email || null,
+                    phoneNumber: profileData.phoneNumber || '',
+                    address: profileData.address || ''
+                });
+
+                setOriginalProfileData({ ...profileData });
+                setSavingProfile(false);
+                setProfileMessage('Saved');
+                setTimeout(() => setProfileMessage(null), 2000);
+            } catch (error) {
+                console.error('Error saving profile:', error);
+                setSavingProfile(false);
+                setProfileMessage('Error saving');
+            }
+        }, 1000);
+
+        return () => clearTimeout(timeoutId);
+    }, [profileData, originalProfileData, client]);
 
 
     // -- LOGIC HELPERS --
@@ -590,42 +719,69 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
     return (
         <div className={styles.container}>
             <div className={styles.grid}>
-                {/* Access Profile - Read Only */}
+                {/* Access Profile - Editable */}
                 <div className={styles.card}>
-                    <div className={styles.sectionTitle} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                        <User size={20} />
-                        Profile Information
+                    <div className={styles.sectionTitle} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <User size={20} />
+                            Profile Information
+                        </div>
+                        {savingProfile && <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '4px' }}><Loader2 className="animate-spin" size={14} /> Saving...</span>}
+                        {profileMessage && !savingProfile && <span style={{ fontSize: '0.8rem', color: 'var(--color-success)' }}>{profileMessage}</span>}
                     </div>
                     <div>
-                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(250px, 1fr))', gap: '16px' }}>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '16px', marginBottom: '16px' }}>
                             <div>
                                 <label className="label">Full Name</label>
-                                <div className="input" style={{ background: 'var(--bg-app)', opacity: 0.8 }}>{client.fullName}</div>
+                                <input
+                                    type="text"
+                                    className="input"
+                                    value={profileData.fullName}
+                                    onChange={(e) => setProfileData({ ...profileData, fullName: e.target.value })}
+                                />
                             </div>
                             <div>
                                 <label className="label">Email Address</label>
-                                <div className="input" style={{ background: 'var(--bg-app)', opacity: 0.8 }}>{client.email || 'N/A'}</div>
+                                <input
+                                    type="email"
+                                    className="input"
+                                    value={profileData.email}
+                                    onChange={(e) => setProfileData({ ...profileData, email: e.target.value })}
+                                />
                             </div>
                             <div>
                                 <label className="label">Phone Number</label>
-                                <div className="input" style={{ background: 'var(--bg-app)', opacity: 0.8 }}>{client.phoneNumber || 'N/A'}</div>
+                                <input
+                                    type="tel"
+                                    className="input"
+                                    value={profileData.phoneNumber}
+                                    onChange={(e) => setProfileData({ ...profileData, phoneNumber: e.target.value })}
+                                />
                             </div>
                         </div>
-                        <div>
+                        <div style={{ marginBottom: '16px' }}>
                             <label className="label">Delivery Address</label>
-                            <div className="input" style={{ background: 'var(--bg-app)', opacity: 0.8 }}>{client.address || 'N/A'}</div>
+                            <textarea
+                                className="input"
+                                rows={2}
+                                value={profileData.address}
+                                onChange={(e) => setProfileData({ ...profileData, address: e.target.value })}
+                                style={{ resize: 'vertical', minHeight: '60px' }}
+                            />
                         </div>
-                        <div>
-                            <label className="label">Service Type</label>
-                            <div className="input" style={{ background: 'var(--bg-app)', opacity: 0.8 }}>{client.serviceType}</div>
-                        </div>
-                        <div>
-                            <label className="label">Approved Amount</label>
-                            <div className="input" style={{ background: 'var(--bg-app)', opacity: 0.8 }}>
-                                {client.serviceType === 'Food'
-                                    ? `${client.approvedMealsPerWeek || 0} meals / week`
-                                    : 'Standard Box Allocation'
-                                }
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '16px' }}>
+                            <div>
+                                <label className="label">Service Type</label>
+                                <div className="input" style={{ background: 'var(--bg-app)', opacity: 0.8 }}>{client.serviceType}</div>
+                            </div>
+                            <div>
+                                <label className="label">Approved Amount</label>
+                                <div className="input" style={{ background: 'var(--bg-app)', opacity: 0.8 }}>
+                                    {client.serviceType === 'Food'
+                                        ? `${client.approvedMealsPerWeek || 0} meals / week`
+                                        : 'Standard Box Allocation'
+                                    }
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -644,9 +800,38 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
                     </div>
                 </div>
 
-                <div className={styles.alert}>
+                <div className={styles.alert} style={{ marginBottom: '1rem' }}>
                     <Info size={16} />
-                    Update your order preferences below. Changes are saved automatically.
+                    <div>
+                        <div>Update your order preferences below. Changes are saved automatically.</div>
+                        {(() => {
+                            // Only show date if there's a vendor set (for Boxes orders)
+                            // For Food orders, always show if date exists
+                            const hasVendor = client.serviceType === 'Food' || 
+                                            orderConfig?.vendorId || 
+                                            upcomingOrder?.vendorId ||
+                                            (client.serviceType === 'Boxes' && orderConfig?.boxTypeId && boxTypes.find(bt => bt.id === orderConfig.boxTypeId)?.vendorId);
+                            
+                            // Get take effect date from upcomingOrder (could be in different formats)
+                            let takeEffectDate = null;
+                            if (upcomingOrder && hasVendor) {
+                                if (upcomingOrder.takeEffectDate) {
+                                    takeEffectDate = upcomingOrder.takeEffectDate;
+                                } else if (typeof upcomingOrder === 'object' && !upcomingOrder.serviceType) {
+                                    // Multi-day format - get from first day
+                                    const firstDay = Object.keys(upcomingOrder)[0];
+                                    if (firstDay && (upcomingOrder as any)[firstDay]?.takeEffectDate) {
+                                        takeEffectDate = (upcomingOrder as any)[firstDay].takeEffectDate;
+                                    }
+                                }
+                            }
+                            return takeEffectDate ? (
+                                <div style={{ marginTop: '0.5rem', fontSize: '0.9rem', fontWeight: 500 }}>
+                                    Your changes will take effect on {new Date(takeEffectDate).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}
+                                </div>
+                            ) : null;
+                        })()}
+                    </div>
                 </div>
 
                 {client.serviceType === 'Food' && (
@@ -664,65 +849,122 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
 
                 {client.serviceType === 'Boxes' && (
                     <div>
-                        {/* Box Type - hidden if only one active */}
-                        {boxTypes.filter(bt => bt.isActive).length > 1 && (
-                            <div className={styles.formGroup}>
-                                <label className="label">Box Type</label>
-                                <select
-                                    value={orderConfig.boxTypeId || ''}
-                                    onChange={(e) => setOrderConfig({ ...orderConfig, boxTypeId: e.target.value })}
-                                    className="input"
-                                >
-                                    <option value="">Select Box Type</option>
-                                    {boxTypes.filter(bt => bt.isActive).map(b => (
-                                        <option key={b.id} value={b.id}>{b.name}</option>
-                                    ))}
-                                </select>
-                            </div>
-                        )}
+                        {/* Box Content Selection - Show all categories with box items */}
+                        {/* Box items are menu items where vendorId is null/empty */}
+                        {(() => {
+                            // Check if there are any box items (items without vendorId)
+                            const hasBoxItems = menuItems.some(i =>
+                                (i.vendorId === null || i.vendorId === '') &&
+                                i.isActive
+                            );
 
-                        {/* Box Content Selection */}
-                        {orderConfig.boxTypeId && activeBoxQuotas.length > 0 && (
+                            if (!hasBoxItems) {
+                                return (
+                                    <div style={{ marginTop: '1rem', padding: '1rem', background: 'rgba(239, 68, 68, 0.1)', borderRadius: '6px', border: '1px solid var(--color-danger)' }}>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem', color: 'var(--color-danger)', fontWeight: 600 }}>
+                                            <AlertTriangle size={16} />
+                                            No box items found
+                                        </div>
+                                        <div style={{ fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
+                                            There are no box items (menu items without a vendor) configured. Please contact support.
+                                        </div>
+                                    </div>
+                                );
+                            }
+
+                            return (
                             <div style={{ marginTop: '1rem', borderTop: '1px solid var(--border-color)', paddingTop: '1rem' }}>
                                 <h4 style={{ fontSize: '0.9rem', marginBottom: '0.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                                     <Package size={14} /> Box Contents
                                 </h4>
 
-                                {activeBoxQuotas.map(quota => {
-                                    const category = categories.find(c => c.id === quota.categoryId);
-                                    if (!category) return null;
-
+                                {/* Show all categories with box items */}
+                                {categories.map(category => {
                                     // Filter items for this category - box items are universal (vendorId is null/empty)
                                     const availableItems = menuItems.filter(i =>
                                         (i.vendorId === null || i.vendorId === '') &&
                                         i.isActive &&
-                                        i.categoryId === quota.categoryId
+                                        i.categoryId === category.id
                                     );
 
-                                    // Calculate current count
-                                    let currentCount = 0;
+                                    if (availableItems.length === 0) return null;
+
                                     const selectedItems = orderConfig.items || {};
+
+                                    // Calculate total quota value for this category
+                                    let categoryQuotaValue = 0;
                                     Object.entries(selectedItems).forEach(([itemId, qty]) => {
                                         const item = menuItems.find(i => i.id === itemId);
-                                        if (item && item.categoryId === quota.categoryId) {
-                                            currentCount += (item.quotaValue || 1) * (qty as number);
+                                        if (item && item.categoryId === category.id) {
+                                            const itemQuotaValue = item.quotaValue || 1;
+                                            categoryQuotaValue += (qty as number) * itemQuotaValue;
                                         }
                                     });
 
-                                    const isMet = currentCount === quota.targetValue;
-                                    const isOver = currentCount > quota.targetValue;
+                                    // Find quota requirement for this category (from box quotas - optional)
+                                    const quota = orderConfig.boxTypeId ? activeBoxQuotas.find(q => q.categoryId === category.id) : null;
+                                    const boxQuantity = orderConfig.boxQuantity || 1;
+                                    const requiredQuotaValueFromBox = quota ? quota.targetValue * boxQuantity : null;
+                                    
+                                    // Check if category has a setValue requirement
+                                    const requiredQuotaValueFromCategory = category.setValue !== undefined && category.setValue !== null ? category.setValue : null;
+                                    
+                                    // Use setValue if present, otherwise use box quota requirement
+                                    const requiredQuotaValue = requiredQuotaValueFromCategory !== null ? requiredQuotaValueFromCategory : requiredQuotaValueFromBox;
+                                    
+                                    const meetsQuota = requiredQuotaValue !== null ? categoryQuotaValue === requiredQuotaValue : true;
 
                                     return (
-                                        <div key={quota.id} style={{ marginBottom: '1rem', background: 'var(--bg-surface-hover)', padding: '0.75rem', borderRadius: '6px' }}>
+                                        <div key={category.id} style={{ marginBottom: '1rem', background: 'var(--bg-surface-hover)', padding: '0.75rem', borderRadius: '6px', border: requiredQuotaValue !== null && !meetsQuota ? '2px solid var(--color-danger)' : '1px solid var(--border-color)' }}>
                                             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem', fontSize: '0.85rem' }}>
-                                                <span style={{ fontWeight: 600 }}>{category.name}</span>
-                                                <span style={{
-                                                    color: isMet ? 'var(--color-success)' : (isOver ? 'var(--color-danger)' : 'var(--color-warning)'),
-                                                    fontWeight: 600
-                                                }}>
-                                                    {currentCount} / {quota.targetValue}
-                                                </span>
+                                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                                    <span style={{ fontWeight: 600 }}>{category.name}</span>
+                                                    {requiredQuotaValueFromCategory !== null && (
+                                                        <span style={{ 
+                                                            fontSize: '0.7rem', 
+                                                            color: 'var(--color-primary)', 
+                                                            background: 'var(--bg-app)',
+                                                            padding: '2px 6px',
+                                                            borderRadius: '4px',
+                                                            fontWeight: 500
+                                                        }}>
+                                                            Set Value: {requiredQuotaValueFromCategory}
+                                                        </span>
+                                                    )}
+                                                </div>
+                                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                                    {requiredQuotaValue !== null && (
+                                                        <span style={{
+                                                            color: meetsQuota ? 'var(--color-success)' : 'var(--color-danger)',
+                                                            fontSize: '0.8rem',
+                                                            fontWeight: 500
+                                                        }}>
+                                                            Quota: {categoryQuotaValue} / {requiredQuotaValue}
+                                                        </span>
+                                                    )}
+                                                    {categoryQuotaValue > 0 && requiredQuotaValue === null && (
+                                                        <span style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>
+                                                            Total: {categoryQuotaValue}
+                                                        </span>
+                                                    )}
+                                                </div>
                                             </div>
+                                            {requiredQuotaValue !== null && !meetsQuota && (
+                                                <div style={{
+                                                    marginBottom: '0.5rem',
+                                                    padding: '0.5rem',
+                                                    backgroundColor: 'rgba(239, 68, 68, 0.1)',
+                                                    borderRadius: '4px',
+                                                    fontSize: '0.75rem',
+                                                    color: 'var(--color-danger)',
+                                                    display: 'flex',
+                                                    alignItems: 'center',
+                                                    gap: '0.25rem'
+                                                }}>
+                                                    <AlertTriangle size={12} />
+                                                    <span>You must have a total of {requiredQuotaValue} {category.name} points</span>
+                                                </div>
+                                            )}
 
                                             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
                                                 {availableItems.map(item => {
@@ -738,13 +980,61 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
                                                         </div>
                                                     );
                                                 })}
-                                                {availableItems.length === 0 && <span style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)' }}>No items available.</span>}
                                             </div>
                                         </div>
                                     );
                                 })}
+
+                                {/* Show uncategorized items if any */}
+                                {(() => {
+                                    const uncategorizedItems = menuItems.filter(i =>
+                                        (i.vendorId === null || i.vendorId === '') &&
+                                        i.isActive &&
+                                        (!i.categoryId || i.categoryId === '')
+                                    );
+
+                                    if (uncategorizedItems.length === 0) return null;
+
+                                    const selectedItems = orderConfig.items || {};
+
+                                    return (
+                                        <div style={{ marginTop: '1rem', marginBottom: '1rem', background: 'var(--bg-surface-hover)', padding: '0.75rem', borderRadius: '6px', border: '1px solid var(--border-color)' }}>
+                                            <div style={{ marginBottom: '0.5rem', fontSize: '0.85rem', fontWeight: 600 }}>Other Items</div>
+                                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
+                                                {uncategorizedItems.map(item => {
+                                                    const qty = Number(selectedItems[item.id] || 0);
+                                                    return (
+                                                        <div key={item.id} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', background: 'var(--bg-app)', padding: '4px 8px', borderRadius: '4px', border: '1px solid var(--border-color)' }}>
+                                                            <span style={{ fontSize: '0.8rem' }}>{item.name} <span style={{ color: 'var(--text-tertiary)' }}>({item.quotaValue || 1})</span></span>
+                                                            <div className={styles.quantityControl} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                                                <button onClick={() => handleBoxItemChange(item.id, Math.max(0, qty - 1))} className="btn btn-secondary" style={{ padding: '2px 8px' }}>-</button>
+                                                                <span style={{ width: '20px', textAlign: 'center' }}>{qty}</span>
+                                                                <button onClick={() => handleBoxItemChange(item.id, qty + 1)} className="btn btn-secondary" style={{ padding: '2px 8px' }}>+</button>
+                                                            </div>
+                                                        </div>
+                                                    );
+                                                })}
+                                            </div>
+                                        </div>
+                                    );
+                                })()}
+
+                                {/* Show message if no categories have items */}
+                                {categories.every(category => {
+                                    const hasItems = menuItems.some(i =>
+                                        (i.vendorId === null || i.vendorId === '') &&
+                                        i.isActive &&
+                                        i.categoryId === category.id
+                                    );
+                                    return !hasItems;
+                                }) && (
+                                    <div style={{ padding: '1rem', textAlign: 'center', color: 'var(--text-secondary)' }}>
+                                        No box items available. Please contact support.
+                                    </div>
+                                )}
                             </div>
-                        )}
+                            );
+                        })()}
                     </div>
                 )}
             </div>
