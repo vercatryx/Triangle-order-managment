@@ -3,7 +3,7 @@
 import { useState, useEffect, Fragment, useMemo } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import { ClientProfile, ClientStatus, Navigator, Vendor, MenuItem, BoxType, ServiceType, AppSettings, DeliveryRecord, ItemCategory, ClientFullDetails, BoxQuota } from '@/lib/types';
-import { updateClient, deleteClient, updateDeliveryProof, recordClientChange, syncCurrentOrderToUpcoming, logNavigatorAction, getBoxQuotas, saveEquipmentOrder, getRegularClients, getDependentsByParentId } from '@/lib/actions';
+import { updateClient, addClient, deleteClient, updateDeliveryProof, recordClientChange, syncCurrentOrderToUpcoming, logNavigatorAction, getBoxQuotas, saveEquipmentOrder, getRegularClients, getDependentsByParentId } from '@/lib/actions';
 import { getSingleForm, getClientSubmissions } from '@/lib/form-actions';
 import { getClient, getStatuses, getNavigators, getVendors, getMenuItems, getBoxTypes, getSettings, getCategories, getEquipment, getClients, invalidateClientData, invalidateReferenceData, getActiveOrderForClient, getUpcomingOrderForClient, getOrderHistory, getClientHistory, getBillingHistory, invalidateOrderData } from '@/lib/cached-data';
 import { Save, ArrowLeft, Truck, Package, AlertTriangle, Upload, Trash2, Plus, Check, ClipboardList, History, CreditCard, Calendar, ChevronDown, ChevronUp, ShoppingCart, Loader2, FileText, Square, CheckSquare, Wrench } from 'lucide-react';
@@ -124,7 +124,12 @@ function DeleteConfirmationModal({
 export function ClientProfileDetail({ clientId: propClientId, onClose, initialData, statuses: initialStatuses, navigators: initialNavigators, vendors: initialVendors, menuItems: initialMenuItems, boxTypes: initialBoxTypes, currentUser }: Props) {
     const router = useRouter();
     const params = useParams();
-    const clientId = (params?.id as string) || propClientId;
+    const propClientIdValue = (params?.id as string) || propClientId;
+    
+    // Track the actual clientId (starts as prop, updates to real ID after creating new client)
+    const [actualClientId, setActualClientId] = useState<string>(propClientIdValue);
+    const clientId = actualClientId;
+    const isNewClient = clientId === 'new';
 
     const [client, setClient] = useState<ClientProfile | null>(null);
     const [statuses, setStatuses] = useState<ClientStatus[]>(initialStatuses || []);
@@ -188,6 +193,41 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
     }, [showUnitsModal]);
 
     useEffect(() => {
+        // Handle new client case - initialize with defaults
+        if (isNewClient) {
+            setLoading(true);
+            // Load lookups but don't load client data
+            loadLookups().then(() => {
+                // Initialize with default values
+                const initialStatusId = (initialStatuses || statuses)[0]?.id || '';
+                const defaultNavigatorId = (initialNavigators || navigators).find(n => n.isActive)?.id || '';
+                
+                const defaultClient: Partial<ClientProfile> = {
+                    fullName: '',
+                    email: '',
+                    address: '',
+                    phoneNumber: '',
+                    secondaryPhoneNumber: null,
+                    navigatorId: defaultNavigatorId,
+                    endDate: '',
+                    screeningTookPlace: false,
+                    screeningSigned: false,
+                    notes: '',
+                    statusId: initialStatusId,
+                    serviceType: 'Food',
+                    approvedMealsPerWeek: 21
+                };
+                
+                setFormData(defaultClient);
+                setClient(defaultClient as ClientProfile);
+                setOrderConfig({ serviceType: 'Food', vendorSelections: [{ vendorId: '', items: {} }] });
+                setOriginalOrderConfig({});
+                setLoading(false);
+                setLoadingOrderDetails(false);
+            });
+            return;
+        }
+
         // If we have initialData AND we have the necessary lookups (passed as props), we can hydrate instantly without loading state.
         // However, if we are missing critical lookups (e.g. somehow props weren't passed), we should still trigger loadLookups.
         // Generally, ClientList passes everything.
@@ -212,7 +252,7 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
             setLoading(true);
             loadData().then(() => setLoading(false));
         }
-    }, [clientId, initialData]);
+    }, [clientId, initialData, isNewClient]);
 
     useEffect(() => {
         // Load submissions for this client
@@ -3201,7 +3241,7 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
     async function handleSave(): Promise<boolean> {
         console.time('handleSave:total');
         console.time('handleSave:pre-check');
-        if (!client) {
+        if (!client && !isNewClient) {
             console.timeEnd('handleSave:pre-check');
             console.timeEnd('handleSave:total');
             return false;
@@ -3248,51 +3288,54 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
 
         // Check for Status Change by Navigator
         // Only show units modal if the new status requires units on change
-        console.log('[handleSave] Status change check:', {
-            userRole: currentUser?.role,
-            isNavigator: currentUser?.role === 'navigator',
-            oldStatusId: client.statusId,
-            newStatusId: formData.statusId,
-            statusChanged: formData.statusId !== client.statusId,
-            statusesCount: statuses.length,
-            allStatuses: statuses.map(s => ({ id: s.id, name: s.name, requiresUnitsOnChange: s.requiresUnitsOnChange }))
-        });
-
-        if (currentUser?.role === 'navigator' && formData.statusId !== client.statusId) {
-            const newStatus = statuses.find(s => s.id === formData.statusId);
-            console.log('[handleSave] Found new status:', {
-                statusId: formData.statusId,
-                statusFound: !!newStatus,
-                statusName: newStatus?.name,
-                requiresUnitsOnChange: newStatus?.requiresUnitsOnChange,
-                fullStatus: newStatus
-            });
-
-            // Only show modal if the new status has requiresUnitsOnChange enabled
-            if (newStatus?.requiresUnitsOnChange) {
-                console.timeEnd('handleSave:pre-check');
-                console.log('[handleSave] Detected status change to status that requires units, showing modal');
-
-                try {
-                    const oldStatusName = getStatusName(client.statusId);
-                    const newStatusName = getStatusName(formData.statusId!);
-                    setPendingStatusChange({ oldStatus: oldStatusName, newStatus: newStatusName });
-                    setShowUnitsModal(true);
-                    console.log('[handleSave] Modal state set to true, returning false to intercept');
-                    return false; // Intercepted
-                } catch (e) {
-                    console.error('[handleSave] Error in status change logic:', e);
-                }
-            } else {
-                // Status change doesn't require units, proceed with save
-                console.log('[handleSave] Status change detected but new status does not require units. requiresUnitsOnChange:', newStatus?.requiresUnitsOnChange);
-            }
-        } else {
-            console.log('[handleSave] Status change check failed:', {
+        // Skip this check for new clients
+        if (!isNewClient && client) {
+            console.log('[handleSave] Status change check:', {
                 userRole: currentUser?.role,
                 isNavigator: currentUser?.role === 'navigator',
-                statusChanged: formData.statusId !== client.statusId
+                oldStatusId: client.statusId,
+                newStatusId: formData.statusId,
+                statusChanged: formData.statusId !== client.statusId,
+                statusesCount: statuses.length,
+                allStatuses: statuses.map(s => ({ id: s.id, name: s.name, requiresUnitsOnChange: s.requiresUnitsOnChange }))
             });
+
+            if (currentUser?.role === 'navigator' && formData.statusId !== client.statusId) {
+                const newStatus = statuses.find(s => s.id === formData.statusId);
+                console.log('[handleSave] Found new status:', {
+                    statusId: formData.statusId,
+                    statusFound: !!newStatus,
+                    statusName: newStatus?.name,
+                    requiresUnitsOnChange: newStatus?.requiresUnitsOnChange,
+                    fullStatus: newStatus
+                });
+
+                // Only show modal if the new status has requiresUnitsOnChange enabled
+                if (newStatus?.requiresUnitsOnChange) {
+                    console.timeEnd('handleSave:pre-check');
+                    console.log('[handleSave] Detected status change to status that requires units, showing modal');
+
+                    try {
+                        const oldStatusName = getStatusName(client.statusId);
+                        const newStatusName = getStatusName(formData.statusId!);
+                        setPendingStatusChange({ oldStatus: oldStatusName, newStatus: newStatusName });
+                        setShowUnitsModal(true);
+                        console.log('[handleSave] Modal state set to true, returning false to intercept');
+                        return false; // Intercepted
+                    } catch (e) {
+                        console.error('[handleSave] Error in status change logic:', e);
+                    }
+                } else {
+                    // Status change doesn't require units, proceed with save
+                    console.log('[handleSave] Status change detected but new status does not require units. requiresUnitsOnChange:', newStatus?.requiresUnitsOnChange);
+                }
+            } else {
+                console.log('[handleSave] Status change check failed:', {
+                    userRole: currentUser?.role,
+                    isNavigator: currentUser?.role === 'navigator',
+                    statusChanged: formData.statusId !== client.statusId
+                });
+            }
         }
 
 
@@ -3300,11 +3343,62 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
     }
 
     async function executeSave(unitsAdded: number = 0): Promise<boolean> {
-        if (!client) return false;
+        if (!client && !isNewClient) return false;
         setSaving(true);
         setMessage(null);
 
         try {
+            // Handle new client creation
+            if (isNewClient) {
+                // Prepare client data with defaults
+                const initialStatusId = (initialStatuses || statuses)[0]?.id || '';
+                const defaultNavigatorId = (initialNavigators || navigators).find(n => n.isActive)?.id || '';
+                
+                const clientData: Omit<ClientProfile, 'id' | 'createdAt' | 'updatedAt'> = {
+                    fullName: formData.fullName || '',
+                    email: formData.email || '',
+                    address: formData.address || '',
+                    phoneNumber: formData.phoneNumber || '',
+                    secondaryPhoneNumber: formData.secondaryPhoneNumber || null,
+                    navigatorId: formData.navigatorId || defaultNavigatorId,
+                    endDate: formData.endDate || '',
+                    screeningTookPlace: formData.screeningTookPlace || false,
+                    screeningSigned: formData.screeningSigned || false,
+                    notes: formData.notes || '',
+                    statusId: formData.statusId || initialStatusId,
+                    serviceType: formData.serviceType || 'Food',
+                    approvedMealsPerWeek: formData.approvedMealsPerWeek || 21,
+                    activeOrder: orderConfig && orderConfig.caseId ? orderConfig : undefined
+                };
+
+                const newClient = await addClient(clientData);
+                if (newClient) {
+                    // Update state with the newly created client
+                    setActualClientId(newClient.id);
+                    setClient(newClient);
+                    setFormData(newClient);
+                    invalidateClientData();
+                    setMessage('Client created successfully.');
+                    
+                    // If there's an order config, sync it
+                    if (orderConfig && orderConfig.caseId) {
+                        await syncCurrentOrderToUpcoming(newClient.id, newClient, true);
+                    }
+                    
+                    setSaving(false);
+                    return true;
+                } else {
+                    setSaving(false);
+                    return false;
+                }
+            }
+
+            // Existing client update logic
+            if (!client) {
+                setSaving(false);
+                return false;
+            }
+
             // Log Navigator Action if applicable
             if (currentUser?.role === 'navigator' && pendingStatusChange && unitsAdded >= 0) {
                 await logNavigatorAction({

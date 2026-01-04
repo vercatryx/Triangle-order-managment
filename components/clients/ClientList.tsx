@@ -68,10 +68,6 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
     const [needsVendorFilter, setNeedsVendorFilter] = useState<boolean>(false);
     const [openFilterMenu, setOpenFilterMenu] = useState<string | null>(null);
 
-    // New Client Modal state
-    const [isCreating, setIsCreating] = useState(false);
-    const [newClientName, setNewClientName] = useState('');
-
     // Add Dependent Modal state
     const [isAddingDependent, setIsAddingDependent] = useState(false);
     const [dependentName, setDependentName] = useState('');
@@ -379,36 +375,10 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
         return sortDirection === 'asc' ? comparison : -comparison;
     });
 
-    async function handleCreate() {
-        if (!newClientName.trim()) return;
-
-        // Default initial status (first one or specific ID if known)
-        const initialStatusId = statuses[0]?.id || '';
-
-        const newClient = await addClient({
-            fullName: newClientName,
-            email: '',
-            address: '',
-            phoneNumber: '',
-            secondaryPhoneNumber: null,
-            navigatorId: navigators.find(n => n.isActive)?.id || '',
-            endDate: '',
-            screeningTookPlace: false,
-            screeningSigned: false,
-            notes: '',
-            statusId: initialStatusId,
-            serviceType: 'Food', // Default
-            approvedMealsPerWeek: 21 // Default per user request
-        });
-
-        if (newClient) {
-            invalidateClientData(); // Invalidate cache
-            setIsCreating(false);
-            setNewClientName(''); // Reset
-            // Refresh logic: for simplicity, confirm and maybe add to top? 
-            // Or just reload all. Reloading all is safest.
-            window.location.reload(); // Simplest way to reset pagination state correctly
-        }
+    function handleCreate() {
+        // Open the modal immediately with "new" as a special clientId
+        // The modal will handle creating the client when the user clicks save
+        setSelectedClientId('new');
     }
 
     async function handleAddDependent() {
@@ -949,7 +919,7 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
                     </div>
 
                     <div style={{ display: 'flex', gap: '0.5rem' }}>
-                        <button className="btn btn-primary" onClick={() => setIsCreating(true)}>
+                        <button className="btn btn-primary" onClick={handleCreate}>
                             <Plus size={16} /> New Client
                         </button>
                         <button className="btn btn-secondary" onClick={() => setIsAddingDependent(true)}>
@@ -1007,28 +977,6 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
                 )}
             </div>
 
-            {isCreating && (
-                <div className={styles.createModal}>
-                    <div className={styles.createCard}>
-                        <h3>Create New Client</h3>
-                        <div className={styles.formGroup}>
-                            <label className="label">Client Name</label>
-                            <input
-                                className="input"
-                                placeholder="Full Name"
-                                value={newClientName}
-                                onChange={e => setNewClientName(e.target.value)}
-                                autoFocus
-                            />
-                        </div>
-                        <div className={styles.modalActions}>
-                            <button className="btn btn-primary" onClick={handleCreate}>Create & Edit</button>
-                            <button className="btn btn-secondary" onClick={() => setIsCreating(false)}>Cancel</button>
-                        </div>
-                    </div>
-                    <div className={styles.overlay} onClick={() => setIsCreating(false)}></div>
-                </div>
-            )}
 
             {isAddingDependent && (
                 <div className={styles.createModal}>
@@ -1463,3 +1411,4 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
         </div>
     );
 }
+
