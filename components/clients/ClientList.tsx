@@ -1412,3 +1412,4 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
     );
 }
 
+

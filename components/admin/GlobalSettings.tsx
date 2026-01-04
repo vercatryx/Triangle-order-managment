@@ -423,7 +423,7 @@ export function GlobalSettings() {
                                                 {settings.reportEmail ? (
                                                     <>
                                                         <button
-                                                            onClick={handleSendEmail}
+                                                            onClick={() => handleSendEmail()}
                                                             disabled={sendingEmail || emailSent}
                                                             className="btn"
                                                             style={{
