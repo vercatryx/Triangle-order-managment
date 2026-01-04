@@ -267,15 +267,56 @@ async function precheckAndTransferUpcomingOrders() {
 
                                     if (items) {
                                         for (const item of items) {
-                                            await supabase.from('order_items').insert({
-                                                order_id: newOrder.id,
-                                                vendor_selection_id: newVs.id,
-                                                menu_item_id: item.menu_item_id,
-                                                quantity: item.quantity,
-                                                unit_value: item.unit_value,
-                                                total_value: item.total_value
-                                            });
+                                            // Skip total items (menu_item_id is null) - we'll recalculate and add a new one
+                                            if (item.menu_item_id !== null) {
+                                                await supabase.from('order_items').insert({
+                                                    order_id: newOrder.id,
+                                                    vendor_selection_id: newVs.id,
+                                                    menu_item_id: item.menu_item_id,
+                                                    quantity: item.quantity,
+                                                    unit_value: item.unit_value,
+                                                    total_value: item.total_value
+                                                });
+                                            }
                                         }
+                                    }
+                                }
+
+                                // Recalculate total from all items and add as a separate item
+                                const { data: allOrderItems } = await supabase
+                                    .from('order_items')
+                                    .select('total_value')
+                                    .eq('order_id', newOrder.id)
+                                    .not('menu_item_id', 'is', null);
+
+                                if (allOrderItems) {
+                                    const calculatedTotal = allOrderItems.reduce((sum, item) => {
+                                        return sum + parseFloat(item.total_value?.toString() || '0');
+                                    }, 0);
+
+                                    // Update order total_value
+                                    await supabase
+                                        .from('orders')
+                                        .update({ total_value: calculatedTotal })
+                                        .eq('id', newOrder.id);
+
+                                    // Add total as a separate item (use first vendor selection from new order)
+                                    const { data: firstNewVs } = await supabase
+                                        .from('order_vendor_selections')
+                                        .select('id')
+                                        .eq('order_id', newOrder.id)
+                                        .limit(1)
+                                        .maybeSingle();
+
+                                    if (firstNewVs && calculatedTotal > 0) {
+                                        await supabase.from('order_items').insert({
+                                            order_id: newOrder.id,
+                                            vendor_selection_id: firstNewVs.id,
+                                            menu_item_id: null, // null indicates this is a total item
+                                            quantity: 1,
+                                            unit_value: calculatedTotal,
+                                            total_value: calculatedTotal
+                                        });
                                     }
                                 }
                             }
@@ -730,22 +771,63 @@ export async function GET(request: NextRequest) {
                                             copyErrors.push(`Failed to fetch items for vendor selection ${vs.id}: ${itemsFetchError.message}`);
                                         } else if (items && items.length > 0) {
                                             for (const item of items) {
-                                                const { error: itemError } = await supabase.from('order_items').insert({
-                                                    order_id: newOrder.id,
-                                                    vendor_selection_id: newVs.id,
-                                                    menu_item_id: item.menu_item_id,
-                                                    quantity: item.quantity,
-                                                    unit_value: item.unit_value,
-                                                    total_value: item.total_value
-                                                });
+                                                // Skip total items (menu_item_id is null) - we'll recalculate and add a new one
+                                                if (item.menu_item_id !== null) {
+                                                    const { error: itemError } = await supabase.from('order_items').insert({
+                                                        order_id: newOrder.id,
+                                                        vendor_selection_id: newVs.id,
+                                                        menu_item_id: item.menu_item_id,
+                                                        quantity: item.quantity,
+                                                        unit_value: item.unit_value,
+                                                        total_value: item.total_value
+                                                    });
 
-                                                if (itemError) {
-                                                    copyErrors.push(`Failed to copy item ${item.id}: ${itemError.message}`);
-                                                } else {
-                                                    itemsCopied++;
+                                                    if (itemError) {
+                                                        copyErrors.push(`Failed to copy item ${item.id}: ${itemError.message}`);
+                                                    } else {
+                                                        itemsCopied++;
+                                                    }
                                                 }
                                             }
                                         }
+                                    }
+                                }
+
+                                // Recalculate total from all items and add as a separate item
+                                const { data: allOrderItems } = await supabase
+                                    .from('order_items')
+                                    .select('total_value')
+                                    .eq('order_id', newOrder.id)
+                                    .not('menu_item_id', 'is', null);
+
+                                if (allOrderItems) {
+                                    const calculatedTotal = allOrderItems.reduce((sum, item) => {
+                                        return sum + parseFloat(item.total_value?.toString() || '0');
+                                    }, 0);
+
+                                    // Update order total_value
+                                    await supabase
+                                        .from('orders')
+                                        .update({ total_value: calculatedTotal })
+                                        .eq('id', newOrder.id);
+
+                                    // Add total as a separate item (use first vendor selection from new order)
+                                    const { data: firstNewVs } = await supabase
+                                        .from('order_vendor_selections')
+                                        .select('id')
+                                        .eq('order_id', newOrder.id)
+                                        .limit(1)
+                                        .maybeSingle();
+
+                                    if (firstNewVs && calculatedTotal > 0) {
+                                        await supabase.from('order_items').insert({
+                                            order_id: newOrder.id,
+                                            vendor_selection_id: firstNewVs.id,
+                                            menu_item_id: null, // null indicates this is a total item
+                                            quantity: 1,
+                                            unit_value: calculatedTotal,
+                                            total_value: calculatedTotal
+                                        });
                                     }
                                 }
                             }

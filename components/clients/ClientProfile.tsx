@@ -555,14 +555,16 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                     const dayItems = selection.itemsByDay[deliveryDay] || {};
                     for (const [itemId, qty] of Object.entries(dayItems)) {
                         const item = menuItems.find(i => i.id === itemId);
-                        total += (item ? item.value * (qty as number) : 0);
+                        const itemPrice = item ? (item.priceEach ?? item.value) : 0;
+                        total += itemPrice * (qty as number);
                     }
                 }
             } else if (selection.items) {
                 // Normal items structure
                 for (const [itemId, qty] of Object.entries(selection.items)) {
                     const item = menuItems.find(i => i.id === itemId);
-                    total += (item ? item.value * (qty as number) : 0);
+                    const itemPrice = item ? (item.priceEach ?? item.value) : 0;
+                    total += itemPrice * (qty as number);
                 }
             }
         }
@@ -653,14 +655,16 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                     const dayItems = selection.itemsByDay[day] || {};
                     for (const [itemId, qty] of Object.entries(dayItems)) {
                         const item = menuItems.find(i => i.id === itemId);
-                        total += (item ? item.value * (qty as number) : 0);
+                        const itemPrice = item ? (item.priceEach ?? item.value) : 0;
+                        total += itemPrice * (qty as number);
                     }
                 }
             } else if (selection.items) {
                 // Normal single-day format
                 for (const [itemId, qty] of Object.entries(selection.items)) {
                     const item = menuItems.find(i => i.id === itemId);
-                    total += (item ? item.value * (qty as number) : 0);
+                    const itemPrice = item ? (item.priceEach ?? item.value) : 0;
+                    total += itemPrice * (qty as number);
                 }
             }
         }
@@ -866,7 +870,8 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
         let total = 0;
         for (const [itemId, qty] of Object.entries(orderConfig.items)) {
             const item = menuItems.find(i => i.id === itemId);
-            total += (item ? item.value * (qty as number) : 0);
+            const itemPrice = item ? (item.priceEach ?? item.value) : 0;
+            total += itemPrice * (qty as number);
         }
         return total;
     }
@@ -2063,6 +2068,7 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                                                                                                             return (
                                                                                                                 <div key={item.id} className={styles.menuItem}>
                                                                                                                     <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
+                                                                                                                        <span>{item.name} <span style={{ color: 'var(--text-tertiary)' }}>(x{item.quotaValue || 1})</span></span>
                                                                                                                         <div className={styles.quantityControl} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                                                                                                                             <button onClick={() => {
                                                                                                                                 const updated = [...currentSelections];
@@ -2101,8 +2107,6 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                                                                                                                                 });
                                                                                                                             }} className="btn btn-secondary" style={{ padding: '2px 8px' }}>+</button>
                                                                                                                         </div>
-                                                                                                                        <span>{item.name}</span>
-                                                                                                                        <span style={{ color: 'var(--text-tertiary)', fontSize: '0.85rem' }}>${item.value}</span>
                                                                                                                     </label>
                                                                                                                 </div>
                                                                                                             );
@@ -2161,13 +2165,12 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                                                                                             return (
                                                                                                 <div key={item.id} className={styles.menuItem}>
                                                                                                     <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
+                                                                                                        <span>{item.name} <span style={{ color: 'var(--text-tertiary)' }}>(x{item.quotaValue || 1})</span></span>
                                                                                                         <div className={styles.quantityControl} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                                                                                                             <button onClick={() => updateItemQuantity(index, item.id, Math.max(0, qty - 1), null)} className="btn btn-secondary" style={{ padding: '2px 8px' }}>-</button>
                                                                                                             <span style={{ width: '20px', textAlign: 'center' }}>{qty}</span>
                                                                                                             <button onClick={() => updateItemQuantity(index, item.id, qty + 1, null)} className="btn btn-secondary" style={{ padding: '2px 8px' }}>+</button>
                                                                                                         </div>
-                                                                                                        <span>{item.name}</span>
-                                                                                                        <span style={{ color: 'var(--text-tertiary)', fontSize: '0.85rem' }}>${item.value}</span>
                                                                                                     </label>
                                                                                                 </div>
                                                                                             );
@@ -2366,6 +2369,7 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                                                                                                             return (
                                                                                                                 <div key={item.id} className={styles.menuItem}>
                                                                                                                     <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
+                                                                                                                        <span>{item.name} <span style={{ color: 'var(--text-tertiary)' }}>(x{item.quotaValue || 1})</span></span>
                                                                                                                         <div className={styles.quantityControl} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                                                                                                                             <button onClick={() => {
                                                                                                                                 const updated = [...currentSelections];
@@ -2402,8 +2406,6 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                                                                                                                                 });
                                                                                                                             }} className="btn btn-secondary" style={{ padding: '2px 8px' }}>+</button>
                                                                                                                         </div>
-                                                                                                                        <span>{item.name}</span>
-                                                                                                                        <span style={{ color: 'var(--text-tertiary)', fontSize: '0.85rem' }}>${item.value}</span>
                                                                                                                     </label>
                                                                                                                 </div>
                                                                                                             );
@@ -2462,13 +2464,12 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                                                                                             return (
                                                                                                 <div key={item.id} className={styles.menuItem}>
                                                                                                     <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
+                                                                                                        <span>{item.name} <span style={{ color: 'var(--text-tertiary)' }}>(x{item.quotaValue || 1})</span></span>
                                                                                                         <div className={styles.quantityControl} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                                                                                                             <button onClick={() => updateItemQuantity(index, item.id, Math.max(0, qty - 1), null)} className="btn btn-secondary" style={{ padding: '2px 8px' }}>-</button>
                                                                                                             <span style={{ width: '20px', textAlign: 'center' }}>{qty}</span>
                                                                                                             <button onClick={() => updateItemQuantity(index, item.id, qty + 1, null)} className="btn btn-secondary" style={{ padding: '2px 8px' }}>+</button>
                                                                                                         </div>
-                                                                                                        <span>{item.name}</span>
-                                                                                                        <span style={{ color: 'var(--text-tertiary)', fontSize: '0.85rem' }}>${item.value}</span>
                                                                                                     </label>
                                                                                                 </div>
                                                                                             );
@@ -2691,7 +2692,7 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                                                                             const qty = Number(selectedItems[item.id] || 0);
                                                                             return (
                                                                                 <div key={item.id} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', background: 'var(--bg-app)', padding: '4px 8px', borderRadius: '4px', border: '1px solid var(--border-color)' }}>
-                                                                                    <span style={{ fontSize: '0.8rem' }}>{item.name}</span>
+                                                                                    <span style={{ fontSize: '0.8rem' }}>{item.name} <span style={{ color: 'var(--text-tertiary)' }}>(x{item.quotaValue || 1})</span></span>
                                                                                     <div className={styles.quantityControl} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                                                                                         <button onClick={() => handleBoxItemChange(item.id, Math.max(0, qty - 1))} className="btn btn-secondary" style={{ padding: '2px 8px' }}>-</button>
                                                                                         <span style={{ width: '20px', textAlign: 'center' }}>{qty}</span>
@@ -2728,7 +2729,7 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                                                                             const qty = Number(selectedItems[item.id] || 0);
                                                                             return (
                                                                                 <div key={item.id} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', background: 'var(--bg-app)', padding: '4px 8px', borderRadius: '4px', border: '1px solid var(--border-color)' }}>
-                                                                                    <span style={{ fontSize: '0.8rem' }}>{item.name}</span>
+                                                                                    <span style={{ fontSize: '0.8rem' }}>{item.name} <span style={{ color: 'var(--text-tertiary)' }}>(x{item.quotaValue || 1})</span></span>
                                                                                     <div className={styles.quantityControl} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                                                                                         <button onClick={() => handleBoxItemChange(item.id, Math.max(0, qty - 1))} className="btn btn-secondary" style={{ padding: '2px 8px' }}>-</button>
                                                                                         <span style={{ width: '20px', textAlign: 'center' }}>{qty}</span>

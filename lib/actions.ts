@@ -518,11 +518,12 @@ export async function deleteBoxType(id: string) {
 
 export async function getSettings() {
     const { data, error } = await supabase.from('app_settings').select('*').single();
-    if (error || !data) return { weeklyCutoffDay: 'Friday', weeklyCutoffTime: '17:00' };
+    if (error || !data) return { weeklyCutoffDay: 'Friday', weeklyCutoffTime: '17:00', reportEmail: '' };
 
     return {
         weeklyCutoffDay: data.weekly_cutoff_day,
-        weeklyCutoffTime: data.weekly_cutoff_time
+        weeklyCutoffTime: data.weekly_cutoff_time,
+        reportEmail: data.report_email || ''
     };
 }
 
@@ -537,7 +538,8 @@ export async function updateSettings(settings: AppSettings) {
         .from('app_settings')
         .update({
             weekly_cutoff_day: settings.weeklyCutoffDay,
-            weekly_cutoff_time: settings.weeklyCutoffTime
+            weekly_cutoff_time: settings.weeklyCutoffTime,
+            report_email: settings.reportEmail || null
         })
         .neq('id', '00000000-0000-0000-0000-000000000000'); // Hack to update all rows
 
@@ -1073,25 +1075,51 @@ export async function getCompletedOrdersWithDeliveryProof(clientId: string) {
             let orderDetails: any = undefined;
 
             if (orderData.service_type === 'Food') {
+                console.log(`[getCompletedOrdersWithDeliveryProof] Processing Food order ${orderData.id}`);
                 const { data: vendorSelections } = await supabase
                     .from('order_vendor_selections')
                     .select('*')
                     .eq('order_id', orderData.id);
 
+                console.log(`[getCompletedOrdersWithDeliveryProof] Found ${vendorSelections?.length || 0} vendor selections for order ${orderData.id}`);
+
                 if (vendorSelections && vendorSelections.length > 0) {
                     const vendorSelectionsWithItems = await Promise.all(
                         vendorSelections.map(async (vs: any) => {
+                            console.log(`[getCompletedOrdersWithDeliveryProof] Processing vendor selection ${vs.id} for vendor ${vs.vendor_id}`);
                             const { data: items } = await supabase
                                 .from('order_items')
                                 .select('*')
                                 .eq('vendor_selection_id', vs.id);
 
+                            console.log(`[getCompletedOrdersWithDeliveryProof] Found ${items?.length || 0} items for vendor selection ${vs.id}`, items);
+
                             const vendor = vendors.find(v => v.id === vs.vendor_id);
                             const itemsWithDetails = (items || []).map((item: any) => {
+                                // Skip total items (menu_item_id is null)
+                                if (item.menu_item_id === null) {
+                                    console.log(`[getCompletedOrdersWithDeliveryProof] Skipping total item with null menu_item_id:`, item);
+                                    return null;
+                                }
                                 const menuItem = menuItems.find(mi => mi.id === item.menu_item_id);
-                                const itemPrice = menuItem?.priceEach ?? parseFloat(item.unit_value);
+                                console.log(`[getCompletedOrdersWithDeliveryProof] Processing item:`, {
+                                    itemId: item.id,
+                                    menuItemId: item.menu_item_id,
+                                    menuItemName: menuItem?.name,
+                                    storedUnitValue: item.unit_value,
+                                    storedTotalValue: item.total_value,
+                                    quantity: item.quantity,
+                                    menuItemPriceEach: menuItem?.priceEach,
+                                    menuItemValue: menuItem?.value
+                                });
+                                
+                                const itemPrice = menuItem?.priceEach ?? parseFloat(item.unit_value || '0');
                                 const quantity = item.quantity;
+                                // Always recalculate from price and quantity, don't trust stored total_value
                                 const itemTotal = itemPrice * quantity;
+                                
+                                console.log(`[getCompletedOrdersWithDeliveryProof] Calculated item total: ${itemPrice} * ${quantity} = ${itemTotal}`);
+                                
                                 return {
                                     id: item.id,
                                     menuItemId: item.menu_item_id,
@@ -1100,7 +1128,9 @@ export async function getCompletedOrdersWithDeliveryProof(clientId: string) {
                                     unitValue: itemPrice,
                                     totalValue: itemTotal
                                 };
-                            });
+                            }).filter(item => item !== null);
+
+                            console.log(`[getCompletedOrdersWithDeliveryProof] Vendor ${vs.vendor_id} has ${itemsWithDetails.length} valid items`);
 
                             return {
                                 vendorId: vs.vendor_id,
@@ -1110,12 +1140,32 @@ export async function getCompletedOrdersWithDeliveryProof(clientId: string) {
                         })
                     );
 
+                    // Calculate total by summing all items from all vendor selections
+                    let calculatedTotal = 0;
+                    console.log(`[getCompletedOrdersWithDeliveryProof] Starting total calculation across ${vendorSelectionsWithItems.length} vendor selections`);
+                    for (const vs of vendorSelectionsWithItems) {
+                        console.log(`[getCompletedOrdersWithDeliveryProof] Processing vendor ${vs.vendorName} with ${vs.items.length} items`);
+                        for (const item of vs.items) {
+                            console.log(`[getCompletedOrdersWithDeliveryProof] Adding item ${item.menuItemName}: ${item.totalValue} to total (current total: ${calculatedTotal})`);
+                            calculatedTotal += item.totalValue;
+                            console.log(`[getCompletedOrdersWithDeliveryProof] New total: ${calculatedTotal}`);
+                        }
+                    }
+
+                    console.log(`[getCompletedOrdersWithDeliveryProof] Final calculated total: ${calculatedTotal}`);
+                    console.log(`[getCompletedOrdersWithDeliveryProof] Stored order total_value from DB: ${orderData.total_value}`);
+
+                    // Always use calculated total (sum of all items)
+                    const finalTotal = calculatedTotal;
+                    console.log(`[getCompletedOrdersWithDeliveryProof] Using finalTotal: ${finalTotal}`);
+
                     orderDetails = {
                         serviceType: orderData.service_type,
                         vendorSelections: vendorSelectionsWithItems,
                         totalItems: orderData.total_items,
-                        totalValue: parseFloat(orderData.total_value || 0)
+                        totalValue: finalTotal
                     };
+                    console.log(`[getCompletedOrdersWithDeliveryProof] Set orderDetails.totalValue to: ${finalTotal}`);
                 }
             } else if (orderData.service_type === 'Boxes') {
                 const { data: boxSelection } = await supabase
@@ -1149,7 +1199,7 @@ export async function getCompletedOrdersWithDeliveryProof(clientId: string) {
                 };
             }
 
-            return {
+            const returnValue = {
                 id: orderData.id,
                 clientId: orderData.client_id,
                 serviceType: orderData.service_type,
@@ -1167,6 +1217,14 @@ export async function getCompletedOrdersWithDeliveryProof(clientId: string) {
                 orderNumber: orderData.order_number,
                 orderDetails: orderDetails
             };
+            
+            console.log(`[getCompletedOrdersWithDeliveryProof] Returning order ${orderData.id}:`, {
+                totalValue: returnValue.totalValue,
+                orderDetailsTotalValue: returnValue.orderDetails?.totalValue,
+                orderDetails: returnValue.orderDetails
+            });
+            
+            return returnValue;
         })
     );
 
@@ -1214,27 +1272,53 @@ export async function getBillingHistory(clientId: string) {
 
                     // Build order details based on service type
                     if (orderData.service_type === 'Food') {
+                        console.log(`[getBillingHistory] Processing Food order ${orderData.id}`);
                         // Fetch vendor selections and items
                         const { data: vendorSelections } = await supabase
                             .from('order_vendor_selections')
                             .select('*')
                             .eq('order_id', d.order_id);
 
+                        console.log(`[getBillingHistory] Found ${vendorSelections?.length || 0} vendor selections for order ${orderData.id}`);
+
                         if (vendorSelections && vendorSelections.length > 0) {
                             const vendorSelectionsWithItems = await Promise.all(
                                 vendorSelections.map(async (vs: any) => {
+                                    console.log(`[getBillingHistory] Processing vendor selection ${vs.id} for vendor ${vs.vendor_id}`);
                                     const { data: items } = await supabase
                                         .from('order_items')
                                         .select('*')
                                         .eq('vendor_selection_id', vs.id);
 
+                                    console.log(`[getBillingHistory] Found ${items?.length || 0} items for vendor selection ${vs.id}`, items);
+
                                     const vendor = vendors.find(v => v.id === vs.vendor_id);
                                     const itemsWithDetails = (items || []).map((item: any) => {
+                                        // Skip total items (menu_item_id is null)
+                                        if (item.menu_item_id === null) {
+                                            console.log(`[getBillingHistory] Skipping total item with null menu_item_id:`, item);
+                                            return null;
+                                        }
                                         const menuItem = menuItems.find(mi => mi.id === item.menu_item_id);
+                                        console.log(`[getBillingHistory] Processing item:`, {
+                                            itemId: item.id,
+                                            menuItemId: item.menu_item_id,
+                                            menuItemName: menuItem?.name,
+                                            storedUnitValue: item.unit_value,
+                                            storedTotalValue: item.total_value,
+                                            quantity: item.quantity,
+                                            menuItemPriceEach: menuItem?.priceEach,
+                                            menuItemValue: menuItem?.value
+                                        });
+                                        
                                         // Use priceEach if available, otherwise fall back to stored unit_value
-                                        const itemPrice = menuItem?.priceEach ?? parseFloat(item.unit_value);
+                                        const itemPrice = menuItem?.priceEach ?? parseFloat(item.unit_value || '0');
                                         const quantity = item.quantity;
+                                        // Always recalculate from price and quantity, don't trust stored total_value
                                         const itemTotal = itemPrice * quantity;
+                                        
+                                        console.log(`[getBillingHistory] Calculated item total: ${itemPrice} * ${quantity} = ${itemTotal}`);
+                                        
                                         return {
                                             id: item.id,
                                             menuItemId: item.menu_item_id,
@@ -1243,7 +1327,9 @@ export async function getBillingHistory(clientId: string) {
                                             unitValue: itemPrice,
                                             totalValue: itemTotal
                                         };
-                                    });
+                                    }).filter(item => item !== null);
+
+                                    console.log(`[getBillingHistory] Vendor ${vs.vendor_id} has ${itemsWithDetails.length} valid items`);
 
                                     return {
                                         vendorId: vs.vendor_id,
@@ -1253,12 +1339,32 @@ export async function getBillingHistory(clientId: string) {
                                 })
                             );
 
+                            // Calculate total by summing all items from all vendor selections
+                            let calculatedTotal = 0;
+                            console.log(`[getBillingHistory] Starting total calculation across ${vendorSelectionsWithItems.length} vendor selections`);
+                            for (const vs of vendorSelectionsWithItems) {
+                                console.log(`[getBillingHistory] Processing vendor ${vs.vendorName} with ${vs.items.length} items`);
+                                for (const item of vs.items) {
+                                    console.log(`[getBillingHistory] Adding item ${item.menuItemName}: ${item.totalValue} to total (current total: ${calculatedTotal})`);
+                                    calculatedTotal += item.totalValue;
+                                    console.log(`[getBillingHistory] New total: ${calculatedTotal}`);
+                                }
+                            }
+
+                            console.log(`[getBillingHistory] Final calculated total: ${calculatedTotal}`);
+                            console.log(`[getBillingHistory] Stored order total_value from DB: ${orderData.total_value}`);
+
+                            // Always use calculated total (sum of all items)
+                            const finalTotal = calculatedTotal;
+                            console.log(`[getBillingHistory] Using finalTotal: ${finalTotal}`);
+
                             orderDetails = {
                                 serviceType: orderData.service_type,
                                 vendorSelections: vendorSelectionsWithItems,
                                 totalItems: orderData.total_items,
-                                totalValue: parseFloat(orderData.total_value || 0)
+                                totalValue: finalTotal
                             };
+                            console.log(`[getBillingHistory] Set orderDetails.totalValue to: ${finalTotal}`);
                         }
                     } else if (orderData.service_type === 'Boxes') {
                         // Fetch box selection
@@ -1684,11 +1790,14 @@ async function syncSingleOrderForDeliveryDay(
                 }
             }
         } else {
-            // If no vendorId, don't calculate dates - they can be set later
-            // Boxes orders can be saved without dates
-            console.log(`[syncSingleOrderForDeliveryDay] No vendorId for Boxes order - dates will be null (can be set later)`);
-            takeEffectDate = null;
-            scheduledDeliveryDate = null;
+            // If no vendorId, we must still provide a take_effect_date to satisfy the NOT NULL constraint in upcoming_orders table.
+            // We'll use a far-future date (2099-12-31) to indicate it's not ready for processing but valid for storage.
+            console.log(`[syncSingleOrderForDeliveryDay] No vendorId for Boxes order - setting fallback take_effect_date (2099-12-31)`);
+
+            // Create date for 2099-12-31
+            const fallbackDate = new Date('2099-12-31T00:00:00.000Z');
+            takeEffectDate = fallbackDate;
+            scheduledDeliveryDate = fallbackDate; // Also set this so the check below passes
         }
     }
 
@@ -1709,15 +1818,45 @@ async function syncSingleOrderForDeliveryDay(
     let totalValue = 0;
     let totalItems = 0;
 
+    console.log(`[syncSingleOrderForDeliveryDay] Starting total calculation for order`);
+    console.log(`[syncSingleOrderForDeliveryDay] Order config:`, {
+        serviceType: orderConfig.serviceType,
+        hasVendorSelections: !!orderConfig.vendorSelections,
+        vendorSelectionsCount: orderConfig.vendorSelections?.length || 0
+    });
+
     if (orderConfig.serviceType === 'Food' && orderConfig.vendorSelections) {
+        console.log(`[syncSingleOrderForDeliveryDay] Processing Food order with ${orderConfig.vendorSelections.length} vendor selections`);
         for (const selection of orderConfig.vendorSelections) {
-            if (!selection.items) continue;
+            if (!selection.items) {
+                console.log(`[syncSingleOrderForDeliveryDay] Skipping vendor selection - no items`);
+                continue;
+            }
+            console.log(`[syncSingleOrderForDeliveryDay] Processing vendor ${selection.vendorId} with ${Object.keys(selection.items).length} items`);
             for (const [itemId, qty] of Object.entries(selection.items)) {
                 const item = menuItems.find(i => i.id === itemId);
                 const quantity = qty as number;
                 if (item && quantity > 0) {
-                    totalValue += item.value * quantity;
+                    // Use priceEach if available, otherwise fall back to value
+                    const itemPrice = item.priceEach ?? item.value;
+                    const itemTotal = itemPrice * quantity;
+                    console.log(`[syncSingleOrderForDeliveryDay] Item: ${item.name}`, {
+                        itemId,
+                        quantity,
+                        itemPrice,
+                        itemValue: item.value,
+                        itemPriceEach: item.priceEach,
+                        itemTotal,
+                        currentTotalValue: totalValue
+                    });
+                    totalValue += itemTotal;
                     totalItems += quantity;
+                    console.log(`[syncSingleOrderForDeliveryDay] Updated totalValue: ${totalValue}, totalItems: ${totalItems}`);
+                } else {
+                    console.log(`[syncSingleOrderForDeliveryDay] Skipping item ${itemId} - item not found or quantity is 0`, {
+                        itemFound: !!item,
+                        quantity
+                    });
                 }
             }
         }
@@ -1749,6 +1888,11 @@ async function syncSingleOrderForDeliveryDay(
     const currentUserName = session?.name || 'Admin';
     const updatedBy = (orderConfig.updatedBy && orderConfig.updatedBy !== 'Admin') ? orderConfig.updatedBy : currentUserName;
 
+    console.log(`[syncSingleOrderForDeliveryDay] Final calculated totals:`, {
+        totalValue,
+        totalItems
+    });
+
     // Upsert upcoming order for this delivery day
     const upcomingOrderData: any = {
         client_id: clientId,
@@ -1764,6 +1908,8 @@ async function syncSingleOrderForDeliveryDay(
         total_items: totalItems,
         notes: null
     };
+    
+    console.log(`[syncSingleOrderForDeliveryDay] Saving upcoming order with total_value: ${totalValue}`);
 
     // Add delivery_day if provided
     if (deliveryDay) {
@@ -1787,8 +1933,9 @@ async function syncSingleOrderForDeliveryDay(
 
     let upcomingOrderId: string;
 
-    if (existing) {
+        if (existing) {
         // Update existing
+        console.log(`[syncSingleOrderForDeliveryDay] Updating existing upcoming order ${existing.id} with total_value: ${upcomingOrderData.total_value}`);
         const { data, error } = await supabaseClient
             .from('upcoming_orders')
             .update(upcomingOrderData)
@@ -1797,12 +1944,14 @@ async function syncSingleOrderForDeliveryDay(
             .single();
 
         if (error) {
-            console.error('Error updating upcoming order:', error);
+            console.error('[syncSingleOrderForDeliveryDay] Error updating upcoming order:', error);
             return;
         }
+        console.log(`[syncSingleOrderForDeliveryDay] Updated upcoming order ${data.id}, saved total_value: ${data.total_value}`);
         upcomingOrderId = data.id;
     } else {
         // Insert new
+        console.log(`[syncSingleOrderForDeliveryDay] Creating new upcoming order with total_value: ${upcomingOrderData.total_value}`);
         const { data, error } = await supabaseClient
             .from('upcoming_orders')
             .insert(upcomingOrderData)
@@ -1810,9 +1959,10 @@ async function syncSingleOrderForDeliveryDay(
             .single();
 
         if (error) {
-            console.error('Error creating upcoming order:', error);
+            console.error('[syncSingleOrderForDeliveryDay] Error creating upcoming order:', error);
             return;
         }
+        console.log(`[syncSingleOrderForDeliveryDay] Created upcoming order ${data.id}, saved total_value: ${data.total_value}`);
         upcomingOrderId = data.id;
     }
 
@@ -1824,9 +1974,18 @@ async function syncSingleOrderForDeliveryDay(
 
     if (orderConfig.serviceType === 'Food' && orderConfig.vendorSelections) {
         // Insert vendor selections and items
-        for (const selection of orderConfig.vendorSelections) {
-            if (!selection.vendorId || !selection.items) continue;
+        let calculatedTotalFromItems = 0;
+        const allVendorSelections: any[] = [];
 
+        console.log(`[syncSingleOrderForDeliveryDay] Starting to insert items for upcoming_order_id: ${upcomingOrderId}`);
+
+        for (const selection of orderConfig.vendorSelections) {
+            if (!selection.vendorId || !selection.items) {
+                console.log(`[syncSingleOrderForDeliveryDay] Skipping vendor selection - missing vendorId or items`);
+                continue;
+            }
+
+            console.log(`[syncSingleOrderForDeliveryDay] Creating vendor selection for vendor ${selection.vendorId}`);
             const { data: vendorSelection, error: vsError } = await supabaseClient
                 .from('upcoming_order_vendor_selections')
                 .insert({
@@ -1836,23 +1995,89 @@ async function syncSingleOrderForDeliveryDay(
                 .select()
                 .single();
 
-            if (vsError || !vendorSelection) continue;
+            if (vsError || !vendorSelection) {
+                console.error(`[syncSingleOrderForDeliveryDay] Error creating vendor selection:`, vsError);
+                continue;
+            }
+
+            allVendorSelections.push(vendorSelection);
+            console.log(`[syncSingleOrderForDeliveryDay] Created vendor selection ${vendorSelection.id}`);
 
             // Insert items
             for (const [itemId, qty] of Object.entries(selection.items)) {
                 const item = menuItems.find(i => i.id === itemId);
                 const quantity = qty as number;
                 if (item && quantity > 0) {
-                    await supabaseClient.from('upcoming_order_items').insert({
+                    // Use priceEach if available, otherwise fall back to value
+                    const itemPrice = item.priceEach ?? item.value;
+                    const itemTotal = itemPrice * quantity;
+                    console.log(`[syncSingleOrderForDeliveryDay] Inserting item:`, {
+                        itemId,
+                        itemName: item.name,
+                        quantity,
+                        itemPrice,
+                        itemValue: item.value,
+                        itemPriceEach: item.priceEach,
+                        itemTotal,
+                        calculatedTotalBefore: calculatedTotalFromItems
+                    });
+                    calculatedTotalFromItems += itemTotal;
+                    console.log(`[syncSingleOrderForDeliveryDay] Updated calculatedTotalFromItems: ${calculatedTotalFromItems}`);
+                    
+                    const insertResult = await supabaseClient.from('upcoming_order_items').insert({
                         upcoming_order_id: upcomingOrderId,
                         vendor_selection_id: vendorSelection.id,
                         menu_item_id: itemId,
                         quantity: quantity,
-                        unit_value: item.value,
-                        total_value: item.value * quantity
+                        unit_value: itemPrice,
+                        total_value: itemTotal
                     });
+                    
+                    if (insertResult.error) {
+                        console.error(`[syncSingleOrderForDeliveryDay] Error inserting item:`, insertResult.error);
+                    } else {
+                        console.log(`[syncSingleOrderForDeliveryDay] Successfully inserted item ${itemId}`);
+                    }
+                } else {
+                    console.log(`[syncSingleOrderForDeliveryDay] Skipping item ${itemId} - item not found or quantity is 0`);
                 }
             }
+        }
+
+        console.log(`[syncSingleOrderForDeliveryDay] Final calculatedTotalFromItems: ${calculatedTotalFromItems}`);
+        console.log(`[syncSingleOrderForDeliveryDay] Original totalValue: ${totalValue}`);
+
+        // Update total_value to match calculated total from items
+        if (calculatedTotalFromItems !== totalValue) {
+            console.log(`[syncSingleOrderForDeliveryDay] Mismatch detected! Updating total_value from ${totalValue} to ${calculatedTotalFromItems}`);
+            totalValue = calculatedTotalFromItems;
+            const updateResult = await supabaseClient
+                .from('upcoming_orders')
+                .update({ total_value: totalValue })
+                .eq('id', upcomingOrderId);
+            
+            if (updateResult.error) {
+                console.error(`[syncSingleOrderForDeliveryDay] Error updating total_value:`, updateResult.error);
+            } else {
+                console.log(`[syncSingleOrderForDeliveryDay] Successfully updated total_value to ${totalValue}`);
+            }
+        } else {
+            console.log(`[syncSingleOrderForDeliveryDay] Total values match, no update needed`);
+        }
+
+        // Add total as a separate item in the order_items table
+        // Use the first vendor selection or create a special one for the total
+        if (allVendorSelections.length > 0 && calculatedTotalFromItems > 0) {
+            // Use the first vendor selection to attach the total item
+            const firstVendorSelection = allVendorSelections[0];
+            await supabaseClient.from('upcoming_order_items').insert({
+                upcoming_order_id: upcomingOrderId,
+                vendor_selection_id: firstVendorSelection.id,
+                menu_item_id: null, // null indicates this is a total item
+                quantity: 1,
+                unit_value: calculatedTotalFromItems,
+                total_value: calculatedTotalFromItems
+            });
         }
     } else if (orderConfig.serviceType === 'Boxes') {
         console.log('[syncSingleOrderForDeliveryDay] Processing Boxes order for upcoming_order_id:', upcomingOrderId);

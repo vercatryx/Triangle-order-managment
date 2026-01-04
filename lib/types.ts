@@ -163,6 +163,7 @@ export interface Equipment {
 export interface AppSettings {
   weeklyCutoffDay: string; // e.g. "Friday"
   weeklyCutoffTime: string; // e.g. "17:00"
+  reportEmail?: string; // Email address for delivery simulation reports
 }
 
 export interface OrderHistoryLog {
