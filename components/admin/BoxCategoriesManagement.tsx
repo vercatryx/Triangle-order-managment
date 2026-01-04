@@ -287,13 +287,14 @@ export function BoxCategoriesManagement() {
                                             ({getBoxItemsForCategory(cat.id).length} items)
                                         </span>
                                         {cat.setValue !== undefined && cat.setValue !== null && (
-                                            <span style={{ 
-                                                color: 'var(--color-primary)', 
-                                                fontSize: '0.75rem', 
-                                                fontWeight: 500,
-                                                background: 'var(--bg-surface)',
-                                                padding: '2px 6px',
-                                                borderRadius: '4px'
+                                            <span style={{
+                                                color: '#000000',
+                                                fontSize: '0.75rem',
+                                                fontWeight: 600,
+                                                background: 'var(--color-primary)',
+                                                padding: '2px 8px',
+                                                borderRadius: '12px',
+                                                border: '1px solid rgba(0,0,0,0.1)'
                                             }}>
                                                 Set Value: {cat.setValue}
                                             </span>
@@ -371,7 +372,7 @@ export function BoxCategoriesManagement() {
                                             <span>{item.name}</span>
                                             <span style={{ color: 'var(--text-tertiary)' }}>(x{item.quotaValue || 1})</span>
                                             {item.priceEach !== undefined && item.priceEach !== null && (
-                                                <span style={{ color: 'var(--color-primary)', fontWeight: 500 }}>${item.priceEach.toFixed(2)}</span>
+                                                <span style={{ color: 'var(--text-primary)', fontWeight: 600 }}>${item.priceEach.toFixed(2)}</span>
                                             )}
                                             <button onClick={() => handleEditItem(item)} style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: 'var(--text-primary)', padding: 0 }} title="Edit Item">
                                                 <Edit2 size={12} />
