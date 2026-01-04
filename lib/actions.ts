@@ -331,7 +331,7 @@ export async function saveEquipmentOrder(clientId: string, vendorId: string, equ
     const vendors = await getVendors();
     const vendor = vendors.find(v => v.id === vendorId);
     let scheduledDeliveryDate: Date | null = null;
-    
+
     if (vendor && vendor.deliveryDays && vendor.deliveryDays.length > 0) {
         const today = new Date();
         today.setHours(0, 0, 0, 0);
@@ -383,7 +383,7 @@ export async function saveEquipmentOrder(clientId: string, vendorId: string, equ
         .single();
 
     handleError(orderError);
-    
+
     // Ensure order_number is at least 6 digits (100000+)
     // The database default should handle this, but we'll verify and fix if needed
     if (newOrder && (!newOrder.order_number || newOrder.order_number < 100000)) {
@@ -394,18 +394,18 @@ export async function saveEquipmentOrder(clientId: string, vendorId: string, equ
             .order('order_number', { ascending: false })
             .limit(1)
             .maybeSingle();
-        
+
         const nextNumber = Math.max((maxOrder?.order_number || 99999) + 1, 100000);
         const { error: updateError } = await supabase
             .from('orders')
             .update({ order_number: nextNumber })
             .eq('id', newOrder.id);
-        
+
         if (!updateError) {
             newOrder.order_number = nextNumber;
         }
     }
-    
+
     // Also create a vendor selection record so it shows up in vendor tab
     // We'll use order_vendor_selections table for Equipment orders too
     if (newOrder) {
@@ -741,9 +741,8 @@ export async function addClient(data: Omit<ClientProfile, 'id' | 'createdAt' | '
 
     const newClient = mapClientFromDB(res);
 
-    // Sync to upcoming_orders if activeOrder exists
     if (newClient.activeOrder && newClient.activeOrder.caseId) {
-        await syncCurrentOrderToUpcoming(newClient.id, newClient);
+        await syncCurrentOrderToUpcoming(newClient.id, newClient, true);
     }
 
     revalidatePath('/clients');
@@ -812,7 +811,7 @@ export async function getRegularClients() {
         .select('*')
         .is('parent_client_id', null)
         .order('full_name');
-    
+
     if (error) {
         // If error (e.g., column doesn't exist), fall back to getting all clients
         // This handles the case where the migration hasn't been run yet
@@ -820,11 +819,11 @@ export async function getRegularClients() {
             .from('clients')
             .select('*')
             .order('full_name');
-        
+
         if (allError) return [];
         return allData.map(mapClientFromDB);
     }
-    
+
     return data.map(mapClientFromDB);
 }
 
@@ -835,7 +834,7 @@ export async function getDependentsByParentId(parentClientId: string) {
             .select('*')
             .eq('parent_client_id', parentClientId)
             .order('full_name');
-        
+
         if (error) {
             // If the column doesn't exist, return empty array
             if (error.code === '42703') {
@@ -878,7 +877,7 @@ export async function updateClient(id: string, data: Partial<ClientProfile>) {
     if (data.activeOrder) {
         const updatedClient = await getClient(id);
         if (updatedClient) {
-            await syncCurrentOrderToUpcoming(id, updatedClient);
+            await syncCurrentOrderToUpcoming(id, updatedClient, true);
         }
     } else {
         // Trigger local DB sync in background even if activeOrder wasn't updated
@@ -1592,7 +1591,7 @@ async function syncSingleOrderForDeliveryDay(
     supabaseClientObj?: any
 ): Promise<void> {
     const supabaseClient = supabaseClientObj || supabase;
-    console.log(`[syncSingleOrderForDeliveryDay] Start sync for client ${clientId}, day: ${deliveryDay || 'null'}`);
+    // console.log(`[syncSingleOrderForDeliveryDay] Start sync for client ${clientId}, day: ${deliveryDay || 'null'}`);
     // Calculate dates for this specific delivery day
     let takeEffectDate: Date | null = null;
     let scheduledDeliveryDate: Date | null = null;
@@ -1941,20 +1940,20 @@ async function syncSingleOrderForDeliveryDay(
  * This ensures upcoming_orders always reflects the latest order configuration
  * Now supports multiple orders per client (one per delivery day)
  */
-export async function syncCurrentOrderToUpcoming(clientId: string, client: ClientProfile) {
-    console.log('[syncCurrentOrderToUpcoming] START', { clientId, serviceType: client.activeOrder?.serviceType });
+export async function syncCurrentOrderToUpcoming(clientId: string, client: ClientProfile, skipClientUpdate: boolean = false) {
+    // console.log('[syncCurrentOrderToUpcoming] START', { clientId, serviceType: client.activeOrder?.serviceType });
 
     // 1. DRAFT PERSISTENCE: Save the raw activeOrder metadata to the clients table.
     // This ensures Case ID, Vendor, and other selections are persisted even if the 
     // full sync to upcoming_orders fails (e.g. if the vendor/delivery day isn't fully set yet).
     const orderConfig = client.activeOrder;
-    console.log('[syncCurrentOrderToUpcoming] orderConfig received:', {
-        serviceType: orderConfig?.serviceType,
-        vendorId: orderConfig?.vendorId,
-        boxTypeId: orderConfig?.boxTypeId,
-        boxQuantity: orderConfig?.boxQuantity,
-        hasItems: !!(orderConfig as any)?.items && Object.keys((orderConfig as any).items || {}).length > 0
-    });
+    // console.log('[syncCurrentOrderToUpcoming] orderConfig received:', {
+    //     serviceType: orderConfig?.serviceType,
+    //     vendorId: orderConfig?.vendorId,
+    //     boxTypeId: orderConfig?.boxTypeId,
+    //     boxQuantity: orderConfig?.boxQuantity,
+    //     hasItems: !!(orderConfig as any)?.items && Object.keys((orderConfig as any).items || {}).length > 0
+    // });
 
     const vendors = await getVendors();
     const menuItems = await getMenuItems();
@@ -1972,7 +1971,7 @@ export async function syncCurrentOrderToUpcoming(clientId: string, client: Clien
     // 1. DRAFT PERSISTENCE: Save the raw activeOrder metadata to the clients table.
     // This ensures Case ID, Vendor, and other selections are persisted even if the 
     // full sync to upcoming_orders fails (e.g. if the vendor/delivery day isn't fully set yet).
-    if (client.activeOrder) {
+    if (!skipClientUpdate && client.activeOrder) {
         await supabaseClient.from('clients').update({
             active_order: client.activeOrder,
             updated_at: new Date().toISOString()
@@ -2011,18 +2010,18 @@ export async function syncCurrentOrderToUpcoming(clientId: string, client: Clien
             });
         });
 
-        console.log('[syncCurrentOrderToUpcoming] Processing deliveryDayOrders format:', {
-            allDays: Object.keys(deliveryDayOrders),
-            filteredDays: deliveryDays,
-            dayDetails: deliveryDays.map(day => ({
-                day,
-                vendorCount: deliveryDayOrders[day]?.vendorSelections?.length || 0,
-                vendors: deliveryDayOrders[day]?.vendorSelections?.map((s: any) => ({
-                    vendorId: s.vendorId,
-                    itemCount: Object.keys(s.items || {}).length
-                }))
-            }))
-        });
+        // console.log('[syncCurrentOrderToUpcoming] Processing deliveryDayOrders format:', {
+        //     allDays: Object.keys(deliveryDayOrders),
+        //     filteredDays: deliveryDays,
+        //     dayDetails: deliveryDays.map(day => ({
+        //         day,
+        //         vendorCount: deliveryDayOrders[day]?.vendorSelections?.length || 0,
+        //         vendors: deliveryDayOrders[day]?.vendorSelections?.map((s: any) => ({
+        //             vendorId: s.vendorId,
+        //             itemCount: Object.keys(s.items || {}).length
+        //         }))
+        //     }))
+        // });
 
         // Delete orders for delivery days that are no longer in the config
         const { data: existingOrders } = await supabaseClient
@@ -2066,7 +2065,7 @@ export async function syncCurrentOrderToUpcoming(clientId: string, client: Clien
 
                 // Only sync if there are vendors with items
                 if (dayOrderConfig.vendorSelections.length > 0) {
-                    console.log(`[syncCurrentOrderToUpcoming] Syncing order for ${deliveryDay} with ${dayOrderConfig.vendorSelections.length} vendor(s)`);
+                    // console.log(`[syncCurrentOrderToUpcoming] Syncing order for ${deliveryDay} with ${dayOrderConfig.vendorSelections.length} vendor(s)`);
                     await syncSingleOrderForDeliveryDay(
                         clientId,
                         dayOrderConfig,
@@ -2077,7 +2076,7 @@ export async function syncCurrentOrderToUpcoming(clientId: string, client: Clien
                         supabaseClient
                     );
                 } else {
-                    console.log(`[syncCurrentOrderToUpcoming] Skipping ${deliveryDay} - no vendors with items`);
+                    // console.log(`[syncCurrentOrderToUpcoming] Skipping ${deliveryDay} - no vendors with items`);
                 }
             }
         }
@@ -2542,12 +2541,12 @@ export async function getActiveOrderForClient(clientId: string) {
                 }
 
                 if (boxSelection) {
-                    console.log('[getActiveOrderForClient] Box selection found:', {
-                        order_id: orderData.id,
-                        vendor_id: boxSelection.vendor_id,
-                        box_type_id: boxSelection.box_type_id,
-                        quantity: boxSelection.quantity
-                    });
+                    // console.log('[getActiveOrderForClient] Box selection found:', {
+                    //     order_id: orderData.id,
+                    //     vendor_id: boxSelection.vendor_id,
+                    //     box_type_id: boxSelection.box_type_id,
+                    //     quantity: boxSelection.quantity
+                    // });
 
                     orderConfig.vendorId = boxSelection.vendor_id;
                     orderConfig.boxTypeId = boxSelection.box_type_id;
@@ -2811,7 +2810,7 @@ export async function getClientsPaginated(page: number, pageSize: number, query:
                 const upcomingOrder = Array.isArray(bs.upcoming_orders) ? bs.upcoming_orders[0] : bs.upcoming_orders;
                 const clientId = upcomingOrder?.client_id;
                 if (!clientId) continue;
-                
+
                 if (!clientBoxSelections.has(clientId)) {
                     clientBoxSelections.set(clientId, []);
                 }
@@ -2824,10 +2823,10 @@ export async function getClientsPaginated(page: number, pageSize: number, query:
         // 1. box_selection.vendor_id is not null, OR
         // 2. box_type.vendor_id is not null (when box_type_id is set)
         const clientIdsNeedingVendor: string[] = [];
-        
+
         for (const clientId of boxesClientIds) {
             const selections = clientBoxSelections.get(clientId) || [];
-            
+
             // If client has no upcoming box selections, they need vendor assignment
             if (selections.length === 0) {
                 clientIdsNeedingVendor.push(clientId);
@@ -2842,7 +2841,7 @@ export async function getClientsPaginated(page: number, pageSize: number, query:
                     hasVendor = true;
                     break;
                 }
-                
+
                 // Check vendor_id from box type
                 if (selection.box_type_id) {
                     const boxTypeVendorId = boxTypeMap.get(selection.box_type_id);
@@ -3140,10 +3139,10 @@ async function processVendorOrderDetails(order: any, vendorId: string, isUpcomin
  */
 export async function resolveOrderId(orderIdentifier: string): Promise<string | null> {
     if (!orderIdentifier) return null;
-    
+
     // Check if it's a UUID (contains hyphens and is 36 chars)
     const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(orderIdentifier);
-    
+
     if (isUUID) {
         // Already a UUID, verify it exists
         const { data } = await supabase
@@ -3153,7 +3152,7 @@ export async function resolveOrderId(orderIdentifier: string): Promise<string | 
             .maybeSingle();
         return data?.id || null;
     }
-    
+
     // Try as order number (numeric)
     const orderNumber = parseInt(orderIdentifier, 10);
     if (!isNaN(orderNumber)) {
@@ -3164,7 +3163,7 @@ export async function resolveOrderId(orderIdentifier: string): Promise<string | 
             .maybeSingle();
         return data?.id || null;
     }
-    
+
     return null;
 }
 
@@ -4024,7 +4023,7 @@ export async function getOrderById(orderId: string) {
             if (notes) {
                 const vendor = vendors.find(v => v.id === notes.vendorId);
                 const equipment = equipmentList.find(e => e.id === notes.equipmentId);
-                
+
                 orderDetails = {
                     serviceType: orderData.service_type,
                     vendorId: notes.vendorId,
@@ -4044,7 +4043,7 @@ export async function getOrderById(orderId: string) {
                 .eq('order_id', orderId)
                 .limit(1)
                 .maybeSingle();
-            
+
             if (vendorSelections) {
                 const vendor = vendors.find(v => v.id === vendorSelections.vendor_id);
                 orderDetails = {
@@ -4079,4 +4078,47 @@ export async function getOrderById(orderId: string) {
         updatedBy: orderData.updated_by,
         orderDetails: orderDetails
     };
+};
+
+/**
+ * Efficiently fetch full details for a batch of clients
+ * Used for prefetching visible clients in the list
+ */
+export async function getBatchClientDetails(clientIds: string[]) {
+    if (!clientIds || clientIds.length === 0) return {};
+
+    try {
+        // console.log(`[BatchFetch] Starting batch fetch for ${clientIds.length} clients`);
+        // We could optimize this further with a single SQL query or stored proc,
+        // but for now, parallelizing the existing optimized getters is a massive step up from serial
+        // fetching in a loop.
+        // Also, most of the "sub-getters" (like history) are simple selects by ID.
+
+        // Use Promise.all to fetch all clients in parallel
+        const results = await Promise.all(
+            clientIds.map(async (id) => {
+                try {
+                    const details = await getClientFullDetails(id);
+                    return { id, details };
+                } catch (e) {
+                    console.error(`Error fetching details for client ${id}:`, e);
+                    return { id, details: null };
+                }
+            })
+        );
+
+        // Convert array to map for easy lookup
+        const resultMap: Record<string, any> = {};
+        results.forEach(r => {
+            if (r.details) {
+                resultMap[r.id] = r.details;
+            }
+        });
+
+        // console.log(`[BatchFetch] Completed batch fetch for ${clientIds.length} clients`);
+        return resultMap;
+    } catch (error) {
+        console.error('Error in getBatchClientDetails:', error);
+        return {};
+    }
 }

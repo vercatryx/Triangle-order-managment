@@ -4,7 +4,23 @@ import { ClientProfileDetail } from './ClientProfile';
 
 import { useState, useEffect, useRef } from 'react';
 import { ClientProfile, ClientStatus, Navigator, Vendor, BoxType, ClientFullDetails, MenuItem } from '@/lib/types';
-import { getClientsPaginated, getClientFullDetails, getStatuses, getNavigators, addClient, addDependent, getRegularClients, getVendors, getBoxTypes, getMenuItems, getClients, updateClient } from '@/lib/actions';
+import {
+    getClientsPaginated,
+    getClientFullDetails,
+    getStatuses,
+    getNavigators,
+    addClient,
+    addDependent,
+    getRegularClients,
+    getVendors,
+    getBoxTypes,
+    getMenuItems,
+    getClients,
+    updateClient,
+    getUpcomingOrderForClient as serverGetUpcomingOrderForClient,
+    getCompletedOrdersWithDeliveryProof as serverGetCompletedOrdersWithDeliveryProof,
+    getBatchClientDetails
+} from '@/lib/actions';
 import { invalidateClientData } from '@/lib/cached-data';
 import { Plus, Search, ChevronRight, CheckSquare, Square, StickyNote, Package, ArrowUpDown, ArrowUp, ArrowDown, Filter, Eye, EyeOff, Loader2, AlertCircle } from 'lucide-react';
 import styles from './ClientList.module.css';
@@ -93,18 +109,35 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
         }
     }, [clients.length, totalClients, isLoading, isFetchingMore, page, currentView]);
 
-    // Background Prefetching Effect
+    // Background Prefetching Effect - Re-enabled with Batch Fetching
     useEffect(() => {
-        if (isLoading) return;
+        if (isLoading || clients.length === 0) return;
 
-        // Find clients that need prefetching (not in cache, not currently pending)
-        // Prioritize visible clients? For now, just top to bottom of current list.
-        const candidates = clients.filter(c => !detailsCache[c.id] && !pendingPrefetches.current.has(c.id));
+        // Prefetch visible clients (e.g., current page)
+        // Since we have all clients loaded progressively, let's just grab the ones that are likely visible
+        // based on scroll or just checking cache.
+        // For simplicity and efficiency, let's check the first 20 clients that are missing form cache.
+        // This is much better than one-by-one.
 
-        if (candidates.length > 0) {
-            // Take the first few
-            const batch = candidates.slice(0, 3);
-            batch.forEach(c => prefetchClient(c.id));
+        const missingCache = clients
+            .filter(c => !detailsCache[c.id] && !pendingPrefetches.current.has(c.id))
+            .slice(0, 20); // Batch size of 20
+
+        if (missingCache.length > 0) {
+            const idsToFetch = missingCache.map(c => c.id);
+            // Mark as pending
+            idsToFetch.forEach(id => pendingPrefetches.current.add(id));
+
+            console.log(`[Prefetch] Batch fetching ${idsToFetch.length} clients...`);
+
+            getBatchClientDetails(idsToFetch).then(results => {
+                setDetailsCache(prev => ({ ...prev, ...results }));
+                // Cleanup pending
+                idsToFetch.forEach(id => pendingPrefetches.current.delete(id));
+            }).catch(err => {
+                console.error('[Prefetch] Batch fetch failed:', err);
+                idsToFetch.forEach(id => pendingPrefetches.current.delete(id));
+            });
         }
     }, [clients, detailsCache, isLoading]);
 
@@ -279,7 +312,7 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
         // Always sort clients needing vendor assignment to the top
         const aNeedsVendor = a.serviceType === 'Boxes' && (!a.activeOrder || (a.activeOrder.serviceType === 'Boxes' && !a.activeOrder.vendorId && !boxTypes.find(bt => bt.id === a.activeOrder?.boxTypeId)?.vendorId));
         const bNeedsVendor = b.serviceType === 'Boxes' && (!b.activeOrder || (b.activeOrder.serviceType === 'Boxes' && !b.activeOrder.vendorId && !boxTypes.find(bt => bt.id === b.activeOrder?.boxTypeId)?.vendorId));
-        
+
         if (aNeedsVendor !== bNeedsVendor) {
             return aNeedsVendor ? -1 : 1; // Clients needing vendor come first
         }
@@ -386,7 +419,7 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
                 const newDependent = await addDependent(dependentName.trim(), selectedParentClientId);
                 if (!newDependent) return;
             }
-            
+
             invalidateClientData(); // Invalidate cache
             setIsAddingDependent(false);
             setDependentName('');
@@ -1051,8 +1084,8 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
                             </div>
                         </div>
                         <div className={styles.modalActions}>
-                            <button 
-                                className="btn btn-primary" 
+                            <button
+                                className="btn btn-primary"
                                 onClick={handleAddDependent}
                                 disabled={!dependentName.trim() || !selectedParentClientId}
                             >
@@ -1229,7 +1262,7 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
                                 borderRadius: 'var(--radius-md)', boxShadow: 'var(--shadow-lg)',
                                 zIndex: 1000, minWidth: '200px'
                             }}>
-                                <div onClick={() => { setServiceTypeFilter(null); setOpenFilterMenu(null); }}
+                                <div onClick={() => { setServiceTypeFilter(null); setNeedsVendorFilter(false); setOpenFilterMenu(null); }}
                                     style={{
                                         padding: '8px 12px', cursor: 'pointer',
                                         backgroundColor: !serviceTypeFilter ? 'var(--bg-surface-hover)' : 'transparent',
@@ -1302,17 +1335,17 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
                             key={client.id}
                             onClick={() => {
                                 if (isDependent) {
-                                    // For dependents, open the Add Dependent modal in edit mode
                                     setEditingDependentId(client.id);
                                     setDependentName(client.fullName);
                                     setSelectedParentClientId(client.parentClientId || '');
-                                    // Find parent client name for search field
                                     const parentClient = allClientsForLookup.find(c => c.id === client.parentClientId);
                                     if (parentClient) {
                                         setParentClientSearch(parentClient.fullName);
                                     }
                                     setIsAddingDependent(true);
                                 } else {
+                                    // Check if we have data ready
+                                    // If not, the modal will handle showing a loading state and fetching data.
                                     setSelectedClientId(client.id);
                                 }
                             }}

@@ -117,7 +117,7 @@ export async function triggerSyncInBackground(): Promise<void> {
 // Sync all orders and upcoming orders from Supabase to local DB
 export async function syncLocalDBFromSupabase(): Promise<void> {
     try {
-        console.log('Starting local DB sync from Supabase...');
+        // console.log('Starting local DB sync from Supabase...');
 
         // Fetch all orders with status pending, confirmed, or processing
         const { data: orders, error: ordersError } = await supabase
@@ -224,8 +224,9 @@ export async function syncLocalDBFromSupabase(): Promise<void> {
             lastSynced: new Date().toISOString()
         };
 
+
         await writeLocalDB(localDB);
-        console.log(`Local DB synced successfully. Orders: ${orders?.length || 0}, Upcoming Orders: ${upcomingOrders?.length || 0}`);
+        // console.log(`Local DB synced successfully. Orders: ${orders?.length || 0}, Upcoming Orders: ${upcomingOrders?.length || 0}`);
     } catch (error) {
         console.error('Error syncing local DB:', error);
         throw error;
@@ -556,23 +557,23 @@ export async function getUpcomingOrderForClientLocal(clientId: string) {
                 }
             } else if (data.service_type === 'Boxes') {
                 const boxSelection = db.upcomingOrderBoxSelections.find(bs => bs.upcoming_order_id === data.id);
-                console.log('[getUpcomingOrderForClientLocal] Loading Boxes order:', {
-                    upcomingOrderId: data.id,
-                    foundBoxSelection: !!boxSelection,
-                    boxSelectionItems: boxSelection?.items,
-                    boxSelectionItemsType: typeof boxSelection?.items,
-                    boxSelectionItemsKeys: boxSelection?.items ? Object.keys(boxSelection.items) : []
-                });
+                // console.log('[getUpcomingOrderForClientLocal] Loading Boxes order:', {
+                //     upcomingOrderId: data.id,
+                //     foundBoxSelection: !!boxSelection,
+                //     boxSelectionItems: boxSelection?.items,
+                //     boxSelectionItemsType: typeof boxSelection?.items,
+                //     boxSelectionItemsKeys: boxSelection?.items ? Object.keys(boxSelection.items) : []
+                // });
                 if (boxSelection) {
                     orderConfig.vendorId = boxSelection.vendor_id;
                     orderConfig.boxTypeId = boxSelection.box_type_id;
                     orderConfig.boxQuantity = boxSelection.quantity;
                     const itemsRaw = boxSelection.items || {};
-                    console.log('[getUpcomingOrderForClientLocal] Processing box items:', {
-                        itemsRaw,
-                        itemsRawType: typeof itemsRaw,
-                        itemsRawKeys: Object.keys(itemsRaw)
-                    });
+                    // console.log('[getUpcomingOrderForClientLocal] Processing box items:', {
+                    //     itemsRaw,
+                    //     itemsRawType: typeof itemsRaw,
+                    //     itemsRawKeys: Object.keys(itemsRaw)
+                    // });
                     const items: any = {};
                     const itemPrices: any = {};
                     for (const [itemId, value] of Object.entries(itemsRaw)) {
@@ -586,11 +587,11 @@ export async function getUpcomingOrderForClientLocal(clientId: string) {
                         }
                     }
                     orderConfig.items = items;
-                    console.log('[getUpcomingOrderForClientLocal] Final box items:', {
-                        itemsCount: Object.keys(items).length,
-                        items,
-                        itemPrices
-                    });
+                    // console.log('[getUpcomingOrderForClientLocal] Final box items:', {
+                    //     itemsCount: Object.keys(items).length,
+                    //     items,
+                    //     itemPrices
+                    // });
                     if (Object.keys(itemPrices).length > 0) {
                         orderConfig.itemPrices = itemPrices;
                     }
