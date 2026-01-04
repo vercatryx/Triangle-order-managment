@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { supabase } from '@/lib/supabase';
 import { getMenuItems, getVendors, getBoxTypes, getSettings, getClient } from '@/lib/actions';
 import { randomUUID } from 'crypto';
+import { getNextDeliveryDate, getTakeEffectDateLegacy } from '@/lib/order-dates';
 
 /**
  * API Route: Process all current active orders from orders table
@@ -30,95 +31,20 @@ function generateUniqueCaseId(): string {
     return `CASE-${timestamp}-${random}`;
 }
 
-/**
- * Calculate the take effect date (second occurrence of vendor delivery day)
- */
+// Re-export for backward compatibility (deprecated, use order-dates.ts directly)
+/** @deprecated Use getTakeEffectDateLegacy from order-dates.ts */
 function calculateTakeEffectDate(vendorId: string, vendors: any[]): Date | null {
-    if (!vendorId) return null;
-
-    const vendor = vendors.find(v => v.id === vendorId);
-    if (!vendor || !vendor.deliveryDays || vendor.deliveryDays.length === 0) {
-        return null;
-    }
-
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-
-    const dayNameToNumber: { [key: string]: number } = {
-        'Sunday': 0,
-        'Monday': 1,
-        'Tuesday': 2,
-        'Wednesday': 3,
-        'Thursday': 4,
-        'Friday': 5,
-        'Saturday': 6
-    };
-
-    const deliveryDayNumbers = vendor.deliveryDays
-        .map((day: string) => dayNameToNumber[day])
-        .filter((num: number | undefined): num is number => num !== undefined);
-
-    if (deliveryDayNumbers.length === 0) return null;
-
-    // Find the second occurrence (next next delivery day, starting from tomorrow)
-    let foundCount = 0;
-    for (let i = 1; i <= 21; i++) {
-        const checkDate = new Date(today);
-        checkDate.setDate(today.getDate() + i);
-        const dayOfWeek = checkDate.getDay();
-
-        if (deliveryDayNumbers.includes(dayOfWeek)) {
-            foundCount++;
-            if (foundCount === 2) {
-                return checkDate;
-            }
-        }
-    }
-
-    return null;
+    return getTakeEffectDateLegacy(vendorId, vendors);
 }
 
 /**
  * Calculate scheduled delivery date (first occurrence of vendor delivery day)
+ * @deprecated Use getNextDeliveryDate from order-dates.ts
  */
 function calculateScheduledDeliveryDate(vendorId: string, vendors: any[]): Date | null {
-    if (!vendorId) return null;
-
-    const vendor = vendors.find(v => v.id === vendorId);
-    if (!vendor || !vendor.deliveryDays || vendor.deliveryDays.length === 0) {
-        return null;
-    }
-
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-
-    const dayNameToNumber: { [key: string]: number } = {
-        'Sunday': 0,
-        'Monday': 1,
-        'Tuesday': 2,
-        'Wednesday': 3,
-        'Thursday': 4,
-        'Friday': 5,
-        'Saturday': 6
-    };
-
-    const deliveryDayNumbers = vendor.deliveryDays
-        .map((day: string) => dayNameToNumber[day])
-        .filter((num: number | undefined): num is number => num !== undefined);
-
-    if (deliveryDayNumbers.length === 0) return null;
-
-    // Find the first occurrence (next delivery day)
-    for (let i = 0; i <= 14; i++) {
-        const checkDate = new Date(today);
-        checkDate.setDate(today.getDate() + i);
-        if (deliveryDayNumbers.includes(checkDate.getDay())) {
-            return checkDate;
-        }
-    }
-
-    return null;
+    return getNextDeliveryDate(vendorId, vendors);
 }
+
 
 /**
  * Precheck function: Transfer upcoming orders for clients who have no orders yet

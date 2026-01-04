@@ -717,7 +717,7 @@ export async function getPublicClient(id: string) {
 }
 
 export async function addClient(data: Omit<ClientProfile, 'id' | 'createdAt' | 'updatedAt'>) {
-    const payload = {
+    const payload: any = {
         full_name: data.fullName,
         email: data.email,
         address: data.address,
@@ -730,9 +730,33 @@ export async function addClient(data: Omit<ClientProfile, 'id' | 'createdAt' | '
         notes: data.notes,
         status_id: data.statusId || null,
         service_type: data.serviceType,
-        approved_meals_per_week: data.approvedMealsPerWeek || 0,
-        active_order: data.activeOrder || {}
+        approved_meals_per_week: data.approvedMealsPerWeek || 0
     };
+
+    // Save active_order if provided (ClientProfile component handles validation)
+    if (data.activeOrder !== undefined && data.activeOrder !== null) {
+        payload.active_order = data.activeOrder;
+    } else {
+        payload.active_order = {};
+    }
+
+    console.log('[addClient] Saving client with active_order:');
+    console.log('  hasActiveOrder:', data.activeOrder !== undefined && data.activeOrder !== null);
+    if (data.activeOrder) {
+        console.log('  Full activeOrder being saved:', JSON.stringify(data.activeOrder, null, 2));
+        if (data.activeOrder.vendorSelections) {
+            console.log('  Vendor Selections being saved:');
+            data.activeOrder.vendorSelections.forEach((s: any, idx: number) => {
+                console.log(`    [${idx}] vendorId: ${s.vendorId}`);
+                console.log(`    [${idx}] items:`, s.items || {});
+                if (s.items) {
+                    Object.entries(s.items).forEach(([itemId, qty]) => {
+                        console.log(`      - ${itemId}: ${qty}`);
+                    });
+                }
+            });
+        }
+    }
 
     const { data: res, error } = await supabase.from('clients').insert([payload]).select().single();
     handleError(error);
@@ -742,6 +766,24 @@ export async function addClient(data: Omit<ClientProfile, 'id' | 'createdAt' | '
     }
 
     const newClient = mapClientFromDB(res);
+
+    console.log('[addClient] Client created, returned activeOrder:');
+    console.log('  hasActiveOrder:', !!newClient.activeOrder);
+    if (newClient.activeOrder) {
+        console.log('  Full activeOrder from DB:', JSON.stringify(newClient.activeOrder, null, 2));
+        if (newClient.activeOrder.vendorSelections) {
+            console.log('  Vendor Selections from DB:');
+            newClient.activeOrder.vendorSelections.forEach((s: any, idx: number) => {
+                console.log(`    [${idx}] vendorId: ${s.vendorId}`);
+                console.log(`    [${idx}] items:`, s.items || {});
+                if (s.items) {
+                    Object.entries(s.items).forEach(([itemId, qty]) => {
+                        console.log(`      - ${itemId}: ${qty}`);
+                    });
+                }
+            });
+        }
+    }
 
     if (newClient.activeOrder && newClient.activeOrder.caseId) {
         await syncCurrentOrderToUpcoming(newClient.id, newClient, true);
@@ -893,6 +935,23 @@ export async function updateClient(id: string, data: Partial<ClientProfile>) {
 }
 
 export async function deleteClient(id: string) {
+    // Delete all upcoming orders for this client
+    const { error: upcomingOrdersError } = await supabase
+        .from('upcoming_orders')
+        .delete()
+        .eq('client_id', id);
+    handleError(upcomingOrdersError);
+
+    // Delete active orders (pending, confirmed, processing) but preserve order history
+    // Order history includes: completed, waiting_for_proof, billing_pending, cancelled
+    const { error: activeOrdersError } = await supabase
+        .from('orders')
+        .delete()
+        .eq('client_id', id)
+        .in('status', ['pending', 'confirmed', 'processing']);
+    handleError(activeOrdersError);
+
+    // Delete the client
     const { error } = await supabase.from('clients').delete().eq('id', id);
     handleError(error);
     revalidatePath('/clients');
@@ -1542,146 +1601,42 @@ export async function getAllBillingRecords() {
 
 // --- UPCOMING ORDERS ACTIONS ---
 
-/**
- * Calculate the take effect date (second occurrence of vendor delivery day)
- * Returns a Date object or null if vendor has no delivery days
- */
+// Import centralized order date calculation utilities
+import { 
+    getNextDeliveryDate, 
+    getNextDeliveryDateForDay, 
+    getTakeEffectDate as getTakeEffectDateFromUtils,
+    getAllDeliveryDatesForOrder as getAllDeliveryDatesFromUtils
+} from './order-dates';
+
+// Re-export for backward compatibility (deprecated, use order-dates.ts directly)
+/** @deprecated Use getTakeEffectDateLegacy from order-dates.ts */
 function calculateTakeEffectDate(vendorId: string, vendors: Vendor[]): Date | null {
-    if (!vendorId) return null;
-
-    const vendor = vendors.find(v => v.id === vendorId);
-    if (!vendor || !vendor.deliveryDays || vendor.deliveryDays.length === 0) {
-        return null;
-    }
-
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-
-    const dayNameToNumber: { [key: string]: number } = {
-        'Sunday': 0,
-        'Monday': 1,
-        'Tuesday': 2,
-        'Wednesday': 3,
-        'Thursday': 4,
-        'Friday': 5,
-        'Saturday': 6
-    };
-
-    const deliveryDayNumbers = vendor.deliveryDays
-        .map(day => dayNameToNumber[day])
-        .filter(num => num !== undefined) as number[];
-
-    if (deliveryDayNumbers.length === 0) return null;
-
-    // Find the second occurrence (next next delivery day, starting from tomorrow)
-    let foundCount = 0;
-    for (let i = 1; i <= 21; i++) {
-        const checkDate = new Date(today);
-        checkDate.setDate(today.getDate() + i);
-        const dayOfWeek = checkDate.getDay();
-
-        if (deliveryDayNumbers.includes(dayOfWeek)) {
-            foundCount++;
-            if (foundCount === 2) {
-                return checkDate;
-            }
-        }
-    }
-
-    return null;
+    const { getTakeEffectDateLegacy } = require('./order-dates');
+    return getTakeEffectDateLegacy(vendorId, vendors);
 }
 
-/**
- * Calculate the earliest take effect date from multiple vendors (for Food orders with multiple vendors)
- */
+/** @deprecated Use getEarliestDeliveryDate from order-dates.ts */
 function calculateEarliestTakeEffectDate(vendorIds: string[], vendors: Vendor[]): Date | null {
+    const { getTakeEffectDateLegacy, getEarliestDeliveryDate } = require('./order-dates');
     const dates: Date[] = [];
-
     for (const vendorId of vendorIds) {
-        const date = calculateTakeEffectDate(vendorId, vendors);
+        const date = getTakeEffectDateLegacy(vendorId, vendors);
         if (date) dates.push(date);
     }
-
     if (dates.length === 0) return null;
     return dates.reduce((earliest, current) => current < earliest ? current : earliest);
 }
 
-/**
- * Calculate scheduled delivery date for a specific delivery day
- */
+/** @deprecated Use getNextDeliveryDateForDay from order-dates.ts */
 function calculateScheduledDeliveryDateForDay(deliveryDay: string, vendors: Vendor[], vendorId?: string): Date | null {
-    if (!deliveryDay) return null;
-
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-
-    const dayNameToNumber: { [key: string]: number } = {
-        'Sunday': 0, 'Monday': 1, 'Tuesday': 2, 'Wednesday': 3,
-        'Thursday': 4, 'Friday': 5, 'Saturday': 6
-    };
-
-    const targetDayNumber = dayNameToNumber[deliveryDay];
-    if (targetDayNumber === undefined) return null;
-
-    // If vendorId is provided, verify the vendor delivers on this day
-    if (vendorId) {
-        const vendor = vendors.find(v => v.id === vendorId);
-        if (!vendor || !vendor.deliveryDays || !vendor.deliveryDays.includes(deliveryDay)) {
-            return null;
-        }
-    }
-
-    // Find the next occurrence of this day
-    for (let i = 0; i <= 14; i++) {
-        const checkDate = new Date(today);
-        checkDate.setDate(today.getDate() + i);
-        if (checkDate.getDay() === targetDayNumber) {
-            return checkDate;
-        }
-    }
-
-    return null;
+    return getNextDeliveryDateForDay(deliveryDay, vendors, vendorId);
 }
 
-/**
- * Calculate take effect date for a specific delivery day (second occurrence)
- */
+/** @deprecated Use getTakeEffectDateForDayLegacy from order-dates.ts */
 function calculateTakeEffectDateForDay(deliveryDay: string, vendors: Vendor[], vendorId?: string): Date | null {
-    if (!deliveryDay) return null;
-
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-
-    const dayNameToNumber: { [key: string]: number } = {
-        'Sunday': 0, 'Monday': 1, 'Tuesday': 2, 'Wednesday': 3,
-        'Thursday': 4, 'Friday': 5, 'Saturday': 6
-    };
-
-    const targetDayNumber = dayNameToNumber[deliveryDay];
-    if (targetDayNumber === undefined) return null;
-
-    // If vendorId is provided, verify the vendor delivers on this day
-    if (vendorId) {
-        const vendor = vendors.find(v => v.id === vendorId);
-        if (!vendor || !vendor.deliveryDays || !vendor.deliveryDays.includes(deliveryDay)) {
-            return null;
-        }
-    }
-
-    // Find the second occurrence (starting from tomorrow)
-    let foundCount = 0;
-    for (let i = 1; i <= 21; i++) {
-        const checkDate = new Date(today);
-        checkDate.setDate(today.getDate() + i);
-        if (checkDate.getDay() === targetDayNumber) {
-            foundCount++;
-            if (foundCount === 2) {
-                return checkDate;
-            }
-        }
-    }
-
-    return null;
+    const { getTakeEffectDateForDayLegacy } = require('./order-dates');
+    return getTakeEffectDateForDayLegacy(deliveryDay, vendors, vendorId);
 }
 
 /**
@@ -1699,8 +1654,12 @@ async function syncSingleOrderForDeliveryDay(
     const supabaseClient = supabaseClientObj || supabase;
     // console.log(`[syncSingleOrderForDeliveryDay] Start sync for client ${clientId}, day: ${deliveryDay || 'null'}`);
     // Calculate dates for this specific delivery day
+    // IMPORTANT: take_effect_date must always be a Sunday and respect weekly locking
     let takeEffectDate: Date | null = null;
     let scheduledDeliveryDate: Date | null = null;
+    
+    // Get settings for weekly locking logic
+    const settings = await getSettings();
 
     // ... logic ...
     // Note: I am rewriting the top of the function to include supabaseClientObj.
@@ -1719,39 +1678,36 @@ async function syncSingleOrderForDeliveryDay(
 
         if (vendorIds.length > 0) {
             if (deliveryDay) {
-                // Use the first vendor's delivery day
-                const firstVendorId = vendorIds[0];
-                takeEffectDate = calculateTakeEffectDateForDay(deliveryDay, vendors, firstVendorId);
-                scheduledDeliveryDate = calculateScheduledDeliveryDateForDay(deliveryDay, vendors, firstVendorId);
+                // Calculate scheduled delivery date for the specific day
+                scheduledDeliveryDate = getNextDeliveryDateForDay(deliveryDay, vendors, vendorIds[0]);
             } else {
-                // Fallback to old logic
-                takeEffectDate = calculateEarliestTakeEffectDate(vendorIds, vendors);
+                // Fallback: find the first delivery date
                 const firstVendorId = vendorIds[0];
-                const firstDate = calculateTakeEffectDate(firstVendorId, vendors);
-                if (firstDate) {
+                const vendor = vendors.find(v => v.id === firstVendorId);
+                if (vendor && vendor.deliveryDays) {
+                    const dayNameToNumber: { [key: string]: number } = {
+                        'Sunday': 0, 'Monday': 1, 'Tuesday': 2, 'Wednesday': 3,
+                        'Thursday': 4, 'Friday': 5, 'Saturday': 6
+                    };
+                    const deliveryDayNumbers = vendor.deliveryDays
+                        .map((day: string) => dayNameToNumber[day])
+                        .filter((num: number | undefined): num is number => num !== undefined);
+
                     const today = new Date();
                     today.setHours(0, 0, 0, 0);
-                    const vendor = vendors.find(v => v.id === firstVendorId);
-                    if (vendor && vendor.deliveryDays) {
-                        const dayNameToNumber: { [key: string]: number } = {
-                            'Sunday': 0, 'Monday': 1, 'Tuesday': 2, 'Wednesday': 3,
-                            'Thursday': 4, 'Friday': 5, 'Saturday': 6
-                        };
-                        const deliveryDayNumbers = vendor.deliveryDays
-                            .map((day: string) => dayNameToNumber[day])
-                            .filter((num: number | undefined): num is number => num !== undefined);
-
-                        for (let i = 0; i <= 14; i++) {
-                            const checkDate = new Date(today);
-                            checkDate.setDate(today.getDate() + i);
-                            if (deliveryDayNumbers.includes(checkDate.getDay())) {
-                                scheduledDeliveryDate = checkDate;
-                                break;
-                            }
+                    for (let i = 0; i <= 14; i++) {
+                        const checkDate = new Date(today);
+                        checkDate.setDate(today.getDate() + i);
+                        if (deliveryDayNumbers.includes(checkDate.getDay())) {
+                            scheduledDeliveryDate = checkDate;
+                            break;
                         }
                     }
                 }
             }
+            
+            // IMPORTANT: take_effect_date must always be a Sunday using weekly locking logic
+            takeEffectDate = getTakeEffectDateFromUtils(settings);
         }
     } else if (orderConfig.serviceType === 'Boxes') {
         // Boxes can exist with or without boxTypeId now
@@ -1763,10 +1719,10 @@ async function syncSingleOrderForDeliveryDay(
 
         if (boxVendorId) {
             if (deliveryDay) {
-                takeEffectDate = calculateTakeEffectDateForDay(deliveryDay, vendors, boxVendorId);
-                scheduledDeliveryDate = calculateScheduledDeliveryDateForDay(deliveryDay, vendors, boxVendorId);
+                // Calculate scheduled delivery date for the specific day
+                scheduledDeliveryDate = getNextDeliveryDateForDay(deliveryDay, vendors, boxVendorId);
             } else {
-                takeEffectDate = calculateTakeEffectDate(boxVendorId, vendors);
+                // Fallback: find the first delivery date
                 const vendor = vendors.find(v => v.id === boxVendorId);
                 if (vendor && vendor.deliveryDays && vendor.deliveryDays.length > 0) {
                     const today = new Date();
@@ -1789,6 +1745,9 @@ async function syncSingleOrderForDeliveryDay(
                     }
                 }
             }
+            
+            // IMPORTANT: take_effect_date must always be a Sunday using weekly locking logic
+            takeEffectDate = getTakeEffectDateFromUtils(settings);
         } else {
             // If no vendorId, we must still provide a take_effect_date to satisfy the NOT NULL constraint in upcoming_orders table.
             // We'll use a far-future date (2099-12-31) to indicate it's not ready for processing but valid for storage.
@@ -2431,7 +2390,7 @@ export async function processUpcomingOrders() {
             // Calculate scheduled_delivery_date from delivery_day if available
             let scheduledDeliveryDate: string | null = null;
             if (upcomingOrder.delivery_day) {
-                const calculatedDate = calculateScheduledDeliveryDateForDay(
+                const calculatedDate = getNextDeliveryDateForDay(
                     upcomingOrder.delivery_day,
                     await getVendors(),
                     undefined
@@ -3563,7 +3522,7 @@ export async function saveDeliveryProofUrlAndProcessOrder(
                     // Calculate scheduled_delivery_date from delivery_day if available
                     let scheduledDeliveryDate: string | null = null;
                     if (upcomingOrder.delivery_day) {
-                        const calculatedDate = calculateScheduledDeliveryDateForDay(
+                        const calculatedDate = getNextDeliveryDateForDay(
                             upcomingOrder.delivery_day,
                             await getVendors(),
                             undefined

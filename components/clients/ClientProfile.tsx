@@ -1,11 +1,19 @@
 'use client';
 
-import { useState, useEffect, Fragment, useMemo } from 'react';
+import { useState, useEffect, Fragment, useMemo, useRef, ReactNode } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import { ClientProfile, ClientStatus, Navigator, Vendor, MenuItem, BoxType, ServiceType, AppSettings, DeliveryRecord, ItemCategory, ClientFullDetails, BoxQuota } from '@/lib/types';
 import { updateClient, addClient, deleteClient, updateDeliveryProof, recordClientChange, syncCurrentOrderToUpcoming, logNavigatorAction, getBoxQuotas, saveEquipmentOrder, getRegularClients, getDependentsByParentId } from '@/lib/actions';
 import { getSingleForm, getClientSubmissions } from '@/lib/form-actions';
 import { getClient, getStatuses, getNavigators, getVendors, getMenuItems, getBoxTypes, getSettings, getCategories, getEquipment, getClients, invalidateClientData, invalidateReferenceData, getActiveOrderForClient, getUpcomingOrderForClient, getOrderHistory, getClientHistory, getBillingHistory, invalidateOrderData } from '@/lib/cached-data';
+import { areAnyDeliveriesLocked, getEarliestEffectiveDate, getLockedWeekDescription } from '@/lib/weekly-lock';
+import {
+    getNextDeliveryDate as getNextDeliveryDateUtil,
+    getNextDeliveryDateForDay,
+    getTakeEffectDate,
+    getAllDeliveryDatesForOrder,
+    formatDeliveryDate
+} from '@/lib/order-dates';
 import { Save, ArrowLeft, Truck, Package, AlertTriangle, Upload, Trash2, Plus, Check, ClipboardList, History, CreditCard, Calendar, ChevronDown, ChevronUp, ShoppingCart, Loader2, FileText, Square, CheckSquare, Wrench } from 'lucide-react';
 import FormFiller from '@/components/forms/FormFiller';
 import { FormSchema } from '@/lib/form-types';
@@ -46,9 +54,7 @@ function UnitsModal({
 }) {
     const [units, setUnits] = useState<string>('0');
 
-    useEffect(() => {
-        console.log('[UnitsModal] isOpen changed to:', isOpen);
-    }, [isOpen]);
+
 
     if (!isOpen) return null;
 
@@ -121,15 +127,18 @@ function DeleteConfirmationModal({
     );
 }
 
-export function ClientProfileDetail({ clientId: propClientId, onClose, initialData, statuses: initialStatuses, navigators: initialNavigators, vendors: initialVendors, menuItems: initialMenuItems, boxTypes: initialBoxTypes, currentUser }: Props) {
+export function ClientProfileDetail({ clientId: propClientId, onClose, initialData, statuses: initialStatuses, navigators: initialNavigators, vendors: initialVendors, menuItems: initialMenuItems, boxTypes: initialBoxTypes, currentUser }: Props): ReactNode {
     const router = useRouter();
     const params = useParams();
     const propClientIdValue = (params?.id as string) || propClientId;
-    
+
     // Track the actual clientId (starts as prop, updates to real ID after creating new client)
     const [actualClientId, setActualClientId] = useState<string>(propClientIdValue);
     const clientId = actualClientId;
     const isNewClient = clientId === 'new';
+
+    // Track if we just created a new client to prevent useEffect from overwriting orderConfig
+    const justCreatedClientRef = useRef<boolean>(false);
 
     const [client, setClient] = useState<ClientProfile | null>(null);
     const [statuses, setStatuses] = useState<ClientStatus[]>(initialStatuses || []);
@@ -187,10 +196,7 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
     // Delete Confirmation Modal
     const [showDeleteModal, setShowDeleteModal] = useState(false);
 
-    // Debug: Log when modal state changes
-    useEffect(() => {
-        console.log('[ClientProfile] showUnitsModal changed to:', showUnitsModal);
-    }, [showUnitsModal]);
+
 
     useEffect(() => {
         // Handle new client case - initialize with defaults
@@ -201,7 +207,7 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                 // Initialize with default values
                 const initialStatusId = (initialStatuses || statuses)[0]?.id || '';
                 const defaultNavigatorId = (initialNavigators || navigators).find(n => n.isActive)?.id || '';
-                
+
                 const defaultClient: Partial<ClientProfile> = {
                     fullName: '',
                     email: '',
@@ -217,7 +223,7 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                     serviceType: 'Food',
                     approvedMealsPerWeek: 21
                 };
-                
+
                 setFormData(defaultClient);
                 setClient(defaultClient as ClientProfile);
                 setOrderConfig({ serviceType: 'Food', vendorSelections: [{ vendorId: '', items: {} }] });
@@ -228,11 +234,21 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
             return;
         }
 
+        // If we just created this client, skip reloading to preserve the orderConfig we just set
+        if (justCreatedClientRef.current) {
+
+            justCreatedClientRef.current = false; // Reset the flag
+            return;
+        }
+
+
+
         // If we have initialData AND we have the necessary lookups (passed as props), we can hydrate instantly without loading state.
         // However, if we are missing critical lookups (e.g. somehow props weren't passed), we should still trigger loadLookups.
         // Generally, ClientList passes everything.
 
         if (initialData && initialData.client.id === clientId) {
+
             hydrateFromInitialData(initialData);
             // If props were passed, we don't need to fetch standard lookups, but we might still need settings/categories/allClients
             // For simplicity, let's just fetch everything missing in background but show content immediately if we have the basics.
@@ -260,6 +276,85 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
             loadSubmissions();
         }
     }, [clientId]);
+
+    // Effect: Initialize box quantity when Boxes service is selected
+    useEffect(() => {
+        // If Boxes service is selected and no boxQuantity, set default to 1
+        if (formData.serviceType === 'Boxes' && !orderConfig.boxQuantity) {
+            setOrderConfig((prev: any) => ({
+                ...prev,
+                boxQuantity: 1
+            }));
+        }
+    }, [formData.serviceType]);
+
+    // Extract dependencies with defaults to ensure consistent array size
+    const caseId = useMemo(() => orderConfig?.caseId ?? null, [orderConfig?.caseId]);
+    const vendorSelections = useMemo(() => orderConfig?.vendorSelections ?? [], [orderConfig?.vendorSelections]);
+    const vendorId = useMemo(() => orderConfig?.vendorId ?? null, [orderConfig?.vendorId]);
+    const boxTypeId = useMemo(() => orderConfig?.boxTypeId ?? null, [orderConfig?.boxTypeId]);
+    const boxQuantity = useMemo(() => orderConfig?.boxQuantity ?? null, [orderConfig?.boxQuantity]);
+    const items = useMemo(() => (orderConfig as any)?.items ?? {}, [(orderConfig as any)?.items]);
+    const itemPrices = useMemo(() => (orderConfig as any)?.itemPrices ?? {}, [(orderConfig as any)?.itemPrices]);
+    const serviceType = useMemo(() => formData?.serviceType ?? null, [formData?.serviceType]);
+
+    // Initialize parentClientSearch when formData changes (always call this hook before any conditional returns)
+    useEffect(() => {
+        if (client?.parentClientId && formData.parentClientId && !parentClientSearch) {
+            const parent = regularClients.find(c => c.id === formData.parentClientId);
+            if (parent) {
+                setParentClientSearch(parent.fullName);
+            }
+        }
+    }, [formData.parentClientId, client?.parentClientId, regularClients, parentClientSearch]);
+
+    // Effect: Load quotas when boxTypeId changes
+    useEffect(() => {
+        // If Boxes service is selected and no boxTypeId, auto-set it to first active box type
+        if (formData.serviceType === 'Boxes' && !orderConfig.boxTypeId && boxTypes.length > 0) {
+            const firstActiveBoxType = boxTypes.find(bt => bt.isActive);
+            if (firstActiveBoxType) {
+                setOrderConfig((prev: any) => ({
+                    ...prev,
+                    boxTypeId: firstActiveBoxType.id,
+                    boxQuantity: 1
+                }));
+            }
+        }
+
+        // Load box quotas when boxTypeId changes
+        if (formData.serviceType === 'Boxes' && orderConfig.boxTypeId) {
+            getBoxQuotas(orderConfig.boxTypeId).then(quotas => {
+                setBoxQuotas(quotas);
+            }).catch(err => {
+                console.error('Error loading box quotas:', err);
+                setBoxQuotas([]);
+            });
+        } else {
+            setBoxQuotas([]);
+        }
+    }, [formData.serviceType, orderConfig.boxTypeId, boxTypes]);
+
+    // Don't show anything until all data is loaded
+    if (loading || loadingOrderDetails || !client) {
+        return (
+            <div className={styles.loadingContainer} style={{ minHeight: '400px' }}>
+                <div className={styles.spinner}></div>
+                <p className={styles.loadingText}>Loading client profile...</p>
+            </div>
+        );
+    }
+
+    // Render Form Filler if active
+    if (isFillingForm && formSchema) {
+        return (
+            <div className={`${styles.container} ${onClose ? styles.inModal : ''}`} style={{ padding: 0 }}>
+                <FormFiller schema={formSchema} onBack={handleCloseScreeningForm} clientId={clientId} />
+            </div>
+        );
+    }
+
+
 
     async function loadSubmissions() {
         setLoadingSubmissions(true);
@@ -361,6 +456,7 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
             if (!activeOrderConfig.serviceType) {
                 activeOrderConfig.serviceType = data.client.serviceType;
             }
+
             setOrderConfig(activeOrderConfig);
         } else {
             const defaultOrder: any = { serviceType: data.client.serviceType };
@@ -511,71 +607,11 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                 }
                 configToSet = defaultOrder;
             }
+
             setOrderConfig(configToSet);
             setOriginalOrderConfig(JSON.parse(JSON.stringify(configToSet))); // Deep copy for comparison
         }
     }
-
-    // Effect: Initialize box quantity when Boxes service is selected
-    useEffect(() => {
-        // If Boxes service is selected and no boxQuantity, set default to 1
-        if (formData.serviceType === 'Boxes' && !orderConfig.boxQuantity) {
-            setOrderConfig((prev: any) => ({
-                ...prev,
-                boxQuantity: 1
-            }));
-        }
-    }, [formData.serviceType]);
-
-    // Extract dependencies with defaults to ensure consistent array size
-    const caseId = useMemo(() => orderConfig?.caseId ?? null, [orderConfig?.caseId]);
-    const vendorSelections = useMemo(() => orderConfig?.vendorSelections ?? [], [orderConfig?.vendorSelections]);
-    const vendorId = useMemo(() => orderConfig?.vendorId ?? null, [orderConfig?.vendorId]);
-    const boxTypeId = useMemo(() => orderConfig?.boxTypeId ?? null, [orderConfig?.boxTypeId]);
-    const boxQuantity = useMemo(() => orderConfig?.boxQuantity ?? null, [orderConfig?.boxQuantity]);
-    const items = useMemo(() => (orderConfig as any)?.items ?? {}, [(orderConfig as any)?.items]);
-    const itemPrices = useMemo(() => (orderConfig as any)?.itemPrices ?? {}, [(orderConfig as any)?.itemPrices]);
-    const serviceType = useMemo(() => formData?.serviceType ?? null, [formData?.serviceType]);
-
-    // Auto-save effect removed for optimization
-
-
-    // Initialize parentClientSearch when formData changes (always call this hook before any conditional returns)
-    useEffect(() => {
-        if (client?.parentClientId && formData.parentClientId && !parentClientSearch) {
-            const parent = regularClients.find(c => c.id === formData.parentClientId);
-            if (parent) {
-                setParentClientSearch(parent.fullName);
-            }
-        }
-    }, [formData.parentClientId, client?.parentClientId, regularClients, parentClientSearch]);
-
-    // Effect: Load quotas when boxTypeId changes
-    useEffect(() => {
-        // If Boxes service is selected and no boxTypeId, auto-set it to first active box type
-        if (formData.serviceType === 'Boxes' && !orderConfig.boxTypeId && boxTypes.length > 0) {
-            const firstActiveBoxType = boxTypes.find(bt => bt.isActive);
-            if (firstActiveBoxType) {
-                setOrderConfig((prev: any) => ({
-                    ...prev,
-                    boxTypeId: firstActiveBoxType.id,
-                    boxQuantity: 1
-                }));
-            }
-        }
-
-        // Load box quotas when boxTypeId changes
-        if (formData.serviceType === 'Boxes' && orderConfig.boxTypeId) {
-            getBoxQuotas(orderConfig.boxTypeId).then(quotas => {
-                setBoxQuotas(quotas);
-            }).catch(err => {
-                console.error('Error loading box quotas:', err);
-                setBoxQuotas([]);
-            });
-        } else {
-            setBoxQuotas([]);
-        }
-    }, [formData.serviceType, orderConfig.boxTypeId, boxTypes]);
 
 
     // -- Logic Helpers --
@@ -595,7 +631,7 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                     const dayItems = selection.itemsByDay[deliveryDay] || {};
                     for (const [itemId, qty] of Object.entries(dayItems)) {
                         const item = menuItems.find(i => i.id === itemId);
-                        const itemPrice = item ? (item.priceEach ?? item.value) : 0;
+                        const itemPrice = item ? item.value : 0;
                         total += itemPrice * (qty as number);
                     }
                 }
@@ -603,7 +639,7 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                 // Normal items structure
                 for (const [itemId, qty] of Object.entries(selection.items)) {
                     const item = menuItems.find(i => i.id === itemId);
-                    const itemPrice = item ? (item.priceEach ?? item.value) : 0;
+                    const itemPrice = item ? item.value : 0;
                     total += itemPrice * (qty as number);
                 }
             }
@@ -695,7 +731,7 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                     const dayItems = selection.itemsByDay[day] || {};
                     for (const [itemId, qty] of Object.entries(dayItems)) {
                         const item = menuItems.find(i => i.id === itemId);
-                        const itemPrice = item ? (item.priceEach ?? item.value) : 0;
+                        const itemPrice = item ? item.value : 0;
                         total += itemPrice * (qty as number);
                     }
                 }
@@ -703,7 +739,7 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                 // Normal single-day format
                 for (const [itemId, qty] of Object.entries(selection.items)) {
                     const item = menuItems.find(i => i.id === itemId);
-                    const itemPrice = item ? (item.priceEach ?? item.value) : 0;
+                    const itemPrice = item ? item.value : 0;
                     total += itemPrice * (qty as number);
                 }
             }
@@ -720,189 +756,55 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
     }
 
     /**
-     * Calculate the next delivery date (first occurrence) for a vendor as a Date object
+     * Get the next delivery date for a vendor (wrapper for centralized function)
      */
     function getNextDeliveryDateObject(vendorId: string): Date | null {
-        if (!vendorId) return null;
-
-        const vendor: any = vendors.find(v => v.id === vendorId);
-        const days = vendor?.deliveryDays || vendor?.delivery_days;
-        if (!vendor || !days || days.length === 0) {
-            return null;
-        }
-
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
-
-        const dayNameToNumber: { [key: string]: number } = {
-            'Sunday': 0,
-            'Monday': 1,
-            'Tuesday': 2,
-            'Wednesday': 3,
-            'Thursday': 4,
-            'Friday': 5,
-            'Saturday': 6
-        };
-
-        const deliveryDayNumbers = days
-            .map((day: any) => dayNameToNumber[day])
-            .filter((num: any) => num !== undefined) as number[];
-
-        if (deliveryDayNumbers.length === 0) return null;
-
-        // Find the first occurrence (next delivery day, starting from today)
-        for (let i = 0; i <= 14; i++) {
-            const checkDate = new Date(today);
-            checkDate.setDate(today.getDate() + i);
-            if (deliveryDayNumbers.includes(checkDate.getDay())) {
-                return checkDate;
-            }
-        }
-
-        return null;
+        return getNextDeliveryDateUtil(vendorId, vendors);
     }
 
     /**
-     * Calculate the take effect date (second occurrence) for a vendor as a Date object
+     * Get all delivery dates for the order (for weekly locking validation)
+     * Uses centralized function from order-dates.ts
      */
-    function getTakeEffectDateObject(vendorId: string): Date | null {
-        if (!vendorId) return null;
-
-        const vendor: any = vendors.find(v => v.id === vendorId);
-        const days = vendor?.deliveryDays || vendor?.delivery_days;
-        if (!vendor || !days || days.length === 0) {
-            return null;
-        }
-
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
-
-        const dayNameToNumber: { [key: string]: number } = {
-            'Sunday': 0,
-            'Monday': 1,
-            'Tuesday': 2,
-            'Wednesday': 3,
-            'Thursday': 4,
-            'Friday': 5,
-            'Saturday': 6
-        };
-
-        const deliveryDayNumbers = days
-            .map((day: any) => dayNameToNumber[day])
-            .filter((num: any) => num !== undefined) as number[];
-
-        if (deliveryDayNumbers.length === 0) return null;
-
-        // Find the second occurrence (next next delivery day, starting from tomorrow)
-        let foundCount = 0;
-        for (let i = 1; i <= 21; i++) {
-            const checkDate = new Date(today);
-            checkDate.setDate(today.getDate() + i);
-            if (deliveryDayNumbers.includes(checkDate.getDay())) {
-                foundCount++;
-                if (foundCount === 2) {
-                    return checkDate;
-                }
-            }
-        }
-
-        return null;
+    function getAllDeliveryDatesForOrderLocal(): Date[] {
+        if (!orderConfig || !orderConfig.caseId || !formData.serviceType) return [];
+        return getAllDeliveryDatesForOrder(orderConfig, vendors, formData.serviceType as "Food" | "Boxes");
     }
 
     /**
      * Get the earliest delivery date across all vendors in the order
      */
     function getEarliestDeliveryDateForOrder(): Date | null {
-        if (!orderConfig || !orderConfig.caseId) return null;
-
-        const deliveryDates: Date[] = [];
-
-        if (formData.serviceType === 'Food' && orderConfig.vendorSelections) {
-            for (const selection of orderConfig.vendorSelections) {
-                if (selection.vendorId) {
-                    const date = getNextDeliveryDateObject(selection.vendorId);
-                    if (date) deliveryDates.push(date);
-                }
-            }
-        } else if (formData.serviceType === 'Boxes' && orderConfig.vendorId) {
-            const date = getNextDeliveryDateObject(orderConfig.vendorId);
-            if (date) deliveryDates.push(date);
-        }
-
+        const deliveryDates = getAllDeliveryDatesForOrderLocal();
         if (deliveryDates.length === 0) return null;
         return new Date(Math.min(...deliveryDates.map(d => d.getTime())));
     }
 
     /**
-     * Get the earliest take effect date across all vendors in the order
+     * Get the earliest effective date for order changes.
+     * Uses weekly locking logic - always returns a Sunday.
      */
     function getEarliestTakeEffectDateForOrder(): Date | null {
         if (!orderConfig || !orderConfig.caseId) return null;
+        if (!settings) return null;
 
-        const takeEffectDates: Date[] = [];
-
-        if (formData.serviceType === 'Food' && orderConfig.vendorSelections) {
-            for (const selection of orderConfig.vendorSelections) {
-                if (selection.vendorId) {
-                    const date = getTakeEffectDateObject(selection.vendorId);
-                    if (date) takeEffectDates.push(date);
-                }
-            }
-        } else if (formData.serviceType === 'Boxes' && orderConfig.vendorId) {
-            const date = getTakeEffectDateObject(orderConfig.vendorId);
-            if (date) takeEffectDates.push(date);
-        }
-
-        if (takeEffectDates.length === 0) return null;
-        return new Date(Math.min(...takeEffectDates.map(d => d.getTime())));
+        // Use centralized function from order-dates.ts which uses weekly locking logic
+        return getTakeEffectDate(settings);
     }
 
     /**
-     * Check if the cutoff date has passed relative to the next delivery date
+     * Check if any deliveries in the order are locked due to weekly cutoff.
+     * Uses weekly locking logic: if any delivery in a week is locked, all deliveries in that week are locked.
      */
     function isCutoffPassed(): boolean {
         if (!settings) return false;
         if (!orderConfig || !orderConfig.caseId) return false;
 
-        const nextDeliveryDate = getEarliestDeliveryDateForOrder();
-        if (!nextDeliveryDate) return false;
+        const deliveryDates = getAllDeliveryDatesForOrderLocal();
+        if (deliveryDates.length === 0) return false;
 
-        // Calculate cutoff date/time for the next delivery
-        const cutoffDayName = settings.weeklyCutoffDay;
-        const cutoffTimeStr = settings.weeklyCutoffTime || '17:00';
-        const [cutoffHours, cutoffMinutes] = cutoffTimeStr.split(':').map(Number);
-
-        const dayNameToNumber: { [key: string]: number } = {
-            'Sunday': 0,
-            'Monday': 1,
-            'Tuesday': 2,
-            'Wednesday': 3,
-            'Thursday': 4,
-            'Friday': 5,
-            'Saturday': 6
-        };
-
-        const cutoffDayNumber = dayNameToNumber[cutoffDayName];
-        if (cutoffDayNumber === undefined) return false;
-
-        // Find the cutoff date before the next delivery date
-        // Count backwards from delivery date to find the most recent cutoff day
-        const cutoffDate = new Date(nextDeliveryDate);
-        let daysBack = 0;
-        while (daysBack < 14) {
-            const checkDate = new Date(nextDeliveryDate);
-            checkDate.setDate(nextDeliveryDate.getDate() - daysBack);
-
-            if (checkDate.getDay() === cutoffDayNumber) {
-                cutoffDate.setTime(checkDate.getTime());
-                cutoffDate.setHours(cutoffHours, cutoffMinutes, 0, 0);
-                break;
-            }
-            daysBack++;
-        }
-
-        const now = new Date();
-        return now > cutoffDate;
+        // Use weekly locking logic to check if any deliveries are locked
+        return areAnyDeliveriesLocked(deliveryDates, settings);
     }
 
     function getBoxItemsTotal(): number {
@@ -962,113 +864,23 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
     }
 
     // Get the next delivery date for a vendor (first occurrence)
+    // Function that returns formatted delivery date (for display)
     function getNextDeliveryDate(vendorId: string): { dayOfWeek: string; date: string } | null {
-        if (!vendorId) {
-            return null;
-        }
+        const deliveryDate = getNextDeliveryDateUtil(vendorId, vendors);
+        if (!deliveryDate) return null;
 
-        const vendor = vendors.find(v => v.id === vendorId);
-        if (!vendor || !vendor.deliveryDays || vendor.deliveryDays.length === 0) {
-            return null;
-        }
-
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
-
-        const dayNameToNumber: { [key: string]: number } = {
-            'Sunday': 0,
-            'Monday': 1,
-            'Tuesday': 2,
-            'Wednesday': 3,
-            'Thursday': 4,
-            'Friday': 5,
-            'Saturday': 6
+        return {
+            dayOfWeek: deliveryDate.toLocaleDateString('en-US', { weekday: 'long' }),
+            date: deliveryDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
         };
-
-        const deliveryDayNumbers = vendor.deliveryDays
-            .map(day => dayNameToNumber[day])
-            .filter(num => num !== undefined) as number[];
-
-        if (deliveryDayNumbers.length === 0) {
-            return null;
-        }
-
-        // Find the next delivery date (start from today, check next 14 days)
-        for (let i = 0; i <= 14; i++) {
-            const checkDate = new Date(today);
-            checkDate.setDate(today.getDate() + i);
-            const dayOfWeek = checkDate.getDay();
-
-            if (deliveryDayNumbers.includes(dayOfWeek)) {
-                return {
-                    dayOfWeek: checkDate.toLocaleDateString('en-US', { weekday: 'long' }),
-                    date: checkDate.toLocaleDateString('en-US', {
-                        month: 'short',
-                        day: 'numeric',
-                        year: 'numeric'
-                    })
-                };
-            }
-        }
-
-        return null;
     }
 
     function getNextDeliveryDateForVendor(vendorId: string): string | null {
-        if (!vendorId) {
-            return null;
-        }
+        const deliveryDate = getNextDeliveryDateUtil(vendorId, vendors);
+        if (!deliveryDate) return null;
 
-        const vendor = vendors.find(v => v.id === vendorId);
-        if (!vendor || !vendor.deliveryDays || vendor.deliveryDays.length === 0) {
-            return null;
-        }
-
-        // Find the next delivery date
-        const today = new Date();
-        today.setHours(0, 0, 0, 0); // Reset time to start of day
-
-        // Map day names to day of week (0 = Sunday, 1 = Monday, etc.)
-        const dayNameToNumber: { [key: string]: number } = {
-            'Sunday': 0,
-            'Monday': 1,
-            'Tuesday': 2,
-            'Wednesday': 3,
-            'Thursday': 4,
-            'Friday': 5,
-            'Saturday': 6
-        };
-
-        const deliveryDayNumbers = vendor.deliveryDays
-            .map(day => dayNameToNumber[day])
-            .filter(num => num !== undefined) as number[];
-
-        if (deliveryDayNumbers.length === 0) {
-            return null;
-        }
-
-        // Check the next 21 days to find the second (next next) delivery day (start from tomorrow)
-        let foundCount = 0;
-        for (let i = 1; i <= 21; i++) {
-            const checkDate = new Date(today);
-            checkDate.setDate(today.getDate() + i);
-            const dayOfWeek = checkDate.getDay();
-
-            if (deliveryDayNumbers.includes(dayOfWeek)) {
-                foundCount++;
-                // Return the second occurrence (next next delivery day)
-                if (foundCount === 2) {
-                    return checkDate.toLocaleDateString('en-US', {
-                        weekday: 'long',
-                        year: 'numeric',
-                        month: 'long',
-                        day: 'numeric'
-                    });
-                }
-            }
-        }
-
-        return null;
+        // Return formatted as full date string
+        return formatDeliveryDate(deliveryDate);
     }
 
     // Box Logic Helpers
@@ -1316,7 +1128,9 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
     // Helper: Get vendor selections for a specific delivery day (or all if single day)
     function getVendorSelectionsForDay(day: string | null): any[] {
         if (!orderConfig.deliveryDayOrders) {
-            return orderConfig.vendorSelections || [];
+            const selections = orderConfig.vendorSelections || [];
+
+            return selections;
         }
         if (day && orderConfig.deliveryDayOrders[day]) {
             return orderConfig.deliveryDayOrders[day].vendorSelections || [];
@@ -1425,23 +1239,11 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
         setFormSchema(null);
     }
 
-    // Don't show anything until all data is loaded
-    if (loading || loadingOrderDetails || !client) {
-        return (
-            <div className={styles.loadingContainer} style={{ minHeight: '400px' }}>
-                <div className={styles.spinner}></div>
-                <p className={styles.loadingText}>Loading client profile...</p>
-            </div>
-        );
-    }
-
-    // Render Form Filler if active
-    if (isFillingForm && formSchema) {
-        return (
-            <div className={`${styles.container} ${onClose ? styles.inModal : ''}`} style={{ padding: 0 }}>
-                <FormFiller schema={formSchema} onBack={handleCloseScreeningForm} clientId={clientId} />
-            </div>
-        );
+    async function handleSaveAndClose() {
+        const saved = await handleSave();
+        if (saved && onClose) {
+            onClose();
+        }
     }
 
     const isDependent = !!client?.parentClientId;
@@ -1450,165 +1252,259 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
     );
     const selectedParentClient = formData.parentClientId ? regularClients.find(c => c.id === formData.parentClientId) : null;
 
-    const content = (
-        <div className={`${styles.container} ${onClose ? styles.inModal : ''}`}>
-            <header className={styles.header}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                        {onClose ? (
-                            <button className="btn btn-secondary" onClick={handleDiscardChanges} style={{ marginRight: '8px' }}>
-                                <ArrowLeft size={16} /> Back
+    function getContent() {
+        return (
+            <div className={`${styles.container} ${onClose ? styles.inModal : ''}`}>
+                <header className={styles.header}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                            {onClose ? (
+                                <button className="btn btn-secondary" onClick={handleDiscardChanges} style={{ marginRight: '8px' }}>
+                                    <ArrowLeft size={16} /> Back
+                                </button>
+                            ) : (
+                                <button className="btn btn-secondary" onClick={handleDiscardChanges} style={{ marginRight: '8px' }}>
+                                    <ArrowLeft size={16} /> Back
+                                </button>
+                            )}
+                            <h1 className={styles.title}>{formData.fullName || (isDependent ? 'Dependent Profile' : 'Client Profile')}</h1>
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <button
+                                className={`btn ${styles.deleteButton}`}
+                                onClick={() => setShowDeleteModal(true)}
+                                style={{ marginRight: '8px' }}
+                            >
+                                <Trash2 size={16} /> Delete {isDependent ? 'Dependent' : 'Client'}
                             </button>
-                        ) : (
-                            <button className="btn btn-secondary" onClick={handleDiscardChanges} style={{ marginRight: '8px' }}>
-                                <ArrowLeft size={16} /> Back
-                            </button>
-                        )}
-                        <h1 className={styles.title}>{formData.fullName || (isDependent ? 'Dependent Profile' : 'Client Profile')}</h1>
+                            {!onClose && (
+                                <button className="btn btn-primary" onClick={handleSave} disabled={saving}>
+                                    <Save size={16} /> Save Changes
+                                </button>
+                            )}
+                        </div>
                     </div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                        <button
-                            className={`btn ${styles.deleteButton}`}
-                            onClick={() => setShowDeleteModal(true)}
-                            style={{ marginRight: '8px' }}
-                        >
-                            <Trash2 size={16} /> Delete {isDependent ? 'Dependent' : 'Client'}
-                        </button>
-                        {!onClose && (
-                            <button className="btn btn-primary" onClick={handleSave} disabled={saving}>
-                                <Save size={16} /> Save Changes
-                            </button>
-                        )}
-                    </div>
-                </div>
-            </header>
+                </header>
 
-            {isDependent ? (
-                // Simplified view for dependents
-                <div className={styles.grid}>
-                    <div className={styles.column}>
-                        <section className={styles.card}>
-                            <h3 className={styles.sectionTitle}>Dependent Details</h3>
+                {isDependent ? (
+                    // Simplified view for dependents
+                    <div className={styles.grid}>
+                        <div className={styles.column}>
+                            <section className={styles.card}>
+                                <h3 className={styles.sectionTitle}>Dependent Details</h3>
 
-                            <div className={styles.formGroup}>
-                                <label className="label">Dependent Name</label>
-                                <input className="input" value={formData.fullName || ''} onChange={e => setFormData({ ...formData, fullName: e.target.value })} />
-                            </div>
+                                <div className={styles.formGroup}>
+                                    <label className="label">Dependent Name</label>
+                                    <input className="input" value={formData.fullName || ''} onChange={e => setFormData({ ...formData, fullName: e.target.value })} />
+                                </div>
 
-                            <div className={styles.formGroup}>
-                                <label className="label">Parent Client</label>
-                                <div style={{ position: 'relative' }}>
-                                    <input
-                                        className="input"
-                                        placeholder="Search for client..."
-                                        value={parentClientSearch}
-                                        onChange={e => setParentClientSearch(e.target.value)}
-                                        style={{ marginBottom: '0.5rem' }}
-                                    />
-                                    <div style={{
-                                        maxHeight: '300px',
-                                        overflowY: 'auto',
-                                        overflowX: 'hidden',
-                                        border: '1px solid var(--border-color)',
-                                        borderRadius: 'var(--radius-md)',
-                                        backgroundColor: 'var(--bg-surface)'
-                                    }}>
-                                        {filteredRegularClients.length === 0 ? (
-                                            <div style={{ padding: '0.75rem', color: 'var(--text-secondary)', textAlign: 'center' }}>
-                                                No clients found
+                                <div className={styles.formGroup}>
+                                    <label className="label">Parent Client</label>
+                                    <div style={{ position: 'relative' }}>
+                                        <input
+                                            className="input"
+                                            placeholder="Search for client..."
+                                            value={parentClientSearch}
+                                            onChange={e => setParentClientSearch(e.target.value)}
+                                            style={{ marginBottom: '0.5rem' }}
+                                        />
+                                        <div style={{
+                                            maxHeight: '300px',
+                                            overflowY: 'auto',
+                                            overflowX: 'hidden',
+                                            border: '1px solid var(--border-color)',
+                                            borderRadius: 'var(--radius-md)',
+                                            backgroundColor: 'var(--bg-surface)'
+                                        }}>
+                                            {filteredRegularClients.length === 0 ? (
+                                                <div style={{ padding: '0.75rem', color: 'var(--text-secondary)', textAlign: 'center' }}>
+                                                    No clients found
+                                                </div>
+                                            ) : (
+                                                filteredRegularClients.map(c => (
+                                                    <div
+                                                        key={c.id}
+                                                        onClick={() => {
+                                                            setFormData({ ...formData, parentClientId: c.id });
+                                                            setParentClientSearch(c.fullName);
+                                                        }}
+                                                        style={{
+                                                            padding: '0.75rem',
+                                                            cursor: 'pointer',
+                                                            backgroundColor: formData.parentClientId === c.id ? 'var(--bg-surface-hover)' : 'transparent',
+                                                            borderBottom: '1px solid var(--border-color)',
+                                                            transition: 'background-color 0.2s'
+                                                        }}
+                                                        onMouseEnter={(e) => {
+                                                            if (formData.parentClientId !== c.id) {
+                                                                e.currentTarget.style.backgroundColor = 'var(--bg-surface-hover)';
+                                                            }
+                                                        }}
+                                                        onMouseLeave={(e) => {
+                                                            if (formData.parentClientId !== c.id) {
+                                                                e.currentTarget.style.backgroundColor = 'transparent';
+                                                            }
+                                                        }}
+                                                    >
+                                                        {c.fullName}
+                                                    </div>
+                                                ))
+                                            )}
+                                        </div>
+                                        {selectedParentClient && (
+                                            <div style={{ marginTop: '0.5rem', fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
+                                                Selected: {selectedParentClient.fullName}
                                             </div>
-                                        ) : (
-                                            filteredRegularClients.map(c => (
+                                        )}
+                                    </div>
+                                </div>
+                            </section>
+                        </div>
+                    </div>
+                ) : (
+                    // Regular client view
+                    <div className={styles.grid}>
+                        <div className={styles.column}>
+                            <section className={styles.card}>
+                                <h3 className={styles.sectionTitle}>Client Details</h3>
+
+                                <div className={styles.formGroup}>
+                                    <label className="label">Full Name</label>
+                                    <input className="input" value={formData.fullName || ''} onChange={e => setFormData({ ...formData, fullName: e.target.value })} />
+                                </div>
+
+                                <div className={styles.formGroup}>
+                                    <label className="label">Status</label>
+                                    <select className="input" value={formData.statusId} onChange={e => setFormData({ ...formData, statusId: e.target.value })}>
+                                        {statuses.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                                    </select>
+                                </div>
+
+                                <div className={styles.formGroup}>
+                                    <label className="label">Assigned Navigator</label>
+                                    <select className="input" value={formData.navigatorId} onChange={e => setFormData({ ...formData, navigatorId: e.target.value })}>
+                                        <option value="">Unassigned</option>
+                                        {navigators.map(n => <option key={n.id} value={n.id}>{n.name}</option>)}
+                                    </select>
+                                </div>
+
+                                <div className={styles.formGroup}>
+                                    <label className="label">Address</label>
+                                    <input className="input" value={formData.address || ''} onChange={e => setFormData({ ...formData, address: e.target.value })} />
+                                </div>
+
+                                <div className={styles.formGroup}>
+                                    <label className="label">Phone</label>
+                                    <input className="input" value={formData.phoneNumber || ''} onChange={e => setFormData({ ...formData, phoneNumber: e.target.value })} />
+                                    <div style={{ height: '1rem' }} /> {/* Spacer */}
+                                    <label className="label">Secondary Phone</label>
+                                    <input className="input" value={formData.secondaryPhoneNumber || ''} onChange={e => setFormData({ ...formData, secondaryPhoneNumber: e.target.value })} />
+                                    <div style={{ height: '1rem' }} /> {/* Spacer */}
+                                    <label className="label">Email</label>
+                                    <input className="input" value={formData.email || ''} onChange={e => setFormData({ ...formData, email: e.target.value })} />
+                                </div>
+
+                                <div className={styles.formGroup}>
+                                    <label className="label">General Notes</label>
+                                    <textarea className="input" style={{ height: '100px' }} value={formData.notes || ''} onChange={e => setFormData({ ...formData, notes: e.target.value })} />
+                                </div>
+
+                                {dependents.length > 0 && (
+                                    <div className={styles.formGroup}>
+                                        <label className="label">Dependents ({dependents.length})</label>
+                                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                                            {dependents.map(dependent => (
                                                 <div
-                                                    key={c.id}
+                                                    key={dependent.id}
                                                     onClick={() => {
-                                                        setFormData({ ...formData, parentClientId: c.id });
-                                                        setParentClientSearch(c.fullName);
+                                                        if (onClose) {
+                                                            onClose();
+                                                            // Navigate to dependent in a new view or update the current view
+                                                            // For now, we'll just close and let the user click on it from the list
+                                                        } else {
+                                                            router.push(`/clients/${dependent.id}`);
+                                                        }
                                                     }}
                                                     style={{
                                                         padding: '0.75rem',
+                                                        border: '1px solid var(--border-color)',
+                                                        borderRadius: 'var(--radius-md)',
+                                                        backgroundColor: 'var(--bg-surface)',
                                                         cursor: 'pointer',
-                                                        backgroundColor: formData.parentClientId === c.id ? 'var(--bg-surface-hover)' : 'transparent',
-                                                        borderBottom: '1px solid var(--border-color)',
                                                         transition: 'background-color 0.2s'
                                                     }}
                                                     onMouseEnter={(e) => {
-                                                        if (formData.parentClientId !== c.id) {
-                                                            e.currentTarget.style.backgroundColor = 'var(--bg-surface-hover)';
-                                                        }
+                                                        e.currentTarget.style.backgroundColor = 'var(--bg-surface-hover)';
                                                     }}
                                                     onMouseLeave={(e) => {
-                                                        if (formData.parentClientId !== c.id) {
-                                                            e.currentTarget.style.backgroundColor = 'transparent';
-                                                        }
+                                                        e.currentTarget.style.backgroundColor = 'var(--bg-surface)';
                                                     }}
                                                 >
-                                                    {c.fullName}
+                                                    <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>
+                                                        {dependent.fullName}
+                                                    </div>
                                                 </div>
-                                            ))
-                                        )}
-                                    </div>
-                                    {selectedParentClient && (
-                                        <div style={{ marginTop: '0.5rem', fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
-                                            Selected: {selectedParentClient.fullName}
+                                            ))}
                                         </div>
-                                    )}
+                                    </div>
+                                )}
+
+                                <div className={styles.formGroup}>
+                                    <label className="label">Screening Status</label>
+                                    <div style={{
+                                        display: 'inline-flex',
+                                        alignItems: 'center',
+                                        gap: '8px',
+                                        padding: '12px 16px',
+                                        borderRadius: 'var(--radius-md)',
+                                        fontSize: '1rem',
+                                        fontWeight: 500,
+                                        backgroundColor: (() => {
+                                            const status = client?.screeningStatus || 'not_started';
+                                            switch (status) {
+                                                case 'waiting_approval': return 'rgba(234, 179, 8, 0.1)';
+                                                case 'approved': return 'rgba(34, 197, 94, 0.1)';
+                                                case 'rejected': return 'rgba(239, 68, 68, 0.1)';
+                                                default: return 'var(--bg-surface-hover)';
+                                            }
+                                        })(),
+                                        color: (() => {
+                                            const status = client?.screeningStatus || 'not_started';
+                                            switch (status) {
+                                                case 'waiting_approval': return '#eab308';
+                                                case 'approved': return 'var(--color-success)';
+                                                case 'rejected': return 'var(--color-danger)';
+                                                default: return 'var(--text-tertiary)';
+                                            }
+                                        })(),
+                                        border: '1px solid var(--border-color)'
+                                    }}>
+                                        {(() => {
+                                            const status = client?.screeningStatus || 'not_started';
+                                            switch (status) {
+                                                case 'not_started': return <><Square size={18} /> Not Started</>;
+                                                case 'waiting_approval': return <><CheckSquare size={18} /> Pending Approval</>;
+                                                case 'approved': return <><CheckSquare size={18} /> Approved</>;
+                                                case 'rejected': return <><Square size={18} /> Rejected</>;
+                                                default: return <><Square size={18} /> Not Started</>;
+                                            }
+                                        })()}
+                                    </div>
+                                    <p style={{
+                                        fontSize: '0.85rem',
+                                        color: 'var(--text-tertiary)',
+                                        marginTop: '8px',
+                                        fontStyle: 'italic'
+                                    }}>
+                                        Status updates automatically when screening forms are submitted and reviewed.
+                                    </p>
                                 </div>
-                            </div>
-                        </section>
-                    </div>
-                </div>
-            ) : (
-                // Regular client view
-                <div className={styles.grid}>
-                    <div className={styles.column}>
-                        <section className={styles.card}>
-                            <h3 className={styles.sectionTitle}>Client Details</h3>
 
-                            <div className={styles.formGroup}>
-                                <label className="label">Full Name</label>
-                                <input className="input" value={formData.fullName} onChange={e => setFormData({ ...formData, fullName: e.target.value })} />
-                            </div>
-
-                            <div className={styles.formGroup}>
-                                <label className="label">Status</label>
-                                <select className="input" value={formData.statusId} onChange={e => setFormData({ ...formData, statusId: e.target.value })}>
-                                    {statuses.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-                                </select>
-                            </div>
-
-                            <div className={styles.formGroup}>
-                                <label className="label">Assigned Navigator</label>
-                                <select className="input" value={formData.navigatorId} onChange={e => setFormData({ ...formData, navigatorId: e.target.value })}>
-                                    <option value="">Unassigned</option>
-                                    {navigators.map(n => <option key={n.id} value={n.id}>{n.name}</option>)}
-                                </select>
-                            </div>
-
-                            <div className={styles.formGroup}>
-                                <label className="label">Address</label>
-                                <input className="input" value={formData.address} onChange={e => setFormData({ ...formData, address: e.target.value })} />
-                            </div>
-
-                            <div className={styles.formGroup}>
-                                <label className="label">Phone</label>
-                                <input className="input" value={formData.phoneNumber} onChange={e => setFormData({ ...formData, phoneNumber: e.target.value })} />
-                                <div style={{ height: '1rem' }} /> {/* Spacer */}
-                                <label className="label">Secondary Phone</label>
-                                <input className="input" value={formData.secondaryPhoneNumber || ''} onChange={e => setFormData({ ...formData, secondaryPhoneNumber: e.target.value })} />
-                                <div style={{ height: '1rem' }} /> {/* Spacer */}
-                                <label className="label">Email</label>
-                                <input className="input" value={formData.email || ''} onChange={e => setFormData({ ...formData, email: e.target.value })} />
-                            </div>
-
-                            <div className={styles.formGroup}>
-                                <label className="label">General Notes</label>
-                                <textarea className="input" style={{ height: '100px' }} value={formData.notes} onChange={e => setFormData({ ...formData, notes: e.target.value })} />
-                            </div>
+                            </section>
 
                             {dependents.length > 0 && (
-                                <div className={styles.formGroup}>
-                                    <label className="label">Dependents ({dependents.length})</label>
+                                <section className={styles.card}>
+                                    <h3 className={styles.sectionTitle}>Dependents ({dependents.length})</h3>
                                     <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
                                         {dependents.map(dependent => (
                                             <div
@@ -1643,1607 +1539,1630 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                                             </div>
                                         ))}
                                     </div>
-                                </div>
+                                </section>
                             )}
 
-                            <div className={styles.formGroup}>
-                                <label className="label">Screening Status</label>
-                                <div style={{
-                                    display: 'inline-flex',
-                                    alignItems: 'center',
-                                    gap: '8px',
-                                    padding: '12px 16px',
-                                    borderRadius: 'var(--radius-md)',
-                                    fontSize: '1rem',
-                                    fontWeight: 500,
-                                    backgroundColor: (() => {
-                                        const status = client?.screeningStatus || 'not_started';
-                                        switch (status) {
-                                            case 'waiting_approval': return 'rgba(234, 179, 8, 0.1)';
-                                            case 'approved': return 'rgba(34, 197, 94, 0.1)';
-                                            case 'rejected': return 'rgba(239, 68, 68, 0.1)';
-                                            default: return 'var(--bg-surface-hover)';
-                                        }
-                                    })(),
-                                    color: (() => {
-                                        const status = client?.screeningStatus || 'not_started';
-                                        switch (status) {
-                                            case 'waiting_approval': return '#eab308';
-                                            case 'approved': return 'var(--color-success)';
-                                            case 'rejected': return 'var(--color-danger)';
-                                            default: return 'var(--text-tertiary)';
-                                        }
-                                    })(),
-                                    border: '1px solid var(--border-color)'
-                                }}>
-                                    {(() => {
-                                        const status = client?.screeningStatus || 'not_started';
-                                        switch (status) {
-                                            case 'not_started': return <><Square size={18} /> Not Started</>;
-                                            case 'waiting_approval': return <><CheckSquare size={18} /> Pending Approval</>;
-                                            case 'approved': return <><CheckSquare size={18} /> Approved</>;
-                                            case 'rejected': return <><Square size={18} /> Rejected</>;
-                                            default: return <><Square size={18} /> Not Started</>;
-                                        }
-                                    })()}
-                                </div>
-                                <p style={{
-                                    fontSize: '0.85rem',
-                                    color: 'var(--text-tertiary)',
-                                    marginTop: '8px',
-                                    fontStyle: 'italic'
-                                }}>
-                                    Status updates automatically when screening forms are submitted and reviewed.
-                                </p>
-                            </div>
-
-                        </section>
-
-                        {dependents.length > 0 && (
+                            {/* Screening Form Submissions */}
                             <section className={styles.card}>
-                                <h3 className={styles.sectionTitle}>Dependents ({dependents.length})</h3>
-                                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                                    {dependents.map(dependent => (
-                                        <div
-                                            key={dependent.id}
-                                            onClick={() => {
-                                                if (onClose) {
-                                                    onClose();
-                                                    // Navigate to dependent in a new view or update the current view
-                                                    // For now, we'll just close and let the user click on it from the list
-                                                } else {
-                                                    router.push(`/clients/${dependent.id}`);
-                                                }
-                                            }}
-                                            style={{
-                                                padding: '0.75rem',
-                                                border: '1px solid var(--border-color)',
-                                                borderRadius: 'var(--radius-md)',
-                                                backgroundColor: 'var(--bg-surface)',
-                                                cursor: 'pointer',
-                                                transition: 'background-color 0.2s'
-                                            }}
-                                            onMouseEnter={(e) => {
-                                                e.currentTarget.style.backgroundColor = 'var(--bg-surface-hover)';
-                                            }}
-                                            onMouseLeave={(e) => {
-                                                e.currentTarget.style.backgroundColor = 'var(--bg-surface)';
-                                            }}
-                                        >
-                                            <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>
-                                                {dependent.fullName}
-                                            </div>
-                                        </div>
-                                    ))}
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                                    <h3 className={styles.sectionTitle} style={{ margin: 0 }}>Screening Form Submissions</h3>
+                                    <button
+                                        className="btn btn-primary"
+                                        onClick={handleOpenScreeningForm}
+                                        disabled={loadingForm}
+                                        style={{ fontSize: '14px' }}
+                                    >
+                                        {loadingForm ? <Loader2 size={16} className="animate-spin" /> : <FileText size={16} />}
+                                        Fill Screening Form
+                                    </button>
                                 </div>
+                                {loadingSubmissions ? (
+                                    <div style={{ textAlign: 'center', padding: '20px' }}>
+                                        <Loader2 size={24} className="animate-spin" />
+                                    </div>
+                                ) : (
+                                    <SubmissionsList submissions={submissions} />
+                                )}
                             </section>
-                        )}
 
-                        {/* Screening Form Submissions */}
-                        <section className={styles.card}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-                                <h3 className={styles.sectionTitle} style={{ margin: 0 }}>Screening Form Submissions</h3>
-                                <button
-                                    className="btn btn-primary"
-                                    onClick={handleOpenScreeningForm}
-                                    disabled={loadingForm}
-                                    style={{ fontSize: '14px' }}
-                                >
-                                    {loadingForm ? <Loader2 size={16} className="animate-spin" /> : <FileText size={16} />}
-                                    Fill Screening Form
-                                </button>
-                            </div>
-                            {loadingSubmissions ? (
-                                <div style={{ textAlign: 'center', padding: '20px' }}>
-                                    <Loader2 size={24} className="animate-spin" />
+                        </div>
+
+                        <div className={styles.column}>
+                            <section className={styles.card}>
+                                <h3 className={styles.sectionTitle}>Service Configuration</h3>
+
+                                <div className={styles.formGroup}>
+                                    <label className="label">Service Type</label>
+                                    <div className={styles.serviceTypes}>
+                                        {SERVICE_TYPES.map(type => (
+                                            <button
+                                                key={type}
+                                                className={`${styles.serviceBtn} ${formData.serviceType === type ? styles.activeService : ''}`}
+                                                onClick={() => handleServiceChange(type)}
+                                            >
+                                                {type}
+                                            </button>
+                                        ))}
+                                    </div>
                                 </div>
-                            ) : (
-                                <SubmissionsList submissions={submissions} />
-                            )}
-                        </section>
 
-                    </div>
 
-                    <div className={styles.column}>
-                        <section className={styles.card}>
-                            <h3 className={styles.sectionTitle}>Service Configuration</h3>
 
-                            <div className={styles.formGroup}>
-                                <label className="label">Service Type</label>
-                                <div className={styles.serviceTypes}>
-                                    {SERVICE_TYPES.map(type => (
-                                        <button
-                                            key={type}
-                                            className={`${styles.serviceBtn} ${formData.serviceType === type ? styles.activeService : ''}`}
-                                            onClick={() => handleServiceChange(type)}
-                                        >
-                                            {type}
-                                        </button>
-                                    ))}
+                                <div className={styles.formGroup}>
+                                    <label className="label">Case ID (Required)</label>
+                                    <input
+                                        className="input"
+                                        value={orderConfig.caseId || ''}
+                                        placeholder="Enter Case ID to enable configuration..."
+                                        onChange={e => setOrderConfig({ ...orderConfig, caseId: e.target.value })}
+                                    />
                                 </div>
-                            </div>
 
+                                {!orderConfig.caseId && (
+                                    <div className={styles.alert} style={{ marginTop: '16px', backgroundColor: 'var(--bg-surface-hover)' }}>
+                                        <AlertTriangle size={16} />
+                                        Please enter a Case ID to configure the service.
+                                    </div>
+                                )}
 
+                                {orderConfig.caseId && (
+                                    <>
+                                        {formData.serviceType === 'Food' && (
+                                            <div className="animate-fade-in">
+                                                <div className={styles.formGroup}>
+                                                    <label className="label">Approved Meals Per Week</label>
+                                                    <input
+                                                        type="number"
+                                                        className="input"
+                                                        value={formData.approvedMealsPerWeek || 0}
+                                                        onChange={e => setFormData({ ...formData, approvedMealsPerWeek: Number(e.target.value) })}
+                                                    />
+                                                </div>
 
-                            <div className={styles.formGroup}>
-                                <label className="label">Case ID (Required)</label>
-                                <input
-                                    className="input"
-                                    value={orderConfig.caseId || ''}
-                                    placeholder="Enter Case ID to enable configuration..."
-                                    onChange={e => setOrderConfig({ ...orderConfig, caseId: e.target.value })}
-                                />
-                            </div>
+                                                <div className={styles.divider} />
 
-                            {!orderConfig.caseId && (
-                                <div className={styles.alert} style={{ marginTop: '16px', backgroundColor: 'var(--bg-surface-hover)' }}>
-                                    <AlertTriangle size={16} />
-                                    Please enter a Case ID to configure the service.
-                                </div>
-                            )}
-
-                            {orderConfig.caseId && (
-                                <>
-                                    {formData.serviceType === 'Food' && (
-                                        <div className="animate-fade-in">
-                                            <div className={styles.formGroup}>
-                                                <label className="label">Approved Meals Per Week</label>
-                                                <input
-                                                    type="number"
-                                                    className="input"
-                                                    value={formData.approvedMealsPerWeek || 0}
-                                                    onChange={e => setFormData({ ...formData, approvedMealsPerWeek: Number(e.target.value) })}
-                                                />
-                                            </div>
-
-                                            <div className={styles.divider} />
-
-                                            <div className={styles.orderHeader}>
-                                                <h4>Current Order Request</h4>
-                                                <div style={{ display: 'flex', gap: '0.5rem', flexDirection: 'column', alignItems: 'flex-end' }}>
-                                                    <div className={styles.budget} style={{
-                                                        color: getCurrentOrderTotalValueAllDays() > (formData.approvedMealsPerWeek || 0) ? 'var(--color-danger)' : 'inherit',
-                                                        backgroundColor: getCurrentOrderTotalValueAllDays() > (formData.approvedMealsPerWeek || 0) ? 'rgba(239, 68, 68, 0.1)' : 'var(--bg-surface-hover)'
-                                                    }}>
-                                                        Value: {getCurrentOrderTotalValueAllDays()} / {formData.approvedMealsPerWeek || 0}
+                                                <div className={styles.orderHeader}>
+                                                    <h4>Current Order Request</h4>
+                                                    <div style={{ display: 'flex', gap: '0.5rem', flexDirection: 'column', alignItems: 'flex-end' }}>
+                                                        <div className={styles.budget} style={{
+                                                            color: getCurrentOrderTotalValueAllDays() > (formData.approvedMealsPerWeek || 0) ? 'var(--color-danger)' : 'inherit',
+                                                            backgroundColor: getCurrentOrderTotalValueAllDays() > (formData.approvedMealsPerWeek || 0) ? 'rgba(239, 68, 68, 0.1)' : 'var(--bg-surface-hover)'
+                                                        }}>
+                                                            Value: {getCurrentOrderTotalValueAllDays()} / {formData.approvedMealsPerWeek || 0}
+                                                        </div>
                                                     </div>
                                                 </div>
-                                            </div>
 
-                                            {isCutoffPassed() && (() => {
-                                                const takeEffectDate = getEarliestTakeEffectDateForOrder();
-                                                const nextDeliveryDate = getEarliestDeliveryDateForOrder();
-                                                return (
-                                                    <div className={styles.alert} style={{
-                                                        backgroundColor: 'rgba(251, 191, 36, 0.1)',
-                                                        border: '1px solid rgba(251, 191, 36, 0.3)',
-                                                        color: 'var(--text-primary)',
-                                                        padding: 'var(--spacing-md)',
-                                                        borderRadius: 'var(--radius-sm)',
-                                                        marginBottom: 'var(--spacing-md)'
-                                                    }}>
-                                                        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 'var(--spacing-sm)' }}>
-                                                            <AlertTriangle size={18} style={{ color: '#f59e0b', flexShrink: 0, marginTop: '2px' }} />
-                                                            <div style={{ flex: 1 }}>
-                                                                <div style={{ fontWeight: 600, marginBottom: 'var(--spacing-xs)' }}>
-                                                                    Cutoff Date Passed
-                                                                </div>
-                                                                <div style={{ fontSize: '0.9rem', lineHeight: '1.5' }}>
-                                                                    Your changes will not take effect for the upcoming delivery{nextDeliveryDate ? ` (${nextDeliveryDate.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })})` : ''}.
-                                                                </div>
-                                                                {takeEffectDate && (
-                                                                    <div style={{ fontSize: '0.9rem', marginTop: 'var(--spacing-xs)', fontWeight: 500 }}>
-                                                                        This order will take effect on {takeEffectDate.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}.
-                                                                    </div>
-                                                                )}
-                                                                <div style={{ fontSize: '0.85rem', marginTop: 'var(--spacing-xs)', color: 'var(--text-secondary)' }}>
-                                                                    View the Recent Orders section below to see what will be delivered this week.
-                                                                </div>
-                                                            </div>
-                                                        </div>
-                                                    </div>
-                                                );
-                                            })()}
-                                            {orderConfig && orderConfig.caseId && !isCutoffPassed() && (() => {
-                                                const nextDeliveryDate = getEarliestDeliveryDateForOrder();
-                                                if (!nextDeliveryDate) return null;
-                                                return (
-                                                    <div style={{
-                                                        backgroundColor: 'rgba(34, 197, 94, 0.1)',
-                                                        border: '1px solid rgba(34, 197, 94, 0.3)',
-                                                        color: 'var(--text-primary)',
-                                                        padding: 'var(--spacing-md)',
-                                                        borderRadius: 'var(--radius-sm)',
-                                                        marginBottom: 'var(--spacing-md)'
-                                                    }}>
-                                                        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--spacing-sm)' }}>
-                                                            <Check size={18} style={{ color: '#22c55e', flexShrink: 0 }} />
-                                                            <div style={{ fontSize: '0.9rem', fontWeight: 500 }}>
-                                                                This order will take effect on {nextDeliveryDate.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}.
-                                                            </div>
-                                                        </div>
-                                                    </div>
-                                                );
-                                            })()}
-
-                                            {/* Vendor list with per-vendor delivery day selection */}
-                                            {(() => {
-                                                // Check if we're already in multi-day format (from saved data)
-                                                const isAlreadyMultiDay = orderConfig.deliveryDayOrders && typeof orderConfig.deliveryDayOrders === 'object';
-
-                                                if (isAlreadyMultiDay) {
-                                                    // Convert saved deliveryDayOrders back to per-vendor format for editing
-                                                    const deliveryDays = Object.keys(orderConfig.deliveryDayOrders).sort();
-                                                    const vendorSelections: any[] = [];
-
-                                                    // Group by vendor
-                                                    const vendorsByDay: { [day: string]: any[] } = {};
-                                                    for (const day of deliveryDays) {
-                                                        const daySelections = orderConfig.deliveryDayOrders[day].vendorSelections || [];
-                                                        for (const sel of daySelections) {
-                                                            if (!sel.vendorId) continue;
-                                                            if (!vendorsByDay[day]) vendorsByDay[day] = [];
-                                                            vendorsByDay[day].push(sel);
-                                                        }
-                                                    }
-
-                                                    // Convert to per-vendor format
-                                                    const vendorMap = new Map<string, any>();
-                                                    for (const day of deliveryDays) {
-                                                        for (const sel of vendorsByDay[day] || []) {
-                                                            if (!vendorMap.has(sel.vendorId)) {
-                                                                vendorMap.set(sel.vendorId, {
-                                                                    vendorId: sel.vendorId,
-                                                                    selectedDeliveryDays: [],
-                                                                    itemsByDay: {}
-                                                                });
-                                                            }
-                                                            const vendorSel = vendorMap.get(sel.vendorId);
-                                                            if (!vendorSel.selectedDeliveryDays.includes(day)) {
-                                                                vendorSel.selectedDeliveryDays.push(day);
-                                                            }
-                                                            vendorSel.itemsByDay[day] = sel.items || {};
-                                                        }
-                                                    }
-
-                                                    // Use converted format or fall back to normal
-                                                    const currentSelections = Array.from(vendorMap.values()).length > 0
-                                                        ? Array.from(vendorMap.values())
-                                                        : getVendorSelectionsForDay(null);
-
+                                                {isCutoffPassed() && (() => {
+                                                    const takeEffectDate = getEarliestTakeEffectDateForOrder();
+                                                    const lockedWeekDesc = settings ? getLockedWeekDescription(settings) : null;
                                                     return (
-                                                        <div className={styles.vendorsList}>
-                                                            {(currentSelections || []).map((selection: any, index: number) => {
-                                                                const vendor = selection.vendorId ? vendors.find(v => v.id === selection.vendorId) : null;
-                                                                const vendorHasMultipleDays = vendor && vendor.deliveryDays && vendor.deliveryDays.length > 1;
-                                                                const vendorDeliveryDays = vendor?.deliveryDays || [];
-                                                                const vendorSelectedDays = (selection.selectedDeliveryDays || []) as string[];
-
-                                                                return (
-                                                                    <div key={index} className={styles.vendorBlock}>
-                                                                        <div className={styles.vendorHeader}>
-                                                                            <select
-                                                                                className="input"
-                                                                                value={selection.vendorId}
-                                                                                onChange={e => updateVendorSelection(index, 'vendorId', e.target.value, null)}
-                                                                            >
-                                                                                <option value="">Select Vendor...</option>
-                                                                                {vendors.filter(v => v.serviceTypes.includes('Food') && v.isActive).map(v => (
-                                                                                    <option key={v.id} value={v.id} disabled={currentSelections.some((s: any, i: number) => i !== index && s.vendorId === v.id)}>
-                                                                                        {v.name}
-                                                                                    </option>
-                                                                                ))}
-                                                                            </select>
-                                                                            <button className={`${styles.iconBtn} ${styles.danger}`} onClick={() => removeVendorBlock(index, null)} title="Remove Vendor">
-                                                                                <Trash2 size={16} />
-                                                                            </button>
-                                                                        </div>
-
-                                                                        {selection.vendorId && vendorHasMultipleDays && (
-                                                                            <div style={{
-                                                                                marginBottom: '1rem',
-                                                                                padding: '0.75rem',
-                                                                                backgroundColor: 'var(--bg-surface-hover)',
-                                                                                borderRadius: 'var(--radius-sm)',
-                                                                                border: '1px solid var(--border-color)'
-                                                                            }}>
-                                                                                <div style={{
-                                                                                    display: 'flex',
-                                                                                    alignItems: 'center',
-                                                                                    gap: '0.5rem',
-                                                                                    marginBottom: '0.75rem',
-                                                                                    fontSize: '0.9rem',
-                                                                                    fontWeight: 500
-                                                                                }}>
-                                                                                    <Calendar size={16} />
-                                                                                    <span>Select delivery days for {vendor?.name}:</span>
-                                                                                </div>
-                                                                                <div style={{
-                                                                                    display: 'flex',
-                                                                                    flexWrap: 'wrap',
-                                                                                    gap: '0.5rem'
-                                                                                }}>
-                                                                                    {vendorDeliveryDays.map((day: string) => {
-                                                                                        const isSelected = vendorSelectedDays.includes(day);
-                                                                                        return (
-                                                                                            <button
-                                                                                                key={day}
-                                                                                                type="button"
-                                                                                                onClick={() => {
-                                                                                                    const newSelected = isSelected
-                                                                                                        ? vendorSelectedDays.filter((d: string) => d !== day)
-                                                                                                        : [...vendorSelectedDays, day];
-
-                                                                                                    // Update selection with new delivery days
-                                                                                                    const updated = [...currentSelections];
-                                                                                                    updated[index] = {
-                                                                                                        ...updated[index],
-                                                                                                        selectedDeliveryDays: newSelected,
-                                                                                                        // Initialize items for each selected day
-                                                                                                        itemsByDay: (() => {
-                                                                                                            const itemsByDay = { ...(updated[index].itemsByDay || {}) };
-                                                                                                            if (!isSelected) {
-                                                                                                                // Adding a day - initialize empty items
-                                                                                                                itemsByDay[day] = {};
-                                                                                                            } else {
-                                                                                                                // Removing a day - clean up
-                                                                                                                delete itemsByDay[day];
-                                                                                                            }
-                                                                                                            return itemsByDay;
-                                                                                                        })()
-                                                                                                    };
-                                                                                                    setOrderConfig({
-                                                                                                        ...orderConfig,
-                                                                                                        vendorSelections: updated,
-                                                                                                        deliveryDayOrders: undefined // Clear old format
-                                                                                                    });
-                                                                                                }}
-                                                                                                style={{
-                                                                                                    padding: '0.5rem 1rem',
-                                                                                                    borderRadius: 'var(--radius-sm)',
-                                                                                                    border: `2px solid ${isSelected ? 'var(--color-primary)' : 'var(--border-color)'}`,
-                                                                                                    backgroundColor: isSelected ? 'var(--color-primary)' : 'var(--bg-app)',
-                                                                                                    color: isSelected ? 'white' : 'var(--text-primary)',
-                                                                                                    cursor: 'pointer',
-                                                                                                    fontSize: '0.85rem',
-                                                                                                    fontWeight: isSelected ? 600 : 400,
-                                                                                                    transition: 'all 0.2s'
-                                                                                                }}
-                                                                                            >
-                                                                                                {day}
-                                                                                                {isSelected && <Check size={14} style={{ marginLeft: '0.25rem', display: 'inline', verticalAlign: 'middle' }} />}
-                                                                                            </button>
-                                                                                        );
-                                                                                    })}
-                                                                                </div>
-                                                                            </div>
-                                                                        )}
-
-                                                                        {selection.vendorId && (() => {
-                                                                            const vendorMinimum = vendor?.minimumMeals || 0;
-
-                                                                            // If vendor has multiple days but no days are selected, don't show menu items
-                                                                            if (vendorHasMultipleDays && vendorSelectedDays.length === 0) {
-                                                                                return null;
-                                                                            }
-
-                                                                            // If vendor has multiple days and days are selected, show forms for each day
-                                                                            if (vendorHasMultipleDays && vendorSelectedDays.length > 0) {
-                                                                                return (
-                                                                                    <>
-                                                                                        {vendorSelectedDays.map((day: string) => {
-                                                                                            const dayItems = (selection.itemsByDay || {})[day] || {};
-                                                                                            const dayMealCount = Object.values(dayItems).reduce((sum: number, qty: any) => sum + (Number(qty) || 0), 0);
-                                                                                            const meetsMinimum = vendorMinimum === 0 || dayMealCount >= vendorMinimum;
-
-                                                                                            return (
-                                                                                                <div key={day} style={{
-                                                                                                    marginBottom: '1.5rem',
-                                                                                                    padding: '1rem',
-                                                                                                    border: '1px solid var(--border-color)',
-                                                                                                    borderRadius: 'var(--radius-md)',
-                                                                                                    backgroundColor: 'var(--bg-surface-hover)'
-                                                                                                }}>
-                                                                                                    <div style={{
-                                                                                                        display: 'flex',
-                                                                                                        alignItems: 'center',
-                                                                                                        justifyContent: 'space-between',
-                                                                                                        marginBottom: '0.75rem',
-                                                                                                        paddingBottom: '0.75rem',
-                                                                                                        borderBottom: '1px solid var(--border-color)'
-                                                                                                    }}>
-                                                                                                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                                                                                                            <Calendar size={16} />
-                                                                                                            <strong>{day}</strong>
-                                                                                                        </div>
-                                                                                                        {vendorMinimum > 0 && (
-                                                                                                            <div style={{
-                                                                                                                fontSize: '0.85rem',
-                                                                                                                color: meetsMinimum ? 'var(--text-primary)' : 'var(--color-danger)',
-                                                                                                                fontWeight: 500
-                                                                                                            }}>
-                                                                                                                Meals: {dayMealCount} / {vendorMinimum} min
-                                                                                                            </div>
-                                                                                                        )}
-                                                                                                    </div>
-
-                                                                                                    {vendorMinimum > 0 && !meetsMinimum && (
-                                                                                                        <div style={{
-                                                                                                            marginBottom: '0.75rem',
-                                                                                                            padding: '0.5rem',
-                                                                                                            backgroundColor: 'rgba(239, 68, 68, 0.1)',
-                                                                                                            borderRadius: 'var(--radius-sm)',
-                                                                                                            border: '1px solid var(--color-danger)',
-                                                                                                            fontSize: '0.8rem',
-                                                                                                            color: 'var(--color-danger)'
-                                                                                                        }}>
-                                                                                                            <AlertTriangle size={14} style={{ display: 'inline', marginRight: '4px', verticalAlign: 'middle' }} />
-                                                                                                            Minimum {vendorMinimum} meals required for {day}
-                                                                                                        </div>
-                                                                                                    )}
-
-                                                                                                    <div className={styles.menuItems}>
-                                                                                                        {getVendorMenuItems(selection.vendorId).map((item) => {
-                                                                                                            const qty = Number(dayItems[item.id] || 0);
-                                                                                                            return (
-                                                                                                                <div key={item.id} className={styles.menuItem}>
-                                                                                                                    <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
-                                                                                                                        <span>{item.name} <span style={{ color: 'var(--text-tertiary)' }}>(x{item.quotaValue || 1})</span></span>
-                                                                                                                        <div className={styles.quantityControl} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                                                                                                            <button onClick={() => {
-                                                                                                                                const updated = [...currentSelections];
-                                                                                                                                const itemsByDay = { ...(updated[index].itemsByDay || {}) };
-                                                                                                                                if (!itemsByDay[day]) itemsByDay[day] = {};
-                                                                                                                                const newQty = Math.max(0, qty - 1);
-                                                                                                                                if (newQty > 0) {
-                                                                                                                                    itemsByDay[day][item.id] = newQty;
-                                                                                                                                } else {
-                                                                                                                                    delete itemsByDay[day][item.id];
-                                                                                                                                }
-                                                                                                                                updated[index] = {
-                                                                                                                                    ...updated[index],
-                                                                                                                                    itemsByDay
-                                                                                                                                };
-                                                                                                                                setOrderConfig({
-                                                                                                                                    ...orderConfig,
-                                                                                                                                    vendorSelections: updated,
-                                                                                                                                    deliveryDayOrders: undefined // Clear old format
-                                                                                                                                });
-                                                                                                                            }} className="btn btn-secondary" style={{ padding: '2px 8px' }}>-</button>
-                                                                                                                            <span style={{ width: '20px', textAlign: 'center' }}>{qty}</span>
-                                                                                                                            <button onClick={() => {
-                                                                                                                                const updated = [...currentSelections];
-                                                                                                                                const itemsByDay = { ...(updated[index].itemsByDay || {}) };
-                                                                                                                                if (!itemsByDay[day]) itemsByDay[day] = {};
-                                                                                                                                itemsByDay[day][item.id] = qty + 1;
-                                                                                                                                updated[index] = {
-                                                                                                                                    ...updated[index],
-                                                                                                                                    itemsByDay
-                                                                                                                                };
-                                                                                                                                setOrderConfig({
-                                                                                                                                    ...orderConfig,
-                                                                                                                                    vendorSelections: updated,
-                                                                                                                                    deliveryDayOrders: undefined // Clear old format
-                                                                                                                                });
-                                                                                                                            }} className="btn btn-secondary" style={{ padding: '2px 8px' }}>+</button>
-                                                                                                                        </div>
-                                                                                                                    </label>
-                                                                                                                </div>
-                                                                                                            );
-                                                                                                        })}
-                                                                                                        {getVendorMenuItems(selection.vendorId).length === 0 && <span className={styles.hint}>No active menu items.</span>}
-                                                                                                    </div>
-                                                                                                </div>
-                                                                                            );
-                                                                                        })}
-                                                                                    </>
-                                                                                );
-                                                                            }
-
-                                                                            // Single delivery day or no multiple days - show normal item selection
-                                                                            const vendorMealCount = getVendorMealCount(selection.vendorId, selection);
-                                                                            const meetsMinimum = vendorMinimum === 0 || vendorMealCount >= vendorMinimum;
-
-                                                                            return (
-                                                                                <>
-                                                                                    {vendorMinimum > 0 && (
-                                                                                        <div style={{
-                                                                                            marginBottom: '0.75rem',
-                                                                                            padding: '0.5rem 0.75rem',
-                                                                                            backgroundColor: meetsMinimum ? 'var(--bg-surface-hover)' : 'rgba(239, 68, 68, 0.1)',
-                                                                                            borderRadius: 'var(--radius-sm)',
-                                                                                            border: `1px solid ${meetsMinimum ? 'var(--border-color)' : 'var(--color-danger)'}`,
-                                                                                            fontSize: '0.85rem'
-                                                                                        }}>
-                                                                                            <div style={{
-                                                                                                display: 'flex',
-                                                                                                justifyContent: 'space-between',
-                                                                                                alignItems: 'center',
-                                                                                                color: meetsMinimum ? 'var(--text-primary)' : 'var(--color-danger)',
-                                                                                                fontWeight: 500
-                                                                                            }}>
-                                                                                                <span>Minimum meals required: {vendorMinimum}</span>
-                                                                                                <span>
-                                                                                                    Meals selected: <strong>{vendorMealCount}</strong>
-                                                                                                </span>
-                                                                                            </div>
-                                                                                            {!meetsMinimum && (
-                                                                                                <div style={{
-                                                                                                    marginTop: '0.25rem',
-                                                                                                    fontSize: '0.8rem',
-                                                                                                    color: 'var(--color-danger)'
-                                                                                                }}>
-                                                                                                    <AlertTriangle size={14} style={{ display: 'inline', marginRight: '4px', verticalAlign: 'middle' }} />
-                                                                                                    You must order at least {vendorMinimum} meals from {vendor?.name}
-                                                                                                </div>
-                                                                                            )}
-                                                                                        </div>
-                                                                                    )}
-                                                                                    <div className={styles.menuItems}>
-                                                                                        {getVendorMenuItems(selection.vendorId).map((item) => {
-                                                                                            const qty = Number(selection.items?.[item.id] || 0);
-                                                                                            return (
-                                                                                                <div key={item.id} className={styles.menuItem}>
-                                                                                                    <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
-                                                                                                        <span>{item.name} <span style={{ color: 'var(--text-tertiary)' }}>(x{item.quotaValue || 1})</span></span>
-                                                                                                        <div className={styles.quantityControl} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                                                                                            <button onClick={() => updateItemQuantity(index, item.id, Math.max(0, qty - 1), null)} className="btn btn-secondary" style={{ padding: '2px 8px' }}>-</button>
-                                                                                                            <span style={{ width: '20px', textAlign: 'center' }}>{qty}</span>
-                                                                                                            <button onClick={() => updateItemQuantity(index, item.id, qty + 1, null)} className="btn btn-secondary" style={{ padding: '2px 8px' }}>+</button>
-                                                                                                        </div>
-                                                                                                    </label>
-                                                                                                </div>
-                                                                                            );
-                                                                                        })}
-                                                                                        {getVendorMenuItems(selection.vendorId).length === 0 && <span className={styles.hint}>No active menu items.</span>}
-                                                                                    </div>
-                                                                                </>
-                                                                            );
-                                                                        })()}
-                                                                    </div>
-                                                                );
-                                                            })}
-                                                            <button className="btn btn-secondary" onClick={() => addVendorBlock(null)} style={{ marginTop: '0.5rem' }}>
-                                                                <Plus size={16} /> Add Vendor
-                                                            </button>
-                                                        </div>
-                                                    );
-                                                } else {
-                                                    // Single form - show vendors with per-vendor delivery day selection
-                                                    const currentSelections = getVendorSelectionsForDay(null);
-                                                    return (
-                                                        <div className={styles.vendorsList}>
-                                                            {(currentSelections || []).map((selection: any, index: number) => {
-                                                                const vendor = selection.vendorId ? vendors.find(v => v.id === selection.vendorId) : null;
-                                                                const vendorHasMultipleDays = vendor && vendor.deliveryDays && vendor.deliveryDays.length > 1;
-                                                                const vendorDeliveryDays = vendor?.deliveryDays || [];
-
-                                                                // Get selected delivery days for this vendor
-                                                                const vendorSelectedDays = (selection.selectedDeliveryDays || []) as string[];
-
-                                                                return (
-                                                                    <div key={index} className={styles.vendorBlock}>
-                                                                        <div className={styles.vendorHeader}>
-                                                                            <select
-                                                                                className="input"
-                                                                                value={selection.vendorId}
-                                                                                onChange={e => updateVendorSelection(index, 'vendorId', e.target.value, null)}
-                                                                            >
-                                                                                <option value="">Select Vendor...</option>
-                                                                                {vendors.filter(v => v.serviceTypes.includes('Food') && v.isActive).map(v => (
-                                                                                    <option key={v.id} value={v.id} disabled={currentSelections.some((s: any, i: number) => i !== index && s.vendorId === v.id)}>
-                                                                                        {v.name}
-                                                                                    </option>
-                                                                                ))}
-                                                                            </select>
-                                                                            <button className={`${styles.iconBtn} ${styles.danger}`} onClick={() => removeVendorBlock(index, null)} title="Remove Vendor">
-                                                                                <Trash2 size={16} />
-                                                                            </button>
-                                                                        </div>
-
-                                                                        {selection.vendorId && vendorHasMultipleDays && (
-                                                                            <div style={{
-                                                                                marginBottom: '1rem',
-                                                                                padding: '0.75rem',
-                                                                                backgroundColor: 'var(--bg-surface-hover)',
-                                                                                borderRadius: 'var(--radius-sm)',
-                                                                                border: '1px solid var(--border-color)'
-                                                                            }}>
-                                                                                <div style={{
-                                                                                    display: 'flex',
-                                                                                    alignItems: 'center',
-                                                                                    gap: '0.5rem',
-                                                                                    marginBottom: '0.75rem',
-                                                                                    fontSize: '0.9rem',
-                                                                                    fontWeight: 500
-                                                                                }}>
-                                                                                    <Calendar size={16} />
-                                                                                    <span>Select delivery days for {vendor?.name}:</span>
-                                                                                </div>
-                                                                                <div style={{
-                                                                                    display: 'flex',
-                                                                                    flexWrap: 'wrap',
-                                                                                    gap: '0.5rem'
-                                                                                }}>
-                                                                                    {vendorDeliveryDays.map((day: string) => {
-                                                                                        const isSelected = vendorSelectedDays.includes(day);
-                                                                                        return (
-                                                                                            <button
-                                                                                                key={day}
-                                                                                                type="button"
-                                                                                                onClick={() => {
-                                                                                                    const newSelected = isSelected
-                                                                                                        ? vendorSelectedDays.filter((d: string) => d !== day)
-                                                                                                        : [...vendorSelectedDays, day];
-
-                                                                                                    // Update selection with new delivery days
-                                                                                                    const updated = [...currentSelections];
-                                                                                                    updated[index] = {
-                                                                                                        ...updated[index],
-                                                                                                        selectedDeliveryDays: newSelected,
-                                                                                                        // Initialize items for each selected day
-                                                                                                        itemsByDay: (() => {
-                                                                                                            const itemsByDay = { ...(updated[index].itemsByDay || {}) };
-                                                                                                            if (!isSelected) {
-                                                                                                                // Adding a day - initialize empty items
-                                                                                                                itemsByDay[day] = {};
-                                                                                                            } else {
-                                                                                                                // Removing a day - clean up
-                                                                                                                delete itemsByDay[day];
-                                                                                                            }
-                                                                                                            return itemsByDay;
-                                                                                                        })()
-                                                                                                    };
-                                                                                                    setOrderConfig({
-                                                                                                        ...orderConfig,
-                                                                                                        vendorSelections: updated
-                                                                                                    });
-                                                                                                }}
-                                                                                                style={{
-                                                                                                    padding: '0.5rem 1rem',
-                                                                                                    borderRadius: 'var(--radius-sm)',
-                                                                                                    border: `2px solid ${isSelected ? 'var(--color-primary)' : 'var(--border-color)'}`,
-                                                                                                    backgroundColor: isSelected ? 'var(--color-primary)' : 'var(--bg-app)',
-                                                                                                    color: isSelected ? 'white' : 'var(--text-primary)',
-                                                                                                    cursor: 'pointer',
-                                                                                                    fontSize: '0.85rem',
-                                                                                                    fontWeight: isSelected ? 600 : 400,
-                                                                                                    transition: 'all 0.2s'
-                                                                                                }}
-                                                                                            >
-                                                                                                {day}
-                                                                                                {isSelected && <Check size={14} style={{ marginLeft: '0.25rem', display: 'inline', verticalAlign: 'middle' }} />}
-                                                                                            </button>
-                                                                                        );
-                                                                                    })}
-                                                                                </div>
-                                                                            </div>
-                                                                        )}
-
-                                                                        {selection.vendorId && (() => {
-                                                                            const vendorMinimum = vendor?.minimumMeals || 0;
-
-                                                                            // If vendor has multiple days but no days are selected, don't show menu items
-                                                                            if (vendorHasMultipleDays && vendorSelectedDays.length === 0) {
-                                                                                return null;
-                                                                            }
-
-                                                                            // If vendor has multiple days and days are selected, show forms for each day
-                                                                            if (vendorHasMultipleDays && vendorSelectedDays.length > 0) {
-                                                                                return (
-                                                                                    <>
-                                                                                        {vendorSelectedDays.map((day: string) => {
-                                                                                            const dayItems = (selection.itemsByDay || {})[day] || {};
-                                                                                            const dayMealCount = Object.values(dayItems).reduce((sum: number, qty: any) => sum + (Number(qty) || 0), 0);
-                                                                                            const meetsMinimum = vendorMinimum === 0 || dayMealCount >= vendorMinimum;
-
-                                                                                            return (
-                                                                                                <div key={day} style={{
-                                                                                                    marginBottom: '1.5rem',
-                                                                                                    padding: '1rem',
-                                                                                                    border: '1px solid var(--border-color)',
-                                                                                                    borderRadius: 'var(--radius-md)',
-                                                                                                    backgroundColor: 'var(--bg-surface-hover)'
-                                                                                                }}>
-                                                                                                    <div style={{
-                                                                                                        display: 'flex',
-                                                                                                        alignItems: 'center',
-                                                                                                        justifyContent: 'space-between',
-                                                                                                        marginBottom: '0.75rem',
-                                                                                                        paddingBottom: '0.75rem',
-                                                                                                        borderBottom: '1px solid var(--border-color)'
-                                                                                                    }}>
-                                                                                                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                                                                                                            <Calendar size={16} />
-                                                                                                            <strong>{day}</strong>
-                                                                                                        </div>
-                                                                                                        {vendorMinimum > 0 && (
-                                                                                                            <div style={{
-                                                                                                                fontSize: '0.85rem',
-                                                                                                                color: meetsMinimum ? 'var(--text-primary)' : 'var(--color-danger)',
-                                                                                                                fontWeight: 500
-                                                                                                            }}>
-                                                                                                                Meals: {dayMealCount} / {vendorMinimum} min
-                                                                                                            </div>
-                                                                                                        )}
-                                                                                                    </div>
-
-                                                                                                    {vendorMinimum > 0 && !meetsMinimum && (
-                                                                                                        <div style={{
-                                                                                                            marginBottom: '0.75rem',
-                                                                                                            padding: '0.5rem',
-                                                                                                            backgroundColor: 'rgba(239, 68, 68, 0.1)',
-                                                                                                            borderRadius: 'var(--radius-sm)',
-                                                                                                            border: '1px solid var(--color-danger)',
-                                                                                                            fontSize: '0.8rem',
-                                                                                                            color: 'var(--color-danger)'
-                                                                                                        }}>
-                                                                                                            <AlertTriangle size={14} style={{ display: 'inline', marginRight: '4px', verticalAlign: 'middle' }} />
-                                                                                                            Minimum {vendorMinimum} meals required for {day}
-                                                                                                        </div>
-                                                                                                    )}
-
-                                                                                                    <div className={styles.menuItems}>
-                                                                                                        {getVendorMenuItems(selection.vendorId).map((item) => {
-                                                                                                            const qty = Number(dayItems[item.id] || 0);
-                                                                                                            return (
-                                                                                                                <div key={item.id} className={styles.menuItem}>
-                                                                                                                    <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
-                                                                                                                        <span>{item.name} <span style={{ color: 'var(--text-tertiary)' }}>(x{item.quotaValue || 1})</span></span>
-                                                                                                                        <div className={styles.quantityControl} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                                                                                                            <button onClick={() => {
-                                                                                                                                const updated = [...currentSelections];
-                                                                                                                                const itemsByDay = { ...(updated[index].itemsByDay || {}) };
-                                                                                                                                if (!itemsByDay[day]) itemsByDay[day] = {};
-                                                                                                                                const newQty = Math.max(0, qty - 1);
-                                                                                                                                if (newQty > 0) {
-                                                                                                                                    itemsByDay[day][item.id] = newQty;
-                                                                                                                                } else {
-                                                                                                                                    delete itemsByDay[day][item.id];
-                                                                                                                                }
-                                                                                                                                updated[index] = {
-                                                                                                                                    ...updated[index],
-                                                                                                                                    itemsByDay
-                                                                                                                                };
-                                                                                                                                setOrderConfig({
-                                                                                                                                    ...orderConfig,
-                                                                                                                                    vendorSelections: updated
-                                                                                                                                });
-                                                                                                                            }} className="btn btn-secondary" style={{ padding: '2px 8px' }}>-</button>
-                                                                                                                            <span style={{ width: '20px', textAlign: 'center' }}>{qty}</span>
-                                                                                                                            <button onClick={() => {
-                                                                                                                                const updated = [...currentSelections];
-                                                                                                                                const itemsByDay = { ...(updated[index].itemsByDay || {}) };
-                                                                                                                                if (!itemsByDay[day]) itemsByDay[day] = {};
-                                                                                                                                itemsByDay[day][item.id] = qty + 1;
-                                                                                                                                updated[index] = {
-                                                                                                                                    ...updated[index],
-                                                                                                                                    itemsByDay
-                                                                                                                                };
-                                                                                                                                setOrderConfig({
-                                                                                                                                    ...orderConfig,
-                                                                                                                                    vendorSelections: updated
-                                                                                                                                });
-                                                                                                                            }} className="btn btn-secondary" style={{ padding: '2px 8px' }}>+</button>
-                                                                                                                        </div>
-                                                                                                                    </label>
-                                                                                                                </div>
-                                                                                                            );
-                                                                                                        })}
-                                                                                                        {getVendorMenuItems(selection.vendorId).length === 0 && <span className={styles.hint}>No active menu items.</span>}
-                                                                                                    </div>
-                                                                                                </div>
-                                                                                            );
-                                                                                        })}
-                                                                                    </>
-                                                                                );
-                                                                            }
-
-                                                                            // Single delivery day or no multiple days - show normal item selection
-                                                                            const vendorMealCount = getVendorMealCount(selection.vendorId, selection);
-                                                                            const meetsMinimum = vendorMinimum === 0 || vendorMealCount >= vendorMinimum;
-
-                                                                            return (
-                                                                                <>
-                                                                                    {vendorMinimum > 0 && (
-                                                                                        <div style={{
-                                                                                            marginBottom: '0.75rem',
-                                                                                            padding: '0.5rem 0.75rem',
-                                                                                            backgroundColor: meetsMinimum ? 'var(--bg-surface-hover)' : 'rgba(239, 68, 68, 0.1)',
-                                                                                            borderRadius: 'var(--radius-sm)',
-                                                                                            border: `1px solid ${meetsMinimum ? 'var(--border-color)' : 'var(--color-danger)'}`,
-                                                                                            fontSize: '0.85rem'
-                                                                                        }}>
-                                                                                            <div style={{
-                                                                                                display: 'flex',
-                                                                                                justifyContent: 'space-between',
-                                                                                                alignItems: 'center',
-                                                                                                color: meetsMinimum ? 'var(--text-primary)' : 'var(--color-danger)',
-                                                                                                fontWeight: 500
-                                                                                            }}>
-                                                                                                <span>Minimum meals required: {vendorMinimum}</span>
-                                                                                                <span>
-                                                                                                    Meals selected: <strong>{vendorMealCount}</strong>
-                                                                                                </span>
-                                                                                            </div>
-                                                                                            {!meetsMinimum && (
-                                                                                                <div style={{
-                                                                                                    marginTop: '0.25rem',
-                                                                                                    fontSize: '0.8rem',
-                                                                                                    color: 'var(--color-danger)'
-                                                                                                }}>
-                                                                                                    <AlertTriangle size={14} style={{ display: 'inline', marginRight: '4px', verticalAlign: 'middle' }} />
-                                                                                                    You must order at least {vendorMinimum} meals from {vendor?.name}
-                                                                                                </div>
-                                                                                            )}
-                                                                                        </div>
-                                                                                    )}
-                                                                                    <div className={styles.menuItems}>
-                                                                                        {getVendorMenuItems(selection.vendorId).map((item) => {
-                                                                                            const qty = Number(selection.items?.[item.id] || 0);
-                                                                                            return (
-                                                                                                <div key={item.id} className={styles.menuItem}>
-                                                                                                    <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
-                                                                                                        <span>{item.name} <span style={{ color: 'var(--text-tertiary)' }}>(x{item.quotaValue || 1})</span></span>
-                                                                                                        <div className={styles.quantityControl} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                                                                                            <button onClick={() => updateItemQuantity(index, item.id, Math.max(0, qty - 1), null)} className="btn btn-secondary" style={{ padding: '2px 8px' }}>-</button>
-                                                                                                            <span style={{ width: '20px', textAlign: 'center' }}>{qty}</span>
-                                                                                                            <button onClick={() => updateItemQuantity(index, item.id, qty + 1, null)} className="btn btn-secondary" style={{ padding: '2px 8px' }}>+</button>
-                                                                                                        </div>
-                                                                                                    </label>
-                                                                                                </div>
-                                                                                            );
-                                                                                        })}
-                                                                                        {getVendorMenuItems(selection.vendorId).length === 0 && <span className={styles.hint}>No active menu items.</span>}
-                                                                                    </div>
-                                                                                </>
-                                                                            );
-                                                                        })()}
-                                                                    </div>
-                                                                );
-                                                            })}
-                                                            <button className="btn btn-secondary" onClick={() => addVendorBlock(null)} style={{ marginTop: '0.5rem' }}>
-                                                                <Plus size={16} /> Add Vendor
-                                                            </button>
-                                                        </div>
-                                                    );
-                                                }
-                                            })()}
-                                        </div>
-                                    )}
-
-                                    {formData.serviceType === 'Boxes' && (
-                                        <div className="animate-fade-in">
-                                            <div className={styles.formGroup}>
-                                                <label className="label">Vendor</label>
-                                                <select
-                                                    className="input"
-                                                    value={orderConfig.vendorId || ''}
-                                                    onChange={e => {
-                                                        const newVendorId = e.target.value;
-                                                        // Auto-select the first active box type when vendor is selected
-                                                        const firstActiveBoxType = boxTypes.find(bt => bt.isActive);
-                                                        setOrderConfig({
-                                                            ...orderConfig,
-                                                            vendorId: newVendorId,
-                                                            boxTypeId: firstActiveBoxType?.id || '', // Auto-select first active box type
-                                                            boxQuantity: 1 // Default quantity
-                                                        });
-                                                    }}
-                                                >
-                                                    <option value="">Select Vendor...</option>
-                                                    {vendors.filter(v => v.serviceTypes.includes('Boxes') && v.isActive).map(v => (
-                                                        <option key={v.id} value={v.id}>{v.name}</option>
-                                                    ))}
-                                                </select>
-                                            </div>
-
-                                            {/* Next Delivery Date for this vendor */}
-                                            {orderConfig.vendorId && (() => {
-                                                const nextDeliveryDate = getNextDeliveryDateForVendor(orderConfig.vendorId);
-                                                if (nextDeliveryDate) {
-                                                    return (
-                                                        <div style={{
-                                                            marginTop: 'var(--spacing-md)',
-                                                            padding: '0.75rem',
-                                                            backgroundColor: 'var(--bg-surface-hover)',
+                                                        <div className={styles.alert} style={{
+                                                            backgroundColor: 'rgba(251, 191, 36, 0.1)',
+                                                            border: '1px solid rgba(251, 191, 36, 0.3)',
+                                                            color: 'var(--text-primary)',
+                                                            padding: 'var(--spacing-md)',
                                                             borderRadius: 'var(--radius-sm)',
-                                                            border: '1px solid var(--border-color)',
-                                                            fontSize: '0.85rem',
-                                                            color: 'var(--text-secondary)',
-                                                            textAlign: 'center'
+                                                            marginBottom: 'var(--spacing-md)'
                                                         }}>
-                                                            <strong style={{ color: 'var(--text-primary)' }}>Take Effect Date:</strong> {nextDeliveryDate}
-                                                        </div>
-                                                    );
-                                                }
-
-                                                return (
-                                                    <div style={{
-                                                        marginTop: 'var(--spacing-md)',
-                                                        padding: '0.75rem',
-                                                        backgroundColor: 'rgba(239, 68, 68, 0.1)',
-                                                        borderRadius: 'var(--radius-sm)',
-                                                        border: '1px solid var(--color-danger)',
-                                                        fontSize: '0.85rem',
-                                                        color: 'var(--color-danger)',
-                                                        display: 'flex',
-                                                        alignItems: 'center',
-                                                        gap: '0.5rem',
-                                                        textAlign: 'center',
-                                                        justifyContent: 'center'
-                                                    }}>
-                                                        <AlertTriangle size={16} />
-                                                        <span><strong>Warning:</strong> This vendor has no delivery days configured. Orders will NOT be created.</span>
-                                                    </div>
-                                                );
-                                            })()}
-
-                                            <div style={{ display: 'none' }}>
-                                                <label className="label">Quantity</label>
-                                                <input
-                                                    type="number"
-                                                    className="input"
-                                                    value={orderConfig.boxQuantity || 1}
-                                                    readOnly
-                                                    style={{ display: 'none' }}
-                                                />
-                                            </div>
-
-                                            {/* Box Content Selection */}
-                                            <div style={{ marginTop: '1rem', borderTop: '1px solid var(--border-color)', paddingTop: '1rem' }}>
-                                                <h4 style={{ fontSize: '0.9rem', marginBottom: '0.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                                                    <Package size={14} /> Box Contents
-                                                </h4>
-
-                                                {/* Check if vendor has delivery days */}
-                                                {orderConfig.vendorId && !getNextDeliveryDateForVendor(orderConfig.vendorId) ? (
-                                                    <div style={{
-                                                        padding: '1.5rem',
-                                                        backgroundColor: 'var(--bg-surface-active)',
-                                                        borderRadius: 'var(--radius-md)',
-                                                        border: '1px dashed var(--color-danger)',
-                                                        color: 'var(--text-secondary)',
-                                                        textAlign: 'center',
-                                                        display: 'flex',
-                                                        flexDirection: 'column',
-                                                        alignItems: 'center',
-                                                        gap: '0.5rem',
-                                                        opacity: 0.7
-                                                    }}>
-                                                        <AlertTriangle size={24} color="var(--color-danger)" />
-                                                        <span style={{ color: 'var(--color-danger)', fontWeight: 600 }}>Action Required</span>
-                                                        <span style={{ fontSize: '0.9rem' }}>
-                                                            Please configure <strong>Delivery Days</strong> for this vendor in Settings before adding items.
-                                                        </span>
-                                                    </div>
-                                                ) : (
-                                                    <>
-                                                        {/* Show all categories with box items */}
-                                                        {categories.map(category => {
-                                                            // Filter items for this category
-                                                            const availableItems = menuItems.filter(i =>
-                                                                (i.vendorId === null || i.vendorId === '') &&
-                                                                i.isActive &&
-                                                                i.categoryId === category.id
-                                                            );
-
-                                                            if (availableItems.length === 0) return null;
-
-                                                            const selectedItems = orderConfig.items || {};
-
-                                                            // Calculate total quota value for this category
-                                                            let categoryQuotaValue = 0;
-                                                            Object.entries(selectedItems).forEach(([itemId, qty]) => {
-                                                                const item = menuItems.find(i => i.id === itemId);
-                                                                if (item && item.categoryId === category.id) {
-                                                                    const itemQuotaValue = item.quotaValue || 1;
-                                                                    categoryQuotaValue += (qty as number) * itemQuotaValue;
-                                                                }
-                                                            });
-
-                                                            // Find quota requirement for this category (from box quotas)
-                                                            const quota = boxQuotas.find(q => q.categoryId === category.id);
-                                                            const boxQuantity = orderConfig.boxQuantity || 1;
-                                                            const requiredQuotaValueFromBox = quota ? quota.targetValue * boxQuantity : null;
-
-                                                            // Check if category has a setValue requirement
-                                                            const requiredQuotaValueFromCategory = category.setValue !== undefined && category.setValue !== null ? category.setValue : null;
-
-                                                            // Use setValue if present, otherwise use box quota requirement
-                                                            const requiredQuotaValue = requiredQuotaValueFromCategory !== null ? requiredQuotaValueFromCategory : requiredQuotaValueFromBox;
-
-                                                            const meetsQuota = requiredQuotaValue !== null ? categoryQuotaValue === requiredQuotaValue : true;
-
-                                                            return (
-                                                                <div key={category.id} style={{ marginBottom: '1rem', background: 'var(--bg-surface-hover)', padding: '0.75rem', borderRadius: '6px', border: requiredQuotaValue !== null && !meetsQuota ? '2px solid var(--color-danger)' : '1px solid var(--border-color)' }}>
-                                                                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem', fontSize: '0.85rem' }}>
-                                                                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                                                                            <span style={{ fontWeight: 600 }}>{category.name}</span>
-                                                                            {requiredQuotaValueFromCategory !== null && (
-                                                                                <span style={{
-                                                                                    fontSize: '0.7rem',
-                                                                                    color: 'var(--color-primary)',
-                                                                                    background: 'var(--bg-app)',
-                                                                                    padding: '2px 6px',
-                                                                                    borderRadius: '4px',
-                                                                                    fontWeight: 500
-                                                                                }}>
-                                                                                    Set Value: {requiredQuotaValueFromCategory}
-                                                                                </span>
-                                                                            )}
-                                                                        </div>
-                                                                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                                                                            {requiredQuotaValue !== null && (
-                                                                                <span style={{
-                                                                                    color: meetsQuota ? 'var(--color-success)' : 'var(--color-danger)',
-                                                                                    fontSize: '0.8rem',
-                                                                                    fontWeight: 500
-                                                                                }}>
-                                                                                    Quota: {categoryQuotaValue} / {requiredQuotaValue}
-                                                                                </span>
-                                                                            )}
-                                                                            {categoryQuotaValue > 0 && requiredQuotaValue === null && (
-                                                                                <span style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>
-                                                                                    Total: {categoryQuotaValue}
-                                                                                </span>
-                                                                            )}
-                                                                        </div>
+                                                            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 'var(--spacing-sm)' }}>
+                                                                <AlertTriangle size={18} style={{ color: '#f59e0b', flexShrink: 0, marginTop: '2px' }} />
+                                                                <div style={{ flex: 1 }}>
+                                                                    <div style={{ fontWeight: 600, marginBottom: 'var(--spacing-xs)' }}>
+                                                                        Weekly Cutoff Passed
                                                                     </div>
-                                                                    {requiredQuotaValue !== null && !meetsQuota && (
-                                                                        <div style={{
-                                                                            marginBottom: '0.5rem',
-                                                                            padding: '0.5rem',
-                                                                            backgroundColor: 'rgba(239, 68, 68, 0.1)',
-                                                                            borderRadius: '4px',
-                                                                            fontSize: '0.75rem',
-                                                                            color: 'var(--color-danger)',
-                                                                            display: 'flex',
-                                                                            alignItems: 'center',
-                                                                            gap: '0.25rem'
-                                                                        }}>
-                                                                            <AlertTriangle size={12} />
-                                                                            <span>You must have a total of {requiredQuotaValue} {category.name} points</span>
+                                                                    <div style={{ fontSize: '0.9rem', lineHeight: '1.5' }}>
+                                                                        The cutoff date has passed. Changes cannot be made to any deliveries in the locked week{lockedWeekDesc ? ` (${lockedWeekDesc})` : ''}.
+                                                                    </div>
+                                                                    {takeEffectDate && (
+                                                                        <div style={{ fontSize: '0.9rem', marginTop: 'var(--spacing-xs)', fontWeight: 500 }}>
+                                                                            Your changes will take effect on {takeEffectDate.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })} (the earliest effective date is always a Sunday).
                                                                         </div>
                                                                     )}
-
-                                                                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
-                                                                        {availableItems.map(item => {
-                                                                            const qty = Number(selectedItems[item.id] || 0);
-                                                                            return (
-                                                                                <div key={item.id} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', background: 'var(--bg-app)', padding: '4px 8px', borderRadius: '4px', border: '1px solid var(--border-color)' }}>
-                                                                                    <span style={{ fontSize: '0.8rem' }}>{item.name} <span style={{ color: 'var(--text-tertiary)' }}>(x{item.quotaValue || 1})</span></span>
-                                                                                    <div className={styles.quantityControl} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                                                                        <button onClick={() => handleBoxItemChange(item.id, Math.max(0, qty - 1))} className="btn btn-secondary" style={{ padding: '2px 8px' }}>-</button>
-                                                                                        <span style={{ width: '20px', textAlign: 'center' }}>{qty}</span>
-                                                                                        <button onClick={() => handleBoxItemChange(item.id, qty + 1)} className="btn btn-secondary" style={{ padding: '2px 8px' }}>+</button>
-                                                                                    </div>
-                                                                                </div>
-                                                                            );
-                                                                        })}
+                                                                    <div style={{ fontSize: '0.85rem', marginTop: 'var(--spacing-xs)', color: 'var(--text-secondary)' }}>
+                                                                        View the Recent Orders section below to see what will be delivered this week.
                                                                     </div>
                                                                 </div>
-                                                            );
-                                                        })}
+                                                            </div>
+                                                        </div>
+                                                    );
+                                                })()}
+                                                {orderConfig && orderConfig.caseId && !isCutoffPassed() && (() => {
+                                                    const nextDeliveryDate = getEarliestDeliveryDateForOrder();
+                                                    if (!nextDeliveryDate) return null;
+                                                    return (
+                                                        <div style={{
+                                                            backgroundColor: 'rgba(34, 197, 94, 0.1)',
+                                                            border: '1px solid rgba(34, 197, 94, 0.3)',
+                                                            color: 'var(--text-primary)',
+                                                            padding: 'var(--spacing-md)',
+                                                            borderRadius: 'var(--radius-sm)',
+                                                            marginBottom: 'var(--spacing-md)'
+                                                        }}>
+                                                            <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--spacing-sm)' }}>
+                                                                <Check size={18} style={{ color: '#22c55e', flexShrink: 0 }} />
+                                                                <div style={{ fontSize: '0.9rem', fontWeight: 500 }}>
+                                                                    This order will take effect on {nextDeliveryDate.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}.
+                                                                </div>
+                                                            </div>
+                                                        </div>
+                                                    );
+                                                })()}
 
-                                                        {/* Show uncategorized items if any */}
-                                                        {(() => {
-                                                            const uncategorizedItems = menuItems.filter(i =>
-                                                                (i.vendorId === null || i.vendorId === '') &&
-                                                                i.isActive &&
-                                                                (!i.categoryId || i.categoryId === '')
-                                                            );
+                                                {/* Vendor list with per-vendor delivery day selection */}
+                                                {(() => {
+                                                    // Check if we're already in multi-day format (from saved data)
+                                                    const isAlreadyMultiDay = orderConfig.deliveryDayOrders && typeof orderConfig.deliveryDayOrders === 'object';
 
-                                                            if (uncategorizedItems.length === 0) return null;
+                                                    if (isAlreadyMultiDay) {
+                                                        // Convert saved deliveryDayOrders back to per-vendor format for editing
+                                                        const deliveryDays = Object.keys(orderConfig.deliveryDayOrders).sort();
+                                                        const vendorSelections: any[] = [];
 
-                                                            const selectedItems = orderConfig.items || {};
+                                                        // Group by vendor
+                                                        const vendorsByDay: { [day: string]: any[] } = {};
+                                                        for (const day of deliveryDays) {
+                                                            const daySelections = orderConfig.deliveryDayOrders[day].vendorSelections || [];
+                                                            for (const sel of daySelections) {
+                                                                if (!sel.vendorId) continue;
+                                                                if (!vendorsByDay[day]) vendorsByDay[day] = [];
+                                                                vendorsByDay[day].push(sel);
+                                                            }
+                                                        }
 
-                                                            return (
-                                                                <div style={{ marginBottom: '1rem', background: 'var(--bg-surface-hover)', padding: '0.75rem', borderRadius: '6px' }}>
-                                                                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem', fontSize: '0.85rem' }}>
-                                                                        <span style={{ fontWeight: 600 }}>Uncategorized</span>
-                                                                    </div>
+                                                        // Convert to per-vendor format
+                                                        const vendorMap = new Map<string, any>();
+                                                        for (const day of deliveryDays) {
+                                                            for (const sel of vendorsByDay[day] || []) {
+                                                                if (!vendorMap.has(sel.vendorId)) {
+                                                                    vendorMap.set(sel.vendorId, {
+                                                                        vendorId: sel.vendorId,
+                                                                        selectedDeliveryDays: [],
+                                                                        itemsByDay: {}
+                                                                    });
+                                                                }
+                                                                const vendorSel = vendorMap.get(sel.vendorId);
+                                                                if (!vendorSel.selectedDeliveryDays.includes(day)) {
+                                                                    vendorSel.selectedDeliveryDays.push(day);
+                                                                }
+                                                                vendorSel.itemsByDay[day] = sel.items || {};
+                                                            }
+                                                        }
 
-                                                                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
-                                                                        {uncategorizedItems.map(item => {
-                                                                            const qty = Number(selectedItems[item.id] || 0);
-                                                                            return (
-                                                                                <div key={item.id} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', background: 'var(--bg-app)', padding: '4px 8px', borderRadius: '4px', border: '1px solid var(--border-color)' }}>
-                                                                                    <span style={{ fontSize: '0.8rem' }}>{item.name} <span style={{ color: 'var(--text-tertiary)' }}>(x{item.quotaValue || 1})</span></span>
-                                                                                    <div className={styles.quantityControl} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                                                                        <button onClick={() => handleBoxItemChange(item.id, Math.max(0, qty - 1))} className="btn btn-secondary" style={{ padding: '2px 8px' }}>-</button>
-                                                                                        <span style={{ width: '20px', textAlign: 'center' }}>{qty}</span>
-                                                                                        <button onClick={() => handleBoxItemChange(item.id, qty + 1)} className="btn btn-secondary" style={{ padding: '2px 8px' }}>+</button>
+                                                        // Use converted format or fall back to normal
+                                                        const currentSelections = Array.from(vendorMap.values()).length > 0
+                                                            ? Array.from(vendorMap.values())
+                                                            : getVendorSelectionsForDay(null);
+
+                                                        return (
+                                                            <div className={styles.vendorsList}>
+                                                                {(currentSelections || []).map((selection: any, index: number) => {
+                                                                    const vendor = selection.vendorId ? vendors.find(v => v.id === selection.vendorId) : null;
+                                                                    const vendorHasMultipleDays = vendor && vendor.deliveryDays && vendor.deliveryDays.length > 1;
+                                                                    const vendorDeliveryDays = vendor?.deliveryDays || [];
+                                                                    const vendorSelectedDays = (selection.selectedDeliveryDays || []) as string[];
+
+                                                                    return (
+                                                                        <div key={index} className={styles.vendorBlock}>
+                                                                            <div className={styles.vendorHeader}>
+                                                                                <select
+                                                                                    className="input"
+                                                                                    value={selection.vendorId}
+                                                                                    onChange={e => updateVendorSelection(index, 'vendorId', e.target.value, null)}
+                                                                                >
+                                                                                    <option value="">Select Vendor...</option>
+                                                                                    {vendors.filter(v => v.serviceTypes.includes('Food') && v.isActive).map(v => (
+                                                                                        <option key={v.id} value={v.id} disabled={currentSelections.some((s: any, i: number) => i !== index && s.vendorId === v.id)}>
+                                                                                            {v.name}
+                                                                                        </option>
+                                                                                    ))}
+                                                                                </select>
+                                                                                <button className={`${styles.iconBtn} ${styles.danger}`} onClick={() => removeVendorBlock(index, null)} title="Remove Vendor">
+                                                                                    <Trash2 size={16} />
+                                                                                </button>
+                                                                            </div>
+
+                                                                            {selection.vendorId && vendorHasMultipleDays && (
+                                                                                <div style={{
+                                                                                    marginBottom: '1rem',
+                                                                                    padding: '0.75rem',
+                                                                                    backgroundColor: 'var(--bg-surface-hover)',
+                                                                                    borderRadius: 'var(--radius-sm)',
+                                                                                    border: '1px solid var(--border-color)'
+                                                                                }}>
+                                                                                    <div style={{
+                                                                                        display: 'flex',
+                                                                                        alignItems: 'center',
+                                                                                        gap: '0.5rem',
+                                                                                        marginBottom: '0.75rem',
+                                                                                        fontSize: '0.9rem',
+                                                                                        fontWeight: 500
+                                                                                    }}>
+                                                                                        <Calendar size={16} />
+                                                                                        <span>Select delivery days for {vendor?.name}:</span>
+                                                                                    </div>
+                                                                                    <div style={{
+                                                                                        display: 'flex',
+                                                                                        flexWrap: 'wrap',
+                                                                                        gap: '0.5rem'
+                                                                                    }}>
+                                                                                        {vendorDeliveryDays.map((day: string) => {
+                                                                                            const isSelected = vendorSelectedDays.includes(day);
+                                                                                            return (
+                                                                                                <button
+                                                                                                    key={day}
+                                                                                                    type="button"
+                                                                                                    onClick={() => {
+                                                                                                        const newSelected = isSelected
+                                                                                                            ? vendorSelectedDays.filter((d: string) => d !== day)
+                                                                                                            : [...vendorSelectedDays, day];
+
+                                                                                                        // Update selection with new delivery days
+                                                                                                        const updated = [...currentSelections];
+                                                                                                        updated[index] = {
+                                                                                                            ...updated[index],
+                                                                                                            selectedDeliveryDays: newSelected,
+                                                                                                            // Initialize items for each selected day
+                                                                                                            itemsByDay: (() => {
+                                                                                                                const itemsByDay = { ...(updated[index].itemsByDay || {}) };
+                                                                                                                if (!isSelected) {
+                                                                                                                    // Adding a day - initialize empty items
+                                                                                                                    itemsByDay[day] = {};
+                                                                                                                } else {
+                                                                                                                    // Removing a day - clean up
+                                                                                                                    delete itemsByDay[day];
+                                                                                                                }
+                                                                                                                return itemsByDay;
+                                                                                                            })()
+                                                                                                        };
+                                                                                                        setOrderConfig({
+                                                                                                            ...orderConfig,
+                                                                                                            vendorSelections: updated,
+                                                                                                            deliveryDayOrders: undefined // Clear old format
+                                                                                                        });
+                                                                                                    }}
+                                                                                                    style={{
+                                                                                                        padding: '0.5rem 1rem',
+                                                                                                        borderRadius: 'var(--radius-sm)',
+                                                                                                        border: `2px solid ${isSelected ? 'var(--color-primary)' : 'var(--border-color)'}`,
+                                                                                                        backgroundColor: isSelected ? 'var(--color-primary)' : 'var(--bg-app)',
+                                                                                                        color: isSelected ? 'white' : 'var(--text-primary)',
+                                                                                                        cursor: 'pointer',
+                                                                                                        fontSize: '0.85rem',
+                                                                                                        fontWeight: isSelected ? 600 : 400,
+                                                                                                        transition: 'all 0.2s'
+                                                                                                    }}
+                                                                                                >
+                                                                                                    {day}
+                                                                                                    {isSelected && <Check size={14} style={{ marginLeft: '0.25rem', display: 'inline', verticalAlign: 'middle' }} />}
+                                                                                                </button>
+                                                                                            );
+                                                                                        })}
                                                                                     </div>
                                                                                 </div>
-                                                                            );
-                                                                        })}
-                                                                    </div>
-                                                                </div>
-                                                            );
-                                                        })()}
-                                                    </>
-                                                )}
+                                                                            )}
+
+                                                                            {selection.vendorId && (() => {
+                                                                                const vendorMinimum = vendor?.minimumMeals || 0;
+
+                                                                                // If vendor has multiple days but no days are selected, don't show menu items
+                                                                                if (vendorHasMultipleDays && vendorSelectedDays.length === 0) {
+                                                                                    return null;
+                                                                                }
+
+                                                                                // If vendor has multiple days and days are selected, show forms for each day
+                                                                                if (vendorHasMultipleDays && vendorSelectedDays.length > 0) {
+                                                                                    return (
+                                                                                        <>
+                                                                                            {vendorSelectedDays.map((day: string) => {
+                                                                                                const dayItems = (selection.itemsByDay || {})[day] || {};
+                                                                                                const dayMealCount = Object.values(dayItems).reduce((sum: number, qty: any) => sum + (Number(qty) || 0), 0);
+                                                                                                const meetsMinimum = vendorMinimum === 0 || dayMealCount >= vendorMinimum;
+
+                                                                                                return (
+                                                                                                    <div key={day} style={{
+                                                                                                        marginBottom: '1.5rem',
+                                                                                                        padding: '1rem',
+                                                                                                        border: '1px solid var(--border-color)',
+                                                                                                        borderRadius: 'var(--radius-md)',
+                                                                                                        backgroundColor: 'var(--bg-surface-hover)'
+                                                                                                    }}>
+                                                                                                        <div style={{
+                                                                                                            display: 'flex',
+                                                                                                            alignItems: 'center',
+                                                                                                            justifyContent: 'space-between',
+                                                                                                            marginBottom: '0.75rem',
+                                                                                                            paddingBottom: '0.75rem',
+                                                                                                            borderBottom: '1px solid var(--border-color)'
+                                                                                                        }}>
+                                                                                                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                                                                                                <Calendar size={16} />
+                                                                                                                <strong>{day}</strong>
+                                                                                                            </div>
+                                                                                                            {vendorMinimum > 0 && (
+                                                                                                                <div style={{
+                                                                                                                    fontSize: '0.85rem',
+                                                                                                                    color: meetsMinimum ? 'var(--text-primary)' : 'var(--color-danger)',
+                                                                                                                    fontWeight: 500
+                                                                                                                }}>
+                                                                                                                    Meals: {dayMealCount} / {vendorMinimum} min
+                                                                                                                </div>
+                                                                                                            )}
+                                                                                                        </div>
+
+                                                                                                        {vendorMinimum > 0 && !meetsMinimum && (
+                                                                                                            <div style={{
+                                                                                                                marginBottom: '0.75rem',
+                                                                                                                padding: '0.5rem',
+                                                                                                                backgroundColor: 'rgba(239, 68, 68, 0.1)',
+                                                                                                                borderRadius: 'var(--radius-sm)',
+                                                                                                                border: '1px solid var(--color-danger)',
+                                                                                                                fontSize: '0.8rem',
+                                                                                                                color: 'var(--color-danger)'
+                                                                                                            }}>
+                                                                                                                <AlertTriangle size={14} style={{ display: 'inline', marginRight: '4px', verticalAlign: 'middle' }} />
+                                                                                                                Minimum {vendorMinimum} meals required for {day}
+                                                                                                            </div>
+                                                                                                        )}
+
+                                                                                                        <div className={styles.menuItems}>
+                                                                                                            {getVendorMenuItems(selection.vendorId).map((item) => {
+                                                                                                                const qty = Number(dayItems[item.id] || 0);
+                                                                                                                return (
+                                                                                                                    <div key={item.id} className={styles.menuItem}>
+                                                                                                                        <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
+                                                                                                                            <span>{item.name} <span style={{ color: 'var(--text-tertiary)' }}>(x{item.quotaValue || 1})</span></span>
+                                                                                                                            <div className={styles.quantityControl} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                                                                                                                <button onClick={() => {
+                                                                                                                                    const updated = [...currentSelections];
+                                                                                                                                    const itemsByDay = { ...(updated[index].itemsByDay || {}) };
+                                                                                                                                    if (!itemsByDay[day]) itemsByDay[day] = {};
+                                                                                                                                    const newQty = Math.max(0, qty - 1);
+                                                                                                                                    if (newQty > 0) {
+                                                                                                                                        itemsByDay[day][item.id] = newQty;
+                                                                                                                                    } else {
+                                                                                                                                        delete itemsByDay[day][item.id];
+                                                                                                                                    }
+                                                                                                                                    updated[index] = {
+                                                                                                                                        ...updated[index],
+                                                                                                                                        itemsByDay
+                                                                                                                                    };
+                                                                                                                                    setOrderConfig({
+                                                                                                                                        ...orderConfig,
+                                                                                                                                        vendorSelections: updated,
+                                                                                                                                        deliveryDayOrders: undefined // Clear old format
+                                                                                                                                    });
+                                                                                                                                }} className="btn btn-secondary" style={{ padding: '2px 8px' }}>-</button>
+                                                                                                                                <span style={{ width: '20px', textAlign: 'center' }}>{qty}</span>
+                                                                                                                                <button onClick={() => {
+                                                                                                                                    const updated = [...currentSelections];
+                                                                                                                                    const itemsByDay = { ...(updated[index].itemsByDay || {}) };
+                                                                                                                                    if (!itemsByDay[day]) itemsByDay[day] = {};
+                                                                                                                                    itemsByDay[day][item.id] = qty + 1;
+                                                                                                                                    updated[index] = {
+                                                                                                                                        ...updated[index],
+                                                                                                                                        itemsByDay
+                                                                                                                                    };
+                                                                                                                                    setOrderConfig({
+                                                                                                                                        ...orderConfig,
+                                                                                                                                        vendorSelections: updated,
+                                                                                                                                        deliveryDayOrders: undefined // Clear old format
+                                                                                                                                    });
+                                                                                                                                }} className="btn btn-secondary" style={{ padding: '2px 8px' }}>+</button>
+                                                                                                                            </div>
+                                                                                                                        </label>
+                                                                                                                    </div>
+                                                                                                                );
+                                                                                                            })}
+                                                                                                            {getVendorMenuItems(selection.vendorId).length === 0 && <span className={styles.hint}>No active menu items.</span>}
+                                                                                                        </div>
+                                                                                                    </div>
+                                                                                                );
+                                                                                            })}
+                                                                                        </>
+                                                                                    );
+                                                                                }
+
+                                                                                // Single delivery day or no multiple days - show normal item selection
+                                                                                const vendorMealCount = getVendorMealCount(selection.vendorId, selection);
+                                                                                const meetsMinimum = vendorMinimum === 0 || vendorMealCount >= vendorMinimum;
+
+                                                                                return (
+                                                                                    <>
+                                                                                        {vendorMinimum > 0 && (
+                                                                                            <div style={{
+                                                                                                marginBottom: '0.75rem',
+                                                                                                padding: '0.5rem 0.75rem',
+                                                                                                backgroundColor: meetsMinimum ? 'var(--bg-surface-hover)' : 'rgba(239, 68, 68, 0.1)',
+                                                                                                borderRadius: 'var(--radius-sm)',
+                                                                                                border: `1px solid ${meetsMinimum ? 'var(--border-color)' : 'var(--color-danger)'}`,
+                                                                                                fontSize: '0.85rem'
+                                                                                            }}>
+                                                                                                <div style={{
+                                                                                                    display: 'flex',
+                                                                                                    justifyContent: 'space-between',
+                                                                                                    alignItems: 'center',
+                                                                                                    color: meetsMinimum ? 'var(--text-primary)' : 'var(--color-danger)',
+                                                                                                    fontWeight: 500
+                                                                                                }}>
+                                                                                                    <span>Minimum meals required: {vendorMinimum}</span>
+                                                                                                    <span>
+                                                                                                        Meals selected: <strong>{vendorMealCount}</strong>
+                                                                                                    </span>
+                                                                                                </div>
+                                                                                                {!meetsMinimum && (
+                                                                                                    <div style={{
+                                                                                                        marginTop: '0.25rem',
+                                                                                                        fontSize: '0.8rem',
+                                                                                                        color: 'var(--color-danger)'
+                                                                                                    }}>
+                                                                                                        <AlertTriangle size={14} style={{ display: 'inline', marginRight: '4px', verticalAlign: 'middle' }} />
+                                                                                                        You must order at least {vendorMinimum} meals from {vendor?.name}
+                                                                                                    </div>
+                                                                                                )}
+                                                                                            </div>
+                                                                                        )}
+                                                                                        <div className={styles.menuItems}>
+                                                                                            {getVendorMenuItems(selection.vendorId).map((item) => {
+                                                                                                // Get quantity from itemsByDay if it exists, otherwise from items
+                                                                                                let qty = 0;
+                                                                                                if (selection.itemsByDay && selection.selectedDeliveryDays) {
+                                                                                                    // Sum up quantities across all selected delivery days
+                                                                                                    for (const day of selection.selectedDeliveryDays) {
+                                                                                                        const dayItems = selection.itemsByDay[day] || {};
+                                                                                                        qty += Number(dayItems[item.id] || 0);
+                                                                                                    }
+
+                                                                                                } else {
+                                                                                                    qty = Number(selection.items?.[item.id] || 0);
+                                                                                                }
+                                                                                                return (
+                                                                                                    <div key={item.id} className={styles.menuItem}>
+                                                                                                        <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
+                                                                                                            <span>{item.name} <span style={{ color: 'var(--text-tertiary)' }}>(x{item.quotaValue || 1})</span></span>
+                                                                                                            <div className={styles.quantityControl} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                                                                                                <button onClick={() => updateItemQuantity(index, item.id, Math.max(0, qty - 1), null)} className="btn btn-secondary" style={{ padding: '2px 8px' }}>-</button>
+                                                                                                                <span style={{ width: '20px', textAlign: 'center' }}>{qty}</span>
+                                                                                                                <button onClick={() => updateItemQuantity(index, item.id, qty + 1, null)} className="btn btn-secondary" style={{ padding: '2px 8px' }}>+</button>
+                                                                                                            </div>
+                                                                                                        </label>
+                                                                                                    </div>
+                                                                                                );
+                                                                                            })}
+                                                                                            {getVendorMenuItems(selection.vendorId).length === 0 && <span className={styles.hint}>No active menu items.</span>}
+                                                                                        </div>
+                                                                                    </>
+                                                                                );
+                                                                            })()}
+                                                                        </div>
+                                                                    );
+                                                                })}
+                                                                <button className="btn btn-secondary" onClick={() => addVendorBlock(null)} style={{ marginTop: '0.5rem' }}>
+                                                                    <Plus size={16} /> Add Vendor
+                                                                </button>
+                                                            </div>
+                                                        );
+                                                    } else {
+                                                        // Single form - show vendors with per-vendor delivery day selection
+                                                        const currentSelections = getVendorSelectionsForDay(null);
+                                                        return (
+                                                            <div className={styles.vendorsList}>
+                                                                {(currentSelections || []).map((selection: any, index: number) => {
+                                                                    const vendor = selection.vendorId ? vendors.find(v => v.id === selection.vendorId) : null;
+                                                                    const vendorHasMultipleDays = vendor && vendor.deliveryDays && vendor.deliveryDays.length > 1;
+                                                                    const vendorDeliveryDays = vendor?.deliveryDays || [];
+
+                                                                    // Get selected delivery days for this vendor
+                                                                    const vendorSelectedDays = (selection.selectedDeliveryDays || []) as string[];
+
+                                                                    return (
+                                                                        <div key={index} className={styles.vendorBlock}>
+                                                                            <div className={styles.vendorHeader}>
+                                                                                <select
+                                                                                    className="input"
+                                                                                    value={selection.vendorId}
+                                                                                    onChange={e => updateVendorSelection(index, 'vendorId', e.target.value, null)}
+                                                                                >
+                                                                                    <option value="">Select Vendor...</option>
+                                                                                    {vendors.filter(v => v.serviceTypes.includes('Food') && v.isActive).map(v => (
+                                                                                        <option key={v.id} value={v.id} disabled={currentSelections.some((s: any, i: number) => i !== index && s.vendorId === v.id)}>
+                                                                                            {v.name}
+                                                                                        </option>
+                                                                                    ))}
+                                                                                </select>
+                                                                                <button className={`${styles.iconBtn} ${styles.danger}`} onClick={() => removeVendorBlock(index, null)} title="Remove Vendor">
+                                                                                    <Trash2 size={16} />
+                                                                                </button>
+                                                                            </div>
+
+                                                                            {selection.vendorId && vendorHasMultipleDays && (
+                                                                                <div style={{
+                                                                                    marginBottom: '1rem',
+                                                                                    padding: '0.75rem',
+                                                                                    backgroundColor: 'var(--bg-surface-hover)',
+                                                                                    borderRadius: 'var(--radius-sm)',
+                                                                                    border: '1px solid var(--border-color)'
+                                                                                }}>
+                                                                                    <div style={{
+                                                                                        display: 'flex',
+                                                                                        alignItems: 'center',
+                                                                                        gap: '0.5rem',
+                                                                                        marginBottom: '0.75rem',
+                                                                                        fontSize: '0.9rem',
+                                                                                        fontWeight: 500
+                                                                                    }}>
+                                                                                        <Calendar size={16} />
+                                                                                        <span>Select delivery days for {vendor?.name}:</span>
+                                                                                    </div>
+                                                                                    <div style={{
+                                                                                        display: 'flex',
+                                                                                        flexWrap: 'wrap',
+                                                                                        gap: '0.5rem'
+                                                                                    }}>
+                                                                                        {vendorDeliveryDays.map((day: string) => {
+                                                                                            const isSelected = vendorSelectedDays.includes(day);
+                                                                                            return (
+                                                                                                <button
+                                                                                                    key={day}
+                                                                                                    type="button"
+                                                                                                    onClick={() => {
+                                                                                                        const newSelected = isSelected
+                                                                                                            ? vendorSelectedDays.filter((d: string) => d !== day)
+                                                                                                            : [...vendorSelectedDays, day];
+
+                                                                                                        // Update selection with new delivery days
+                                                                                                        const updated = [...currentSelections];
+                                                                                                        updated[index] = {
+                                                                                                            ...updated[index],
+                                                                                                            selectedDeliveryDays: newSelected,
+                                                                                                            // Initialize items for each selected day
+                                                                                                            itemsByDay: (() => {
+                                                                                                                const itemsByDay = { ...(updated[index].itemsByDay || {}) };
+                                                                                                                if (!isSelected) {
+                                                                                                                    // Adding a day - initialize empty items
+                                                                                                                    itemsByDay[day] = {};
+                                                                                                                } else {
+                                                                                                                    // Removing a day - clean up
+                                                                                                                    delete itemsByDay[day];
+                                                                                                                }
+                                                                                                                return itemsByDay;
+                                                                                                            })()
+                                                                                                        };
+                                                                                                        setOrderConfig({
+                                                                                                            ...orderConfig,
+                                                                                                            vendorSelections: updated
+                                                                                                        });
+                                                                                                    }}
+                                                                                                    style={{
+                                                                                                        padding: '0.5rem 1rem',
+                                                                                                        borderRadius: 'var(--radius-sm)',
+                                                                                                        border: `2px solid ${isSelected ? 'var(--color-primary)' : 'var(--border-color)'}`,
+                                                                                                        backgroundColor: isSelected ? 'var(--color-primary)' : 'var(--bg-app)',
+                                                                                                        color: isSelected ? 'white' : 'var(--text-primary)',
+                                                                                                        cursor: 'pointer',
+                                                                                                        fontSize: '0.85rem',
+                                                                                                        fontWeight: isSelected ? 600 : 400,
+                                                                                                        transition: 'all 0.2s'
+                                                                                                    }}
+                                                                                                >
+                                                                                                    {day}
+                                                                                                    {isSelected && <Check size={14} style={{ marginLeft: '0.25rem', display: 'inline', verticalAlign: 'middle' }} />}
+                                                                                                </button>
+                                                                                            );
+                                                                                        })}
+                                                                                    </div>
+                                                                                </div>
+                                                                            )}
+
+                                                                            {selection.vendorId && (() => {
+                                                                                const vendorMinimum = vendor?.minimumMeals || 0;
+
+                                                                                // If vendor has multiple days but no days are selected, don't show menu items
+                                                                                if (vendorHasMultipleDays && vendorSelectedDays.length === 0) {
+                                                                                    return null;
+                                                                                }
+
+                                                                                // If vendor has multiple days and days are selected, show forms for each day
+                                                                                if (vendorHasMultipleDays && vendorSelectedDays.length > 0) {
+                                                                                    return (
+                                                                                        <>
+                                                                                            {vendorSelectedDays.map((day: string) => {
+                                                                                                const dayItems = (selection.itemsByDay || {})[day] || {};
+                                                                                                const dayMealCount = Object.values(dayItems).reduce((sum: number, qty: any) => sum + (Number(qty) || 0), 0);
+                                                                                                const meetsMinimum = vendorMinimum === 0 || dayMealCount >= vendorMinimum;
+
+                                                                                                return (
+                                                                                                    <div key={day} style={{
+                                                                                                        marginBottom: '1.5rem',
+                                                                                                        padding: '1rem',
+                                                                                                        border: '1px solid var(--border-color)',
+                                                                                                        borderRadius: 'var(--radius-md)',
+                                                                                                        backgroundColor: 'var(--bg-surface-hover)'
+                                                                                                    }}>
+                                                                                                        <div style={{
+                                                                                                            display: 'flex',
+                                                                                                            alignItems: 'center',
+                                                                                                            justifyContent: 'space-between',
+                                                                                                            marginBottom: '0.75rem',
+                                                                                                            paddingBottom: '0.75rem',
+                                                                                                            borderBottom: '1px solid var(--border-color)'
+                                                                                                        }}>
+                                                                                                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                                                                                                <Calendar size={16} />
+                                                                                                                <strong>{day}</strong>
+                                                                                                            </div>
+                                                                                                            {vendorMinimum > 0 && (
+                                                                                                                <div style={{
+                                                                                                                    fontSize: '0.85rem',
+                                                                                                                    color: meetsMinimum ? 'var(--text-primary)' : 'var(--color-danger)',
+                                                                                                                    fontWeight: 500
+                                                                                                                }}>
+                                                                                                                    Meals: {dayMealCount} / {vendorMinimum} min
+                                                                                                                </div>
+                                                                                                            )}
+                                                                                                        </div>
+
+                                                                                                        {vendorMinimum > 0 && !meetsMinimum && (
+                                                                                                            <div style={{
+                                                                                                                marginBottom: '0.75rem',
+                                                                                                                padding: '0.5rem',
+                                                                                                                backgroundColor: 'rgba(239, 68, 68, 0.1)',
+                                                                                                                borderRadius: 'var(--radius-sm)',
+                                                                                                                border: '1px solid var(--color-danger)',
+                                                                                                                fontSize: '0.8rem',
+                                                                                                                color: 'var(--color-danger)'
+                                                                                                            }}>
+                                                                                                                <AlertTriangle size={14} style={{ display: 'inline', marginRight: '4px', verticalAlign: 'middle' }} />
+                                                                                                                Minimum {vendorMinimum} meals required for {day}
+                                                                                                            </div>
+                                                                                                        )}
+
+                                                                                                        <div className={styles.menuItems}>
+                                                                                                            {getVendorMenuItems(selection.vendorId).map((item) => {
+                                                                                                                const qty = Number(dayItems[item.id] || 0);
+                                                                                                                return (
+                                                                                                                    <div key={item.id} className={styles.menuItem}>
+                                                                                                                        <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
+                                                                                                                            <span>{item.name} <span style={{ color: 'var(--text-tertiary)' }}>(x{item.quotaValue || 1})</span></span>
+                                                                                                                            <div className={styles.quantityControl} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                                                                                                                <button onClick={() => {
+                                                                                                                                    const updated = [...currentSelections];
+                                                                                                                                    const itemsByDay = { ...(updated[index].itemsByDay || {}) };
+                                                                                                                                    if (!itemsByDay[day]) itemsByDay[day] = {};
+                                                                                                                                    const newQty = Math.max(0, qty - 1);
+                                                                                                                                    if (newQty > 0) {
+                                                                                                                                        itemsByDay[day][item.id] = newQty;
+                                                                                                                                    } else {
+                                                                                                                                        delete itemsByDay[day][item.id];
+                                                                                                                                    }
+                                                                                                                                    updated[index] = {
+                                                                                                                                        ...updated[index],
+                                                                                                                                        itemsByDay
+                                                                                                                                    };
+                                                                                                                                    setOrderConfig({
+                                                                                                                                        ...orderConfig,
+                                                                                                                                        vendorSelections: updated
+                                                                                                                                    });
+                                                                                                                                }} className="btn btn-secondary" style={{ padding: '2px 8px' }}>-</button>
+                                                                                                                                <span style={{ width: '20px', textAlign: 'center' }}>{qty}</span>
+                                                                                                                                <button onClick={() => {
+                                                                                                                                    const updated = [...currentSelections];
+                                                                                                                                    const itemsByDay = { ...(updated[index].itemsByDay || {}) };
+                                                                                                                                    if (!itemsByDay[day]) itemsByDay[day] = {};
+                                                                                                                                    itemsByDay[day][item.id] = qty + 1;
+                                                                                                                                    updated[index] = {
+                                                                                                                                        ...updated[index],
+                                                                                                                                        itemsByDay
+                                                                                                                                    };
+                                                                                                                                    setOrderConfig({
+                                                                                                                                        ...orderConfig,
+                                                                                                                                        vendorSelections: updated
+                                                                                                                                    });
+                                                                                                                                }} className="btn btn-secondary" style={{ padding: '2px 8px' }}>+</button>
+                                                                                                                            </div>
+                                                                                                                        </label>
+                                                                                                                    </div>
+                                                                                                                );
+                                                                                                            })}
+                                                                                                            {getVendorMenuItems(selection.vendorId).length === 0 && <span className={styles.hint}>No active menu items.</span>}
+                                                                                                        </div>
+                                                                                                    </div>
+                                                                                                );
+                                                                                            })}
+                                                                                        </>
+                                                                                    );
+                                                                                }
+
+                                                                                // Single delivery day or no multiple days - show normal item selection
+                                                                                const vendorMealCount = getVendorMealCount(selection.vendorId, selection);
+                                                                                const meetsMinimum = vendorMinimum === 0 || vendorMealCount >= vendorMinimum;
+
+                                                                                return (
+                                                                                    <>
+                                                                                        {vendorMinimum > 0 && (
+                                                                                            <div style={{
+                                                                                                marginBottom: '0.75rem',
+                                                                                                padding: '0.5rem 0.75rem',
+                                                                                                backgroundColor: meetsMinimum ? 'var(--bg-surface-hover)' : 'rgba(239, 68, 68, 0.1)',
+                                                                                                borderRadius: 'var(--radius-sm)',
+                                                                                                border: `1px solid ${meetsMinimum ? 'var(--border-color)' : 'var(--color-danger)'}`,
+                                                                                                fontSize: '0.85rem'
+                                                                                            }}>
+                                                                                                <div style={{
+                                                                                                    display: 'flex',
+                                                                                                    justifyContent: 'space-between',
+                                                                                                    alignItems: 'center',
+                                                                                                    color: meetsMinimum ? 'var(--text-primary)' : 'var(--color-danger)',
+                                                                                                    fontWeight: 500
+                                                                                                }}>
+                                                                                                    <span>Minimum meals required: {vendorMinimum}</span>
+                                                                                                    <span>
+                                                                                                        Meals selected: <strong>{vendorMealCount}</strong>
+                                                                                                    </span>
+                                                                                                </div>
+                                                                                                {!meetsMinimum && (
+                                                                                                    <div style={{
+                                                                                                        marginTop: '0.25rem',
+                                                                                                        fontSize: '0.8rem',
+                                                                                                        color: 'var(--color-danger)'
+                                                                                                    }}>
+                                                                                                        <AlertTriangle size={14} style={{ display: 'inline', marginRight: '4px', verticalAlign: 'middle' }} />
+                                                                                                        You must order at least {vendorMinimum} meals from {vendor?.name}
+                                                                                                    </div>
+                                                                                                )}
+                                                                                            </div>
+                                                                                        )}
+                                                                                        <div className={styles.menuItems}>
+                                                                                            {getVendorMenuItems(selection.vendorId).map((item) => {
+                                                                                                // Get quantity from itemsByDay if it exists, otherwise from items
+                                                                                                let qty = 0;
+                                                                                                if (selection.itemsByDay && selection.selectedDeliveryDays) {
+                                                                                                    // Sum up quantities across all selected delivery days
+                                                                                                    for (const day of selection.selectedDeliveryDays) {
+                                                                                                        const dayItems = selection.itemsByDay[day] || {};
+                                                                                                        qty += Number(dayItems[item.id] || 0);
+                                                                                                    }
+
+                                                                                                } else {
+                                                                                                    qty = Number(selection.items?.[item.id] || 0);
+                                                                                                }
+                                                                                                return (
+                                                                                                    <div key={item.id} className={styles.menuItem}>
+                                                                                                        <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
+                                                                                                            <span>{item.name} <span style={{ color: 'var(--text-tertiary)' }}>(x{item.quotaValue || 1})</span></span>
+                                                                                                            <div className={styles.quantityControl} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                                                                                                <button onClick={() => updateItemQuantity(index, item.id, Math.max(0, qty - 1), null)} className="btn btn-secondary" style={{ padding: '2px 8px' }}>-</button>
+                                                                                                                <span style={{ width: '20px', textAlign: 'center' }}>{qty}</span>
+                                                                                                                <button onClick={() => updateItemQuantity(index, item.id, qty + 1, null)} className="btn btn-secondary" style={{ padding: '2px 8px' }}>+</button>
+                                                                                                            </div>
+                                                                                                        </label>
+                                                                                                    </div>
+                                                                                                );
+                                                                                            })}
+                                                                                            {getVendorMenuItems(selection.vendorId).length === 0 && <span className={styles.hint}>No active menu items.</span>}
+                                                                                        </div>
+                                                                                    </>
+                                                                                );
+                                                                            })()}
+                                                                        </div>
+                                                                    );
+                                                                })}
+                                                                <button className="btn btn-secondary" onClick={() => addVendorBlock(null)} style={{ marginTop: '0.5rem' }}>
+                                                                    <Plus size={16} /> Add Vendor
+                                                                </button>
+                                                            </div>
+                                                        );
+                                                    }
+                                                })()}
                                             </div>
-                                        </div>
-                                    )}
+                                        )}
 
-                                    {/* Equipment Order Section - Always visible */}
-                                    <div className={styles.divider} style={{ marginTop: '2rem', marginBottom: '1rem' }} />
-                                    <div style={{ marginTop: '1rem' }}>
-                                        <h4 style={{ fontSize: '0.9rem', marginBottom: '0.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                                            <Wrench size={14} /> Equipment Order
-                                        </h4>
-                                        {!showEquipmentOrder ? (
-                                            <button
-                                                className="btn btn-secondary"
-                                                onClick={() => setShowEquipmentOrder(true)}
-                                                style={{ width: '100%' }}
-                                            >
-                                                Equipment Order
-                                            </button>
-                                        ) : (
-                                            <div style={{
-                                                padding: '1rem',
-                                                backgroundColor: 'var(--bg-surface-hover)',
-                                                borderRadius: 'var(--radius-md)',
-                                                border: '1px solid var(--border-color)'
-                                            }}>
+                                        {formData.serviceType === 'Boxes' && (
+                                            <div className="animate-fade-in">
                                                 <div className={styles.formGroup}>
                                                     <label className="label">Vendor</label>
                                                     <select
                                                         className="input"
-                                                        value={equipmentOrder?.vendorId || ''}
-                                                        onChange={e => setEquipmentOrder({
-                                                            ...equipmentOrder,
-                                                            vendorId: e.target.value,
-                                                            equipmentId: '' // Reset equipment selection when vendor changes
-                                                        })}
+                                                        value={orderConfig.vendorId || ''}
+                                                        onChange={e => {
+                                                            const newVendorId = e.target.value;
+                                                            // Auto-select the first active box type when vendor is selected
+                                                            const firstActiveBoxType = boxTypes.find(bt => bt.isActive);
+                                                            setOrderConfig({
+                                                                ...orderConfig,
+                                                                vendorId: newVendorId,
+                                                                boxTypeId: firstActiveBoxType?.id || '', // Auto-select first active box type
+                                                                boxQuantity: 1 // Default quantity
+                                                            });
+                                                        }}
                                                     >
                                                         <option value="">Select Vendor...</option>
-                                                        {vendors
-                                                            .filter(v => {
-                                                                const hasEquipment = v.serviceTypes && v.serviceTypes.includes('Equipment');
-                                                                const isActive = v.isActive;
-                                                                return hasEquipment && isActive;
-                                                            })
-                                                            .map(v => (
-                                                                <option key={v.id} value={v.id}>{v.name}</option>
-                                                            ))}
+                                                        {vendors.filter(v => v.serviceTypes.includes('Boxes') && v.isActive).map(v => (
+                                                            <option key={v.id} value={v.id}>{v.name}</option>
+                                                        ))}
                                                     </select>
-                                                    {vendors.filter(v => v.serviceTypes && v.serviceTypes.includes('Equipment') && v.isActive).length === 0 && (
-                                                        <p style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)', marginTop: '0.5rem', fontStyle: 'italic' }}>
-                                                            No active vendors with Equipment service type found. Please create a vendor with Equipment service type in the admin panel.
-                                                        </p>
-                                                    )}
                                                 </div>
 
-                                                {equipmentOrder?.vendorId && (
-                                                    <div className={styles.formGroup}>
-                                                        <label className="label">Equipment Item</label>
-                                                        <select
-                                                            className="input"
-                                                            value={equipmentOrder?.equipmentId || ''}
-                                                            onChange={e => setEquipmentOrder({
-                                                                ...equipmentOrder,
-                                                                equipmentId: e.target.value
-                                                            })}
-                                                        >
-                                                            <option value="">Select Equipment Item...</option>
-                                                            {equipment.map(eq => (
-                                                                <option key={eq.id} value={eq.id}>
-                                                                    {eq.name} - ${eq.price.toFixed(2)}
-                                                                </option>
-                                                            ))}
-                                                        </select>
-                                                    </div>
-                                                )}
-
-                                                {equipmentOrder?.equipmentId && (
-                                                    <div style={{ marginTop: '1rem', display: 'flex', gap: '0.5rem' }}>
-                                                        <button
-                                                            className="btn btn-primary"
-                                                            onClick={async () => {
-                                                                if (!equipmentOrder.vendorId || !equipmentOrder.equipmentId) {
-                                                                    alert('Please select both vendor and equipment item');
-                                                                    return;
-                                                                }
-                                                                try {
-                                                                    setSubmittingEquipmentOrder(true);
-                                                                    await saveEquipmentOrder(
-                                                                        clientId,
-                                                                        equipmentOrder.vendorId,
-                                                                        equipmentOrder.equipmentId,
-                                                                        orderConfig.caseId
-                                                                    );
-                                                                    setMessage('Equipment order submitted successfully!');
-                                                                    setTimeout(() => setMessage(null), 3000);
-                                                                    setShowEquipmentOrder(false);
-                                                                    setEquipmentOrder(null);
-                                                                    // Reload data to show the new order in Recent Orders section
-                                                                    setLoadingOrderDetails(true);
-                                                                    const [activeOrderData, orderHistoryData] = await Promise.all([
-                                                                        getActiveOrderForClient(clientId),
-                                                                        getOrderHistory(clientId)
-                                                                    ]);
-                                                                    setActiveOrder(activeOrderData);
-                                                                    setOrderHistory(orderHistoryData || []);
-                                                                    setLoadingOrderDetails(false);
-                                                                } catch (error: any) {
-                                                                    alert(`Error submitting equipment order: ${error.message || 'Unknown error'}`);
-                                                                } finally {
-                                                                    setSubmittingEquipmentOrder(false);
-                                                                }
-                                                            }}
-                                                            disabled={submittingEquipmentOrder}
-                                                        >
-                                                            {submittingEquipmentOrder ? 'Submitting...' : 'Submit Equipment Order'}
-                                                        </button>
-                                                        <button
-                                                            className="btn btn-secondary"
-                                                            onClick={() => {
-                                                                setShowEquipmentOrder(false);
-                                                                setEquipmentOrder(null);
-                                                            }}
-                                                        >
-                                                            Cancel
-                                                        </button>
-                                                    </div>
-                                                )}
-                                            </div>
-                                        )}
-                                    </div>
-                                </>
-                            )}
-                        </section>
-
-                        {/* Recent Orders Panel */}
-                        <section className={styles.card} style={{ marginTop: 'var(--spacing-lg)' }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: 'var(--spacing-md)' }}>
-                                <Calendar size={18} />
-                                <h3 className={styles.sectionTitle} style={{ marginBottom: 0, borderBottom: 'none', paddingBottom: 0 }}>
-                                    Recent Orders
-                                </h3>
-                            </div>
-                            {loadingOrderDetails ? (
-                                <div className={styles.loadingContainer}>
-                                    <div className={styles.spinner}></div>
-                                    <p className={styles.loadingText}>Loading order details...</p>
-                                </div>
-                            ) : activeOrder ? (
-                                <div>
-                                    {(() => {
-                                        // Handle both single order (backward compatibility) and multiple orders
-                                        const isMultiple = activeOrder.multiple === true && Array.isArray(activeOrder.orders);
-                                        const ordersToDisplay = isMultiple ? activeOrder.orders : [activeOrder];
-
-                                        return (
-                                            <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--spacing-md)' }}>
-                                                {ordersToDisplay.map((order: any, orderIdx: number) => {
-                                                    const isFood = order.serviceType === 'Food';
-                                                    const isBoxes = order.serviceType === 'Boxes';
-                                                    const isEquipment = order.serviceType === 'Equipment';
+                                                {/* Take Effect Date for this vendor */}
+                                                {orderConfig.vendorId && settings && (() => {
+                                                    const takeEffectDate = getEarliestTakeEffectDateForOrder();
+                                                    if (takeEffectDate) {
+                                                        return (
+                                                            <div style={{
+                                                                marginTop: 'var(--spacing-md)',
+                                                                padding: '0.75rem',
+                                                                backgroundColor: 'var(--bg-surface-hover)',
+                                                                borderRadius: 'var(--radius-sm)',
+                                                                border: '1px solid var(--border-color)',
+                                                                fontSize: '0.85rem',
+                                                                color: 'var(--text-secondary)',
+                                                                textAlign: 'center'
+                                                            }}>
+                                                                <strong style={{ color: 'var(--text-primary)' }}>Take Effect Date:</strong> {takeEffectDate.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })} (always a Sunday)
+                                                            </div>
+                                                        );
+                                                    }
 
                                                     return (
-                                                        <div key={orderIdx} style={isMultiple ? {
-                                                            padding: 'var(--spacing-md)',
-                                                            backgroundColor: 'var(--bg-surface)',
-                                                            borderRadius: 'var(--radius-md)',
-                                                            border: '1px solid var(--border-color)'
-                                                        } : {}}>
-                                                            <div style={{
-                                                                marginBottom: 'var(--spacing-md)',
-                                                                paddingBottom: 'var(--spacing-sm)',
-                                                                borderBottom: '1px solid var(--border-color)',
-                                                                display: 'flex',
-                                                                justifyContent: 'space-between',
-                                                                alignItems: 'center',
-                                                                flexWrap: 'wrap',
-                                                                gap: '8px'
-                                                            }}>
-                                                                <div style={{
-                                                                    fontSize: '0.9rem',
-                                                                    fontWeight: 600,
-                                                                    color: 'var(--text-secondary)'
-                                                                }}>
-                                                                    {order.orderNumber ? `Order #${order.orderNumber}` : `Order ${orderIdx + 1}`}
-                                                                    {isMultiple && !order.orderNumber && ` of ${ordersToDisplay.length}`}
-                                                                    {order.scheduledDeliveryDate && (
-                                                                        <span style={{ marginLeft: 'var(--spacing-sm)', fontSize: '0.85rem', fontWeight: 400 }}>
-                                                                            • Scheduled: {new Date(order.scheduledDeliveryDate).toLocaleDateString()}
-                                                                        </span>
-                                                                    )}
-                                                                </div>
-
-                                                                {/* Proof of Delivery / Status */}
-                                                                <div style={{ fontSize: '0.85rem' }}>
-                                                                    {order.proofOfDelivery ? (
-                                                                        <a
-                                                                            href={order.proofOfDelivery}
-                                                                            target="_blank"
-                                                                            rel="noopener noreferrer"
-                                                                            style={{
-                                                                                display: 'flex',
-                                                                                alignItems: 'center',
-                                                                                gap: '4px',
-                                                                                color: 'var(--color-primary)',
-                                                                                fontWeight: 500,
-                                                                                textDecoration: 'none'
-                                                                            }}
-                                                                        >
-                                                                            View Proof of Delivery
-                                                                        </a>
-                                                                    ) : (
-                                                                        <span style={{
-                                                                            color: 'var(--text-tertiary)',
-                                                                            fontStyle: 'italic',
-                                                                            display: 'flex',
-                                                                            alignItems: 'center',
-                                                                            gap: '4px'
-                                                                        }}>
-                                                                            Not yet delivered
-                                                                        </span>
-                                                                    )}
-                                                                </div>
-                                                            </div>
-                                                            <div>
-                                                                {/* Service Type Header */}
-                                                                <div style={{ marginBottom: 'var(--spacing-sm)', fontSize: '0.9rem', fontWeight: 600, color: 'var(--text-primary)' }}>
-                                                                    {isFood ? 'Food' : isBoxes ? 'Boxes' : isEquipment ? 'Equipment' : 'Unknown Service'}
-                                                                </div>
-
-                                                                {/* Food Order Display - Show vendors first, then items grouped by vendor */}
-                                                                {isFood && (
-                                                                    <div style={{ padding: 'var(--spacing-md)', backgroundColor: 'var(--bg-surface)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)' }}>
-                                                                        {order.vendorSelections && order.vendorSelections.length > 0 ? (
-                                                                            <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--spacing-md)' }}>
-                                                                                {order.vendorSelections.map((vendorSelection: any, idx: number) => {
-                                                                                    const vendor = vendors.find(v => v.id === vendorSelection.vendorId);
-                                                                                    const vendorName = vendor?.name || 'Unassigned';
-                                                                                    const nextDelivery = getNextDeliveryDate(vendorSelection.vendorId);
-                                                                                    const items = vendorSelection.items || {};
-
-                                                                                    return (
-                                                                                        <div key={idx} style={{ padding: 'var(--spacing-md)', backgroundColor: 'var(--bg-surface)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)' }}>
-                                                                                            {/* Vendor Header */}
-                                                                                            <div style={{ marginBottom: 'var(--spacing-sm)', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                                                                                                {vendorName}
-                                                                                            </div>
-                                                                                            {/* Items List */}
-                                                                                            {Object.keys(items).length > 0 ? (
-                                                                                                <div style={{ fontSize: '0.85rem', color: 'var(--text-primary)' }}>
-                                                                                                    {Object.entries(items).map(([itemId, qty]: [string, any]) => {
-                                                                                                        const item = menuItems.find(i => i.id === itemId);
-                                                                                                        return item ? (
-                                                                                                            <div key={itemId} style={{ marginBottom: '4px' }}>
-                                                                                                                {item.name} × {qty}
-                                                                                                            </div>
-                                                                                                        ) : null;
-                                                                                                    })}
-                                                                                                </div>
-                                                                                            ) : (
-                                                                                                <div style={{ fontSize: '0.85rem', color: 'var(--text-tertiary)', fontStyle: 'italic' }}>
-                                                                                                    No items selected
-                                                                                                </div>
-                                                                                            )}
-                                                                                            {nextDelivery && (
-                                                                                                <div style={{ marginTop: 'var(--spacing-sm)', fontSize: '0.8rem', color: 'var(--text-secondary)', fontWeight: 500 }}>
-                                                                                                    Next delivery: {nextDelivery.dayOfWeek}, {nextDelivery.date}
-                                                                                                </div>
-                                                                                            )}
-                                                                                        </div>
-                                                                                    );
-                                                                                })}
-                                                                            </div>
-                                                                        ) : (
-                                                                            <div style={{ fontSize: '0.85rem', color: 'var(--text-tertiary)', fontStyle: 'italic' }}>
-                                                                                No vendors or items selected
-                                                                            </div>
-                                                                        )}
-                                                                    </div>
-                                                                )}
-
-                                                                {/* Boxes Order Display - Show vendor, box type, and all items */}
-                                                                {isBoxes && order.boxTypeId && (
-                                                                    <div style={{ padding: 'var(--spacing-md)', backgroundColor: 'var(--bg-surface)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)' }}>
-                                                                        {(() => {
-                                                                            const box = boxTypes.find(b => b.id === order.boxTypeId);
-                                                                            // Get vendorId from order first, then fall back to box.vendorId
-                                                                            const boxVendorId = order.vendorId || box?.vendorId || null;
-                                                                            const vendor = boxVendorId ? vendors.find(v => v.id === boxVendorId) : null;
-                                                                            const vendorName = vendor?.name || 'Unassigned';
-                                                                            const boxName = box?.name || 'Unknown Box';
-                                                                            const nextDelivery = boxVendorId ? getNextDeliveryDate(boxVendorId) : null;
-                                                                            const items = order.items || {};
-
-                                                                            return (
-                                                                                <>
-                                                                                    {/* Vendor */}
-                                                                                    <div style={{ marginBottom: 'var(--spacing-sm)', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                                                                                        {vendorName}
-                                                                                    </div>
-                                                                                    {/* Box Type and Quantity */}
-                                                                                    <div style={{ marginBottom: 'var(--spacing-sm)', fontSize: '0.85rem', color: 'var(--text-primary)' }}>
-                                                                                        {boxName} × {order.boxQuantity || 1}
-                                                                                    </div>
-                                                                                    {/* Items List */}
-                                                                                    {Object.keys(items).length > 0 ? (
-                                                                                        <div style={{ fontSize: '0.85rem', color: 'var(--text-primary)' }}>
-                                                                                            {Object.entries(items).map(([itemId, qty]: [string, any]) => {
-                                                                                                const item = menuItems.find(i => i.id === itemId);
-                                                                                                return item ? (
-                                                                                                    <div key={itemId} style={{ marginBottom: '4px' }}>
-                                                                                                        {item.name} × {qty}
-                                                                                                    </div>
-                                                                                                ) : null;
-                                                                                            })}
-                                                                                        </div>
-                                                                                    ) : (
-                                                                                        <div style={{ fontSize: '0.85rem', color: 'var(--text-tertiary)', fontStyle: 'italic' }}>
-                                                                                            No items selected
-                                                                                        </div>
-                                                                                    )}
-                                                                                    {nextDelivery && (
-                                                                                        <div style={{ marginTop: 'var(--spacing-sm)', fontSize: '0.8rem', color: 'var(--text-secondary)', fontWeight: 500 }}>
-                                                                                            Next delivery: {nextDelivery.dayOfWeek}, {nextDelivery.date}
-                                                                                        </div>
-                                                                                    )}
-                                                                                </>
-                                                                            );
-                                                                        })()}
-                                                                    </div>
-                                                                )}
-
-                                                                {/* Equipment Order Display */}
-                                                                {isEquipment && (
-                                                                    <div style={{ padding: 'var(--spacing-md)', backgroundColor: 'var(--bg-surface)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)' }}>
-                                                                        {(() => {
-                                                                            // Parse equipment details from order notes or orderDetails
-                                                                            let equipmentDetails: any = null;
-                                                                            try {
-                                                                                if (order.orderDetails?.equipmentSelection) {
-                                                                                    equipmentDetails = order.orderDetails.equipmentSelection;
-                                                                                } else if (order.notes) {
-                                                                                    const parsed = JSON.parse(order.notes);
-                                                                                    if (parsed.equipmentName) {
-                                                                                        equipmentDetails = parsed;
-                                                                                    }
-                                                                                }
-                                                                            } catch (e) {
-                                                                                console.error('Error parsing equipment order:', e);
-                                                                            }
-
-                                                                            const vendorId = equipmentDetails?.vendorId;
-                                                                            const vendor = vendorId ? vendors.find(v => v.id === vendorId) : null;
-                                                                            const vendorName = vendor?.name || 'Unknown Vendor';
-                                                                            const equipmentName = equipmentDetails?.equipmentName || 'Unknown Equipment';
-                                                                            const price = equipmentDetails?.price || order.totalValue || 0;
-                                                                            const nextDelivery = vendorId ? getNextDeliveryDate(vendorId) : null;
-
-                                                                            return (
-                                                                                <>
-                                                                                    {/* Vendor */}
-                                                                                    <div style={{ marginBottom: 'var(--spacing-sm)', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                                                                                        {vendorName}
-                                                                                    </div>
-                                                                                    {/* Equipment Item */}
-                                                                                    <div style={{ marginBottom: 'var(--spacing-sm)', fontSize: '0.85rem', color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                                                                                        <Wrench size={14} />
-                                                                                        <span>{equipmentName}</span>
-                                                                                        <span style={{ marginLeft: 'auto', fontWeight: 600, color: 'var(--color-primary)' }}>
-                                                                                            ${price.toFixed(2)}
-                                                                                        </span>
-                                                                                    </div>
-                                                                                    {nextDelivery && (
-                                                                                        <div style={{ marginTop: 'var(--spacing-sm)', fontSize: '0.8rem', color: 'var(--text-secondary)', fontWeight: 500 }}>
-                                                                                            Next delivery: {nextDelivery.dayOfWeek}, {nextDelivery.date}
-                                                                                        </div>
-                                                                                    )}
-                                                                                </>
-                                                                            );
-                                                                        })()}
-                                                                    </div>
-                                                                )}
-                                                            </div>
+                                                        <div style={{
+                                                            marginTop: 'var(--spacing-md)',
+                                                            padding: '0.75rem',
+                                                            backgroundColor: 'rgba(239, 68, 68, 0.1)',
+                                                            borderRadius: 'var(--radius-sm)',
+                                                            border: '1px solid var(--color-danger)',
+                                                            fontSize: '0.85rem',
+                                                            color: 'var(--color-danger)',
+                                                            display: 'flex',
+                                                            alignItems: 'center',
+                                                            gap: '0.5rem',
+                                                            textAlign: 'center',
+                                                            justifyContent: 'center'
+                                                        }}>
+                                                            <AlertTriangle size={16} />
+                                                            <span><strong>Warning:</strong> This vendor has no delivery days configured. Orders will NOT be created.</span>
                                                         </div>
                                                     );
-                                                })}
+                                                })()}
+
+                                                <div style={{ display: 'none' }}>
+                                                    <label className="label">Quantity</label>
+                                                    <input
+                                                        type="number"
+                                                        className="input"
+                                                        value={orderConfig.boxQuantity || 1}
+                                                        readOnly
+                                                        style={{ display: 'none' }}
+                                                    />
+                                                </div>
+
+                                                {/* Box Content Selection */}
+                                                <div style={{ marginTop: '1rem', borderTop: '1px solid var(--border-color)', paddingTop: '1rem' }}>
+                                                    <h4 style={{ fontSize: '0.9rem', marginBottom: '0.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                                        <Package size={14} /> Box Contents
+                                                    </h4>
+
+                                                    {/* Check if vendor has delivery days */}
+                                                    {orderConfig.vendorId && !getNextDeliveryDateForVendor(orderConfig.vendorId) ? (
+                                                        <div style={{
+                                                            padding: '1.5rem',
+                                                            backgroundColor: 'var(--bg-surface-active)',
+                                                            borderRadius: 'var(--radius-md)',
+                                                            border: '1px dashed var(--color-danger)',
+                                                            color: 'var(--text-secondary)',
+                                                            textAlign: 'center',
+                                                            display: 'flex',
+                                                            flexDirection: 'column',
+                                                            alignItems: 'center',
+                                                            gap: '0.5rem',
+                                                            opacity: 0.7
+                                                        }}>
+                                                            <AlertTriangle size={24} color="var(--color-danger)" />
+                                                            <span style={{ color: 'var(--color-danger)', fontWeight: 600 }}>Action Required</span>
+                                                            <span style={{ fontSize: '0.9rem' }}>
+                                                                Please configure <strong>Delivery Days</strong> for this vendor in Settings before adding items.
+                                                            </span>
+                                                        </div>
+                                                    ) : (
+                                                        <>
+                                                            {/* Show all categories with box items */}
+                                                            {categories.map(category => {
+                                                                // Filter items for this category
+                                                                const availableItems = menuItems.filter(i =>
+                                                                    (i.vendorId === null || i.vendorId === '') &&
+                                                                    i.isActive &&
+                                                                    i.categoryId === category.id
+                                                                );
+
+                                                                if (availableItems.length === 0) return null;
+
+                                                                const selectedItems = orderConfig.items || {};
+
+                                                                // Calculate total quota value for this category
+                                                                let categoryQuotaValue = 0;
+                                                                Object.entries(selectedItems).forEach(([itemId, qty]) => {
+                                                                    const item = menuItems.find(i => i.id === itemId);
+                                                                    if (item && item.categoryId === category.id) {
+                                                                        const itemQuotaValue = item.quotaValue || 1;
+                                                                        categoryQuotaValue += (qty as number) * itemQuotaValue;
+                                                                    }
+                                                                });
+
+                                                                // Find quota requirement for this category (from box quotas)
+                                                                const quota = boxQuotas.find(q => q.categoryId === category.id);
+                                                                const boxQuantity = orderConfig.boxQuantity || 1;
+                                                                const requiredQuotaValueFromBox = quota ? quota.targetValue * boxQuantity : null;
+
+                                                                // Check if category has a setValue requirement
+                                                                const requiredQuotaValueFromCategory = category.setValue !== undefined && category.setValue !== null ? category.setValue : null;
+
+                                                                // Use setValue if present, otherwise use box quota requirement
+                                                                const requiredQuotaValue = requiredQuotaValueFromCategory !== null ? requiredQuotaValueFromCategory : requiredQuotaValueFromBox;
+
+                                                                const meetsQuota = requiredQuotaValue !== null ? categoryQuotaValue === requiredQuotaValue : true;
+
+                                                                return (
+                                                                    <div key={category.id} style={{ marginBottom: '1rem', background: 'var(--bg-surface-hover)', padding: '0.75rem', borderRadius: '6px', border: requiredQuotaValue !== null && !meetsQuota ? '2px solid var(--color-danger)' : '1px solid var(--border-color)' }}>
+                                                                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem', fontSize: '0.85rem' }}>
+                                                                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                                                                <span style={{ fontWeight: 600 }}>{category.name}</span>
+                                                                                {requiredQuotaValueFromCategory !== null && (
+                                                                                    <span style={{
+                                                                                        fontSize: '0.7rem',
+                                                                                        color: 'var(--color-primary)',
+                                                                                        background: 'var(--bg-app)',
+                                                                                        padding: '2px 6px',
+                                                                                        borderRadius: '4px',
+                                                                                        fontWeight: 500
+                                                                                    }}>
+                                                                                        Set Value: {requiredQuotaValueFromCategory}
+                                                                                    </span>
+                                                                                )}
+                                                                            </div>
+                                                                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                                                                {requiredQuotaValue !== null && (
+                                                                                    <span style={{
+                                                                                        color: meetsQuota ? 'var(--color-success)' : 'var(--color-danger)',
+                                                                                        fontSize: '0.8rem',
+                                                                                        fontWeight: 500
+                                                                                    }}>
+                                                                                        Quota: {categoryQuotaValue} / {requiredQuotaValue}
+                                                                                    </span>
+                                                                                )}
+                                                                                {categoryQuotaValue > 0 && requiredQuotaValue === null && (
+                                                                                    <span style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>
+                                                                                        Total: {categoryQuotaValue}
+                                                                                    </span>
+                                                                                )}
+                                                                            </div>
+                                                                        </div>
+                                                                        {requiredQuotaValue !== null && !meetsQuota && (
+                                                                            <div style={{
+                                                                                marginBottom: '0.5rem',
+                                                                                padding: '0.5rem',
+                                                                                backgroundColor: 'rgba(239, 68, 68, 0.1)',
+                                                                                borderRadius: '4px',
+                                                                                fontSize: '0.75rem',
+                                                                                color: 'var(--color-danger)',
+                                                                                display: 'flex',
+                                                                                alignItems: 'center',
+                                                                                gap: '0.25rem'
+                                                                            }}>
+                                                                                <AlertTriangle size={12} />
+                                                                                <span>You must have a total of {requiredQuotaValue} {category.name} points</span>
+                                                                            </div>
+                                                                        )}
+
+                                                                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
+                                                                            {availableItems.map(item => {
+                                                                                const qty = Number(selectedItems[item.id] || 0);
+                                                                                return (
+                                                                                    <div key={item.id} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', background: 'var(--bg-app)', padding: '4px 8px', borderRadius: '4px', border: '1px solid var(--border-color)' }}>
+                                                                                        <span style={{ fontSize: '0.8rem' }}>{item.name} <span style={{ color: 'var(--text-tertiary)' }}>(x{item.quotaValue || 1})</span></span>
+                                                                                        <div className={styles.quantityControl} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                                                                            <button onClick={() => handleBoxItemChange(item.id, Math.max(0, qty - 1))} className="btn btn-secondary" style={{ padding: '2px 8px' }}>-</button>
+                                                                                            <span style={{ width: '20px', textAlign: 'center' }}>{qty}</span>
+                                                                                            <button onClick={() => handleBoxItemChange(item.id, qty + 1)} className="btn btn-secondary" style={{ padding: '2px 8px' }}>+</button>
+                                                                                        </div>
+                                                                                    </div>
+                                                                                );
+                                                                            })}
+                                                                        </div>
+                                                                    </div>
+                                                                );
+                                                            })}
+
+                                                            {/* Show uncategorized items if any */}
+                                                            {(() => {
+                                                                const uncategorizedItems = menuItems.filter(i =>
+                                                                    (i.vendorId === null || i.vendorId === '') &&
+                                                                    i.isActive &&
+                                                                    (!i.categoryId || i.categoryId === '')
+                                                                );
+
+                                                                if (uncategorizedItems.length === 0) return null;
+
+                                                                const selectedItems = orderConfig.items || {};
+
+                                                                return (
+                                                                    <div style={{ marginBottom: '1rem', background: 'var(--bg-surface-hover)', padding: '0.75rem', borderRadius: '6px' }}>
+                                                                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem', fontSize: '0.85rem' }}>
+                                                                            <span style={{ fontWeight: 600 }}>Uncategorized</span>
+                                                                        </div>
+
+                                                                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
+                                                                            {uncategorizedItems.map(item => {
+                                                                                const qty = Number(selectedItems[item.id] || 0);
+                                                                                return (
+                                                                                    <div key={item.id} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', background: 'var(--bg-app)', padding: '4px 8px', borderRadius: '4px', border: '1px solid var(--border-color)' }}>
+                                                                                        <span style={{ fontSize: '0.8rem' }}>{item.name} <span style={{ color: 'var(--text-tertiary)' }}>(x{item.quotaValue || 1})</span></span>
+                                                                                        <div className={styles.quantityControl} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                                                                            <button onClick={() => handleBoxItemChange(item.id, Math.max(0, qty - 1))} className="btn btn-secondary" style={{ padding: '2px 8px' }}>-</button>
+                                                                                            <span style={{ width: '20px', textAlign: 'center' }}>{qty}</span>
+                                                                                            <button onClick={() => handleBoxItemChange(item.id, qty + 1)} className="btn btn-secondary" style={{ padding: '2px 8px' }}>+</button>
+                                                                                        </div>
+                                                                                    </div>
+                                                                                );
+                                                                            })}
+                                                                        </div>
+                                                                    </div>
+                                                                );
+                                                            })()}
+                                                        </>
+                                                    )}
+                                                </div>
                                             </div>
-                                        );
-                                    })()}
+                                        )}
+
+                                        {/* Equipment Order Section - Always visible */}
+                                        <div className={styles.divider} style={{ marginTop: '2rem', marginBottom: '1rem' }} />
+                                        <div style={{ marginTop: '1rem' }}>
+                                            <h4 style={{ fontSize: '0.9rem', marginBottom: '0.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                                <Wrench size={14} /> Equipment Order
+                                            </h4>
+                                            {!showEquipmentOrder ? (
+                                                <button
+                                                    className="btn btn-secondary"
+                                                    onClick={() => setShowEquipmentOrder(true)}
+                                                    style={{ width: '100%' }}
+                                                >
+                                                    Equipment Order
+                                                </button>
+                                            ) : (
+                                                <div style={{
+                                                    padding: '1rem',
+                                                    backgroundColor: 'var(--bg-surface-hover)',
+                                                    borderRadius: 'var(--radius-md)',
+                                                    border: '1px solid var(--border-color)'
+                                                }}>
+                                                    <div className={styles.formGroup}>
+                                                        <label className="label">Vendor</label>
+                                                        <select
+                                                            className="input"
+                                                            value={equipmentOrder?.vendorId || ''}
+                                                            onChange={e => setEquipmentOrder({
+                                                                ...equipmentOrder,
+                                                                vendorId: e.target.value,
+                                                                equipmentId: '' // Reset equipment selection when vendor changes
+                                                            })}
+                                                        >
+                                                            <option value="">Select Vendor...</option>
+                                                            {vendors
+                                                                .filter(v => {
+                                                                    const hasEquipment = v.serviceTypes && v.serviceTypes.includes('Equipment');
+                                                                    const isActive = v.isActive;
+                                                                    return hasEquipment && isActive;
+                                                                })
+                                                                .map(v => (
+                                                                    <option key={v.id} value={v.id}>{v.name}</option>
+                                                                ))}
+                                                        </select>
+                                                        {vendors.filter(v => v.serviceTypes && v.serviceTypes.includes('Equipment') && v.isActive).length === 0 && (
+                                                            <p style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)', marginTop: '0.5rem', fontStyle: 'italic' }}>
+                                                                No active vendors with Equipment service type found. Please create a vendor with Equipment service type in the admin panel.
+                                                            </p>
+                                                        )}
+                                                    </div>
+
+                                                    {equipmentOrder?.vendorId && (
+                                                        <div className={styles.formGroup}>
+                                                            <label className="label">Equipment Item</label>
+                                                            <select
+                                                                className="input"
+                                                                value={equipmentOrder?.equipmentId || ''}
+                                                                onChange={e => setEquipmentOrder({
+                                                                    ...equipmentOrder,
+                                                                    equipmentId: e.target.value
+                                                                })}
+                                                            >
+                                                                <option value="">Select Equipment Item...</option>
+                                                                {equipment.map(eq => (
+                                                                    <option key={eq.id} value={eq.id}>
+                                                                        {eq.name} - ${eq.price.toFixed(2)}
+                                                                    </option>
+                                                                ))}
+                                                            </select>
+                                                        </div>
+                                                    )}
+
+                                                    {equipmentOrder?.equipmentId && (
+                                                        <div style={{ marginTop: '1rem', display: 'flex', gap: '0.5rem' }}>
+                                                            <button
+                                                                className="btn btn-primary"
+                                                                onClick={async () => {
+                                                                    if (!equipmentOrder.vendorId || !equipmentOrder.equipmentId) {
+                                                                        alert('Please select both vendor and equipment item');
+                                                                        return;
+                                                                    }
+                                                                    if (isNewClient) {
+                                                                        alert('Please save the client first before creating an equipment order.');
+                                                                        return;
+                                                                    }
+                                                                    try {
+                                                                        setSubmittingEquipmentOrder(true);
+                                                                        await saveEquipmentOrder(
+                                                                            clientId,
+                                                                            equipmentOrder.vendorId,
+                                                                            equipmentOrder.equipmentId,
+                                                                            orderConfig.caseId
+                                                                        );
+                                                                        setMessage('Equipment order submitted successfully!');
+                                                                        setTimeout(() => setMessage(null), 3000);
+                                                                        setShowEquipmentOrder(false);
+                                                                        setEquipmentOrder(null);
+                                                                        // Reload data to show the new order in Recent Orders section
+                                                                        setLoadingOrderDetails(true);
+                                                                        const [activeOrderData, orderHistoryData] = await Promise.all([
+                                                                            getActiveOrderForClient(clientId),
+                                                                            getOrderHistory(clientId)
+                                                                        ]);
+                                                                        setActiveOrder(activeOrderData);
+                                                                        setOrderHistory(orderHistoryData || []);
+                                                                        setLoadingOrderDetails(false);
+                                                                    } catch (error: any) {
+                                                                        alert(`Error submitting equipment order: ${error.message || 'Unknown error'}`);
+                                                                    } finally {
+                                                                        setSubmittingEquipmentOrder(false);
+                                                                    }
+                                                                }}
+                                                                disabled={submittingEquipmentOrder}
+                                                            >
+                                                                {submittingEquipmentOrder ? 'Submitting...' : 'Submit Equipment Order'}
+                                                            </button>
+                                                            <button
+                                                                className="btn btn-secondary"
+                                                                onClick={() => {
+                                                                    setShowEquipmentOrder(false);
+                                                                    setEquipmentOrder(null);
+                                                                }}
+                                                            >
+                                                                Cancel
+                                                            </button>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            )}
+                                        </div>
+                                    </>
+                                )}
+                            </section>
+
+                            {/* Recent Orders Panel */}
+                            <section className={styles.card} style={{ marginTop: 'var(--spacing-lg)' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: 'var(--spacing-md)' }}>
+                                    <Calendar size={18} />
+                                    <h3 className={styles.sectionTitle} style={{ marginBottom: 0, borderBottom: 'none', paddingBottom: 0 }}>
+                                        Recent Orders
+                                    </h3>
                                 </div>
-                            ) : (
-                                <div className={styles.empty}>
-                                    No recent orders.
+                                {loadingOrderDetails ? (
+                                    <div className={styles.loadingContainer}>
+                                        <div className={styles.spinner}></div>
+                                        <p className={styles.loadingText}>Loading order details...</p>
+                                    </div>
+                                ) : activeOrder ? (
+                                    <div>
+                                        {(() => {
+                                            // Handle both single order (backward compatibility) and multiple orders
+                                            const isMultiple = activeOrder.multiple === true && Array.isArray(activeOrder.orders);
+                                            const ordersToDisplay = isMultiple ? activeOrder.orders : [activeOrder];
+
+                                            return (
+                                                <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--spacing-md)' }}>
+                                                    {ordersToDisplay.map((order: any, orderIdx: number) => {
+                                                        const isFood = order.serviceType === 'Food';
+                                                        const isBoxes = order.serviceType === 'Boxes';
+                                                        const isEquipment = order.serviceType === 'Equipment';
+
+                                                        return (
+                                                            <div key={orderIdx} style={isMultiple ? {
+                                                                padding: 'var(--spacing-md)',
+                                                                backgroundColor: 'var(--bg-surface)',
+                                                                borderRadius: 'var(--radius-md)',
+                                                                border: '1px solid var(--border-color)'
+                                                            } : {}}>
+                                                                <div style={{
+                                                                    marginBottom: 'var(--spacing-md)',
+                                                                    paddingBottom: 'var(--spacing-sm)',
+                                                                    borderBottom: '1px solid var(--border-color)',
+                                                                    display: 'flex',
+                                                                    justifyContent: 'space-between',
+                                                                    alignItems: 'center',
+                                                                    flexWrap: 'wrap',
+                                                                    gap: '8px'
+                                                                }}>
+                                                                    <div style={{
+                                                                        fontSize: '0.9rem',
+                                                                        fontWeight: 600,
+                                                                        color: 'var(--text-secondary)'
+                                                                    }}>
+                                                                        {order.orderNumber ? `Order #${order.orderNumber}` : `Order ${orderIdx + 1}`}
+                                                                        {isMultiple && !order.orderNumber && ` of ${ordersToDisplay.length}`}
+                                                                        {order.scheduledDeliveryDate && (
+                                                                            <span style={{ marginLeft: 'var(--spacing-sm)', fontSize: '0.85rem', fontWeight: 400 }}>
+                                                                                • Scheduled: {new Date(order.scheduledDeliveryDate).toLocaleDateString()}
+                                                                            </span>
+                                                                        )}
+                                                                    </div>
+
+                                                                    {/* Proof of Delivery / Status */}
+                                                                    <div style={{ fontSize: '0.85rem' }}>
+                                                                        {order.proofOfDelivery ? (
+                                                                            <a
+                                                                                href={order.proofOfDelivery}
+                                                                                target="_blank"
+                                                                                rel="noopener noreferrer"
+                                                                                style={{
+                                                                                    display: 'flex',
+                                                                                    alignItems: 'center',
+                                                                                    gap: '4px',
+                                                                                    color: 'var(--color-primary)',
+                                                                                    fontWeight: 500,
+                                                                                    textDecoration: 'none'
+                                                                                }}
+                                                                            >
+                                                                                View Proof of Delivery
+                                                                            </a>
+                                                                        ) : (
+                                                                            <span style={{
+                                                                                color: 'var(--text-tertiary)',
+                                                                                fontStyle: 'italic',
+                                                                                display: 'flex',
+                                                                                alignItems: 'center',
+                                                                                gap: '4px'
+                                                                            }}>
+                                                                                Not yet delivered
+                                                                            </span>
+                                                                        )}
+                                                                    </div>
+                                                                </div>
+                                                                <div>
+                                                                    {/* Service Type Header */}
+                                                                    <div style={{ marginBottom: 'var(--spacing-sm)', fontSize: '0.9rem', fontWeight: 600, color: 'var(--text-primary)' }}>
+                                                                        {isFood ? 'Food' : isBoxes ? 'Boxes' : isEquipment ? 'Equipment' : 'Unknown Service'}
+                                                                    </div>
+
+                                                                    {/* Food Order Display - Show vendors first, then items grouped by vendor */}
+                                                                    {isFood && (
+                                                                        <div style={{ padding: 'var(--spacing-md)', backgroundColor: 'var(--bg-surface)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)' }}>
+                                                                            {order.vendorSelections && order.vendorSelections.length > 0 ? (
+                                                                                <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--spacing-md)' }}>
+                                                                                    {order.vendorSelections.map((vendorSelection: any, idx: number) => {
+                                                                                        const vendor = vendors.find(v => v.id === vendorSelection.vendorId);
+                                                                                        const vendorName = vendor?.name || 'Unassigned';
+                                                                                        const nextDelivery = getNextDeliveryDate(vendorSelection.vendorId);
+                                                                                        const items = vendorSelection.items || {};
+
+                                                                                        return (
+                                                                                            <div key={idx} style={{ padding: 'var(--spacing-md)', backgroundColor: 'var(--bg-surface)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)' }}>
+                                                                                                {/* Vendor Header */}
+                                                                                                <div style={{ marginBottom: 'var(--spacing-sm)', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                                                                                                    {vendorName}
+                                                                                                </div>
+                                                                                                {/* Items List */}
+                                                                                                {Object.keys(items).length > 0 ? (
+                                                                                                    <div style={{ fontSize: '0.85rem', color: 'var(--text-primary)' }}>
+                                                                                                        {Object.entries(items).map(([itemId, qty]: [string, any]) => {
+                                                                                                            const item = menuItems.find(i => i.id === itemId);
+                                                                                                            return item ? (
+                                                                                                                <div key={itemId} style={{ marginBottom: '4px' }}>
+                                                                                                                    {item.name} × {qty}
+                                                                                                                </div>
+                                                                                                            ) : null;
+                                                                                                        })}
+                                                                                                    </div>
+                                                                                                ) : (
+                                                                                                    <div style={{ fontSize: '0.85rem', color: 'var(--text-tertiary)', fontStyle: 'italic' }}>
+                                                                                                        No items selected
+                                                                                                    </div>
+                                                                                                )}
+                                                                                                {nextDelivery && (
+                                                                                                    <div style={{ marginTop: 'var(--spacing-sm)', fontSize: '0.8rem', color: 'var(--text-secondary)', fontWeight: 500 }}>
+                                                                                                        Next delivery: {nextDelivery.dayOfWeek}, {nextDelivery.date}
+                                                                                                    </div>
+                                                                                                )}
+                                                                                            </div>
+                                                                                        );
+                                                                                    })}
+                                                                                </div>
+                                                                            ) : (
+                                                                                <div style={{ fontSize: '0.85rem', color: 'var(--text-tertiary)', fontStyle: 'italic' }}>
+                                                                                    No vendors or items selected
+                                                                                </div>
+                                                                            )}
+                                                                        </div>
+                                                                    )}
+
+                                                                    {/* Boxes Order Display - Show vendor, box type, and all items */}
+                                                                    {isBoxes && order.boxTypeId && (
+                                                                        <div style={{ padding: 'var(--spacing-md)', backgroundColor: 'var(--bg-surface)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)' }}>
+                                                                            {(() => {
+                                                                                const box = boxTypes.find(b => b.id === order.boxTypeId);
+                                                                                // Get vendorId from order first, then fall back to box.vendorId
+                                                                                const boxVendorId = order.vendorId || box?.vendorId || null;
+                                                                                const vendor = boxVendorId ? vendors.find(v => v.id === boxVendorId) : null;
+                                                                                const vendorName = vendor?.name || 'Unassigned';
+                                                                                const boxName = box?.name || 'Unknown Box';
+                                                                                const nextDelivery = boxVendorId ? getNextDeliveryDate(boxVendorId) : null;
+                                                                                const items = order.items || {};
+
+                                                                                return (
+                                                                                    <>
+                                                                                        {/* Vendor */}
+                                                                                        <div style={{ marginBottom: 'var(--spacing-sm)', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                                                                                            {vendorName}
+                                                                                        </div>
+                                                                                        {/* Box Type and Quantity */}
+                                                                                        <div style={{ marginBottom: 'var(--spacing-sm)', fontSize: '0.85rem', color: 'var(--text-primary)' }}>
+                                                                                            {boxName} × {order.boxQuantity || 1}
+                                                                                        </div>
+                                                                                        {/* Items List */}
+                                                                                        {Object.keys(items).length > 0 ? (
+                                                                                            <div style={{ fontSize: '0.85rem', color: 'var(--text-primary)' }}>
+                                                                                                {Object.entries(items).map(([itemId, qty]: [string, any]) => {
+                                                                                                    const item = menuItems.find(i => i.id === itemId);
+                                                                                                    return item ? (
+                                                                                                        <div key={itemId} style={{ marginBottom: '4px' }}>
+                                                                                                            {item.name} × {qty}
+                                                                                                        </div>
+                                                                                                    ) : null;
+                                                                                                })}
+                                                                                            </div>
+                                                                                        ) : (
+                                                                                            <div style={{ fontSize: '0.85rem', color: 'var(--text-tertiary)', fontStyle: 'italic' }}>
+                                                                                                No items selected
+                                                                                            </div>
+                                                                                        )}
+                                                                                        {nextDelivery && (
+                                                                                            <div style={{ marginTop: 'var(--spacing-sm)', fontSize: '0.8rem', color: 'var(--text-secondary)', fontWeight: 500 }}>
+                                                                                                Next delivery: {nextDelivery.dayOfWeek}, {nextDelivery.date}
+                                                                                            </div>
+                                                                                        )}
+                                                                                    </>
+                                                                                );
+                                                                            })()}
+                                                                        </div>
+                                                                    )}
+
+                                                                    {/* Equipment Order Display */}
+                                                                    {isEquipment && (
+                                                                        <div style={{ padding: 'var(--spacing-md)', backgroundColor: 'var(--bg-surface)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)' }}>
+                                                                            {(() => {
+                                                                                // Parse equipment details from order notes or orderDetails
+                                                                                let equipmentDetails: any = null;
+                                                                                try {
+                                                                                    if (order.orderDetails?.equipmentSelection) {
+                                                                                        equipmentDetails = order.orderDetails.equipmentSelection;
+                                                                                    } else if (order.notes) {
+                                                                                        const parsed = JSON.parse(order.notes);
+                                                                                        if (parsed.equipmentName) {
+                                                                                            equipmentDetails = parsed;
+                                                                                        }
+                                                                                    }
+                                                                                } catch (e) {
+                                                                                    console.error('Error parsing equipment order:', e);
+                                                                                }
+
+                                                                                const vendorId = equipmentDetails?.vendorId;
+                                                                                const vendor = vendorId ? vendors.find(v => v.id === vendorId) : null;
+                                                                                const vendorName = vendor?.name || 'Unknown Vendor';
+                                                                                const equipmentName = equipmentDetails?.equipmentName || 'Unknown Equipment';
+                                                                                const price = equipmentDetails?.price || order.totalValue || 0;
+                                                                                const nextDelivery = vendorId ? getNextDeliveryDate(vendorId) : null;
+
+                                                                                return (
+                                                                                    <>
+                                                                                        {/* Vendor */}
+                                                                                        <div style={{ marginBottom: 'var(--spacing-sm)', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                                                                                            {vendorName}
+                                                                                        </div>
+                                                                                        {/* Equipment Item */}
+                                                                                        <div style={{ marginBottom: 'var(--spacing-sm)', fontSize: '0.85rem', color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                                                                            <Wrench size={14} />
+                                                                                            <span>{equipmentName}</span>
+                                                                                            <span style={{ marginLeft: 'auto', fontWeight: 600, color: 'var(--color-primary)' }}>
+                                                                                                ${price.toFixed(2)}
+                                                                                            </span>
+                                                                                        </div>
+                                                                                        {nextDelivery && (
+                                                                                            <div style={{ marginTop: 'var(--spacing-sm)', fontSize: '0.8rem', color: 'var(--text-secondary)', fontWeight: 500 }}>
+                                                                                                Next delivery: {nextDelivery.dayOfWeek}, {nextDelivery.date}
+                                                                                            </div>
+                                                                                        )}
+                                                                                    </>
+                                                                                );
+                                                                            })()}
+                                                                        </div>
+                                                                    )}
+                                                                </div>
+                                                            </div>
+                                                        );
+                                                    })}
+                                                </div>
+                                            );
+                                        })()}
+                                    </div>
+                                ) : (
+                                    <div className={styles.empty}>
+                                        No recent orders.
+                                    </div>
+                                )}
+                            </section>
+                        </div>
+                    </div>
+                )}
+                {
+                    onClose && (
+                        <div className={styles.bottomAction} style={{ display: 'flex', gap: '12px', justifyContent: 'center' }}>
+                            <button
+                                className="btn"
+                                onClick={handleDiscardChanges}
+                                disabled={saving}
+                                style={{
+                                    width: '200px',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    gap: '8px',
+                                    background: 'none',
+                                    border: '1px solid var(--border-color)',
+                                    color: 'var(--text-secondary)',
+                                    opacity: saving ? 0.7 : 1,
+                                    cursor: saving ? 'not-allowed' : 'pointer'
+                                }}
+                            >
+                                Discard Changes
+                            </button>
+                            <button
+                                className="btn btn-primary"
+                                onClick={handleSaveAndClose}
+                                disabled={saving}
+                                style={{
+                                    width: '200px',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    gap: '8px',
+                                    opacity: saving ? 0.7 : 1,
+                                    cursor: saving ? 'not-allowed' : 'pointer'
+                                }}
+                            >
+                                {saving ? (
+                                    <>
+                                        <Loader2
+                                            size={16}
+                                            style={{
+                                                animation: 'spin 1s linear infinite',
+                                                display: 'inline-block'
+                                            }}
+                                        />
+                                        Saving...
+                                    </>
+                                ) : (
+                                    'Save'
+                                )}
+                            </button>
+                        </div>
+                    )
+                }
+            </div>
+        );
+    }
+
+    const content = getContent();
+
+    return (
+        <>
+            {onClose ? (
+                <div className={styles.modalOverlay} onClick={() => {
+                    // Try to save and close when clicking overlay
+                    handleSaveAndClose();
+                }}>
+                    <div className={styles.modalContent} onClick={e => e.stopPropagation()} style={{ position: 'relative' }}>
+                        {saving && (
+                            <div className={styles.savingOverlay}>
+                                <div className={styles.savingIndicator}>
+                                    <Loader2 size={48} className="animate-spin" style={{ color: 'var(--color-primary)' }} />
+                                    <p className={styles.savingText}>Saving changes...</p>
                                 </div>
-                            )}
-                        </section>
+                            </div>
+                        )}
+                        <div style={{ filter: saving ? 'blur(4px)' : 'none', pointerEvents: saving ? 'none' : 'auto' }}>
+                            {content}
+                        </div>
+                    </div>
+                </div>
+            ) : (
+                <div style={{ position: 'relative' }}>
+                    {saving && (
+                        <div className={styles.savingOverlay}>
+                            <div className={styles.savingIndicator}>
+                                <Loader2 size={48} className="animate-spin" style={{ color: 'var(--color-primary)' }} />
+                                <p className={styles.savingText}>Saving changes...</p>
+                            </div>
+                        </div>
+                    )}
+                    <div style={{ filter: saving ? 'blur(4px)' : 'none', pointerEvents: saving ? 'none' : 'auto' }}>
+                        {content}
                     </div>
                 </div>
             )}
-            {
-                onClose && (
-                    <div className={styles.bottomAction} style={{ display: 'flex', gap: '12px', justifyContent: 'center' }}>
-                        <button
-                            className="btn"
-                            onClick={handleDiscardChanges}
-                            disabled={saving}
-                            style={{
-                                width: '200px',
-                                display: 'flex',
-                                alignItems: 'center',
-                                justifyContent: 'center',
-                                gap: '8px',
-                                background: 'none',
-                                border: '1px solid var(--border-color)',
-                                color: 'var(--text-secondary)',
-                                opacity: saving ? 0.7 : 1,
-                                cursor: saving ? 'not-allowed' : 'pointer'
-                            }}
-                        >
-                            Discard Changes
-                        </button>
-                        <button
-                            className="btn btn-primary"
-                            onClick={handleSaveAndClose}
-                            disabled={saving}
-                            style={{
-                                width: '200px',
-                                display: 'flex',
-                                alignItems: 'center',
-                                justifyContent: 'center',
-                                gap: '8px',
-                                opacity: saving ? 0.7 : 1,
-                                cursor: saving ? 'not-allowed' : 'pointer'
-                            }}
-                        >
-                            {saving ? (
-                                <>
-                                    <Loader2
-                                        size={16}
-                                        style={{
-                                            animation: 'spin 1s linear infinite',
-                                            display: 'inline-block'
-                                        }}
-                                    />
-                                    Saving...
-                                </>
-                            ) : (
-                                'Save'
-                            )}
-                        </button>
+            {validationError.show && (
+                <div className={styles.modalOverlay} style={{ zIndex: 200 }}>
+                    <div className={styles.modalContent} style={{ maxWidth: '400px', height: 'auto', padding: '24px' }} onClick={e => e.stopPropagation()}>
+                        <h2 style={{ fontSize: '1.25rem', fontWeight: 600, marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--color-danger)' }}>
+                            <AlertTriangle size={24} />
+                            Cannot Save
+                        </h2>
+                        <p style={{ marginBottom: '16px', color: 'var(--text-secondary)' }}>
+                            Please fix the following errors before saving:
+                        </p>
+                        <div style={{ background: 'var(--bg-surface-hover)', padding: '12px', borderRadius: '8px', marginBottom: '24px' }}>
+                            <ul style={{ listStyle: 'disc', paddingLeft: '20px', margin: 0 }}>
+                                {validationError.messages.map((msg, i) => (
+                                    <li key={i} style={{ marginBottom: '4px', color: 'var(--text-primary)' }}>{msg}</li>
+                                ))}
+                            </ul>
+                        </div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                            <button
+                                className="btn btn-primary"
+                                onClick={() => setValidationError({ show: false, messages: [] })}
+                            >
+                                Return to Editing
+                            </button>
+                            <button
+                                className="btn"
+                                style={{ background: 'none', border: '1px solid var(--border-color)', color: 'var(--text-secondary)' }}
+                                onClick={handleDiscardChanges}
+                            >
+                                Discard Changes & Exit
+                            </button>
+                        </div>
                     </div>
-                )
-            }
-        </div>
+                </div>
+            )}
+            <UnitsModal
+                isOpen={showUnitsModal}
+                onClose={() => {
+                    setShowUnitsModal(false);
+                    setPendingStatusChange(null);
+                }}
+                onConfirm={executeSave}
+                saving={saving}
+            />
+            <DeleteConfirmationModal
+                isOpen={showDeleteModal}
+                onClose={() => setShowDeleteModal(false)}
+                onConfirm={handleDelete}
+                clientName={formData.fullName || 'this client'}
+                deleting={saving}
+            />
+        </>
     );
 
     async function handleSave(): Promise<boolean> {
-        console.time('handleSave:total');
-        console.time('handleSave:pre-check');
+
         if (!client && !isNewClient) {
-            console.timeEnd('handleSave:pre-check');
-            console.timeEnd('handleSave:total');
             return false;
         }
 
@@ -3258,8 +3177,7 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                     show: true,
                     messages: [`Approved meals per week (${approvedMeals}) must be at least ${MIN_APPROVED_MEALS_PER_WEEK}.`]
                 });
-                console.timeEnd('handleSave:pre-check');
-                console.timeEnd('handleSave:total');
+
                 return false;
             }
             if (approvedMeals > MAX_APPROVED_MEALS_PER_WEEK) {
@@ -3267,21 +3185,16 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                     show: true,
                     messages: [`Approved meals per week (${approvedMeals}) must be at most ${MAX_APPROVED_MEALS_PER_WEEK}.`]
                 });
-                console.timeEnd('handleSave:pre-check');
-                console.timeEnd('handleSave:total');
+
                 return false;
             }
         }
 
         // Validate Order Config before saving (if we have config)
         if (orderConfig && orderConfig.caseId) {
-            console.time('handleSave:validate');
             const validation = validateOrder();
-            console.timeEnd('handleSave:validate');
             if (!validation.isValid) {
                 setValidationError({ show: true, messages: validation.messages });
-                console.timeEnd('handleSave:pre-check');
-                console.timeEnd('handleSave:total');
                 return false;
             }
         }
@@ -3290,51 +3203,21 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
         // Only show units modal if the new status requires units on change
         // Skip this check for new clients
         if (!isNewClient && client) {
-            console.log('[handleSave] Status change check:', {
-                userRole: currentUser?.role,
-                isNavigator: currentUser?.role === 'navigator',
-                oldStatusId: client.statusId,
-                newStatusId: formData.statusId,
-                statusChanged: formData.statusId !== client.statusId,
-                statusesCount: statuses.length,
-                allStatuses: statuses.map(s => ({ id: s.id, name: s.name, requiresUnitsOnChange: s.requiresUnitsOnChange }))
-            });
-
             if (currentUser?.role === 'navigator' && formData.statusId !== client.statusId) {
                 const newStatus = statuses.find(s => s.id === formData.statusId);
-                console.log('[handleSave] Found new status:', {
-                    statusId: formData.statusId,
-                    statusFound: !!newStatus,
-                    statusName: newStatus?.name,
-                    requiresUnitsOnChange: newStatus?.requiresUnitsOnChange,
-                    fullStatus: newStatus
-                });
 
                 // Only show modal if the new status has requiresUnitsOnChange enabled
                 if (newStatus?.requiresUnitsOnChange) {
-                    console.timeEnd('handleSave:pre-check');
-                    console.log('[handleSave] Detected status change to status that requires units, showing modal');
-
                     try {
                         const oldStatusName = getStatusName(client.statusId);
                         const newStatusName = getStatusName(formData.statusId!);
                         setPendingStatusChange({ oldStatus: oldStatusName, newStatus: newStatusName });
                         setShowUnitsModal(true);
-                        console.log('[handleSave] Modal state set to true, returning false to intercept');
                         return false; // Intercepted
                     } catch (e) {
                         console.error('[handleSave] Error in status change logic:', e);
                     }
-                } else {
-                    // Status change doesn't require units, proceed with save
-                    console.log('[handleSave] Status change detected but new status does not require units. requiresUnitsOnChange:', newStatus?.requiresUnitsOnChange);
                 }
-            } else {
-                console.log('[handleSave] Status change check failed:', {
-                    userRole: currentUser?.role,
-                    isNavigator: currentUser?.role === 'navigator',
-                    statusChanged: formData.statusId !== client.statusId
-                });
             }
         }
 
@@ -3343,6 +3226,90 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
     }
 
     async function executeSave(unitsAdded: number = 0): Promise<boolean> {
+        // Helper to prepare cleaned active order
+        const prepareActiveOrder = () => {
+            if (!orderConfig) return undefined;
+
+            const cleanedOrderConfig = { ...orderConfig };
+
+            // CRITICAL: Always preserve caseId at the top level for both Food and Boxes
+            cleanedOrderConfig.caseId = orderConfig.caseId;
+
+            if (formData.serviceType === 'Food') {
+                // For Food service: Ensure vendorId and items are preserved in all vendor selections
+                if (cleanedOrderConfig.deliveryDayOrders) {
+                    // Multi-day format: Clean and preserve vendor selections for each day
+                    for (const day of Object.keys(cleanedOrderConfig.deliveryDayOrders)) {
+                        cleanedOrderConfig.deliveryDayOrders[day].vendorSelections = (cleanedOrderConfig.deliveryDayOrders[day].vendorSelections || [])
+                            .filter((s: any) => s.vendorId) // Only keep selections with a vendor
+                            .map((s: any) => ({
+                                vendorId: s.vendorId, // Preserve vendor ID
+                                items: s.items || {} // Preserve items
+                            }));
+                    }
+                } else if (cleanedOrderConfig.vendorSelections) {
+                    // Check if we have per-vendor delivery days (itemsByDay format)
+                    const hasPerVendorDeliveryDays = cleanedOrderConfig.vendorSelections.some((s: any) =>
+                        s.selectedDeliveryDays && s.selectedDeliveryDays.length > 0 && s.itemsByDay
+                    );
+
+                    if (hasPerVendorDeliveryDays) {
+                        // Convert per-vendor delivery days to deliveryDayOrders format
+                        const deliveryDayOrders: any = {};
+                        for (const selection of cleanedOrderConfig.vendorSelections) {
+                            if (!selection.vendorId || !selection.selectedDeliveryDays || !selection.itemsByDay) continue;
+
+                            for (const day of selection.selectedDeliveryDays) {
+                                if (!deliveryDayOrders[day]) deliveryDayOrders[day] = { vendorSelections: [] };
+                                const dayItems = selection.itemsByDay[day] || {};
+                                const hasItems = Object.keys(dayItems).length > 0 && Object.values(dayItems).some((qty: any) => (Number(qty) || 0) > 0);
+                                if (hasItems) {
+                                    // Preserve vendorId and items for this day
+                                    deliveryDayOrders[day].vendorSelections.push({
+                                        vendorId: selection.vendorId,
+                                        items: dayItems
+                                    });
+                                }
+                            }
+                        }
+                        // Clean up days with no vendors
+                        const daysWithVendors = Object.keys(deliveryDayOrders).filter(day =>
+                            deliveryDayOrders[day].vendorSelections && deliveryDayOrders[day].vendorSelections.length > 0
+                        );
+                        if (daysWithVendors.length > 0) {
+                            const cleanedDeliveryDayOrders: any = {};
+                            for (const day of daysWithVendors) cleanedDeliveryDayOrders[day] = deliveryDayOrders[day];
+                            cleanedOrderConfig.deliveryDayOrders = cleanedDeliveryDayOrders;
+                            cleanedOrderConfig.vendorSelections = undefined;
+                        }
+                    } else {
+                        // Single-day format: Clean and preserve vendor selections
+                        cleanedOrderConfig.vendorSelections = (cleanedOrderConfig.vendorSelections || [])
+                            .filter((s: any) => s.vendorId) // Only keep selections with a vendor
+                            .map((s: any) => ({
+                                vendorId: s.vendorId, // Preserve vendor ID
+                                items: s.items || {} // Preserve items
+                            }));
+                    }
+                }
+            } else if (formData.serviceType === 'Boxes') {
+                // For Boxes: Explicitly preserve all critical fields
+                cleanedOrderConfig.vendorId = orderConfig.vendorId; // Preserve vendor ID
+                cleanedOrderConfig.caseId = orderConfig.caseId; // Preserve case ID (also set above)
+                cleanedOrderConfig.boxTypeId = orderConfig.boxTypeId; // Preserve box type
+                cleanedOrderConfig.boxQuantity = orderConfig.boxQuantity || 1; // Preserve quantity
+                cleanedOrderConfig.items = orderConfig.items || {}; // Preserve items
+                cleanedOrderConfig.itemPrices = orderConfig.itemPrices || {}; // Preserve item prices
+            }
+
+            return {
+                ...cleanedOrderConfig,
+                serviceType: formData.serviceType,
+                lastUpdated: new Date().toISOString(),
+                updatedBy: 'Admin'
+            };
+        };
+
         if (!client && !isNewClient) return false;
         setSaving(true);
         setMessage(null);
@@ -3350,47 +3317,125 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
         try {
             // Handle new client creation
             if (isNewClient) {
-                // Prepare client data with defaults
+                // STRATEGY: Create client first WITHOUT order details, then update it with order details
+                // This avoids issues with saving order data during creation and uses the proven edit path
                 const initialStatusId = (initialStatuses || statuses)[0]?.id || '';
                 const defaultNavigatorId = (initialNavigators || navigators).find(n => n.isActive)?.id || '';
-                
-                const clientData: Omit<ClientProfile, 'id' | 'createdAt' | 'updatedAt'> = {
-                    fullName: formData.fullName || '',
-                    email: formData.email || '',
-                    address: formData.address || '',
-                    phoneNumber: formData.phoneNumber || '',
-                    secondaryPhoneNumber: formData.secondaryPhoneNumber || null,
-                    navigatorId: formData.navigatorId || defaultNavigatorId,
-                    endDate: formData.endDate || '',
-                    screeningTookPlace: formData.screeningTookPlace || false,
-                    screeningSigned: formData.screeningSigned || false,
-                    notes: formData.notes || '',
-                    statusId: formData.statusId || initialStatusId,
-                    serviceType: formData.serviceType || 'Food',
-                    approvedMealsPerWeek: formData.approvedMealsPerWeek || 21,
-                    activeOrder: orderConfig && orderConfig.caseId ? orderConfig : undefined
+
+                // Create client WITHOUT activeOrder first
+                const clientDataWithoutOrder: Omit<ClientProfile, 'id' | 'createdAt' | 'updatedAt'> = {
+                    fullName: formData.fullName ?? '',
+                    email: formData.email ?? '',
+                    address: formData.address ?? '',
+                    phoneNumber: formData.phoneNumber ?? '',
+                    secondaryPhoneNumber: formData.secondaryPhoneNumber ?? null,
+                    navigatorId: formData.navigatorId ?? defaultNavigatorId,
+                    endDate: formData.endDate ?? '',
+                    screeningTookPlace: formData.screeningTookPlace ?? false,
+                    screeningSigned: formData.screeningSigned ?? false,
+                    notes: formData.notes ?? '',
+                    statusId: formData.statusId ?? initialStatusId,
+                    serviceType: formData.serviceType ?? 'Food',
+                    approvedMealsPerWeek: formData.approvedMealsPerWeek ?? 21,
+                    activeOrder: undefined // Create without order first
                 };
 
-                const newClient = await addClient(clientData);
-                if (newClient) {
-                    // Update state with the newly created client
-                    setActualClientId(newClient.id);
-                    setClient(newClient);
-                    setFormData(newClient);
-                    invalidateClientData();
-                    setMessage('Client created successfully.');
-                    
-                    // If there's an order config, sync it
-                    if (orderConfig && orderConfig.caseId) {
-                        await syncCurrentOrderToUpcoming(newClient.id, newClient, true);
-                    }
-                    
-                    setSaving(false);
-                    return true;
-                } else {
+
+                const newClient = await addClient(clientDataWithoutOrder);
+
+                if (!newClient) {
                     setSaving(false);
                     return false;
                 }
+
+
+
+
+                // Now update the client with order details (same as editing an existing client)
+                // Determine if orderConfig has meaningful data to save
+                const hasCaseId = orderConfig?.caseId && orderConfig.caseId.trim() !== '';
+                const hasVendorSelections = orderConfig?.vendorSelections &&
+                    Array.isArray(orderConfig.vendorSelections) &&
+                    orderConfig.vendorSelections.some((s: any) => s.vendorId && s.vendorId.trim() !== '');
+                const hasDeliveryDayOrders = orderConfig?.deliveryDayOrders &&
+                    Object.keys(orderConfig.deliveryDayOrders).length > 0;
+                const hasBoxConfig = (orderConfig?.vendorId && orderConfig.vendorId.trim() !== '') ||
+                    (orderConfig?.boxTypeId && orderConfig.boxTypeId.trim() !== '');
+                const hasOrderData = hasCaseId || hasVendorSelections || hasDeliveryDayOrders || hasBoxConfig;
+
+                // Prepare update data with order details
+                const updateData: Partial<ClientProfile> = {
+                    fullName: formData.fullName ?? '',
+                    email: formData.email ?? '',
+                    address: formData.address ?? '',
+                    phoneNumber: formData.phoneNumber ?? '',
+                    secondaryPhoneNumber: formData.secondaryPhoneNumber ?? null,
+                    navigatorId: formData.navigatorId ?? defaultNavigatorId,
+                    endDate: formData.endDate ?? '',
+                    screeningTookPlace: formData.screeningTookPlace ?? false,
+                    screeningSigned: formData.screeningSigned ?? false,
+                    notes: formData.notes ?? '',
+                    statusId: formData.statusId ?? initialStatusId,
+                    serviceType: formData.serviceType ?? 'Food',
+                    approvedMealsPerWeek: formData.approvedMealsPerWeek ?? 21,
+                    activeOrder: hasOrderData ? prepareActiveOrder() : undefined
+                };
+
+
+                try {
+                    // updateClient doesn't return a value, so we call it and then fetch the updated client
+                    await updateClient(newClient.id, updateData);
+                } catch (error) {
+                    console.error('[ClientProfile] Error updating client with order details:', error);
+                    setSaving(false);
+                    setMessage('Error updating client with order details.');
+                    return false;
+                }
+
+                // Fetch the updated client after update
+
+                const updatedClient = await getClient(newClient.id);
+
+                if (!updatedClient) {
+                    console.error('[ClientProfile] Failed to fetch updated client after update');
+                    setSaving(false);
+                    setMessage('Error: Failed to fetch updated client.');
+                    return false;
+                }
+
+
+
+
+                // IMPORTANT: Set flag BEFORE changing clientId to prevent useEffect from overwriting orderConfig
+                justCreatedClientRef.current = true;
+
+                // Update state with the updated client
+                setActualClientId(updatedClient.id);
+                setClient(updatedClient);
+                setFormData(updatedClient);
+
+                // Set orderConfig from the updated client's activeOrder
+                if (updatedClient.activeOrder && Object.keys(updatedClient.activeOrder).length > 0) {
+
+                    setOrderConfig(updatedClient.activeOrder);
+                    setOriginalOrderConfig(updatedClient.activeOrder);
+                } else {
+                    // If no activeOrder, keep the current orderConfig
+
+                }
+
+                invalidateClientData();
+                setMessage('Client created successfully.');
+
+                // Sync to upcoming_orders if there's order data (same as edit path)
+                if (updatedClient.activeOrder && updatedClient.activeOrder.caseId) {
+                    await syncCurrentOrderToUpcoming(updatedClient.id, updatedClient, true);
+                }
+
+                // IMPORTANT: Set saving to false and return true BEFORE any state updates that might trigger re-renders
+                setSaving(false);
+
+                return true;
             }
 
             // Existing client update logic
@@ -3463,92 +3508,9 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
             // Sync Current Order Request
             const hasOrderConfigChanges = JSON.stringify(orderConfig) !== JSON.stringify(originalOrderConfig);
             if (hasOrderConfigChanges || hasOrderChanges) {
-                const cleanedOrderConfig = { ...orderConfig };
-
-                // CRITICAL: Always preserve caseId at the top level for both Food and Boxes
-                cleanedOrderConfig.caseId = orderConfig.caseId;
-
-                if (formData.serviceType === 'Food') {
-                    // For Food service: Ensure vendorId and items are preserved in all vendor selections
-                    if (cleanedOrderConfig.deliveryDayOrders) {
-                        // Multi-day format: Clean and preserve vendor selections for each day
-                        for (const day of Object.keys(cleanedOrderConfig.deliveryDayOrders)) {
-                            cleanedOrderConfig.deliveryDayOrders[day].vendorSelections = (cleanedOrderConfig.deliveryDayOrders[day].vendorSelections || [])
-                                .filter((s: any) => s.vendorId) // Only keep selections with a vendor
-                                .map((s: any) => ({
-                                    vendorId: s.vendorId, // Preserve vendor ID
-                                    items: s.items || {} // Preserve items
-                                }));
-                        }
-                    } else if (cleanedOrderConfig.vendorSelections) {
-                        // Check if we have per-vendor delivery days (itemsByDay format)
-                        const hasPerVendorDeliveryDays = cleanedOrderConfig.vendorSelections.some((s: any) =>
-                            s.selectedDeliveryDays && s.selectedDeliveryDays.length > 0 && s.itemsByDay
-                        );
-
-                        if (hasPerVendorDeliveryDays) {
-                            // Convert per-vendor delivery days to deliveryDayOrders format
-                            const deliveryDayOrders: any = {};
-                            for (const selection of cleanedOrderConfig.vendorSelections) {
-                                if (!selection.vendorId || !selection.selectedDeliveryDays || !selection.itemsByDay) continue;
-
-                                for (const day of selection.selectedDeliveryDays) {
-                                    if (!deliveryDayOrders[day]) deliveryDayOrders[day] = { vendorSelections: [] };
-                                    const dayItems = selection.itemsByDay[day] || {};
-                                    const hasItems = Object.keys(dayItems).length > 0 && Object.values(dayItems).some((qty: any) => (Number(qty) || 0) > 0);
-                                    if (hasItems) {
-                                        // Preserve vendorId and items for this day
-                                        deliveryDayOrders[day].vendorSelections.push({
-                                            vendorId: selection.vendorId,
-                                            items: dayItems
-                                        });
-                                    }
-                                }
-                            }
-                            // Clean up days with no vendors
-                            const daysWithVendors = Object.keys(deliveryDayOrders).filter(day =>
-                                deliveryDayOrders[day].vendorSelections && deliveryDayOrders[day].vendorSelections.length > 0
-                            );
-                            if (daysWithVendors.length > 0) {
-                                const cleanedDeliveryDayOrders: any = {};
-                                for (const day of daysWithVendors) cleanedDeliveryDayOrders[day] = deliveryDayOrders[day];
-                                cleanedOrderConfig.deliveryDayOrders = cleanedDeliveryDayOrders;
-                                cleanedOrderConfig.vendorSelections = undefined;
-                            }
-                        } else {
-                            // Single-day format: Clean and preserve vendor selections
-                            cleanedOrderConfig.vendorSelections = (cleanedOrderConfig.vendorSelections || [])
-                                .filter((s: any) => s.vendorId) // Only keep selections with a vendor
-                                .map((s: any) => ({
-                                    vendorId: s.vendorId, // Preserve vendor ID
-                                    items: s.items || {} // Preserve items
-                                }));
-                        }
-                    }
-                } else if (formData.serviceType === 'Boxes') {
-                    // For Boxes: Explicitly preserve all critical fields
-                    cleanedOrderConfig.vendorId = orderConfig.vendorId; // Preserve vendor ID
-                    cleanedOrderConfig.caseId = orderConfig.caseId; // Preserve case ID (also set above)
-                    cleanedOrderConfig.boxTypeId = orderConfig.boxTypeId; // Preserve box type
-                    cleanedOrderConfig.boxQuantity = orderConfig.boxQuantity || 1; // Preserve quantity
-                    cleanedOrderConfig.items = orderConfig.items || {}; // Preserve items
-                    cleanedOrderConfig.itemPrices = orderConfig.itemPrices || {}; // Preserve item prices
-                }
-
-                const tempClient: ClientProfile = {
-                    ...client,
-                    ...formData,
-                    activeOrder: {
-                        ...cleanedOrderConfig,
-                        serviceType: formData.serviceType,
-                        lastUpdated: new Date().toISOString(),
-                        updatedBy: 'Admin'
-                    }
-                } as ClientProfile;
-
                 // Add activeOrder to updateData so updateClient handles the full save + sync efficiently
                 // efficiently with only ONE revalidation
-                updateData.activeOrder = tempClient.activeOrder;
+                updateData.activeOrder = prepareActiveOrder();
             }
 
             // CRITICAL: Execute the single update call
@@ -3568,12 +3530,11 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
             if (hasOrderChanges && orderConfig && orderConfig.caseId) {
                 const cutoffPassed = isCutoffPassed();
                 const takeEffectDate = getEarliestTakeEffectDateForOrder();
-                const nextDeliveryDate = getEarliestDeliveryDateForOrder();
 
                 if (cutoffPassed && takeEffectDate) {
-                    confirmationMessage = `Order saved. The cutoff date has passed, so this order will take effect on ${takeEffectDate.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}. View Recent Orders section to see what will be delivered this week.`;
-                } else if (nextDeliveryDate) {
-                    confirmationMessage = `Order saved successfully. This order will take effect on ${nextDeliveryDate.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}.`;
+                    confirmationMessage = `Order saved. The weekly cutoff has passed, so this order will take effect on ${takeEffectDate.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })} (earliest effective date is always a Sunday). View Recent Orders section to see what will be delivered this week.`;
+                } else if (takeEffectDate) {
+                    confirmationMessage = `Order saved successfully. This order will take effect on ${takeEffectDate.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}.`;
                 }
             }
 
@@ -3598,157 +3559,5 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
             setShowUnitsModal(false);
             setPendingStatusChange(null);
         }
-    }
-
-    async function handleSaveAndClose() {
-        const saved = await handleSave();
-        if (saved && onClose) {
-            onClose();
-        }
-    }
-
-    if (onClose) {
-        return (
-            <>
-                <div className={styles.modalOverlay} onClick={() => {
-                    // Try to save and close when clicking overlay
-                    handleSaveAndClose();
-                }}>
-                    <div className={styles.modalContent} onClick={e => e.stopPropagation()} style={{ position: 'relative' }}>
-                        {saving && (
-                            <div className={styles.savingOverlay}>
-                                <div className={styles.savingIndicator}>
-                                    <Loader2 size={48} className="animate-spin" style={{ color: 'var(--color-primary)' }} />
-                                    <p className={styles.savingText}>Saving changes...</p>
-                                </div>
-                            </div>
-                        )}
-                        <div style={{ filter: saving ? 'blur(4px)' : 'none', pointerEvents: saving ? 'none' : 'auto' }}>
-                            {content}
-                        </div>
-                    </div>
-                </div>
-                {validationError.show && (
-                    <div className={styles.modalOverlay} style={{ zIndex: 200 }}>
-                        <div className={styles.modalContent} style={{ maxWidth: '400px', height: 'auto', padding: '24px' }} onClick={e => e.stopPropagation()}>
-                            <h2 style={{ fontSize: '1.25rem', fontWeight: 600, marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--color-danger)' }}>
-                                <AlertTriangle size={24} />
-                                Cannot Save
-                            </h2>
-                            <p style={{ marginBottom: '16px', color: 'var(--text-secondary)' }}>
-                                Please fix the following errors before saving:
-                            </p>
-                            <div style={{ background: 'var(--bg-surface-hover)', padding: '12px', borderRadius: '8px', marginBottom: '24px' }}>
-                                <ul style={{ listStyle: 'disc', paddingLeft: '20px', margin: 0 }}>
-                                    {validationError.messages.map((msg, i) => (
-                                        <li key={i} style={{ marginBottom: '4px', color: 'var(--text-primary)' }}>{msg}</li>
-                                    ))}
-                                </ul>
-                            </div>
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                                <button
-                                    className="btn btn-primary"
-                                    onClick={() => setValidationError({ show: false, messages: [] })}
-                                >
-                                    Return to Editing
-                                </button>
-                                <button
-                                    className="btn"
-                                    style={{ background: 'none', border: '1px solid var(--border-color)', color: 'var(--text-secondary)' }}
-                                    onClick={handleDiscardChanges}
-                                >
-                                    Discard Changes & Exit
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-                )}
-                <UnitsModal
-                    isOpen={showUnitsModal}
-                    onClose={() => {
-                        setShowUnitsModal(false);
-                        setPendingStatusChange(null);
-                    }}
-                    onConfirm={executeSave}
-                    saving={saving}
-                />
-                <DeleteConfirmationModal
-                    isOpen={showDeleteModal}
-                    onClose={() => setShowDeleteModal(false)}
-                    onConfirm={handleDelete}
-                    clientName={formData.fullName || 'this client'}
-                    deleting={saving}
-                />
-            </>
-        );
-    } else {
-        return (
-            <>
-                <div style={{ position: 'relative' }}>
-                    {saving && (
-                        <div className={styles.savingOverlay}>
-                            <div className={styles.savingIndicator}>
-                                <Loader2 size={48} className="animate-spin" style={{ color: 'var(--color-primary)' }} />
-                                <p className={styles.savingText}>Saving changes...</p>
-                            </div>
-                        </div>
-                    )}
-                    <div style={{ filter: saving ? 'blur(4px)' : 'none', pointerEvents: saving ? 'none' : 'auto' }}>
-                        {content}
-                    </div>
-                </div>
-                {validationError.show && (
-                    <div className={styles.modalOverlay} style={{ zIndex: 200 }}>
-                        <div className={styles.modalContent} style={{ maxWidth: '400px', height: 'auto', padding: '24px' }} onClick={e => e.stopPropagation()}>
-                            <h2 style={{ fontSize: '1.25rem', fontWeight: 600, marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--color-danger)' }}>
-                                <AlertTriangle size={24} />
-                                Cannot Save
-                            </h2>
-                            <p style={{ marginBottom: '16px', color: 'var(--text-secondary)' }}>
-                                Please fix the following errors before saving:
-                            </p>
-                            <div style={{ background: 'var(--bg-surface-hover)', padding: '12px', borderRadius: '8px', marginBottom: '24px' }}>
-                                <ul style={{ listStyle: 'disc', paddingLeft: '20px', margin: 0 }}>
-                                    {validationError.messages.map((msg, i) => (
-                                        <li key={i} style={{ marginBottom: '4px', color: 'var(--text-primary)' }}>{msg}</li>
-                                    ))}
-                                </ul>
-                            </div>
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                                <button
-                                    className="btn btn-primary"
-                                    onClick={() => setValidationError({ show: false, messages: [] })}
-                                >
-                                    Return to Editing
-                                </button>
-                                <button
-                                    className="btn"
-                                    style={{ background: 'none', border: '1px solid var(--border-color)', color: 'var(--text-secondary)' }}
-                                    onClick={handleDiscardChanges}
-                                >
-                                    Discard Changes & Exit
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-                )}
-                <UnitsModal
-                    isOpen={showUnitsModal}
-                    onClose={() => {
-                        setShowUnitsModal(false);
-                        setPendingStatusChange(null);
-                    }}
-                    onConfirm={executeSave}
-                    saving={saving}
-                />
-                <DeleteConfirmationModal
-                    isOpen={showDeleteModal}
-                    onClose={() => setShowDeleteModal(false)}
-                    onConfirm={handleDelete}
-                    clientName={formData.fullName || 'this client'}
-                    deleting={saving}
-                />
-            </>
-        );
     }
 }

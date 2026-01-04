@@ -1,42 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabase } from '@/lib/supabase';
 import { getCurrentTime } from '@/lib/time';
-import { getMenuItems } from '@/lib/actions';
-
-/**
- * Calculate the next occurrence of a day of week
- * Returns a Date object for the next occurrence of the specified day
- */
-async function calculateNextDeliveryDate(deliveryDay: string | null): Promise<Date | null> {
-    if (!deliveryDay) return null;
-
-    const today = await getCurrentTime();
-    today.setHours(0, 0, 0, 0);
-
-    const dayNameToNumber: { [key: string]: number } = {
-        'Sunday': 0,
-        'Monday': 1,
-        'Tuesday': 2,
-        'Wednesday': 3,
-        'Thursday': 4,
-        'Friday': 5,
-        'Saturday': 6
-    };
-
-    const targetDayNumber = dayNameToNumber[deliveryDay];
-    if (targetDayNumber === undefined) return null;
-
-    // Find the next occurrence of this day (always in the future, never today or past)
-    for (let i = 1; i <= 14; i++) {
-        const checkDate = new Date(today);
-        checkDate.setDate(today.getDate() + i);
-        if (checkDate.getDay() === targetDayNumber) {
-            return checkDate;
-        }
-    }
-
-    return null;
-}
+import { getMenuItems, getSettings, getVendors } from '@/lib/actions';
+import { isDeliveryDateLocked, getLockedWeekDescription } from '@/lib/weekly-lock';
+import { getNextDeliveryDateForDay } from '@/lib/order-dates';
 
 /**
  * API Route: Simulate Delivery Cycle
@@ -116,13 +83,29 @@ export async function POST(request: NextRequest) {
             console.log(`[Simulate Delivery] Processing upcoming order ${upOrder.id} (client: ${upOrder.client_id}, delivery_day: ${upOrder.delivery_day || 'null'})`);
 
             // Calculate the actual delivery date from the delivery_day (day of week)
-            const deliveryDate = await calculateNextDeliveryDate(upOrder.delivery_day);
+            const vendors = await getVendors();
+            const referenceDate = await getCurrentTime();
+            const deliveryDate = upOrder.delivery_day 
+                ? getNextDeliveryDateForDay(upOrder.delivery_day, vendors, undefined, referenceDate)
+                : null;
 
             if (!deliveryDate) {
                 const errorMsg = `Cannot calculate delivery date for upcoming order ${upOrder.id}: delivery_day is "${upOrder.delivery_day || 'null'}"`;
                 console.warn(`[Simulate Delivery] SKIPPED: ${errorMsg}`);
                 errors.push(errorMsg);
                 skippedReasons.push(`Order ${upOrder.id}: Missing or invalid delivery_day`);
+                skippedCount++;
+                continue;
+            }
+
+            // Check if this delivery date is locked due to weekly cutoff
+            const settings = await getSettings();
+            const currentTime = await getCurrentTime();
+            if (isDeliveryDateLocked(deliveryDate, settings, currentTime)) {
+                const lockedWeekDesc = getLockedWeekDescription(settings, currentTime);
+                const skipMsg = `Order ${upOrder.id}: Delivery date ${deliveryDate.toISOString().split('T')[0]} is in a locked week${lockedWeekDesc ? ` (${lockedWeekDesc})` : ''}`;
+                console.warn(`[Simulate Delivery] SKIPPED: ${skipMsg}`);
+                skippedReasons.push(skipMsg);
                 skippedCount++;
                 continue;
             }
