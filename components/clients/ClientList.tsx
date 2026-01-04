@@ -22,7 +22,7 @@ import {
     getBatchClientDetails
 } from '@/lib/actions';
 import { invalidateClientData } from '@/lib/cached-data';
-import { Plus, Search, ChevronRight, CheckSquare, Square, StickyNote, Package, ArrowUpDown, ArrowUp, ArrowDown, Filter, Eye, EyeOff, Loader2, AlertCircle } from 'lucide-react';
+import { Plus, Search, ChevronRight, CheckSquare, Square, StickyNote, Package, ArrowUpDown, ArrowUp, ArrowDown, Filter, Eye, EyeOff, Loader2, AlertCircle, X } from 'lucide-react';
 import styles from './ClientList.module.css';
 import { useRouter } from 'next/navigation';
 
@@ -972,10 +972,19 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
                     <input
                         className="input"
                         placeholder="Search clients..."
-                        style={{ paddingLeft: '2.5rem', width: '300px' }}
+                        style={{ paddingLeft: '2.5rem', paddingRight: search ? '2rem' : '0.75rem', width: '300px' }}
                         value={search}
                         onChange={e => setSearch(e.target.value)}
                     />
+                    {search && (
+                        <button
+                            className={styles.clearButton}
+                            onClick={() => setSearch('')}
+                            aria-label="Clear search"
+                        >
+                            <X size={16} />
+                        </button>
+                    )}
                 </div>
 
 
