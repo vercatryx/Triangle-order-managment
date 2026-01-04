@@ -258,7 +258,14 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
     }
 
     const filteredClients = clients.filter(c => {
-        const matchesSearch = c.fullName.toLowerCase().includes(search.toLowerCase());
+        const searchLower = search.toLowerCase();
+        const matchesSearch =
+            c.fullName.toLowerCase().includes(searchLower) ||
+            (c.phoneNumber && c.phoneNumber.includes(searchLower)) ||
+            (c.secondaryPhoneNumber && c.secondaryPhoneNumber.includes(searchLower)) ||
+            (c.address && c.address.toLowerCase().includes(searchLower)) ||
+            (c.email && c.email.toLowerCase().includes(searchLower)) ||
+            (c.notes && c.notes.toLowerCase().includes(searchLower));
 
         // Filter by View
         let matchesView = true;
