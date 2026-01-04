@@ -681,6 +681,8 @@ function mapClientFromDB(c: any): ClientProfile {
         serviceType: c.service_type as any,
         approvedMealsPerWeek: c.approved_meals_per_week,
         parentClientId: c.parent_client_id || null,
+        authorizedAmount: c.authorized_amount ?? null,
+        expirationDate: c.expiration_date || null,
         activeOrder: c.active_order, // Metadata matches structure
         createdAt: c.created_at,
         updatedAt: c.updated_at
@@ -730,7 +732,9 @@ export async function addClient(data: Omit<ClientProfile, 'id' | 'createdAt' | '
         notes: data.notes,
         status_id: data.statusId || null,
         service_type: data.serviceType,
-        approved_meals_per_week: data.approvedMealsPerWeek || 0
+        approved_meals_per_week: data.approvedMealsPerWeek || 0,
+        authorized_amount: data.authorizedAmount ?? null,
+        expiration_date: data.expirationDate || null
     };
 
     // Save active_order if provided (ClientProfile component handles validation)
@@ -738,24 +742,6 @@ export async function addClient(data: Omit<ClientProfile, 'id' | 'createdAt' | '
         payload.active_order = data.activeOrder;
     } else {
         payload.active_order = {};
-    }
-
-    console.log('[addClient] Saving client with active_order:');
-    console.log('  hasActiveOrder:', data.activeOrder !== undefined && data.activeOrder !== null);
-    if (data.activeOrder) {
-        console.log('  Full activeOrder being saved:', JSON.stringify(data.activeOrder, null, 2));
-        if (data.activeOrder.vendorSelections) {
-            console.log('  Vendor Selections being saved:');
-            data.activeOrder.vendorSelections.forEach((s: any, idx: number) => {
-                console.log(`    [${idx}] vendorId: ${s.vendorId}`);
-                console.log(`    [${idx}] items:`, s.items || {});
-                if (s.items) {
-                    Object.entries(s.items).forEach(([itemId, qty]) => {
-                        console.log(`      - ${itemId}: ${qty}`);
-                    });
-                }
-            });
-        }
     }
 
     const { data: res, error } = await supabase.from('clients').insert([payload]).select().single();
@@ -766,24 +752,6 @@ export async function addClient(data: Omit<ClientProfile, 'id' | 'createdAt' | '
     }
 
     const newClient = mapClientFromDB(res);
-
-    console.log('[addClient] Client created, returned activeOrder:');
-    console.log('  hasActiveOrder:', !!newClient.activeOrder);
-    if (newClient.activeOrder) {
-        console.log('  Full activeOrder from DB:', JSON.stringify(newClient.activeOrder, null, 2));
-        if (newClient.activeOrder.vendorSelections) {
-            console.log('  Vendor Selections from DB:');
-            newClient.activeOrder.vendorSelections.forEach((s: any, idx: number) => {
-                console.log(`    [${idx}] vendorId: ${s.vendorId}`);
-                console.log(`    [${idx}] items:`, s.items || {});
-                if (s.items) {
-                    Object.entries(s.items).forEach(([itemId, qty]) => {
-                        console.log(`      - ${itemId}: ${qty}`);
-                    });
-                }
-            });
-        }
-    }
 
     if (newClient.activeOrder && newClient.activeOrder.caseId) {
         await syncCurrentOrderToUpcoming(newClient.id, newClient, true);
@@ -825,6 +793,8 @@ export async function addDependent(name: string, parentClientId: string) {
         status_id: null,
         service_type: 'Food' as ServiceType, // Default service type
         approved_meals_per_week: 0,
+        authorized_amount: null,
+        expiration_date: null,
         active_order: {},
         parent_client_id: parentClientId
     };
@@ -910,6 +880,8 @@ export async function updateClient(id: string, data: Partial<ClientProfile>) {
     if (data.serviceType) payload.service_type = data.serviceType;
     if (data.approvedMealsPerWeek !== undefined) payload.approved_meals_per_week = data.approvedMealsPerWeek;
     if (data.parentClientId !== undefined) payload.parent_client_id = data.parentClientId || null;
+    if (data.authorizedAmount !== undefined) payload.authorized_amount = data.authorizedAmount ?? null;
+    if (data.expirationDate !== undefined) payload.expiration_date = data.expirationDate || null;
     if (data.activeOrder) payload.active_order = data.activeOrder;
 
     payload.updated_at = new Date().toISOString();
@@ -1171,14 +1143,14 @@ export async function getCompletedOrdersWithDeliveryProof(clientId: string) {
                                     menuItemPriceEach: menuItem?.priceEach,
                                     menuItemValue: menuItem?.value
                                 });
-                                
+
                                 const itemPrice = menuItem?.priceEach ?? parseFloat(item.unit_value || '0');
                                 const quantity = item.quantity;
                                 // Always recalculate from price and quantity, don't trust stored total_value
                                 const itemTotal = itemPrice * quantity;
-                                
+
                                 console.log(`[getCompletedOrdersWithDeliveryProof] Calculated item total: ${itemPrice} * ${quantity} = ${itemTotal}`);
-                                
+
                                 return {
                                     id: item.id,
                                     menuItemId: item.menu_item_id,
@@ -1276,13 +1248,13 @@ export async function getCompletedOrdersWithDeliveryProof(clientId: string) {
                 orderNumber: orderData.order_number,
                 orderDetails: orderDetails
             };
-            
+
             console.log(`[getCompletedOrdersWithDeliveryProof] Returning order ${orderData.id}:`, {
                 totalValue: returnValue.totalValue,
                 orderDetailsTotalValue: returnValue.orderDetails?.totalValue,
                 orderDetails: returnValue.orderDetails
             });
-            
+
             return returnValue;
         })
     );
@@ -1369,15 +1341,15 @@ export async function getBillingHistory(clientId: string) {
                                             menuItemPriceEach: menuItem?.priceEach,
                                             menuItemValue: menuItem?.value
                                         });
-                                        
+
                                         // Use priceEach if available, otherwise fall back to stored unit_value
                                         const itemPrice = menuItem?.priceEach ?? parseFloat(item.unit_value || '0');
                                         const quantity = item.quantity;
                                         // Always recalculate from price and quantity, don't trust stored total_value
                                         const itemTotal = itemPrice * quantity;
-                                        
+
                                         console.log(`[getBillingHistory] Calculated item total: ${itemPrice} * ${quantity} = ${itemTotal}`);
-                                        
+
                                         return {
                                             id: item.id,
                                             menuItemId: item.menu_item_id,
@@ -1500,7 +1472,132 @@ export async function getBillingHistory(clientId: string) {
     return recordsWithOrderData;
 }
 
+export async function getBillingOrders() {
+    // Get orders with billing_pending status
+    const { data: pendingOrders, error: pendingError } = await supabase
+        .from('orders')
+        .select(`
+            *,
+            clients (
+                full_name
+            )
+        `)
+        .eq('status', 'billing_pending')
+        .order('created_at', { ascending: false });
+
+    if (pendingError) {
+        console.error('Error fetching billing pending orders:', pendingError);
+    }
+
+    // Get billing records with status "success" and their associated orders
+    const { data: billingRecords, error: billingError } = await supabase
+        .from('billing_records')
+        .select(`
+            order_id,
+            status
+        `)
+        .eq('status', 'success');
+
+    if (billingError) {
+        console.error('Error fetching billing records:', billingError);
+    }
+
+    const successfulOrderIds = new Set((billingRecords || []).map((br: any) => br.order_id).filter(Boolean));
+
+    // Get orders that have successful billing records
+    let successfulOrders: any[] = [];
+    if (successfulOrderIds.size > 0) {
+        const { data: orders, error: successError } = await supabase
+            .from('orders')
+            .select(`
+                *,
+                clients (
+                    full_name
+                )
+            `)
+            .in('id', Array.from(successfulOrderIds))
+            .order('created_at', { ascending: false });
+
+        if (!successError && orders) {
+            successfulOrders = orders;
+        }
+    }
+
+    // Combine and map orders
+    const allOrders = [
+        ...((pendingOrders || []).map((o: any) => ({
+            ...o,
+            clientName: o.clients?.full_name || 'Unknown',
+            amount: o.total_value || 0,
+            billingStatus: 'billing_pending' as const
+        }))),
+        ...(successfulOrders.map((o: any) => ({
+            ...o,
+            clientName: o.clients?.full_name || 'Unknown',
+            amount: o.total_value || 0,
+            billingStatus: 'billing_successful' as const
+        })))
+    ];
+
+    // Remove duplicates (in case an order is both pending and has a successful record - prioritize successful)
+    const orderMap = new Map();
+    for (const order of allOrders) {
+        if (!orderMap.has(order.id) || order.billingStatus === 'billing_successful') {
+            orderMap.set(order.id, order);
+        }
+    }
+
+    return Array.from(orderMap.values()).sort((a, b) => {
+        const dateA = new Date(a.created_at || 0).getTime();
+        const dateB = new Date(b.created_at || 0).getTime();
+        return dateB - dateA;
+    });
+}
+
 export async function getAllBillingRecords() {
+    // First, ensure all orders with billing_pending status have billing records
+    const { data: billingPendingOrders, error: ordersError } = await supabase
+        .from('orders')
+        .select('*')
+        .eq('status', 'billing_pending');
+
+    if (!ordersError && billingPendingOrders) {
+        // For each billing_pending order, check if billing record exists
+        for (const order of billingPendingOrders) {
+            const { data: existingBilling } = await supabase
+                .from('billing_records')
+                .select('id')
+                .eq('order_id', order.id)
+                .maybeSingle();
+
+            if (!existingBilling) {
+                // Fetch client to get navigator and name
+                const { data: client } = await supabase
+                    .from('clients')
+                    .select('navigator_id, full_name')
+                    .eq('id', order.client_id)
+                    .single();
+
+                if (client) {
+                    // Create billing record for this order
+                    const billingPayload = {
+                        client_id: order.client_id,
+                        client_name: client.full_name || 'Unknown Client',
+                        order_id: order.id,
+                        status: 'pending',
+                        amount: order.total_value || 0,
+                        navigator: client.navigator_id || 'Unknown',
+                        delivery_date: order.actual_delivery_date || order.scheduled_delivery_date,
+                        remarks: 'Auto-generated for billing_pending order'
+                    };
+
+                    await supabase.from('billing_records').insert([billingPayload]);
+                }
+            }
+        }
+    }
+
+    // Now fetch all billing records
     const { data, error } = await supabase
         .from('billing_records')
         .select('*')
@@ -1602,9 +1699,9 @@ export async function getAllBillingRecords() {
 // --- UPCOMING ORDERS ACTIONS ---
 
 // Import centralized order date calculation utilities
-import { 
-    getNextDeliveryDate, 
-    getNextDeliveryDateForDay, 
+import {
+    getNextDeliveryDate,
+    getNextDeliveryDateForDay,
     getTakeEffectDate as getTakeEffectDateFromUtils,
     getAllDeliveryDatesForOrder as getAllDeliveryDatesFromUtils
 } from './order-dates';
@@ -1652,12 +1749,20 @@ async function syncSingleOrderForDeliveryDay(
     supabaseClientObj?: any
 ): Promise<void> {
     const supabaseClient = supabaseClientObj || supabase;
-    // console.log(`[syncSingleOrderForDeliveryDay] Start sync for client ${clientId}, day: ${deliveryDay || 'null'}`);
+
+    console.log('[syncSingleOrderForDeliveryDay] Start', {
+        clientId,
+        serviceType: orderConfig.serviceType,
+        deliveryDay,
+        itemsCount: orderConfig.items ? Object.keys(orderConfig.items).length : 0,
+        boxQuantity: orderConfig.boxQuantity
+    });
+
     // Calculate dates for this specific delivery day
     // IMPORTANT: take_effect_date must always be a Sunday and respect weekly locking
     let takeEffectDate: Date | null = null;
     let scheduledDeliveryDate: Date | null = null;
-    
+
     // Get settings for weekly locking logic
     const settings = await getSettings();
 
@@ -1705,13 +1810,14 @@ async function syncSingleOrderForDeliveryDay(
                     }
                 }
             }
-            
+
             // IMPORTANT: take_effect_date must always be a Sunday using weekly locking logic
             takeEffectDate = getTakeEffectDateFromUtils(settings);
         }
     } else if (orderConfig.serviceType === 'Boxes') {
         // Boxes can exist with or without boxTypeId now
-        let boxVendorId = orderConfig.vendorId || null;
+        // Check explicitly for undefined/null/empty string to properly handle vendor assignment
+        let boxVendorId = (orderConfig.vendorId && orderConfig.vendorId.trim() !== '') ? orderConfig.vendorId : null;
         if (!boxVendorId && orderConfig.boxTypeId) {
             const boxType = boxTypes.find(bt => bt.id === orderConfig.boxTypeId);
             boxVendorId = boxType?.vendorId || null;
@@ -1745,7 +1851,7 @@ async function syncSingleOrderForDeliveryDay(
                     }
                 }
             }
-            
+
             // IMPORTANT: take_effect_date must always be a Sunday using weekly locking logic
             takeEffectDate = getTakeEffectDateFromUtils(settings);
         } else {
@@ -1867,8 +1973,6 @@ async function syncSingleOrderForDeliveryDay(
         total_items: totalItems,
         notes: null
     };
-    
-    console.log(`[syncSingleOrderForDeliveryDay] Saving upcoming order with total_value: ${totalValue}`);
 
     // Add delivery_day if provided
     if (deliveryDay) {
@@ -1890,11 +1994,17 @@ async function syncSingleOrderForDeliveryDay(
 
     const { data: existing } = await query.maybeSingle();
 
+    console.log('[syncSingleOrderForDeliveryDay] Checking existing', {
+        deliveryDay,
+        foundExisting: !!existing,
+        existingId: existing?.id,
+        willCreateNew: !existing
+    });
+
     let upcomingOrderId: string;
 
-        if (existing) {
+    if (existing) {
         // Update existing
-        console.log(`[syncSingleOrderForDeliveryDay] Updating existing upcoming order ${existing.id} with total_value: ${upcomingOrderData.total_value}`);
         const { data, error } = await supabaseClient
             .from('upcoming_orders')
             .update(upcomingOrderData)
@@ -1906,11 +2016,9 @@ async function syncSingleOrderForDeliveryDay(
             console.error('[syncSingleOrderForDeliveryDay] Error updating upcoming order:', error);
             return;
         }
-        console.log(`[syncSingleOrderForDeliveryDay] Updated upcoming order ${data.id}, saved total_value: ${data.total_value}`);
         upcomingOrderId = data.id;
     } else {
         // Insert new
-        console.log(`[syncSingleOrderForDeliveryDay] Creating new upcoming order with total_value: ${upcomingOrderData.total_value}`);
         const { data, error } = await supabaseClient
             .from('upcoming_orders')
             .insert(upcomingOrderData)
@@ -1921,7 +2029,6 @@ async function syncSingleOrderForDeliveryDay(
             console.error('[syncSingleOrderForDeliveryDay] Error creating upcoming order:', error);
             return;
         }
-        console.log(`[syncSingleOrderForDeliveryDay] Created upcoming order ${data.id}, saved total_value: ${data.total_value}`);
         upcomingOrderId = data.id;
     }
 
@@ -1982,7 +2089,7 @@ async function syncSingleOrderForDeliveryDay(
                     });
                     calculatedTotalFromItems += itemTotal;
                     console.log(`[syncSingleOrderForDeliveryDay] Updated calculatedTotalFromItems: ${calculatedTotalFromItems}`);
-                    
+
                     const insertResult = await supabaseClient.from('upcoming_order_items').insert({
                         upcoming_order_id: upcomingOrderId,
                         vendor_selection_id: vendorSelection.id,
@@ -1991,7 +2098,7 @@ async function syncSingleOrderForDeliveryDay(
                         unit_value: itemPrice,
                         total_value: itemTotal
                     });
-                    
+
                     if (insertResult.error) {
                         console.error(`[syncSingleOrderForDeliveryDay] Error inserting item:`, insertResult.error);
                     } else {
@@ -2014,7 +2121,7 @@ async function syncSingleOrderForDeliveryDay(
                 .from('upcoming_orders')
                 .update({ total_value: totalValue })
                 .eq('id', upcomingOrderId);
-            
+
             if (updateResult.error) {
                 console.error(`[syncSingleOrderForDeliveryDay] Error updating total_value:`, updateResult.error);
             } else {
@@ -2051,7 +2158,8 @@ async function syncSingleOrderForDeliveryDay(
         const quantity = orderConfig.boxQuantity || 1;
 
         // Get vendor ID from orderConfig, or from boxType if boxTypeId is present
-        let boxVendorId = orderConfig.vendorId || null;
+        // Check explicitly for undefined/null/empty string to properly handle vendor assignment
+        let boxVendorId = (orderConfig.vendorId && orderConfig.vendorId.trim() !== '') ? orderConfig.vendorId : null;
         if (!boxVendorId && orderConfig.boxTypeId) {
             const boxType = boxTypes.find(bt => bt.id === orderConfig.boxTypeId);
             boxVendorId = boxType?.vendorId || null;
@@ -2291,7 +2399,8 @@ export async function syncCurrentOrderToUpcoming(clientId: string, client: Clien
             });
 
             const boxType = orderConfig.boxTypeId ? boxTypes.find(bt => bt.id === orderConfig.boxTypeId) : null;
-            const boxVendorId = orderConfig.vendorId || boxType?.vendorId || null;
+            // Check explicitly for undefined/null/empty string to properly handle vendor assignment
+            const boxVendorId = (orderConfig.vendorId && orderConfig.vendorId.trim() !== '') ? orderConfig.vendorId : (boxType?.vendorId || null);
 
             console.log('[syncCurrentOrderToUpcoming] Box vendor resolution:', {
                 orderConfigVendorId: orderConfig.vendorId,
@@ -2302,8 +2411,10 @@ export async function syncCurrentOrderToUpcoming(clientId: string, client: Clien
             if (boxVendorId) {
                 const vendor = vendors.find(v => v.id === boxVendorId);
                 if (vendor && vendor.deliveryDays && vendor.deliveryDays.length > 0) {
-                    deliveryDays = vendor.deliveryDays;
-                    console.log('[syncCurrentOrderToUpcoming] Found delivery days:', deliveryDays);
+                    // FIX: For Boxes, we strictly want ONE recurring order per week, not one per delivery day.
+                    // Since the UI doesn't currently allow selecting a specific day for Boxes,
+                    // we default to the first available delivery day of the vendor.
+                    deliveryDays = [vendor.deliveryDays[0]];
                 } else {
                     // If vendor has no delivery days, still try to sync (will use default logic)
                     console.warn(`[syncCurrentOrderToUpcoming] Vendor ${boxVendorId} has no delivery days configured, will attempt sync anyway`);
@@ -2337,6 +2448,28 @@ export async function syncCurrentOrderToUpcoming(clientId: string, client: Clien
             }
         } else {
             // Single delivery day or no delivery days - use old logic
+
+            // CLEANUP: Ensure no duplicate Box orders exist from previous bugs
+            // Only keep the order for the target delivery day (or null), delete others
+            if (orderConfig.serviceType === 'Boxes') {
+                const targetDay = deliveryDays.length === 1 ? deliveryDays[0] : null;
+                const { data: existing } = await supabaseClient
+                    .from('upcoming_orders')
+                    .select('id, delivery_day')
+                    .eq('client_id', clientId)
+                    .eq('service_type', 'Boxes');
+
+                if (existing) {
+                    const idsToDelete = existing
+                        .filter(o => o.delivery_day !== targetDay)
+                        .map(o => o.id);
+
+                    if (idsToDelete.length > 0) {
+                        await supabaseClient.from('upcoming_orders').delete().in('id', idsToDelete);
+                    }
+                }
+            }
+
             await syncSingleOrderForDeliveryDay(
                 clientId,
                 orderConfig,
@@ -3434,7 +3567,7 @@ export async function updateOrderDeliveryProof(orderId: string, proofUrl: string
     // Fetch client to get navigator info and client name
     const { data: client } = await supabase
         .from('clients')
-        .select('navigator_id, fullName')
+        .select('navigator_id, fullName, authorized_amount')
         .eq('id', order.client_id)
         .single();
 
@@ -3465,6 +3598,21 @@ export async function updateOrderDeliveryProof(orderId: string, proofUrl: string
         }
     }
 
+    // Reduce client's authorized amount by the order amount (only if billing record didn't already exist)
+    if (!existingBilling && client && client.authorized_amount !== null && client.authorized_amount !== undefined) {
+        const orderAmount = order.total_value || 0;
+        const newAuthorizedAmount = Math.max(0, client.authorized_amount - orderAmount);
+
+        const { error: authAmountError } = await supabase
+            .from('clients')
+            .update({ authorized_amount: newAuthorizedAmount })
+            .eq('id', order.client_id);
+
+        if (authAmountError) {
+            console.error('Failed to update authorized amount:', authAmountError);
+        }
+    }
+
     revalidatePath('/vendors');
     return { success: true };
 }
@@ -3474,6 +3622,9 @@ export async function saveDeliveryProofUrlAndProcessOrder(
     orderType: string,
     proofUrl: string
 ) {
+    console.log(`[Process Pending Order] START saveDeliveryProofUrlAndProcessOrder for Order: "${orderId}", Type: "${orderType}"`);
+    console.log(`[Process Pending Order] Proof URL: ${proofUrl}`);
+
     const session = await getSession();
     const currentUserName = session?.name || 'Admin';
 
@@ -3533,6 +3684,7 @@ export async function saveDeliveryProofUrlAndProcessOrder(
                     }
 
                     // Create order in orders table
+                    console.log(`[Process Pending Order] Creating new Order for Case ${upcomingOrder.case_id} with status 'billing_pending'`);
                     const orderData: any = {
                         client_id: upcomingOrder.client_id,
                         service_type: upcomingOrder.service_type,
@@ -3563,11 +3715,12 @@ export async function saveDeliveryProofUrlAndProcessOrder(
 
                     finalOrderId = newOrder.id;
                     wasProcessed = true;
+                    console.log(`[Process Pending Order] Successfully created Order ${newOrder.id}`);
 
                     // Create billing record for the processed order
                     const { data: client } = await supabase
                         .from('clients')
-                        .select('navigator_id, fullName')
+                        .select('navigator_id, full_name, authorized_amount')
                         .eq('id', upcomingOrder.client_id)
                         .single();
 
@@ -3579,9 +3732,10 @@ export async function saveDeliveryProofUrlAndProcessOrder(
                         .maybeSingle();
 
                     if (!existingBilling) {
+                        console.log(`[Process Pending Order] Creating Billing Record for ${newOrder.id}`);
                         const billingPayload = {
                             client_id: upcomingOrder.client_id,
-                            client_name: client?.fullName || 'Unknown Client',
+                            client_name: client?.full_name || 'Unknown Client',
                             order_id: newOrder.id,
                             status: 'pending',
                             amount: upcomingOrder.total_value || 0,
@@ -3596,6 +3750,33 @@ export async function saveDeliveryProofUrlAndProcessOrder(
 
                         if (billingError) {
                             errors.push('Failed to create billing record: ' + billingError.message);
+                        }
+                    }
+
+                    // Reduce client's authorized amount by the order amount (only if billing record didn't already exist)
+                    if (!existingBilling && client) {
+                        console.log(`[Process Pending Order] Processing deduction for client ${upcomingOrder.client_id}`);
+                        console.log(`[Process Pending Order] Client Object:`, client);
+                        console.log(`[Process Pending Order] Current authorized_amount: ${client?.authorized_amount}`);
+                        console.log(`[Process Pending Order] Order total_value: ${upcomingOrder.total_value}`);
+
+                        // Treat null/undefined as 0 and allow negative result
+                        const currentAmount = client.authorized_amount ?? 0;
+                        const orderAmount = upcomingOrder.total_value || 0;
+                        const newAuthorizedAmount = currentAmount - orderAmount;
+
+                        console.log(`[Process Pending Order] Deducting ${orderAmount} from ${currentAmount}. New amount: ${newAuthorizedAmount}`);
+
+                        const { error: authAmountError } = await supabase
+                            .from('clients')
+                            .update({ authorized_amount: newAuthorizedAmount })
+                            .eq('id', upcomingOrder.client_id);
+
+                        if (authAmountError) {
+                            errors.push('Failed to update authorized amount: ' + authAmountError.message);
+                            console.error('[Process Pending Order] Failed to update authorized amount:', authAmountError);
+                        } else {
+                            console.log('[Process Pending Order] Successfully updated authorized_amount');
                         }
                     }
 
@@ -3738,7 +3919,7 @@ export async function saveDeliveryProofUrlAndProcessOrder(
     if (!wasProcessed) {
         const { data: client } = await supabase
             .from('clients')
-            .select('navigator_id, fullName')
+            .select('navigator_id, fullName, authorized_amount')
             .eq('id', order.client_id)
             .single();
 
@@ -3768,6 +3949,21 @@ export async function saveDeliveryProofUrlAndProcessOrder(
 
             if (billingError) {
                 errors.push('Failed to create billing record: ' + billingError.message);
+            }
+        }
+
+        // Reduce client's authorized amount by the order amount (only if billing record didn't already exist)
+        if (!existingBilling && client && client.authorized_amount !== null && client.authorized_amount !== undefined) {
+            const orderAmount = order.total_value || 0;
+            const newAuthorizedAmount = Math.max(0, client.authorized_amount - orderAmount);
+
+            const { error: authAmountError } = await supabase
+                .from('clients')
+                .update({ authorized_amount: newAuthorizedAmount })
+                .eq('id', order.client_id);
+
+            if (authAmountError) {
+                errors.push('Failed to update authorized amount: ' + authAmountError.message);
             }
         }
     }
@@ -3996,6 +4192,7 @@ export async function invalidateOrderData(path?: string) {
 }
 
 export async function getOrdersPaginated(page: number, pageSize: number, filter?: 'needs-vendor') {
+    // For the Orders tab, show orders from the orders table
     let query = supabase
         .from('orders')
         .select(`
@@ -4068,19 +4265,19 @@ export async function getOrdersPaginated(page: number, pageSize: number, filter?
             return { orders: [], total: 0 };
         }
 
-        // Fetch the actual orders (only from orders table for now, upcoming orders would need separate handling)
-        const orderIdsFromOrders = orderIdsNeedingVendor.filter(id => boxesOrderIds.includes(id));
-        if (orderIdsFromOrders.length > 0) {
-            query = query.in('id', orderIdsFromOrders);
+        // Filter to only upcoming orders that need vendor
+        const orderIdsFromUpcoming = orderIdsNeedingVendor.filter(id => boxesUpcomingOrderIds.includes(id));
+        if (orderIdsFromUpcoming.length > 0) {
+            query = query.in('id', orderIdsFromUpcoming);
         } else {
-            // If all are upcoming orders, return empty for now (could be enhanced to show upcoming orders)
+            // If no upcoming orders need vendor, return empty
             return { orders: [], total: 0 };
         }
     }
 
     const { data, count, error } = await query
         .range((page - 1) * pageSize, page * pageSize - 1)
-        .order('scheduled_delivery_date', { ascending: false });
+        .order('created_at', { ascending: false });
 
     if (error) {
         console.error('Error fetching paginated orders:', error);
@@ -4090,7 +4287,11 @@ export async function getOrdersPaginated(page: number, pageSize: number, filter?
     return {
         orders: (data || []).map((o: any) => ({
             ...o,
-            clientName: o.clients?.full_name || 'Unknown'
+            clientName: o.clients?.full_name || 'Unknown',
+            // Ensure status is 'scheduled' for upcoming_orders
+            status: 'scheduled',
+            // Map delivery_day to scheduled_delivery_date if needed
+            scheduled_delivery_date: o.scheduled_delivery_date || null
         })),
         total: count || 0
     };

@@ -52,23 +52,7 @@ export function OrderDetailView({ order }: OrderDetailViewProps) {
     const renderOrderItems = () => {
         if (!order.orderDetails) return null;
 
-        console.log('[OrderDetailView] renderOrderItems - order.orderDetails:', order.orderDetails);
-        console.log('[OrderDetailView] renderOrderItems - order.totalValue:', order.totalValue);
-        console.log('[OrderDetailView] renderOrderItems - order.orderDetails.totalValue:', order.orderDetails.totalValue);
-
         if (order.orderDetails.serviceType === 'Food' && order.orderDetails.vendorSelections) {
-            // Calculate total from items for verification
-            let calculatedTotalFromItems = 0;
-            order.orderDetails.vendorSelections.forEach((vs: any) => {
-                console.log('[OrderDetailView] Vendor:', vs.vendorName, 'has', vs.items.length, 'items');
-                vs.items.forEach((item: any) => {
-                    console.log('[OrderDetailView] Item:', item.menuItemName, 'qty:', item.quantity, 'unit:', item.unitValue, 'total:', item.totalValue);
-                    calculatedTotalFromItems += item.totalValue;
-                });
-            });
-            console.log('[OrderDetailView] Calculated total from items:', calculatedTotalFromItems);
-            console.log('[OrderDetailView] orderDetails.totalValue:', order.orderDetails.totalValue);
-
             return (
                 <div className={styles.orderItemsSection}>
                     <div className={styles.sectionHeader}>

@@ -15,21 +15,16 @@ export async function processDeliveryProof(formData: FormData) {
     );
 
     if (!file || !orderNumber) {
+        console.error('[Delivery Debug] processDeliveryProof called but missing file or orderNumber', {
+            hasFile: !!file,
+            orderNumber
+        });
         return { success: false, error: 'Missing file or order number' };
     }
 
     try {
         // 1. Verify Order matches
-        // The barcode contains the order NUMBER (e.g. "1001"), but we might need the UUID.
-        // Let's look up the order by order_number or id.
-        // In VendorDeliveryOrders.tsx line 397: `const orderNum = order.orderNumber || order.id`.
-
-        // We try to find the order by orderNumber first, then fallback to ID?
-        // Actually, let's just query for order_number.
-
-        // 1. Verify Order matches
         let table: 'orders' | 'upcoming_orders' = 'orders';
-        let proofColumn = 'delivery_proof_url';
         let foundOrder: { id: string } | null = null;
 
         // Try finding in orders
@@ -57,7 +52,6 @@ export async function processDeliveryProof(formData: FormData) {
         // If still not found, try UPCOMING orders
         if (!foundOrder) {
             table = 'upcoming_orders';
-            proofColumn = 'delivery_proof_url';
 
             const { data: upcomingOrder } = await supabaseAdmin
                 .from('upcoming_orders')
@@ -82,6 +76,7 @@ export async function processDeliveryProof(formData: FormData) {
         }
 
         if (!foundOrder) {
+            console.error(`[Delivery Debug] Order not found for OrderNumber: "${orderNumber}" in orders or upcoming_orders`);
             return { success: false, error: 'Order not found' };
         }
 
@@ -134,7 +129,7 @@ export async function processDeliveryProof(formData: FormData) {
         if (orderDetails) {
             const { data: client } = await supabaseAdmin
                 .from('clients')
-                .select('navigator_id, fullName')
+                .select('navigator_id, full_name, authorized_amount')
                 .eq('id', orderDetails.client_id)
                 .single();
 
@@ -147,7 +142,7 @@ export async function processDeliveryProof(formData: FormData) {
             if (!existingBilling) {
                 const billingPayload = {
                     client_id: orderDetails.client_id,
-                    client_name: client?.fullName || 'Unknown Client',
+                    client_name: client?.full_name || 'Unknown Client',
                     order_id: orderId,
                     status: 'pending',
                     amount: orderDetails.total_value || 0,
@@ -157,6 +152,24 @@ export async function processDeliveryProof(formData: FormData) {
                 };
 
                 await supabaseAdmin.from('billing_records').insert([billingPayload]);
+            }
+
+            if (!existingBilling && client) {
+                // Treat null/undefined as 0 and allow negative result
+                const currentAmount = client.authorized_amount ?? 0;
+                const orderAmount = orderDetails.total_value || 0;
+                const newAuthorizedAmount = currentAmount - orderAmount;
+
+                const { error: deductionError } = await supabaseAdmin
+                    .from('clients')
+                    .update({ authorized_amount: newAuthorizedAmount })
+                    .eq('id', orderDetails.client_id);
+
+                if (deductionError) {
+                    console.error('[Delivery Proof] Error updating authorized_amount:', deductionError);
+                }
+            } else {
+                if (!client) console.warn('[Delivery Proof] Client not found. Skipping deduction.');
             }
         }
 
@@ -168,3 +181,4 @@ export async function processDeliveryProof(formData: FormData) {
         return { success: false, error: error.message };
     }
 }
+

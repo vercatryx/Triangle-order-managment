@@ -435,6 +435,9 @@ async function handleSubmit(e) {
         let address = document.getElementById('address').value.trim();
         address = address.replace(/\r?\n/g, '  '); // Replace line breaks with two spaces
         
+        const authorizedAmountValue = document.getElementById('authorized-amount').value.trim();
+        const expirationDateValue = document.getElementById('expiration-date').value.trim();
+        
         const formData = {
             fullName: document.getElementById('full-name').value.trim(),
             statusId: document.getElementById('status').value,
@@ -446,7 +449,9 @@ async function handleSubmit(e) {
             notes: document.getElementById('notes').value.trim() || null,
             serviceType: serviceType,
             caseId: document.getElementById('case-url').value.trim(),
-            approvedMealsPerWeek: serviceType === 'Food' && authUnits ? parseInt(authUnits, 10) : 0
+            approvedMealsPerWeek: serviceType === 'Food' && authUnits ? parseInt(authUnits, 10) : 0,
+            authorizedAmount: authorizedAmountValue ? parseFloat(authorizedAmountValue) : null,
+            expirationDate: expirationDateValue || null
         };
 
         // Validate case URL format
@@ -579,6 +584,12 @@ async function handleAutoFill() {
         if (data.phone) {
             document.getElementById('phone').value = data.phone;
         }
+        if (data.authorizedAmount !== undefined && data.authorizedAmount !== null) {
+            document.getElementById('authorized-amount').value = data.authorizedAmount;
+        }
+        if (data.expirationDate) {
+            document.getElementById('expiration-date').value = data.expirationDate;
+        }
         if (caseId) {
             // Validate case URL format
             if (!isValidCaseUrl(caseId)) {
@@ -589,7 +600,7 @@ async function handleAutoFill() {
         }
 
         // Trigger input events to update validation
-        ['full-name', 'address', 'phone', 'case-url'].forEach(id => {
+        ['full-name', 'address', 'phone', 'authorized-amount', 'expiration-date', 'case-url'].forEach(id => {
             const input = document.getElementById(id);
             if (input) {
                 input.dispatchEvent(new Event('input', { bubbles: true }));

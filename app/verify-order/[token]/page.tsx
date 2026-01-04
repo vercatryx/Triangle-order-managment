@@ -7,6 +7,7 @@ import { FormSchema } from '@/lib/form-types';
 import { CheckCircle, XCircle, Loader2, Edit, MessageSquare, User } from 'lucide-react';
 import SignatureCanvas from 'react-signature-canvas';
 import { jsPDF } from 'jspdf';
+import { PDFDocument } from 'pdf-lib';
 
 export default function VerifyOrderPage() {
     const params = useParams();
@@ -116,18 +117,19 @@ export default function VerifyOrderPage() {
         const doc = new jsPDF();
         const answers = submission.data;
 
-        // Header
-        doc.setFontSize(22);
-        doc.text(formSchema!.title, 20, 20);
-
-        doc.setFontSize(12);
-        doc.setTextColor(100);
-        doc.text(`Submitted: ${new Date(submission.created_at).toLocaleString()}`, 20, 30);
-        doc.text(`Status: ACCEPTED`, 20, 37);
-
-        let yPos = 55;
-        const pageHeight = doc.internal.pageSize.height;
+        let yPos = 10;
         const margin = 20;
+
+        // Client name at the very top
+        if (client?.fullName) {
+            doc.setFontSize(18);
+            doc.setTextColor(0);
+            doc.setFont("helvetica", "bold");
+            doc.text(client.fullName, margin, yPos);
+            yPos += 20;
+        }
+
+        const pageHeight = doc.internal.pageSize.height;
 
         formSchema!.questions.forEach((q, index) => {
             if (yPos > pageHeight - 60) {
@@ -193,7 +195,52 @@ export default function VerifyOrderPage() {
         // Add signature image
         doc.addImage(signatureDataUrl, 'PNG', margin, yPos, 80, 30);
 
-        return doc.output('blob');
+        // Add date of signature underneath the signature
+        const signatureDate = new Date().toLocaleDateString();
+        yPos += 35; // Move down below the signature image
+        doc.setFontSize(10);
+        doc.setTextColor(100);
+        doc.setFont("helvetica", "normal");
+        doc.text(`Date: ${signatureDate}`, margin, yPos);
+
+        // Generate the main PDF blob
+        const mainPdfBlob = doc.output('blob');
+
+        // Merge with bottom.pdf
+        const mergedPdfBlob = await mergeWithBottomPdf(mainPdfBlob);
+
+        return mergedPdfBlob;
+    }
+
+    async function mergeWithBottomPdf(mainPdfBlob: Blob): Promise<Blob> {
+        try {
+            // Load the main PDF
+            const mainPdfBytes = await mainPdfBlob.arrayBuffer();
+            const mainPdfDoc = await PDFDocument.load(mainPdfBytes);
+
+            // Fetch and load bottom.pdf from public folder
+            const bottomPdfResponse = await fetch('/bottom.pdf');
+            if (!bottomPdfResponse.ok) {
+                console.warn('Could not load bottom.pdf, returning main PDF only');
+                return mainPdfBlob;
+            }
+            const bottomPdfBytes = await bottomPdfResponse.arrayBuffer();
+            const bottomPdfDoc = await PDFDocument.load(bottomPdfBytes);
+
+            // Copy all pages from bottom.pdf to main PDF
+            const bottomPages = await mainPdfDoc.copyPages(bottomPdfDoc, bottomPdfDoc.getPageIndices());
+            bottomPages.forEach((page) => {
+                mainPdfDoc.addPage(page);
+            });
+
+            // Save and return the merged PDF
+            const mergedPdfBytes = await mainPdfDoc.save();
+            return new Blob([mergedPdfBytes as any], { type: 'application/pdf' });
+        } catch (error) {
+            console.error('Error merging PDFs:', error);
+            // If merging fails, return the main PDF
+            return mainPdfBlob;
+        }
     }
 
     if (loading) {

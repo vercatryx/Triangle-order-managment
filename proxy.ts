@@ -56,8 +56,8 @@ export default async function proxy(req: NextRequest) {
         }
         // Navigator trying to access admin/vendor routes
         if (session.role === 'navigator') {
-            // Navigators can access /clients, /client-portal, and /navigator-history
-            if (path.startsWith('/clients') || path.startsWith('/client-portal') || path.startsWith('/navigator-history')) {
+            // Navigators can access /clients, /client-portal, /navigator-history, and /orders
+            if (path.startsWith('/clients') || path.startsWith('/client-portal') || path.startsWith('/navigator-history') || path.startsWith('/orders')) {
                 return NextResponse.next();
             }
             // Redirect to clients dashboard

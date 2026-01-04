@@ -232,170 +232,160 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
     const serviceType = client.serviceType;
 
     // Auto-Save Logic - matching ClientProfile exactly
-    useEffect(() => {
-        if (!client || !orderConfig) {
-            return;
-        }
+    // Manual Save Logic
+    const handleSave = async () => {
+        if (!client || !orderConfig) return;
 
         // For Food clients, caseId is required. For Boxes, it's optional
-        if (serviceType === 'Food' && !caseId) {
-            return;
-        }
+        if (serviceType === 'Food' && !caseId) return;
 
-        // Check if config has changed
-        const configChanged = JSON.stringify(orderConfig) !== JSON.stringify(originalOrderConfig);
+        try {
+            // Ensure structure is correct and convert per-vendor delivery days to deliveryDayOrders format
+            const cleanedOrderConfig = { ...orderConfig };
 
-        if (!configChanged) {
-            return;
-        }
+            // CRITICAL: Always preserve caseId at the top level for both Food and Boxes
+            cleanedOrderConfig.caseId = orderConfig.caseId;
 
-        // Debounce check to avoid too many calls
-        const timeoutId = setTimeout(async () => {
-            try {
-                // Ensure structure is correct and convert per-vendor delivery days to deliveryDayOrders format
-                const cleanedOrderConfig = { ...orderConfig };
+            if (serviceType === 'Food') {
+                if (cleanedOrderConfig.deliveryDayOrders) {
+                    // Clean multi-day format (already in deliveryDayOrders)
+                    for (const day of Object.keys(cleanedOrderConfig.deliveryDayOrders)) {
+                        cleanedOrderConfig.deliveryDayOrders[day].vendorSelections = (cleanedOrderConfig.deliveryDayOrders[day].vendorSelections || [])
+                            .filter((s: any) => s.vendorId)
+                            .map((s: any) => ({
+                                vendorId: s.vendorId,
+                                items: s.items || {}
+                            }));
+                    }
+                } else if (cleanedOrderConfig.vendorSelections) {
+                    // Check if any vendor has per-vendor delivery days (itemsByDay)
+                    const hasPerVendorDeliveryDays = cleanedOrderConfig.vendorSelections.some((s: any) =>
+                        s.selectedDeliveryDays && s.selectedDeliveryDays.length > 0 && s.itemsByDay
+                    );
 
-                // CRITICAL: Always preserve caseId at the top level for both Food and Boxes
-                cleanedOrderConfig.caseId = orderConfig.caseId;
+                    if (hasPerVendorDeliveryDays) {
+                        // Convert per-vendor delivery days to deliveryDayOrders format
+                        const deliveryDayOrders: any = {};
 
-                if (serviceType === 'Food') {
-                    if (cleanedOrderConfig.deliveryDayOrders) {
-                        // Clean multi-day format (already in deliveryDayOrders)
-                        for (const day of Object.keys(cleanedOrderConfig.deliveryDayOrders)) {
-                            cleanedOrderConfig.deliveryDayOrders[day].vendorSelections = (cleanedOrderConfig.deliveryDayOrders[day].vendorSelections || [])
-                                .filter((s: any) => s.vendorId)
-                                .map((s: any) => ({
-                                    vendorId: s.vendorId,
-                                    items: s.items || {}
-                                }));
-                        }
-                    } else if (cleanedOrderConfig.vendorSelections) {
-                        // Check if any vendor has per-vendor delivery days (itemsByDay)
-                        const hasPerVendorDeliveryDays = cleanedOrderConfig.vendorSelections.some((s: any) =>
-                            s.selectedDeliveryDays && s.selectedDeliveryDays.length > 0 && s.itemsByDay
-                        );
+                        for (const selection of cleanedOrderConfig.vendorSelections) {
+                            if (!selection.vendorId || !selection.selectedDeliveryDays || !selection.itemsByDay) continue;
 
-                        if (hasPerVendorDeliveryDays) {
-                            // Convert per-vendor delivery days to deliveryDayOrders format
-                            const deliveryDayOrders: any = {};
-
-                            for (const selection of cleanedOrderConfig.vendorSelections) {
-                                if (!selection.vendorId || !selection.selectedDeliveryDays || !selection.itemsByDay) continue;
-
-                                for (const day of selection.selectedDeliveryDays) {
-                                    if (!deliveryDayOrders[day]) {
-                                        deliveryDayOrders[day] = { vendorSelections: [] };
-                                    }
-
-                                    // Add this vendor to this day with its items
-                                    deliveryDayOrders[day].vendorSelections.push({
-                                        vendorId: selection.vendorId,
-                                        items: selection.itemsByDay[day] || {}
-                                    });
+                            for (const day of selection.selectedDeliveryDays) {
+                                if (!deliveryDayOrders[day]) {
+                                    deliveryDayOrders[day] = { vendorSelections: [] };
                                 }
+
+                                // Add this vendor to this day with its items
+                                deliveryDayOrders[day].vendorSelections.push({
+                                    vendorId: selection.vendorId,
+                                    items: selection.itemsByDay[day] || {}
+                                });
                             }
-
-                            cleanedOrderConfig.deliveryDayOrders = deliveryDayOrders;
-                            cleanedOrderConfig.vendorSelections = undefined;
-                        } else {
-                            // Clean single-day format (normal items, not itemsByDay)
-                            cleanedOrderConfig.vendorSelections = (cleanedOrderConfig.vendorSelections || [])
-                                .filter((s: any) => s.vendorId)
-                                .map((s: any) => ({
-                                    vendorId: s.vendorId,
-                                    items: s.items || {}
-                                }));
                         }
+
+                        cleanedOrderConfig.deliveryDayOrders = deliveryDayOrders;
+                        cleanedOrderConfig.vendorSelections = undefined;
+                    } else {
+                        // Clean single-day format (normal items, not itemsByDay)
+                        cleanedOrderConfig.vendorSelections = (cleanedOrderConfig.vendorSelections || [])
+                            .filter((s: any) => s.vendorId)
+                            .map((s: any) => ({
+                                vendorId: s.vendorId,
+                                items: s.items || {}
+                            }));
                     }
-                } else if (serviceType === 'Boxes') {
-                    // For Boxes: Explicitly preserve all critical fields
-                    cleanedOrderConfig.vendorId = orderConfig.vendorId;
-                    cleanedOrderConfig.caseId = orderConfig.caseId; // Also set above
-                    cleanedOrderConfig.boxTypeId = orderConfig.boxTypeId;
-                    cleanedOrderConfig.boxQuantity = orderConfig.boxQuantity || 1;
-                    cleanedOrderConfig.items = orderConfig.items || {};
-                    cleanedOrderConfig.itemPrices = orderConfig.itemPrices || {};
                 }
-
-                // Create a temporary client object for syncCurrentOrderToUpcoming
-                const tempClient: ClientProfile = {
-                    ...client,
-                    activeOrder: {
-                        ...cleanedOrderConfig,
-                        serviceType: serviceType,
-                        lastUpdated: new Date().toISOString(),
-                        updatedBy: 'Client'
-                    }
-                } as ClientProfile;
-
-                setSaving(true);
-                setMessage('Saving...');
-
-                // Sync to upcoming_orders table
-                await syncCurrentOrderToUpcoming(client.id, tempClient);
-
-                // After saving, update originalOrderConfig to prevent re-saving
-                const savedConfig = JSON.parse(JSON.stringify(orderConfig));
-                setOriginalOrderConfig(savedConfig);
-
-                // Track the save timestamp to prevent re-initialization from stale data
-                const saveTimestamp = new Date().toISOString();
-                lastSavedTimestampRef.current = saveTimestamp;
-
-                setSaving(false);
-                setMessage('Saved');
-                setTimeout(() => setMessage(null), 2000);
-            } catch (error) {
-                console.error('Error saving Service Configuration:', error);
-                setSaving(false);
-                setMessage('Error saving');
+            } else if (serviceType === 'Boxes') {
+                // For Boxes: Explicitly preserve all critical fields
+                cleanedOrderConfig.vendorId = orderConfig.vendorId;
+                cleanedOrderConfig.caseId = orderConfig.caseId; // Also set above
+                cleanedOrderConfig.boxTypeId = orderConfig.boxTypeId;
+                cleanedOrderConfig.boxQuantity = orderConfig.boxQuantity || 1;
+                cleanedOrderConfig.items = orderConfig.items || {};
+                cleanedOrderConfig.itemPrices = orderConfig.itemPrices || {};
             }
-        }, 500); // 500ms debounce for check
 
-        return () => {
-            clearTimeout(timeoutId);
-        };
-    }, [caseId, vendorSelections, vendorId, boxTypeId, boxQuantity, items, itemPrices, serviceType, client.id]);
+            // Create a temporary client object for syncCurrentOrderToUpcoming
+            const tempClient: ClientProfile = {
+                ...client,
+                activeOrder: {
+                    ...cleanedOrderConfig,
+                    serviceType: serviceType,
+                    lastUpdated: new Date().toISOString(),
+                    updatedBy: 'Client'
+                }
+            } as ClientProfile;
 
-    // Auto-Save Profile Logic
-    useEffect(() => {
-        if (!client) return;
+            setSaving(true);
+            setMessage('Saving...');
 
-        const profileChanged =
-            profileData.fullName !== originalProfileData.fullName ||
-            profileData.email !== originalProfileData.email ||
-            profileData.phoneNumber !== originalProfileData.phoneNumber ||
-            profileData.secondaryPhoneNumber !== originalProfileData.secondaryPhoneNumber ||
-            profileData.address !== originalProfileData.address;
+            // Sync to upcoming_orders table
+            await syncCurrentOrderToUpcoming(client.id, tempClient);
 
-        if (!profileChanged) return;
+            // After saving, update originalOrderConfig to prevent re-saving
+            const savedConfig = JSON.parse(JSON.stringify(orderConfig));
+            setOriginalOrderConfig(savedConfig);
 
-        const timeoutId = setTimeout(async () => {
-            try {
-                setSavingProfile(true);
-                setProfileMessage('Saving...');
+            // Track the save timestamp to prevent re-initialization from stale data
+            const saveTimestamp = new Date().toISOString();
+            lastSavedTimestampRef.current = saveTimestamp;
 
-                await updateClient(client.id, {
-                    fullName: profileData.fullName,
-                    email: profileData.email || null,
-                    phoneNumber: profileData.phoneNumber || '',
-                    secondaryPhoneNumber: profileData.secondaryPhoneNumber || null,
-                    address: profileData.address || ''
-                });
+            setSaving(false);
+            setMessage('Saved');
+            setTimeout(() => setMessage(null), 2000);
+        } catch (error) {
+            console.error('Error saving Service Configuration:', error);
+            setSaving(false);
+            setMessage('Error saving');
+        }
+    };
 
-                setOriginalProfileData({ ...profileData });
-                setSavingProfile(false);
-                setProfileMessage('Saved');
-                setTimeout(() => setProfileMessage(null), 2000);
-            } catch (error) {
-                console.error('Error saving profile:', error);
-                setSavingProfile(false);
-                setProfileMessage('Error saving');
-            }
-        }, 1000);
+    const handleDiscard = () => {
+        // Reset order config to original
+        setOrderConfig(JSON.parse(JSON.stringify(originalOrderConfig)));
+        setMessage('Changes discarded');
+        setTimeout(() => setMessage(null), 2000);
+    };
 
-        return () => clearTimeout(timeoutId);
-    }, [profileData, originalProfileData, client]);
+    // Auto-Save Profile Logic - DISABLED: Profile editing is not allowed in client portal
+    // useEffect(() => {
+    //     if (!client) return;
+
+    //     const profileChanged =
+    //         profileData.fullName !== originalProfileData.fullName ||
+    //         profileData.email !== originalProfileData.email ||
+    //         profileData.phoneNumber !== originalProfileData.phoneNumber ||
+    //         profileData.secondaryPhoneNumber !== originalProfileData.secondaryPhoneNumber ||
+    //         profileData.address !== originalProfileData.address;
+
+    //     if (!profileChanged) return;
+
+    //     const timeoutId = setTimeout(async () => {
+    //         try {
+    //             setSavingProfile(true);
+    //             setProfileMessage('Saving...');
+
+    //             await updateClient(client.id, {
+    //                 fullName: profileData.fullName,
+    //                 email: profileData.email || null,
+    //                 phoneNumber: profileData.phoneNumber || '',
+    //                 secondaryPhoneNumber: profileData.secondaryPhoneNumber || null,
+    //                 address: profileData.address || ''
+    //             });
+
+    //             setOriginalProfileData({ ...profileData });
+    //             setSavingProfile(false);
+    //             setProfileMessage('Saved');
+    //             setTimeout(() => setProfileMessage(null), 2000);
+    //         } catch (error) {
+    //             console.error('Error saving profile:', error);
+    //             setSavingProfile(false);
+    //             setProfileMessage('Error saving');
+    //         }
+    //     }, 1000);
+
+    //     return () => clearTimeout(timeoutId);
+    // }, [profileData, originalProfileData, client]);
 
 
     // -- LOGIC HELPERS --
@@ -441,7 +431,12 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
             let total = 0;
             for (const deliveryDay of selection.selectedDeliveryDays) {
                 const dayItems = selection.itemsByDay[deliveryDay] || {};
-                total += Object.values(dayItems).reduce((sum: number, qty: any) => sum + (Number(qty) || 0), 0);
+                total += Object.entries(dayItems).reduce((sum: number, [itemId, qty]) => {
+                    const item = menuItems.find(i => i.id === itemId);
+                    // Use item.value as the meal count multiplier
+                    const multiplier = item ? item.value : 1;
+                    return sum + ((Number(qty) || 0) * multiplier);
+                }, 0);
             }
             return total;
         }
@@ -449,7 +444,10 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
         if (!selection.items) return 0;
         let total = 0;
         for (const [itemId, qty] of Object.entries(selection.items)) {
-            total += (qty as number) || 0;
+            const item = menuItems.find(i => i.id === itemId);
+            // Use item.value as the meal count multiplier
+            const multiplier = item ? item.value : 1;
+            total += ((qty as number) || 0) * multiplier;
         }
         return total;
     }
@@ -471,7 +469,12 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
                 const daySelections = orderConfig.deliveryDayOrders[day].vendorSelections || [];
                 for (const sel of daySelections) {
                     const items = sel.items || {};
-                    total += Object.values(items).reduce((sum: number, qty: any) => sum + (Number(qty) || 0), 0);
+                    total += Object.entries(items).reduce((sum: number, [itemId, qty]) => {
+                        const item = menuItems.find(i => i.id === itemId);
+                        // Use item.value as the meal count multiplier
+                        const multiplier = item ? item.value : 1;
+                        return sum + ((Number(qty) || 0) * multiplier);
+                    }, 0);
                 }
             }
             return total;
@@ -572,20 +575,48 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
             ? orderConfig.vendorSelections
             : currentSelections;
 
+        const totalMeals = getTotalMealCountAllDays();
+
         return (
             <div className={styles.vendorsList}>
                 {/* Budget Header */}
-                <div className={styles.orderHeader} style={{ marginBottom: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <h4>Your Selections</h4>
-                    <div style={{ display: 'flex', gap: '0.5rem', flexDirection: 'column', alignItems: 'flex-end' }}>
-                        <div className={styles.budget} style={{
-                            color: getTotalMealCountAllDays() > (client.approvedMealsPerWeek || 0) ? 'var(--color-danger)' : 'inherit',
-                            backgroundColor: getTotalMealCountAllDays() > (client.approvedMealsPerWeek || 0) ? 'rgba(239, 68, 68, 0.1)' : 'var(--bg-surface-hover)',
-                            padding: '4px 8px', borderRadius: '4px', fontSize: '0.9rem', fontWeight: 500
-                        }}>
-                            Meals: {getTotalMealCountAllDays()} / {client.approvedMealsPerWeek || 0}
+                <div className={styles.orderHeader} style={{ marginBottom: '16px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <h4>Your Selections</h4>
+                        <div style={{ display: 'flex', gap: '0.5rem', flexDirection: 'column', alignItems: 'flex-end' }}>
+                            <div className={styles.budget} style={{
+                                color: getTotalMealCountAllDays() > (client.approvedMealsPerWeek || 0) ? 'white' : 'inherit',
+                                backgroundColor: getTotalMealCountAllDays() > (client.approvedMealsPerWeek || 0) ? 'var(--color-danger)' : 'var(--bg-surface-hover)',
+                                padding: '8px 12px',
+                                borderRadius: '6px',
+                                fontSize: '1rem',
+                                fontWeight: 700,
+                                border: getTotalMealCountAllDays() > (client.approvedMealsPerWeek || 0) ? '2px solid #991b1b' : 'none',
+                                boxShadow: getTotalMealCountAllDays() > (client.approvedMealsPerWeek || 0) ? '0 2px 5px rgba(220, 38, 38, 0.3)' : 'none'
+                            }}>
+                                Meals: {getTotalMealCountAllDays()} / {client.approvedMealsPerWeek || 0}
+                                {getTotalMealCountAllDays() > (client.approvedMealsPerWeek || 0) && <span style={{ marginLeft: '8px' }}>(OVER LIMIT)</span>}
+                            </div>
                         </div>
                     </div>
+                    {getTotalMealCountAllDays() > (client.approvedMealsPerWeek || 0) && (
+                        <div style={{
+                            padding: '12px',
+                            backgroundColor: '#fee2e2',
+                            border: '1px solid #ef4444',
+                            borderRadius: '6px',
+                            color: '#b91c1c',
+                            fontWeight: 600,
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '8px',
+                            marginTop: '8px',
+                            width: '100%'
+                        }}>
+                            <AlertTriangle size={24} />
+                            <span>You have exceeded your meal allowance of {client.approvedMealsPerWeek || 0} meals. Please remove some items.</span>
+                        </div>
+                    )}
                 </div>
 
                 {selectionsToRender.map((selection: any, index: number) => {
@@ -681,7 +712,12 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
                                 if (vendorHasMultipleDays && vendorSelectedDays.length > 0) {
                                     return vendorSelectedDays.map((day: string) => {
                                         const dayItems = (selection.itemsByDay || {})[day] || {};
-                                        const dayMealCount = Object.values(dayItems).reduce((sum: number, qty: any) => sum + (Number(qty) || 0), 0);
+
+                                        const dayMealCount = Object.entries(dayItems).reduce((sum: number, [itemId, qty]) => {
+                                            const item = menuItems.find(i => i.id === itemId);
+                                            const val = item?.value || 1;
+                                            return sum + ((Number(qty) || 0) * val);
+                                        }, 0);
                                         const meetsMinimum = vendorMinimum === 0 || dayMealCount >= vendorMinimum;
 
                                         return (
@@ -708,9 +744,19 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
                                                 <div className={styles.menuItemsGrid} style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '10px' }}>
                                                     {getVendorMenuItems(selection.vendorId).map(item => {
                                                         const qty = Number(dayItems[item.id] || 0);
+                                                        const val = item.value || 1;
+                                                        const canAdd = (totalMeals + val) <= (client.approvedMealsPerWeek || 0);
+
                                                         return (
                                                             <div key={item.id} className={styles.menuItemCard} style={{ padding: '0.75rem', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-sm)', background: 'var(--bg-surface)' }}>
-                                                                <div style={{ marginBottom: '8px', fontSize: '0.9rem', fontWeight: 500 }}>{item.name}</div>
+                                                                <div style={{ marginBottom: '8px', fontSize: '0.9rem', fontWeight: 500 }}>
+                                                                    {item.name}
+                                                                    {val > 1 && (
+                                                                        <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginLeft: '4px' }}>
+                                                                            (counts as {val} meals)
+                                                                        </span>
+                                                                    )}
+                                                                </div>
                                                                 <div className={styles.quantityControl} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                                                                     <button onClick={() => {
                                                                         const updated = [...selectionsToRender];
@@ -723,14 +769,28 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
                                                                         setOrderConfig({ ...orderConfig, vendorSelections: updated, deliveryDayOrders: undefined });
                                                                     }} className="btn btn-secondary" style={{ padding: '2px 8px' }}>-</button>
                                                                     <span style={{ width: '20px', textAlign: 'center' }}>{qty}</span>
-                                                                    <button onClick={() => {
-                                                                        const updated = [...selectionsToRender];
-                                                                        const itemsByDay = { ...(updated[index].itemsByDay || {}) };
-                                                                        if (!itemsByDay[day]) itemsByDay[day] = {};
-                                                                        itemsByDay[day][item.id] = qty + 1;
-                                                                        updated[index] = { ...updated[index], itemsByDay };
-                                                                        setOrderConfig({ ...orderConfig, vendorSelections: updated, deliveryDayOrders: undefined });
-                                                                    }} className="btn btn-secondary" style={{ padding: '2px 8px' }}>+</button>
+                                                                    <button
+                                                                        title={!canAdd ? "Adding this item would exceed your weekly meal allowance" : "Add item"}
+                                                                        onClick={() => {
+                                                                            if (!canAdd) {
+                                                                                alert("Adding this item would exceed your weekly meal allowance");
+                                                                                return;
+                                                                            }
+                                                                            const updated = [...selectionsToRender];
+                                                                            const itemsByDay = { ...(updated[index].itemsByDay || {}) };
+                                                                            if (!itemsByDay[day]) itemsByDay[day] = {};
+                                                                            const items = itemsByDay[day];
+                                                                            items[item.id] = qty + 1;
+                                                                            updated[index] = { ...updated[index], itemsByDay };
+                                                                            setOrderConfig({ ...orderConfig, vendorSelections: updated, deliveryDayOrders: undefined });
+                                                                        }}
+                                                                        className="btn btn-secondary"
+                                                                        style={{
+                                                                            padding: '2px 8px',
+                                                                            opacity: canAdd ? 1 : 0.5,
+                                                                            cursor: canAdd ? 'pointer' : 'not-allowed'
+                                                                        }}
+                                                                    >+</button>
                                                                 </div>
                                                             </div>
                                                         );
@@ -745,9 +805,19 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
                                         <div className={styles.menuItemsGrid} style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '10px' }}>
                                             {getVendorMenuItems(selection.vendorId).map(item => {
                                                 const qty = Number((selection.items || {})[item.id] || 0);
+                                                const val = item.value || 1;
+                                                const canAdd = (totalMeals + val) <= (client.approvedMealsPerWeek || 0);
+
                                                 return (
                                                     <div key={item.id} className={styles.menuItemCard} style={{ padding: '0.75rem', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-sm)', background: 'var(--bg-surface)' }}>
-                                                        <div style={{ marginBottom: '8px', fontSize: '0.9rem', fontWeight: 500 }}>{item.name}</div>
+                                                        <div style={{ marginBottom: '8px', fontSize: '0.9rem', fontWeight: 500 }}>
+                                                            {item.name}
+                                                            {val > 1 && (
+                                                                <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginLeft: '4px' }}>
+                                                                    (counts as {val} meals)
+                                                                </span>
+                                                            )}
+                                                        </div>
                                                         <div className={styles.quantityControl} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                                                             <button onClick={() => {
                                                                 const updated = [...selectionsToRender];
@@ -759,13 +829,26 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
                                                                 setOrderConfig({ ...orderConfig, vendorSelections: updated, deliveryDayOrders: undefined });
                                                             }} className="btn btn-secondary" style={{ padding: '2px 8px' }}>-</button>
                                                             <span style={{ width: '20px', textAlign: 'center' }}>{qty}</span>
-                                                            <button onClick={() => {
-                                                                const updated = [...selectionsToRender];
-                                                                const items = { ...(updated[index].items || {}) };
-                                                                items[item.id] = qty + 1;
-                                                                updated[index] = { ...updated[index], items };
-                                                                setOrderConfig({ ...orderConfig, vendorSelections: updated, deliveryDayOrders: undefined });
-                                                            }} className="btn btn-secondary" style={{ padding: '2px 8px' }}>+</button>
+                                                            <button
+                                                                title={!canAdd ? "Adding this item would exceed your weekly meal allowance" : "Add item"}
+                                                                onClick={() => {
+                                                                    if (!canAdd) {
+                                                                        alert("Adding this item would exceed your weekly meal allowance");
+                                                                        return;
+                                                                    }
+                                                                    const updated = [...selectionsToRender];
+                                                                    const items = { ...(updated[index].items || {}) };
+                                                                    items[item.id] = qty + 1;
+                                                                    updated[index] = { ...updated[index], items };
+                                                                    setOrderConfig({ ...orderConfig, vendorSelections: updated, deliveryDayOrders: undefined });
+                                                                }}
+                                                                className="btn btn-secondary"
+                                                                style={{
+                                                                    padding: '2px 8px',
+                                                                    opacity: canAdd ? 1 : 0.5,
+                                                                    cursor: canAdd ? 'pointer' : 'not-allowed'
+                                                                }}
+                                                            >+</button>
                                                         </div>
                                                     </div>
                                                 );
@@ -788,18 +871,18 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
         );
     };
 
+    const configChanged = JSON.stringify(orderConfig) !== JSON.stringify(originalOrderConfig);
+
     return (
         <div className={styles.container}>
             <div className={styles.wideGrid}>
-                {/* Access Profile - Editable */}
+                {/* Access Profile - Read Only */}
                 <div className={styles.card}>
                     <div className={styles.sectionTitle} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                             <User size={20} />
                             Profile Information
                         </div>
-                        {savingProfile && <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '4px' }}><Loader2 className="animate-spin" size={14} /> Saving...</span>}
-                        {profileMessage && !savingProfile && <span style={{ fontSize: '0.8rem', color: 'var(--color-success)' }}>{profileMessage}</span>}
                     </div>
                     <div>
                         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '16px', marginBottom: '16px' }}>
@@ -809,7 +892,9 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
                                     type="text"
                                     className="input"
                                     value={profileData.fullName}
-                                    onChange={(e) => setProfileData({ ...profileData, fullName: e.target.value })}
+                                    disabled
+                                    readOnly
+                                    style={{ background: 'var(--bg-app)', opacity: 0.8, cursor: 'not-allowed' }}
                                 />
                             </div>
                             <div>
@@ -818,7 +903,9 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
                                     type="email"
                                     className="input"
                                     value={profileData.email}
-                                    onChange={(e) => setProfileData({ ...profileData, email: e.target.value })}
+                                    disabled
+                                    readOnly
+                                    style={{ background: 'var(--bg-app)', opacity: 0.8, cursor: 'not-allowed' }}
                                 />
                             </div>
                             <div>
@@ -827,7 +914,9 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
                                     type="tel"
                                     className="input"
                                     value={profileData.phoneNumber}
-                                    onChange={(e) => setProfileData({ ...profileData, phoneNumber: e.target.value })}
+                                    disabled
+                                    readOnly
+                                    style={{ background: 'var(--bg-app)', opacity: 0.8, cursor: 'not-allowed' }}
                                 />
                             </div>
                         </div>
@@ -838,7 +927,9 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
                                     type="tel"
                                     className="input"
                                     value={profileData.secondaryPhoneNumber}
-                                    onChange={(e) => setProfileData({ ...profileData, secondaryPhoneNumber: e.target.value })}
+                                    disabled
+                                    readOnly
+                                    style={{ background: 'var(--bg-app)', opacity: 0.8, cursor: 'not-allowed' }}
                                 />
                             </div>
                             <div>
@@ -847,8 +938,9 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
                                     className="input"
                                     rows={1}
                                     value={profileData.address}
-                                    onChange={(e) => setProfileData({ ...profileData, address: e.target.value })}
-                                    style={{ resize: 'vertical', minHeight: '42px' }}
+                                    disabled
+                                    readOnly
+                                    style={{ resize: 'vertical', minHeight: '42px', background: 'var(--bg-app)', opacity: 0.8, cursor: 'not-allowed' }}
                                 />
                             </div>
                         </div>
@@ -882,12 +974,40 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
                             {saving && <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '4px' }}><Loader2 className="animate-spin" size={14} /> Saving...</span>}
                             {message && !saving && <span style={{ fontSize: '0.8rem', color: 'var(--color-success)' }}>{message}</span>}
                         </div>
+                        {configChanged && !saving && (
+                            <div style={{ display: 'flex', gap: '12px', marginTop: '4px' }}>
+                                <button
+                                    onClick={handleDiscard}
+                                    className="btn btn-secondary"
+                                    style={{
+                                        fontSize: '1rem',
+                                        padding: '10px 20px',
+                                        fontWeight: 600,
+                                        border: '1px solid var(--border-color)'
+                                    }}
+                                >
+                                    Discard
+                                </button>
+                                <button
+                                    onClick={handleSave}
+                                    className="btn btn-primary"
+                                    style={{
+                                        fontSize: '1rem',
+                                        padding: '10px 24px',
+                                        fontWeight: 600,
+                                        boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)'
+                                    }}
+                                >
+                                    Save Changes
+                                </button>
+                            </div>
+                        )}
                     </div>
 
                     <div className={styles.alert} style={{ marginBottom: '1rem' }}>
                         <Info size={16} />
                         <div>
-                            <div>Update your order preferences below. Changes are saved automatically.</div>
+                            <div>Update your order preferences below.</div>
                             {(() => {
                                 // Only show date if there's a vendor set (for Boxes orders)
                                 // For Food orders, always show if date exists
@@ -909,11 +1029,25 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
                                         }
                                     }
                                 }
-                                return takeEffectDate ? (
-                                    <div style={{ marginTop: '0.5rem', fontSize: '0.9rem', fontWeight: 500 }}>
-                                        Your changes will take effect on {new Date(takeEffectDate).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}
-                                    </div>
-                                ) : null;
+
+                                if (takeEffectDate) {
+                                    return (
+                                        <div style={{ marginTop: '0.5rem', fontSize: '0.9rem', fontWeight: 500 }}>
+                                            Your changes will take effect on {new Date(takeEffectDate).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}
+                                        </div>
+                                    );
+                                } else if (client.serviceType === 'Boxes') {
+                                    // Fallback for Boxes if no vendor/date assigned yet
+                                    const nextSunday = new Date();
+                                    nextSunday.setDate(nextSunday.getDate() + (7 - nextSunday.getDay()) % 7 || 7); // Provide next Sunday
+
+                                    return (
+                                        <div style={{ marginTop: '0.5rem', fontSize: '0.9rem', fontWeight: 500 }}>
+                                            These changes will not take effect until the week starting with {nextSunday.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}
+                                        </div>
+                                    );
+                                }
+                                return null;
                             })()}
                         </div>
                     </div>
@@ -1053,13 +1187,33 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
                                                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
                                                         {availableItems.map(item => {
                                                             const qty = Number(selectedItems[item.id] || 0);
+                                                            const itemVal = item.quotaValue || 1;
+                                                            // Check if adding this item would exceed the limit
+                                                            // If requiredQuotaValue is null, there is no limit.
+                                                            const canAdd = requiredQuotaValue === null || (categoryQuotaValue + itemVal <= requiredQuotaValue);
+
                                                             return (
                                                                 <div key={item.id} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', background: 'var(--bg-app)', padding: '4px 8px', borderRadius: '4px', border: '1px solid var(--border-color)' }}>
                                                                     <span style={{ fontSize: '0.8rem' }}>{item.name} <span style={{ color: 'var(--text-tertiary)' }}>({item.quotaValue || 1})</span></span>
                                                                     <div className={styles.quantityControl} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                                                                         <button onClick={() => handleBoxItemChange(item.id, Math.max(0, qty - 1))} className="btn btn-secondary" style={{ padding: '2px 8px' }}>-</button>
                                                                         <span style={{ width: '20px', textAlign: 'center' }}>{qty}</span>
-                                                                        <button onClick={() => handleBoxItemChange(item.id, qty + 1)} className="btn btn-secondary" style={{ padding: '2px 8px' }}>+</button>
+                                                                        <button
+                                                                            onClick={() => {
+                                                                                if (!canAdd) {
+                                                                                    alert("Adding this item would exceed the category limit");
+                                                                                    return;
+                                                                                }
+                                                                                handleBoxItemChange(item.id, qty + 1);
+                                                                            }}
+                                                                            className="btn btn-secondary"
+                                                                            style={{
+                                                                                padding: '2px 8px',
+                                                                                opacity: canAdd ? 1 : 0.5,
+                                                                                cursor: canAdd ? 'pointer' : 'not-allowed'
+                                                                            }}
+                                                                            title={!canAdd ? "Adding this item would exceed the category limit" : "Add item"}
+                                                                        >+</button>
                                                                     </div>
                                                                 </div>
                                                             );

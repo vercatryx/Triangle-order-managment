@@ -57,7 +57,7 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
     const loggedMissingVendorIds = useRef<Set<string>>(new Set());
 
     // Views
-    const [currentView, setCurrentView] = useState<'all' | 'eligible' | 'ineligible' | 'billing'>('all');
+    const [currentView, setCurrentView] = useState<'all' | 'eligible' | 'ineligible' | 'billing' | 'needs-attention'>('all');
 
     // Sorting State
     const [sortColumn, setSortColumn] = useState<string | null>(null);
@@ -256,7 +256,7 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
         }
     }
 
-    const filteredClients = clients.filter(c => {
+    const baseFilteredClients = clients.filter(c => {
         const searchLower = search.toLowerCase();
         const matchesSearch =
             c.fullName.toLowerCase().includes(searchLower) ||
@@ -276,6 +276,53 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
             const status = statuses.find(s => s.id === c.statusId);
             // Show clients whose status does NOT allow deliveries
             matchesView = status ? !status.deliveriesAllowed : false;
+        } else if (currentView === 'needs-attention') {
+            // First, check if client is eligible (status allows deliveries)
+            const status = statuses.find(s => s.id === c.statusId);
+            const isEligible = status ? status.deliveriesAllowed : false;
+            
+            // Only show eligible clients that need attention
+            if (!isEligible) {
+                matchesView = false;
+            } else {
+                // Show clients that need attention based on specific criteria:
+                // 1. Clients with boxes that do not have a vendor assigned
+                // 2. Clients whose expiration date is within the current month
+                // 3. Clients with boxes whose authorized amount is less than 584
+                // 4. Clients with food whose authorized amount is less than 1344
+                
+                const now = new Date();
+                const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+                const firstDayOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+                const lastDayOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+                
+                // 1. Check if client with boxes doesn't have vendor assigned
+                let boxesNeedsVendor = false;
+                if (c.serviceType === 'Boxes') {
+                    if (c.activeOrder && c.activeOrder.serviceType === 'Boxes') {
+                        const box = boxTypes.find(b => b.id === c.activeOrder?.boxTypeId);
+                        const vendorId = c.activeOrder.vendorId || box?.vendorId;
+                        boxesNeedsVendor = !vendorId;
+                    } else {
+                        boxesNeedsVendor = true; // No active order means needs vendor
+                    }
+                }
+                
+                // 2. Check if expiration date is within current month
+                let expirationInCurrentMonth = false;
+                if (c.expirationDate) {
+                    const expDate = new Date(c.expirationDate);
+                    expirationInCurrentMonth = expDate >= firstDayOfMonth && expDate <= lastDayOfMonth;
+                }
+                
+                // 3. Check if boxes client has authorized amount < 584 or is null/undefined
+                const boxesLowOrNoAmount = c.serviceType === 'Boxes' && (c.authorizedAmount === null || c.authorizedAmount === undefined || c.authorizedAmount < 584);
+                
+                // 4. Check if food client has authorized amount < 1344 or is null/undefined
+                const foodLowOrNoAmount = c.serviceType === 'Food' && (c.authorizedAmount === null || c.authorizedAmount === undefined || c.authorizedAmount < 1344);
+                
+                matchesView = boxesNeedsVendor || expirationInCurrentMonth || boxesLowOrNoAmount || foodLowOrNoAmount;
+            }
         }
         // 'billing' might just show all clients but with different columns?
 
@@ -314,7 +361,15 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
         const matchesDependentsFilter = showDependents || !c.parentClientId;
 
         return matchesSearch && matchesView && matchesStatusFilter && matchesNavigatorFilter && matchesScreeningFilter && matchesServiceTypeFilter && matchesNeedsVendorFilter && matchesDependentsFilter;
-    }).sort((a, b) => {
+    });
+
+    // Group dependents under their parent clients
+    // First, separate parent clients and dependents
+    const parentClients = baseFilteredClients.filter(c => !c.parentClientId);
+    const dependents = baseFilteredClients.filter(c => c.parentClientId);
+
+    // Helper function to compare clients based on sort column
+    function compareClients(a: ClientProfile, b: ClientProfile): number {
         // Always sort clients needing vendor assignment to the top
         const aNeedsVendor = a.serviceType === 'Boxes' && (!a.activeOrder || (a.activeOrder.serviceType === 'Boxes' && !a.activeOrder.vendorId && !boxTypes.find(bt => bt.id === a.activeOrder?.boxTypeId)?.vendorId));
         const bNeedsVendor = b.serviceType === 'Boxes' && (!b.activeOrder || (b.activeOrder.serviceType === 'Boxes' && !b.activeOrder.vendorId && !boxTypes.find(bt => bt.id === b.activeOrder?.boxTypeId)?.vendorId));
@@ -323,7 +378,10 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
             return aNeedsVendor ? -1 : 1; // Clients needing vendor come first
         }
 
-        if (!sortColumn) return 0;
+        if (!sortColumn) {
+            // Default to alphabetical by name
+            return a.fullName.localeCompare(b.fullName);
+        }
 
         let comparison = 0;
 
@@ -371,12 +429,62 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
                 const notesB = b.notes || '';
                 comparison = notesA.localeCompare(notesB);
                 break;
+            case 'authorizedAmount':
+                const amountA = a.authorizedAmount ?? 0;
+                const amountB = b.authorizedAmount ?? 0;
+                comparison = amountA - amountB;
+                break;
+            case 'expirationDate':
+                const dateA = a.expirationDate ? new Date(a.expirationDate).getTime() : 0;
+                const dateB = b.expirationDate ? new Date(b.expirationDate).getTime() : 0;
+                comparison = dateA - dateB;
+                break;
             default:
-                return 0;
+                comparison = a.fullName.localeCompare(b.fullName);
         }
 
         return sortDirection === 'asc' ? comparison : -comparison;
+    }
+
+    // Sort parent clients (default to alphabetical by name)
+    const sortedParentClients = [...parentClients].sort(compareClients);
+
+    // Group dependents by parent ID and sort them alphabetically within each group
+    const dependentsByParent = new Map<string, ClientProfile[]>();
+    dependents.forEach(dep => {
+        const parentId = dep.parentClientId!;
+        if (!dependentsByParent.has(parentId)) {
+            dependentsByParent.set(parentId, []);
+        }
+        dependentsByParent.get(parentId)!.push(dep);
     });
+
+    // Sort dependents within each parent group (always alphabetically by name, ignoring other sort columns)
+    dependentsByParent.forEach((deps, parentId) => {
+        deps.sort((a, b) => a.fullName.localeCompare(b.fullName));
+    });
+
+    // Build final list: each parent followed by its dependents
+    const groupedClients: ClientProfile[] = [];
+    sortedParentClients.forEach(parent => {
+        groupedClients.push(parent);
+        // Add dependents for this parent (they're already filtered by showDependents in the base filter)
+        const parentDependents = dependentsByParent.get(parent.id) || [];
+        groupedClients.push(...parentDependents);
+    });
+
+    // Also include dependents whose parents are not in the filtered list (orphaned dependents)
+    const orphanedDependents = dependents.filter(dep => {
+        const parentId = dep.parentClientId!;
+        return !sortedParentClients.some(p => p.id === parentId);
+    });
+    if (orphanedDependents.length > 0) {
+        orphanedDependents.sort((a, b) => a.fullName.localeCompare(b.fullName));
+        groupedClients.push(...orphanedDependents);
+    }
+
+    // Use the grouped clients as the final filtered list
+    const filteredClients = groupedClients;
 
     function handleCreate() {
         // Open the modal immediately with "new" as a special clientId
@@ -834,6 +942,54 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
         );
     }
 
+    function getNeedsAttentionReason(client: ClientProfile): string {
+        const reasons: string[] = [];
+        const now = new Date();
+        const firstDayOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+        const lastDayOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+        
+        // 1. Check if client with boxes doesn't have vendor assigned
+        if (client.serviceType === 'Boxes') {
+            if (client.activeOrder && client.activeOrder.serviceType === 'Boxes') {
+                const box = boxTypes.find(b => b.id === client.activeOrder?.boxTypeId);
+                const vendorId = client.activeOrder.vendorId || box?.vendorId;
+                if (!vendorId) {
+                    reasons.push('Boxes: No vendor assigned');
+                }
+            } else {
+                reasons.push('Boxes: No vendor assigned');
+            }
+        }
+        
+        // 2. Check if expiration date is within current month
+        if (client.expirationDate) {
+            const expDate = new Date(client.expirationDate);
+            if (expDate >= firstDayOfMonth && expDate <= lastDayOfMonth) {
+                reasons.push('Expiration date this month');
+            }
+        }
+        
+            // 3. Check if boxes client has authorized amount < 584 or is null/undefined
+            if (client.serviceType === 'Boxes') {
+                if (client.authorizedAmount === null || client.authorizedAmount === undefined) {
+                    reasons.push('Boxes: No authorized amount');
+                } else if (client.authorizedAmount < 584) {
+                    reasons.push(`Boxes: Auth amount $${client.authorizedAmount} < $584`);
+                }
+            }
+            
+            // 4. Check if food client has authorized amount < 1344 or is null/undefined
+            if (client.serviceType === 'Food') {
+                if (client.authorizedAmount === null || client.authorizedAmount === undefined) {
+                    reasons.push('Food: No authorized amount');
+                } else if (client.authorizedAmount < 1344) {
+                    reasons.push(`Food: Auth amount $${client.authorizedAmount} < $1344`);
+                }
+            }
+            
+            return reasons.length > 0 ? reasons.join(', ') : 'No reason specified';
+    }
+
     // Helper function to check if a date is in the current week
     function isInCurrentWeek(dateString: string): boolean {
         if (!dateString) return false;
@@ -910,6 +1066,12 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
                             onClick={() => setCurrentView('ineligible')}
                         >
                             Ineligible
+                        </button>
+                        <button
+                            className={`${styles.viewBtn} ${currentView === 'needs-attention' ? styles.viewBtnActive : ''}`}
+                            onClick={() => setCurrentView('needs-attention')}
+                        >
+                            Needs Attention
                         </button>
                         <button
                             className={`${styles.viewBtn} ${currentView === 'billing' ? styles.viewBtnActive : ''}`}
@@ -1131,169 +1293,191 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
                         )}
                     </span>
 
-                    {/* Navigator column with filter */}
-                    <span style={{ minWidth: '160px', flex: 1, paddingRight: '16px', display: 'flex', alignItems: 'center', gap: '4px', position: 'relative' }} data-filter-dropdown>
-                        <span style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }} onClick={() => handleSort('navigator')}>
-                            Navigator {getSortIcon('navigator')}
-                        </span>
-                        <Filter
-                            size={14}
-                            style={{ cursor: 'pointer', opacity: navigatorFilter ? 1 : 0.5, color: navigatorFilter ? 'var(--color-primary)' : 'inherit', filter: navigatorFilter ? 'drop-shadow(0 0 3px var(--color-primary))' : 'none' }}
-                            onClick={(e) => { e.stopPropagation(); setOpenFilterMenu(openFilterMenu === 'navigator' ? null : 'navigator'); }}
-                        />
-                        {openFilterMenu === 'navigator' && (
-                            <div style={{
-                                position: 'absolute', top: '100%', left: 0, marginTop: '4px',
-                                backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-color)',
-                                borderRadius: 'var(--radius-md)', boxShadow: 'var(--shadow-lg)',
-                                zIndex: 1000, minWidth: '200px', maxHeight: '300px', overflowY: 'auto'
-                            }}>
-                                <div onClick={() => { setNavigatorFilter(null); setOpenFilterMenu(null); }}
-                                    style={{
-                                        padding: '8px 12px', cursor: 'pointer',
-                                        backgroundColor: !navigatorFilter ? 'var(--bg-surface-hover)' : 'transparent',
-                                        fontWeight: !navigatorFilter ? 600 : 400
+                    {currentView !== 'needs-attention' && (
+                        <>
+                            {/* Navigator column with filter */}
+                            <span style={{ minWidth: '160px', flex: 1, paddingRight: '16px', display: 'flex', alignItems: 'center', gap: '4px', position: 'relative' }} data-filter-dropdown>
+                                <span style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }} onClick={() => handleSort('navigator')}>
+                                    Navigator {getSortIcon('navigator')}
+                                </span>
+                                <Filter
+                                    size={14}
+                                    style={{ cursor: 'pointer', opacity: navigatorFilter ? 1 : 0.5, color: navigatorFilter ? 'var(--color-primary)' : 'inherit', filter: navigatorFilter ? 'drop-shadow(0 0 3px var(--color-primary))' : 'none' }}
+                                    onClick={(e) => { e.stopPropagation(); setOpenFilterMenu(openFilterMenu === 'navigator' ? null : 'navigator'); }}
+                                />
+                                {openFilterMenu === 'navigator' && (
+                                    <div style={{
+                                        position: 'absolute', top: '100%', left: 0, marginTop: '4px',
+                                        backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-color)',
+                                        borderRadius: 'var(--radius-md)', boxShadow: 'var(--shadow-lg)',
+                                        zIndex: 1000, minWidth: '200px', maxHeight: '300px', overflowY: 'auto'
                                     }}>
-                                    All Navigators
-                                </div>
-                                {navigators.map(navigator => (
-                                    <div key={navigator.id}
-                                        onClick={() => { setNavigatorFilter(navigator.id); setOpenFilterMenu(null); }}
-                                        style={{
-                                            padding: '8px 12px', cursor: 'pointer',
-                                            backgroundColor: navigatorFilter === navigator.id ? 'var(--bg-surface-hover)' : 'transparent',
-                                            fontWeight: navigatorFilter === navigator.id ? 600 : 400
-                                        }}>
-                                        {navigator.name}
+                                        <div onClick={() => { setNavigatorFilter(null); setOpenFilterMenu(null); }}
+                                            style={{
+                                                padding: '8px 12px', cursor: 'pointer',
+                                                backgroundColor: !navigatorFilter ? 'var(--bg-surface-hover)' : 'transparent',
+                                                fontWeight: !navigatorFilter ? 600 : 400
+                                            }}>
+                                            All Navigators
+                                        </div>
+                                        {navigators.map(navigator => (
+                                            <div key={navigator.id}
+                                                onClick={() => { setNavigatorFilter(navigator.id); setOpenFilterMenu(null); }}
+                                                style={{
+                                                    padding: '8px 12px', cursor: 'pointer',
+                                                    backgroundColor: navigatorFilter === navigator.id ? 'var(--bg-surface-hover)' : 'transparent',
+                                                    fontWeight: navigatorFilter === navigator.id ? 600 : 400
+                                                }}>
+                                                {navigator.name}
+                                            </div>
+                                        ))}
                                     </div>
-                                ))}
-                            </div>
-                        )}
-                    </span>
+                                )}
+                            </span>
 
-                    {/* Screening column with filter */}
-                    <span style={{ minWidth: '140px', flex: 1, paddingRight: '16px', display: 'flex', alignItems: 'center', gap: '4px', position: 'relative' }} data-filter-dropdown>
-                        <span style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }} onClick={() => handleSort('screening')}>
-                            Screening {getSortIcon('screening')}
-                        </span>
-                        <Filter
-                            size={14}
-                            style={{ cursor: 'pointer', opacity: screeningFilter ? 1 : 0.5, color: screeningFilter ? 'var(--color-primary)' : 'inherit', filter: screeningFilter ? 'drop-shadow(0 0 3px var(--color-primary))' : 'none' }}
-                            onClick={(e) => { e.stopPropagation(); setOpenFilterMenu(openFilterMenu === 'screening' ? null : 'screening'); }}
-                        />
-                        {openFilterMenu === 'screening' && (
-                            <div style={{
-                                position: 'absolute', top: '100%', left: 0, marginTop: '4px',
-                                backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-color)',
-                                borderRadius: 'var(--radius-md)', boxShadow: 'var(--shadow-lg)',
-                                zIndex: 1000, minWidth: '200px'
-                            }}>
-                                <div onClick={() => { setScreeningFilter(null); setOpenFilterMenu(null); }}
-                                    style={{
-                                        padding: '8px 12px', cursor: 'pointer',
-                                        backgroundColor: !screeningFilter ? 'var(--bg-surface-hover)' : 'transparent',
-                                        fontWeight: !screeningFilter ? 600 : 400
+                            {/* Screening column with filter */}
+                            <span style={{ minWidth: '140px', flex: 1, paddingRight: '16px', display: 'flex', alignItems: 'center', gap: '4px', position: 'relative' }} data-filter-dropdown>
+                                <span style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }} onClick={() => handleSort('screening')}>
+                                    Screening {getSortIcon('screening')}
+                                </span>
+                                <Filter
+                                    size={14}
+                                    style={{ cursor: 'pointer', opacity: screeningFilter ? 1 : 0.5, color: screeningFilter ? 'var(--color-primary)' : 'inherit', filter: screeningFilter ? 'drop-shadow(0 0 3px var(--color-primary))' : 'none' }}
+                                    onClick={(e) => { e.stopPropagation(); setOpenFilterMenu(openFilterMenu === 'screening' ? null : 'screening'); }}
+                                />
+                                {openFilterMenu === 'screening' && (
+                                    <div style={{
+                                        position: 'absolute', top: '100%', left: 0, marginTop: '4px',
+                                        backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-color)',
+                                        borderRadius: 'var(--radius-md)', boxShadow: 'var(--shadow-lg)',
+                                        zIndex: 1000, minWidth: '200px'
                                     }}>
-                                    All Statuses
-                                </div>
-                                {['not_started', 'waiting_approval', 'approved', 'rejected'].map(status => (
-                                    <div key={status}
-                                        onClick={() => { setScreeningFilter(status); setOpenFilterMenu(null); }}
-                                        style={{
-                                            padding: '8px 12px', cursor: 'pointer',
-                                            backgroundColor: screeningFilter === status ? 'var(--bg-surface-hover)' : 'transparent',
-                                            fontWeight: screeningFilter === status ? 600 : 400
-                                        }}>
-                                        {getScreeningStatusLabel(status)}
+                                        <div onClick={() => { setScreeningFilter(null); setOpenFilterMenu(null); }}
+                                            style={{
+                                                padding: '8px 12px', cursor: 'pointer',
+                                                backgroundColor: !screeningFilter ? 'var(--bg-surface-hover)' : 'transparent',
+                                                fontWeight: !screeningFilter ? 600 : 400
+                                            }}>
+                                            All Statuses
+                                        </div>
+                                        {['not_started', 'waiting_approval', 'approved', 'rejected'].map(status => (
+                                            <div key={status}
+                                                onClick={() => { setScreeningFilter(status); setOpenFilterMenu(null); }}
+                                                style={{
+                                                    padding: '8px 12px', cursor: 'pointer',
+                                                    backgroundColor: screeningFilter === status ? 'var(--bg-surface-hover)' : 'transparent',
+                                                    fontWeight: screeningFilter === status ? 600 : 400
+                                                }}>
+                                                {getScreeningStatusLabel(status)}
+                                            </div>
+                                        ))}
                                     </div>
-                                ))}
-                            </div>
-                        )}
-                    </span>
+                                )}
+                            </span>
 
-                    {/* Active Order column with filter */}
-                    <span style={{ minWidth: '350px', flex: 3, paddingRight: '16px', display: 'flex', alignItems: 'center', gap: '8px', position: 'relative' }} data-filter-dropdown>
-                        Active Order
-                        <span
-                            onClick={(e) => { e.stopPropagation(); setShowOrderDetails(!showOrderDetails); }}
-                            style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', color: 'var(--text-secondary)' }}
-                            title={showOrderDetails ? "Hide Details" : "Show Details"}
-                        >
-                            {showOrderDetails ? <EyeOff size={14} /> : <Eye size={14} />}
-                        </span>
-                        <Filter
-                            size={14}
-                            style={{ cursor: 'pointer', opacity: (serviceTypeFilter || needsVendorFilter) ? 1 : 0.5, color: (serviceTypeFilter || needsVendorFilter) ? 'var(--color-primary)' : 'inherit', filter: (serviceTypeFilter || needsVendorFilter) ? 'drop-shadow(0 0 3px var(--color-primary))' : 'none' }}
-                            onClick={(e) => { e.stopPropagation(); setOpenFilterMenu(openFilterMenu === 'serviceType' ? null : 'serviceType'); }}
-                        />
-                        {openFilterMenu === 'serviceType' && (
-                            <div style={{
-                                position: 'absolute', top: '100%', left: 0, marginTop: '4px',
-                                backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-color)',
-                                borderRadius: 'var(--radius-md)', boxShadow: 'var(--shadow-lg)',
-                                zIndex: 1000, minWidth: '200px'
-                            }}>
-                                <div onClick={() => { setServiceTypeFilter(null); setNeedsVendorFilter(false); setOpenFilterMenu(null); }}
-                                    style={{
-                                        padding: '8px 12px', cursor: 'pointer',
-                                        backgroundColor: !serviceTypeFilter ? 'var(--bg-surface-hover)' : 'transparent',
-                                        fontWeight: !serviceTypeFilter ? 600 : 400
+                            {/* Active Order column with filter */}
+                            <span style={{ minWidth: '350px', flex: 3, paddingRight: '16px', display: 'flex', alignItems: 'center', gap: '8px', position: 'relative' }} data-filter-dropdown>
+                                Active Order
+                                <span
+                                    onClick={(e) => { e.stopPropagation(); setShowOrderDetails(!showOrderDetails); }}
+                                    style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', color: 'var(--text-secondary)' }}
+                                    title={showOrderDetails ? "Hide Details" : "Show Details"}
+                                >
+                                    {showOrderDetails ? <EyeOff size={14} /> : <Eye size={14} />}
+                                </span>
+                                <Filter
+                                    size={14}
+                                    style={{ cursor: 'pointer', opacity: (serviceTypeFilter || needsVendorFilter) ? 1 : 0.5, color: (serviceTypeFilter || needsVendorFilter) ? 'var(--color-primary)' : 'inherit', filter: (serviceTypeFilter || needsVendorFilter) ? 'drop-shadow(0 0 3px var(--color-primary))' : 'none' }}
+                                    onClick={(e) => { e.stopPropagation(); setOpenFilterMenu(openFilterMenu === 'serviceType' ? null : 'serviceType'); }}
+                                />
+                                {openFilterMenu === 'serviceType' && (
+                                    <div style={{
+                                        position: 'absolute', top: '100%', left: 0, marginTop: '4px',
+                                        backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-color)',
+                                        borderRadius: 'var(--radius-md)', boxShadow: 'var(--shadow-lg)',
+                                        zIndex: 1000, minWidth: '200px'
                                     }}>
-                                    All Types
-                                </div>
-                                <div onClick={() => { setServiceTypeFilter('Food'); setOpenFilterMenu(null); }}
-                                    style={{
-                                        padding: '8px 12px', cursor: 'pointer',
-                                        backgroundColor: serviceTypeFilter === 'Food' ? 'var(--bg-surface-hover)' : 'transparent',
-                                        fontWeight: serviceTypeFilter === 'Food' ? 600 : 400
-                                    }}>
-                                    Food
-                                </div>
-                                <div onClick={() => { setServiceTypeFilter('Boxes'); setOpenFilterMenu(null); }}
-                                    style={{
-                                        padding: '8px 12px', cursor: 'pointer',
-                                        backgroundColor: serviceTypeFilter === 'Boxes' ? 'var(--bg-surface-hover)' : 'transparent',
-                                        fontWeight: serviceTypeFilter === 'Boxes' ? 600 : 400
-                                    }}>
-                                    Boxes
-                                </div>
-                                <div style={{ height: '1px', backgroundColor: 'var(--border-color)', margin: '4px 0' }}></div>
-                                <div onClick={() => { setNeedsVendorFilter(!needsVendorFilter); setOpenFilterMenu(null); }}
-                                    style={{
-                                        padding: '8px 12px', cursor: 'pointer',
-                                        backgroundColor: needsVendorFilter ? 'var(--bg-surface-hover)' : 'transparent',
-                                        fontWeight: needsVendorFilter ? 600 : 400,
-                                        display: 'flex',
-                                        alignItems: 'center',
-                                        gap: '8px'
-                                    }}>
-                                    <AlertCircle size={14} />
-                                    Needs Vendor Assignment
-                                </div>
-                            </div>
-                        )}
-                    </span>
+                                        <div onClick={() => { setServiceTypeFilter(null); setNeedsVendorFilter(false); setOpenFilterMenu(null); }}
+                                            style={{
+                                                padding: '8px 12px', cursor: 'pointer',
+                                                backgroundColor: !serviceTypeFilter ? 'var(--bg-surface-hover)' : 'transparent',
+                                                fontWeight: !serviceTypeFilter ? 600 : 400
+                                            }}>
+                                            All Types
+                                        </div>
+                                        <div onClick={() => { setServiceTypeFilter('Food'); setOpenFilterMenu(null); }}
+                                            style={{
+                                                padding: '8px 12px', cursor: 'pointer',
+                                                backgroundColor: serviceTypeFilter === 'Food' ? 'var(--bg-surface-hover)' : 'transparent',
+                                                fontWeight: serviceTypeFilter === 'Food' ? 600 : 400
+                                            }}>
+                                            Food
+                                        </div>
+                                        <div onClick={() => { setServiceTypeFilter('Boxes'); setOpenFilterMenu(null); }}
+                                            style={{
+                                                padding: '8px 12px', cursor: 'pointer',
+                                                backgroundColor: serviceTypeFilter === 'Boxes' ? 'var(--bg-surface-hover)' : 'transparent',
+                                                fontWeight: serviceTypeFilter === 'Boxes' ? 600 : 400
+                                            }}>
+                                            Boxes
+                                        </div>
+                                        <div style={{ height: '1px', backgroundColor: 'var(--border-color)', margin: '4px 0' }}></div>
+                                        <div onClick={() => { setNeedsVendorFilter(!needsVendorFilter); setOpenFilterMenu(null); }}
+                                            style={{
+                                                padding: '8px 12px', cursor: 'pointer',
+                                                backgroundColor: needsVendorFilter ? 'var(--bg-surface-hover)' : 'transparent',
+                                                fontWeight: needsVendorFilter ? 600 : 400,
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                gap: '8px'
+                                            }}>
+                                            <AlertCircle size={14} />
+                                            Needs Vendor Assignment
+                                        </div>
+                                    </div>
+                                )}
+                            </span>
+                        </>
+                    )}
 
-                    <span style={{ minWidth: '180px', flex: 1.2, paddingRight: '16px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}
-                        onClick={() => handleSort('email')}>
-                        Email {getSortIcon('email')}
-                    </span>
-                    <span style={{ minWidth: '140px', flex: 1, paddingRight: '16px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}
-                        onClick={() => handleSort('phone')}>
-                        Phone {getSortIcon('phone')}
-                    </span>
-                    <span style={{ minWidth: '140px', flex: 1, paddingRight: '16px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}
-                        onClick={() => handleSort('secondaryPhone')}>
-                        Secondary Phone {getSortIcon('secondaryPhone')}
-                    </span>
-                    <span style={{ minWidth: '250px', flex: 2, paddingRight: '16px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}
-                        onClick={() => handleSort('address')}>
-                        Address {getSortIcon('address')}
-                    </span>
-                    <span style={{ minWidth: '200px', flex: 2, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}
-                        onClick={() => handleSort('notes')}>
-                        Notes {getSortIcon('notes')}
-                    </span>
+                    {currentView === 'needs-attention' ? (
+                        <>
+                            <span style={{ minWidth: '400px', flex: 4, paddingRight: '16px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                Reason
+                            </span>
+                            <span style={{ minWidth: '150px', flex: 1.2, paddingRight: '16px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}
+                                onClick={() => handleSort('authorizedAmount')}>
+                                Authorized Amount {getSortIcon('authorizedAmount')}
+                            </span>
+                            <span style={{ minWidth: '150px', flex: 1.2, paddingRight: '16px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}
+                                onClick={() => handleSort('expirationDate')}>
+                                Expiration Date {getSortIcon('expirationDate')}
+                            </span>
+                        </>
+                    ) : (
+                        <>
+                            <span style={{ minWidth: '180px', flex: 1.2, paddingRight: '16px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}
+                                onClick={() => handleSort('email')}>
+                                Email {getSortIcon('email')}
+                            </span>
+                            <span style={{ minWidth: '140px', flex: 1, paddingRight: '16px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}
+                                onClick={() => handleSort('phone')}>
+                                Phone {getSortIcon('phone')}
+                            </span>
+                            <span style={{ minWidth: '140px', flex: 1, paddingRight: '16px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}
+                                onClick={() => handleSort('secondaryPhone')}>
+                                Secondary Phone {getSortIcon('secondaryPhone')}
+                            </span>
+                            <span style={{ minWidth: '250px', flex: 2, paddingRight: '16px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}
+                                onClick={() => handleSort('address')}>
+                                Address {getSortIcon('address')}
+                            </span>
+                            <span style={{ minWidth: '200px', flex: 2, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}
+                                onClick={() => handleSort('notes')}>
+                                Notes {getSortIcon('notes')}
+                            </span>
+                        </>
+                    )}
                     <span style={{ width: '40px' }}></span>
                 </div>
                 {filteredClients.map((client, index) => {
@@ -1320,7 +1504,7 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
                                     setSelectedClientId(client.id);
                                 }
                             }}
-                            className={styles.clientRow}
+                            className={`${styles.clientRow} ${isDependent ? styles.clientRowDependent : ''}`}
                             style={{ cursor: 'pointer' }}
                         >
                             <span style={{ minWidth: '60px', flex: 0.3, paddingRight: '16px', color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
@@ -1341,26 +1525,50 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
                                     </span>
                                 )}
                             </span>
-                            <span title={isDependent ? '' : getNavigatorName(client.navigatorId)} style={{ minWidth: '160px', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: '16px' }}>{isDependent ? '-' : getNavigatorName(client.navigatorId)}</span>
-                            <span style={{ minWidth: '140px', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: '16px' }}>{isDependent ? '-' : getScreeningStatus(client)}</span>
-                            <span style={{ minWidth: '350px', flex: 3, fontSize: '0.9rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: '16px' }}>
-                                {isDependent ? '-' : getOrderSummary(client)}
-                            </span>
-                            <span title={isDependent ? undefined : (client.email || undefined)} style={{ minWidth: '180px', flex: 1.2, fontSize: '0.85rem', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: '16px' }}>
-                                {isDependent ? '-' : (client.email || '-')}
-                            </span>
-                            <span title={isDependent ? undefined : client.phoneNumber} style={{ minWidth: '140px', flex: 1, fontSize: '0.85rem', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: '16px' }}>
-                                {isDependent ? '-' : (client.phoneNumber || '-')}
-                            </span>
-                            <span title={isDependent ? undefined : (client.secondaryPhoneNumber || undefined)} style={{ minWidth: '140px', flex: 1, fontSize: '0.85rem', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: '16px' }}>
-                                {isDependent ? '-' : (client.secondaryPhoneNumber || '-')}
-                            </span>
-                            <span title={isDependent ? undefined : client.address} style={{ minWidth: '250px', flex: 2, fontSize: '0.85rem', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: '16px' }}>
-                                {isDependent ? '-' : (client.address || '-')}
-                            </span>
-                            <span title={isDependent ? undefined : client.notes} style={{ minWidth: '200px', flex: 2, fontSize: '0.85rem', color: 'var(--text-tertiary)', fontStyle: 'italic', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: '16px' }}>
-                                {isDependent ? '-' : (client.notes || '-')}
-                            </span>
+                            {currentView !== 'needs-attention' && (
+                                <>
+                                    <span title={isDependent ? '' : getNavigatorName(client.navigatorId)} style={{ minWidth: '160px', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: '16px' }}>{isDependent ? '-' : getNavigatorName(client.navigatorId)}</span>
+                                    <span style={{ minWidth: '140px', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: '16px' }}>{isDependent ? '-' : getScreeningStatus(client)}</span>
+                                    <span style={{ minWidth: '350px', flex: 3, fontSize: '0.9rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: '16px' }}>
+                                        {isDependent ? '-' : getOrderSummary(client)}
+                                    </span>
+                                </>
+                            )}
+                            {currentView === 'needs-attention' ? (
+                                <>
+                                    <span title={getNeedsAttentionReason(client)} style={{ minWidth: '400px', flex: 4, fontSize: '0.85rem', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: '16px' }}>
+                                        {getNeedsAttentionReason(client)}
+                                    </span>
+                                    <span style={{ minWidth: '150px', flex: 1.2, fontSize: '0.85rem', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: '16px' }}>
+                                        {client.authorizedAmount !== null && client.authorizedAmount !== undefined 
+                                            ? `$${client.authorizedAmount.toFixed(2)}` 
+                                            : '-'}
+                                    </span>
+                                    <span style={{ minWidth: '150px', flex: 1.2, fontSize: '0.85rem', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: '16px' }}>
+                                        {client.expirationDate 
+                                            ? new Date(client.expirationDate).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
+                                            : '-'}
+                                    </span>
+                                </>
+                            ) : (
+                                <>
+                                    <span title={isDependent ? undefined : (client.email || undefined)} style={{ minWidth: '180px', flex: 1.2, fontSize: '0.85rem', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: '16px' }}>
+                                        {isDependent ? '-' : (client.email || '-')}
+                                    </span>
+                                    <span title={isDependent ? undefined : client.phoneNumber} style={{ minWidth: '140px', flex: 1, fontSize: '0.85rem', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: '16px' }}>
+                                        {isDependent ? '-' : (client.phoneNumber || '-')}
+                                    </span>
+                                    <span title={isDependent ? undefined : (client.secondaryPhoneNumber || undefined)} style={{ minWidth: '140px', flex: 1, fontSize: '0.85rem', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: '16px' }}>
+                                        {isDependent ? '-' : (client.secondaryPhoneNumber || '-')}
+                                    </span>
+                                    <span title={isDependent ? undefined : client.address} style={{ minWidth: '250px', flex: 2, fontSize: '0.85rem', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: '16px' }}>
+                                        {isDependent ? '-' : (client.address || '-')}
+                                    </span>
+                                    <span title={isDependent ? undefined : client.notes} style={{ minWidth: '200px', flex: 2, fontSize: '0.85rem', color: 'var(--text-tertiary)', fontStyle: 'italic', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: '16px' }}>
+                                        {isDependent ? '-' : (client.notes || '-')}
+                                    </span>
+                                </>
+                            )}
                             <span style={{ width: '40px' }}><ChevronRight size={16} /></span>
                         </div>
                     );
@@ -1370,7 +1578,8 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
                         {needsVendorFilter ? 'No clients with box orders needing vendor assignment.' :
                             currentView === 'ineligible' ? 'No ineligible clients found.' :
                                 currentView === 'eligible' ? 'No eligible clients found.' :
-                                    'No clients found.'}
+                                    currentView === 'needs-attention' ? 'No clients need attention.' :
+                                        'No clients found.'}
                     </div>
                 )}
             </div>

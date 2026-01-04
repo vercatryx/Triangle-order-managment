@@ -95,6 +95,40 @@
     font-weight: 500;
 }
 
+/* Date Section Styles */
+.dateSection {
+    margin-bottom: var(--spacing-xl);
+}
+
+.dateSection:last-child {
+    margin-bottom: 0;
+}
+
+.dateHeader {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: var(--spacing-md) var(--spacing-lg);
+    background-color: var(--bg-surface-hover);
+    border: 1px solid var(--border-color);
+    border-bottom: none;
+    border-radius: var(--radius-md) var(--radius-md) 0 0;
+    margin-bottom: 0;
+}
+
+.dateTitle {
+    font-size: 1.125rem;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.dateTotal {
+    font-size: 0.9375rem;
+    font-weight: 600;
+    color: var(--color-success);
+}
+
+
 
 
 

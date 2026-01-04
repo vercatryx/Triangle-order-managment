@@ -20,6 +20,9 @@ import { ServiceType } from '@/lib/types';
  *   notes?: string
  *   serviceType: 'Food' | 'Boxes'
  *   caseId: string (required, must be valid case URL)
+ *   approvedMealsPerWeek?: number
+ *   authorizedAmount?: number | null
+ *   expirationDate?: string | null (ISO date string or YYYY-MM-DD format)
  * }
  */
 export async function OPTIONS(request: NextRequest) {
@@ -73,7 +76,9 @@ export async function POST(request: NextRequest) {
             notes,
             serviceType,
             caseId,
-            approvedMealsPerWeek
+            approvedMealsPerWeek,
+            authorizedAmount,
+            expirationDate
         } = body;
 
         // Validate required fields
@@ -116,6 +121,8 @@ export async function POST(request: NextRequest) {
             statusId: statusId,
             serviceType: serviceType as ServiceType,
             approvedMealsPerWeek: approvedMealsPerWeek ? parseInt(approvedMealsPerWeek.toString(), 10) : 0,
+            authorizedAmount: authorizedAmount !== undefined && authorizedAmount !== null ? parseFloat(authorizedAmount.toString()) : null,
+            expirationDate: expirationDate?.trim() || null,
             activeOrder: {
                 serviceType: serviceType as ServiceType,
                 caseId: caseId.trim()

@@ -25,6 +25,10 @@ export interface ClientProfile {
   // Dependent relationship - if set, this client is a dependent of another client
   parentClientId?: string | null;
 
+  // Authorization fields
+  authorizedAmount?: number | null;
+  expirationDate?: string | null; // ISO Date string (DATE type in database)
+
   // Order Configuration (Active Request)
   activeOrder?: OrderConfiguration;
 

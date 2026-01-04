@@ -45,12 +45,26 @@ export function OrderDeliveryFlow({ order }: { order: OrderDetails }) {
         formData.append('file', file);
         formData.append('orderNumber', order.id);
 
-        const result = await processDeliveryProof(formData);
+        console.log('[Client Debug] Calling processDeliveryProof with:', {
+            orderId: order.id,
+            fileSize: file.size,
+            orderNumber: order.orderNumber
+        });
 
-        if (result.success) {
-            setStep('SUCCESS');
-        } else {
-            setError(result.error || 'Upload failed');
+        try {
+            const result = await processDeliveryProof(formData);
+            console.log('[Client Debug] processDeliveryProof result:', result);
+
+            if (result.success) {
+                setStep('SUCCESS');
+            } else {
+                console.error('[Client Debug] Server returned error:', result.error);
+                setError(result.error || 'Upload failed');
+                setStep('ERROR');
+            }
+        } catch (err: any) {
+            console.error('[Client Debug] FATAL ERROR calling processDeliveryProof:', err);
+            setError(err?.message || 'Network or Server Error occurred');
             setStep('ERROR');
         }
     }

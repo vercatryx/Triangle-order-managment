@@ -117,6 +117,12 @@
     background-color: var(--bg-app);
 }
 
+.clientRowDependent {
+    background-color: var(--bg-surface-hover);
+    padding-left: calc(var(--spacing-md) + 24px);
+    border-left: 3px solid var(--color-primary);
+}
+
 .empty {
     padding: var(--spacing-xl);
     text-align: center;

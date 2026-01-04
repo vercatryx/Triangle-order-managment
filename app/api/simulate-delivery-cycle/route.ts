@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabase } from '@/lib/supabase';
 import { getCurrentTime } from '@/lib/time';
-import { getMenuItems, getSettings, getVendors } from '@/lib/actions';
+import { getMenuItems, getSettings, getVendors, getStatuses } from '@/lib/actions';
 import { isDeliveryDateLocked, getLockedWeekDescription } from '@/lib/weekly-lock';
 import { getNextDeliveryDateForDay } from '@/lib/order-dates';
 
@@ -57,6 +57,26 @@ export async function POST(request: NextRequest) {
         console.log(`[Simulate Delivery] Found ${upcomingOrders.length} upcoming orders to process`);
         debugLogs.push(`Found ${upcomingOrders.length} upcoming orders to process`);
 
+        // Fetch statuses to check eligibility
+        const statuses = await getStatuses();
+        const statusMap = new Map(statuses.map(s => [s.id, s.deliveriesAllowed]));
+        debugLogs.push(`Loaded ${statuses.length} statuses`);
+
+        // Fetch all clients to check their status
+        // WE MUST FETCH ALL CLIENTS to filter by status, as upcoming_orders doesn't have status info
+        const { data: clients, error: clientsError } = await supabase
+            .from('clients')
+            .select('id, status_id');
+
+        if (clientsError) {
+            console.error('Error fetching clients for status check:', clientsError);
+            // Proceeding but warning
+            errors.push(`Error fetching clients: ${clientsError.message}`);
+        }
+
+        const clientStatusMap = new Map(clients?.map(c => [c.id, c.status_id]) || []);
+        debugLogs.push(`Loaded ${clients?.length || 0} clients for status verification`);
+
         // Get the starting order number (ensures at least 6 digits, starting from 100000)
         const { data: maxOrderData } = await supabase
             .from('orders')
@@ -82,10 +102,25 @@ export async function POST(request: NextRequest) {
         for (const upOrder of upcomingOrders) {
             console.log(`[Simulate Delivery] Processing upcoming order ${upOrder.id} (client: ${upOrder.client_id}, delivery_day: ${upOrder.delivery_day || 'null'})`);
 
+            // CHECK ELIGIBILITY
+            const clientStatusId = clientStatusMap.get(upOrder.client_id);
+            if (clientStatusId) {
+                const isAllowed = statusMap.get(clientStatusId);
+                if (isAllowed === false) { // Explicitly false, enabled defaults to true often but let's be strict
+                    const skipMsg = `Order ${upOrder.id}: Client ${upOrder.client_id} has status which disallows deliveries.`;
+                    console.warn(`[Simulate Delivery] SKIPPED: ${skipMsg}`);
+                    skippedReasons.push(skipMsg);
+                    skippedCount++;
+                    continue;
+                }
+            } else {
+                console.warn(`[Simulate Delivery] Warning: Client ${upOrder.client_id} not found in client list or has no status.`);
+            }
+
             // Calculate the actual delivery date from the delivery_day (day of week)
             const vendors = await getVendors();
             const referenceDate = await getCurrentTime();
-            const deliveryDate = upOrder.delivery_day 
+            const deliveryDate = upOrder.delivery_day
                 ? getNextDeliveryDateForDay(upOrder.delivery_day, vendors, undefined, referenceDate)
                 : null;
 
@@ -181,7 +216,7 @@ export async function POST(request: NextRequest) {
                 const logMsg3 = `[Simulate Delivery] Processing Food order - copying vendor selections and items`;
                 console.log(logMsg3);
                 debugLogs.push(logMsg3);
-                
+
                 const { data: vendorSelections } = await supabase
                     .from('upcoming_order_vendor_selections')
                     .select('*')
@@ -196,7 +231,7 @@ export async function POST(request: NextRequest) {
                         const logMsg5 = `[Simulate Delivery] Processing vendor selection ${vs.id} for vendor ${vs.vendor_id}`;
                         console.log(logMsg5);
                         debugLogs.push(logMsg5);
-                        
+
                         const { data: newVs, error: vsError } = await supabase
                             .from('order_vendor_selections')
                             .insert({
@@ -236,7 +271,7 @@ export async function POST(request: NextRequest) {
                                 const menuItem = menuItems.find(mi => mi.id === item.menu_item_id);
                                 // Use priceEach if available, otherwise fall back to stored unit_value
                                 const correctPrice = menuItem?.priceEach ?? parseFloat(item.unit_value?.toString() || '0');
-                                
+
                                 const itemInfo = {
                                     menu_item_id: item.menu_item_id,
                                     menuItemName: menuItem?.name || 'Unknown',
@@ -258,7 +293,7 @@ export async function POST(request: NextRequest) {
                                 const logMsg8 = `[Simulate Delivery] Calculated item total: ${correctPrice} * ${item.quantity} = ${itemTotal}`;
                                 console.log(logMsg8);
                                 debugLogs.push(logMsg8);
-                                
+
                                 const logMsg9 = `[Simulate Delivery] Running total from items: ${calculatedTotalFromItems}`;
                                 console.log(logMsg9);
                                 debugLogs.push(logMsg9);
@@ -286,7 +321,7 @@ export async function POST(request: NextRequest) {
                 const logMsg10 = `[Simulate Delivery] Final calculated total from items: ${calculatedTotalFromItems}`;
                 console.log(logMsg10);
                 debugLogs.push(logMsg10);
-                
+
                 const logMsg11 = `[Simulate Delivery] Original upcoming order total_value: ${upOrder.total_value}`;
                 console.log(logMsg11);
                 debugLogs.push(logMsg11);
@@ -296,7 +331,7 @@ export async function POST(request: NextRequest) {
                     const logMsg12 = `[Simulate Delivery] Mismatch detected! Updating order total_value from ${upOrder.total_value} to ${calculatedTotalFromItems}`;
                     console.log(logMsg12);
                     debugLogs.push(logMsg12);
-                    
+
                     const { error: updateError } = await supabase
                         .from('orders')
                         .update({ total_value: calculatedTotalFromItems })
@@ -326,16 +361,63 @@ export async function POST(request: NextRequest) {
                     .eq('upcoming_order_id', upOrder.id);
 
                 if (boxSelections) {
-                    const newBoxSelections = boxSelections.map(bs => ({
-                        order_id: newOrder.id,
-                        // box_type_id: bs.box_type_id, // Removed: column does not exist on table order_box_selections
-                        vendor_id: bs.vendor_id,
-                        quantity: bs.quantity,
-                        unit_value: bs.unit_value,
-                        total_value: bs.total_value,
-                        items: bs.items // Copy box items/prices stored in JSONB
-                    }));
+                    let calculatedTotalFromBoxes = 0;
+
+                    const newBoxSelections = boxSelections.map(bs => {
+                        // Calculate value based on contents
+                        let boxValue = 0;
+                        if (bs.items) {
+                            Object.entries(bs.items).forEach(([itemId, qty]) => {
+                                // Look up item in menuItems
+                                const menuItem = menuItems.find(mi => mi.id === itemId);
+                                if (menuItem) {
+                                    // Use stored price if available in itemPrices (not yet standard), or current price
+                                    // Since we don't have itemPrices on box selection usually, use current price
+                                    // Note: bs might have itemPrices if it was stored? The type definition says it might
+                                    // But usually it's just {itemId: qty}
+                                    const price = menuItem.priceEach || menuItem.value || 0;
+                                    boxValue += price * (qty as number);
+                                }
+                            });
+                        }
+
+                        // If no items or value 0, fallback to existing logic or maybe it's a fixed price box?
+                        // Assuming strictly per-item value for now based on request.
+                        // Only override if we calculated something (or if it was 0 and we want to enforce it)
+                        const finalValue = Math.max(boxValue, 0); // Ensure non-negative
+                        calculatedTotalFromBoxes += finalValue;
+
+                        return {
+                            order_id: newOrder.id,
+                            vendor_id: bs.vendor_id,
+                            quantity: bs.quantity,
+                            unit_value: finalValue, // Set calculated value
+                            total_value: finalValue, // Assuming quantity 1 usually? If quantity > 1, multiply?
+                            // Wait, bs.quantity is number of boxes.
+                            // If boxValue is per box:
+                            // total_value = boxValue * bs.quantity
+                            items: bs.items
+                        };
+                    });
+
+                    // Correct the total value calculation for multiple boxes
+                    let finalBoxTotal = 0;
+                    newBoxSelections.forEach(nbs => {
+                        const lineTotal = nbs.unit_value * nbs.quantity; // unit * quantity
+                        nbs.total_value = lineTotal;
+                        finalBoxTotal += lineTotal;
+                    });
+
+
                     await supabase.from('order_box_selections').insert(newBoxSelections);
+
+                    // Update order total if needed
+                    if (finalBoxTotal > 0 && finalBoxTotal !== upOrder.total_value) {
+                        const logMsgBox = `[Simulate Delivery] Box Order Mismatch! Updating total_value from ${upOrder.total_value} to ${finalBoxTotal}`;
+                        console.log(logMsgBox);
+                        debugLogs.push(logMsgBox);
+                        await supabase.from('orders').update({ total_value: finalBoxTotal }).eq('id', newOrder.id);
+                    }
                 }
             }
 
@@ -366,3 +448,4 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ success: false, message: error.message }, { status: 500 });
     }
 }
+

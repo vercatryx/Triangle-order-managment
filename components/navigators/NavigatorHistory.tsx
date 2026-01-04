@@ -56,51 +56,89 @@ export function NavigatorHistory({ navigatorId }: NavigatorHistoryProps) {
                     <p>No history found.</p>
                     <p className={styles.emptySubtext}>Your unit history will appear here once you start adding units to clients.</p>
                 </div>
-            ) : (
-                <div className={styles.tableContainer}>
-                    <table className={styles.table}>
-                        <thead>
-                            <tr>
-                                <th>Date</th>
-                                <th>Client Name</th>
-                                <th>Old Status</th>
-                                <th>New Status</th>
-                                <th style={{ textAlign: 'right' }}>Units Added</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {logs.map((log) => (
-                                <tr key={log.id}>
-                                    <td>
-                                        {new Date(log.createdAt).toLocaleString('en-US', {
-                                            year: 'numeric',
-                                            month: 'short',
-                                            day: 'numeric',
-                                            hour: '2-digit',
-                                            minute: '2-digit'
-                                        })}
-                                    </td>
-                                    <td style={{ fontWeight: 500 }}>{log.clientName}</td>
-                                    <td>
-                                        <span className={styles.statusBadge}>{log.oldStatus || 'N/A'}</span>
-                                    </td>
-                                    <td>
-                                        <span className={`${styles.statusBadge} ${styles.statusNew}`}>
-                                            {log.newStatus || 'N/A'}
-                                        </span>
-                                    </td>
-                                    <td style={{ textAlign: 'right', fontWeight: 600, color: 'var(--color-success)' }}>
-                                        +{log.unitsAdded}
-                                    </td>
-                                </tr>
-                            ))}
-                        </tbody>
-                    </table>
-                </div>
-            )}
+            ) : (() => {
+                // Group logs by date
+                const logsByDate = logs.reduce((acc, log) => {
+                    const date = new Date(log.createdAt);
+                    const dateKey = date.toLocaleDateString('en-US', { 
+                        year: 'numeric', 
+                        month: 'long', 
+                        day: 'numeric' 
+                    });
+                    const dateSortKey = date.toISOString().split('T')[0]; // For sorting
+                    
+                    if (!acc[dateSortKey]) {
+                        acc[dateSortKey] = {
+                            displayDate: dateKey,
+                            logs: [],
+                            totalUnits: 0
+                        };
+                    }
+                    acc[dateSortKey].logs.push(log);
+                    acc[dateSortKey].totalUnits += log.unitsAdded;
+                    return acc;
+                }, {} as Record<string, { displayDate: string; logs: NavigatorLog[]; totalUnits: number }>);
+
+                // Sort dates (newest first)
+                const sortedDates = Object.keys(logsByDate).sort((a, b) => b.localeCompare(a));
+
+                return (
+                    <div>
+                        {sortedDates.map(dateKey => {
+                            const dateGroup = logsByDate[dateKey];
+                            return (
+                                <div key={dateKey} className={styles.dateSection}>
+                                    <div className={styles.dateHeader}>
+                                        <span className={styles.dateTitle}>{dateGroup.displayDate}</span>
+                                        <span className={styles.dateTotal}>Total Units: {dateGroup.totalUnits}</span>
+                                    </div>
+                                    <div className={styles.tableContainer}>
+                                        <table className={styles.table}>
+                                            <thead>
+                                                <tr>
+                                                    <th>Time</th>
+                                                    <th>Client Name</th>
+                                                    <th>Old Status</th>
+                                                    <th>New Status</th>
+                                                    <th style={{ textAlign: 'right' }}>Units Added</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {dateGroup.logs.map((log) => (
+                                                    <tr key={log.id}>
+                                                        <td>
+                                                            {new Date(log.createdAt).toLocaleTimeString('en-US', {
+                                                                hour: '2-digit',
+                                                                minute: '2-digit'
+                                                            })}
+                                                        </td>
+                                                        <td style={{ fontWeight: 500 }}>{log.clientName}</td>
+                                                        <td>
+                                                            <span className={styles.statusBadge}>{log.oldStatus || 'N/A'}</span>
+                                                        </td>
+                                                        <td>
+                                                            <span className={`${styles.statusBadge} ${styles.statusNew}`}>
+                                                                {log.newStatus || 'N/A'}
+                                                            </span>
+                                                        </td>
+                                                        <td style={{ textAlign: 'right', fontWeight: 600, color: 'var(--color-success)' }}>
+                                                            +{log.unitsAdded}
+                                                        </td>
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                            );
+                        })}
+                    </div>
+                );
+            })()}
         </div>
     );
 }
+
 
 
 

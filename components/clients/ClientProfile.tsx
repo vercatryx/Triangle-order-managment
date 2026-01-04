@@ -3,7 +3,7 @@
 import { useState, useEffect, Fragment, useMemo, useRef, ReactNode } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import { ClientProfile, ClientStatus, Navigator, Vendor, MenuItem, BoxType, ServiceType, AppSettings, DeliveryRecord, ItemCategory, ClientFullDetails, BoxQuota } from '@/lib/types';
-import { updateClient, addClient, deleteClient, updateDeliveryProof, recordClientChange, syncCurrentOrderToUpcoming, logNavigatorAction, getBoxQuotas, saveEquipmentOrder, getRegularClients, getDependentsByParentId } from '@/lib/actions';
+import { updateClient, addClient, deleteClient, updateDeliveryProof, recordClientChange, syncCurrentOrderToUpcoming, logNavigatorAction, getBoxQuotas, saveEquipmentOrder, getRegularClients, getDependentsByParentId, addDependent } from '@/lib/actions';
 import { getSingleForm, getClientSubmissions } from '@/lib/form-actions';
 import { getClient, getStatuses, getNavigators, getVendors, getMenuItems, getBoxTypes, getSettings, getCategories, getEquipment, getClients, invalidateClientData, invalidateReferenceData, getActiveOrderForClient, getUpcomingOrderForClient, getOrderHistory, getClientHistory, getBillingHistory, invalidateOrderData } from '@/lib/cached-data';
 import { areAnyDeliveriesLocked, getEarliestEffectiveDate, getLockedWeekDescription } from '@/lib/weekly-lock';
@@ -196,6 +196,11 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
     // Delete Confirmation Modal
     const [showDeleteModal, setShowDeleteModal] = useState(false);
 
+    // Dependent Creation State
+    const [showAddDependentForm, setShowAddDependentForm] = useState(false);
+    const [dependentName, setDependentName] = useState('');
+    const [creatingDependent, setCreatingDependent] = useState(false);
+
 
 
     useEffect(() => {
@@ -221,7 +226,9 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                     notes: '',
                     statusId: initialStatusId,
                     serviceType: 'Food',
-                    approvedMealsPerWeek: 21
+                    approvedMealsPerWeek: 21,
+                    authorizedAmount: null,
+                    expirationDate: null
                 };
 
                 setFormData(defaultClient);
@@ -404,6 +411,10 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
 
         // Handle upcoming order logic (reused from loadData)
         const upcomingOrderData = data.upcomingOrder;
+        console.log('[ClientProfile] hydrateFromInitialData - Debugging Boxes Vendor', {
+            upcomingOrderData: JSON.stringify(upcomingOrderData, null, 2),
+            clientActiveOrder: JSON.stringify(data.client.activeOrder, null, 2)
+        });
         if (upcomingOrderData) {
             // Check if it's the multi-day format (object keyed by delivery day, not deliveryDayOrders)
             const isMultiDayFormat = upcomingOrderData && typeof upcomingOrderData === 'object' &&
@@ -464,6 +475,26 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                 defaultOrder.vendorSelections = [{ vendorId: '', items: {} }];
             }
             setOrderConfig(defaultOrder);
+        }
+
+        // Fix for Boxes: If vendorId is missing but boxTypeId exists, try to find vendor from boxType
+        // This handles cases where vendorId wasn't saved/synced correctly but boxType was
+        if (data.client.serviceType === 'Boxes') {
+            setOrderConfig((prev: any) => {
+                const conf = { ...prev };
+                // Use boxTypes from component state (passed as prop)
+                if (!conf.vendorId && conf.boxTypeId && boxTypes && boxTypes.length > 0) {
+                    const boxType = boxTypes.find((bt: any) => bt.id === conf.boxTypeId);
+                    if (boxType && boxType.vendorId) {
+                        console.log('[ClientProfile] hydrateFromInitialData - Recovered missing vendorId from boxType', {
+                            boxTypeId: conf.boxTypeId,
+                            recoveredVendorId: boxType.vendorId
+                        });
+                        conf.vendorId = boxType.vendorId;
+                    }
+                }
+                return conf;
+            });
         }
     }
 
@@ -542,17 +573,22 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
         // If no upcoming order exists, fall back to active_order from clients table
         // If no active_order exists, initialize with default based on service type
         if (c) {
-            let configToSet: any = {};
+            console.log('[ClientProfile] loadData - Debugging Boxes Vendor', {
+                clientId: c.id,
+                serviceType: c.serviceType,
+                upcomingOrderData: JSON.stringify(upcomingOrderData, null, 2),
+                activeOrderData: JSON.stringify(activeOrderData, null, 2),
+                clientActiveOrder: JSON.stringify(c.activeOrder, null, 2)
+            });
+            let configToSet: any = null;
             if (upcomingOrderData) {
-
-
                 // Check if it's the multi-day format (object keyed by delivery day, not deliveryDayOrders)
                 const isMultiDayFormat = upcomingOrderData && typeof upcomingOrderData === 'object' &&
                     !upcomingOrderData.serviceType &&
                     !upcomingOrderData.deliveryDayOrders &&
                     Object.keys(upcomingOrderData).some(key => {
                         const val = (upcomingOrderData as any)[key];
-                        return val && val.serviceType;
+                        return val && (val.serviceType || val.id);
                     });
 
                 if (isMultiDayFormat) {
@@ -560,7 +596,7 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                     const deliveryDayOrders: any = {};
                     for (const day of Object.keys(upcomingOrderData)) {
                         const dayOrder = (upcomingOrderData as any)[day];
-                        if (dayOrder && dayOrder.serviceType) {
+                        if (dayOrder && (dayOrder.serviceType || dayOrder.id)) {
                             deliveryDayOrders[day] = {
                                 vendorSelections: dayOrder.vendorSelections || []
                             };
@@ -570,8 +606,9 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                     const firstDayKey = Object.keys(upcomingOrderData)[0];
                     const firstDayOrder = (upcomingOrderData as any)[firstDayKey];
 
-                    if (firstDayOrder?.serviceType === 'Boxes') {
+                    if (firstDayOrder?.serviceType === 'Boxes' || c.serviceType === 'Boxes') {
                         configToSet = firstDayOrder;
+                        if (!configToSet.serviceType) configToSet.serviceType = 'Boxes';
                     } else {
                         configToSet = {
                             serviceType: firstDayOrder?.serviceType || c.serviceType,
@@ -591,7 +628,15 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                 } else {
                     configToSet = upcomingOrderData;
                 }
-            } else if (c.activeOrder) {
+            }
+
+            // Validate Config: If Boxes and missing critical fields, reject it
+            if (configToSet && c.serviceType === 'Boxes' && !configToSet.vendorId && !configToSet.boxTypeId) {
+                console.log('[ClientProfile] loadData - Discarding invalid upcoming order config for Boxes', configToSet);
+                configToSet = null;
+            }
+
+            if (!configToSet && c.activeOrder) {
                 // No upcoming order, but we have active_order from clients table - use that
                 // This ensures vendorId, items, and other Boxes data are preserved even if sync to upcoming_orders failed
                 configToSet = { ...c.activeOrder };
@@ -599,13 +644,28 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                 if (!configToSet.serviceType) {
                     configToSet.serviceType = c.serviceType;
                 }
-            } else {
+            }
+
+            if (!configToSet) {
                 // No upcoming order and no active_order, initialize with default
                 const defaultOrder: any = { serviceType: c.serviceType };
                 if (c.serviceType === 'Food') {
                     defaultOrder.vendorSelections = [{ vendorId: '', items: {} }];
                 }
                 configToSet = defaultOrder;
+            }
+
+            // Fix for Boxes: If vendorId is missing but boxTypeId exists, try to find vendor from boxType
+            if (c.serviceType === 'Boxes' && !configToSet.vendorId && configToSet.boxTypeId) {
+                // boxTypes (b) is available in scope from Promise.all
+                const boxType = b.find((bt: any) => bt.id === configToSet.boxTypeId);
+                if (boxType && boxType.vendorId) {
+                    console.log('[ClientProfile] loadData - Recovered missing vendorId from boxType', {
+                        boxTypeId: configToSet.boxTypeId,
+                        recoveredVendorId: boxType.vendorId
+                    });
+                    configToSet.vendorId = boxType.vendorId;
+                }
             }
 
             setOrderConfig(configToSet);
@@ -1246,6 +1306,30 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
         }
     }
 
+    async function handleCreateDependent() {
+        if (!dependentName.trim() || !client?.id) return;
+
+        setCreatingDependent(true);
+        try {
+            const newDependent = await addDependent(dependentName.trim(), client.id);
+            if (newDependent) {
+                // Refresh dependents list
+                const dependentsData = await getDependentsByParentId(client.id);
+                setDependents(dependentsData);
+                // Reset form
+                setDependentName('');
+                setShowAddDependentForm(false);
+                // Invalidate cache to refresh list in parent component
+                invalidateClientData();
+            }
+        } catch (error) {
+            console.error('Error creating dependent:', error);
+            alert(error instanceof Error ? error.message : 'Failed to create dependent');
+        } finally {
+            setCreatingDependent(false);
+        }
+    }
+
     const isDependent = !!client?.parentClientId;
     const filteredRegularClients = regularClients.filter(c =>
         c.fullName.toLowerCase().includes(parentClientSearch.toLowerCase()) && c.id !== clientId
@@ -1405,47 +1489,121 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                                 </div>
 
                                 <div className={styles.formGroup}>
+                                    <label className="label">Authorized Amount</label>
+                                    <input
+                                        type="number"
+                                        step="0.01"
+                                        className="input"
+                                        value={formData.authorizedAmount ?? ''}
+                                        onChange={e => setFormData({ ...formData, authorizedAmount: e.target.value ? parseFloat(e.target.value) : null })}
+                                        placeholder="0.00"
+                                    />
+                                    <div style={{ height: '1rem' }} /> {/* Spacer */}
+                                    <label className="label">Expiration Date</label>
+                                    <input
+                                        type="date"
+                                        className="input"
+                                        value={formData.expirationDate ? (formData.expirationDate.includes('T') ? formData.expirationDate.split('T')[0] : formData.expirationDate) : ''}
+                                        onChange={e => setFormData({ ...formData, expirationDate: e.target.value || null })}
+                                    />
+                                </div>
+
+                                <div className={styles.formGroup}>
                                     <label className="label">General Notes</label>
                                     <textarea className="input" style={{ height: '100px' }} value={formData.notes || ''} onChange={e => setFormData({ ...formData, notes: e.target.value })} />
                                 </div>
 
-                                {dependents.length > 0 && (
+                                {!isDependent && (
                                     <div className={styles.formGroup}>
-                                        <label className="label">Dependents ({dependents.length})</label>
-                                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                                            {dependents.map(dependent => (
-                                                <div
-                                                    key={dependent.id}
-                                                    onClick={() => {
-                                                        if (onClose) {
-                                                            onClose();
-                                                            // Navigate to dependent in a new view or update the current view
-                                                            // For now, we'll just close and let the user click on it from the list
-                                                        } else {
-                                                            router.push(`/clients/${dependent.id}`);
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                                            <label className="label">Dependents {dependents.length > 0 && `(${dependents.length})`}</label>
+                                            <button
+                                                className="btn btn-secondary"
+                                                onClick={() => setShowAddDependentForm(!showAddDependentForm)}
+                                                style={{ fontSize: '0.875rem', padding: '0.375rem 0.75rem' }}
+                                            >
+                                                <Plus size={14} /> {showAddDependentForm ? 'Cancel' : 'Add Dependent'}
+                                            </button>
+                                        </div>
+                                        
+                                        {showAddDependentForm && (
+                                            <div style={{ 
+                                                padding: '1rem', 
+                                                border: '1px solid var(--border-color)', 
+                                                borderRadius: 'var(--radius-md)',
+                                                backgroundColor: 'var(--bg-surface-hover)',
+                                                marginBottom: '0.75rem'
+                                            }}>
+                                                <label className="label" style={{ marginBottom: '0.5rem' }}>Dependent Name</label>
+                                                <input
+                                                    className="input"
+                                                    placeholder="Enter dependent name"
+                                                    value={dependentName}
+                                                    onChange={e => setDependentName(e.target.value)}
+                                                    onKeyDown={e => {
+                                                        if (e.key === 'Enter' && dependentName.trim()) {
+                                                            handleCreateDependent();
                                                         }
                                                     }}
-                                                    style={{
-                                                        padding: '0.75rem',
-                                                        border: '1px solid var(--border-color)',
-                                                        borderRadius: 'var(--radius-md)',
-                                                        backgroundColor: 'var(--bg-surface)',
-                                                        cursor: 'pointer',
-                                                        transition: 'background-color 0.2s'
-                                                    }}
-                                                    onMouseEnter={(e) => {
-                                                        e.currentTarget.style.backgroundColor = 'var(--bg-surface-hover)';
-                                                    }}
-                                                    onMouseLeave={(e) => {
-                                                        e.currentTarget.style.backgroundColor = 'var(--bg-surface)';
-                                                    }}
-                                                >
-                                                    <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>
-                                                        {dependent.fullName}
-                                                    </div>
+                                                    style={{ marginBottom: '0.75rem' }}
+                                                    autoFocus
+                                                />
+                                                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem' }}>
+                                                    <button
+                                                        className="btn btn-secondary"
+                                                        onClick={() => {
+                                                            setShowAddDependentForm(false);
+                                                            setDependentName('');
+                                                        }}
+                                                        disabled={creatingDependent}
+                                                    >
+                                                        Cancel
+                                                    </button>
+                                                    <button
+                                                        className="btn btn-primary"
+                                                        onClick={handleCreateDependent}
+                                                        disabled={!dependentName.trim() || creatingDependent}
+                                                    >
+                                                        {creatingDependent ? <Loader2 className="spin" size={14} /> : <Plus size={14} />} Create Dependent
+                                                    </button>
                                                 </div>
-                                            ))}
-                                        </div>
+                                            </div>
+                                        )}
+
+                                        {dependents.length > 0 && (
+                                            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                                                {dependents.map(dependent => (
+                                                    <div
+                                                        key={dependent.id}
+                                                        onClick={() => {
+                                                            if (onClose) {
+                                                                onClose();
+                                                            } else {
+                                                                router.push(`/clients/${dependent.id}`);
+                                                            }
+                                                        }}
+                                                        style={{
+                                                            padding: '0.75rem',
+                                                            border: '1px solid var(--border-color)',
+                                                            borderRadius: 'var(--radius-md)',
+                                                            backgroundColor: 'var(--bg-surface)',
+                                                            cursor: 'pointer',
+                                                            transition: 'background-color 0.2s'
+                                                        }}
+                                                        onMouseEnter={(e) => {
+                                                            e.currentTarget.style.backgroundColor = 'var(--bg-surface-hover)';
+                                                        }}
+                                                        onMouseLeave={(e) => {
+                                                            e.currentTarget.style.backgroundColor = 'var(--bg-surface)';
+                                                        }}
+                                                    >
+                                                        <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>
+                                                            {dependent.fullName}
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        )}
                                     </div>
                                 )}
 
@@ -1502,43 +1660,101 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
 
                             </section>
 
-                            {dependents.length > 0 && (
+                            {!isDependent && (
                                 <section className={styles.card}>
-                                    <h3 className={styles.sectionTitle}>Dependents ({dependents.length})</h3>
-                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                                        {dependents.map(dependent => (
-                                            <div
-                                                key={dependent.id}
-                                                onClick={() => {
-                                                    if (onClose) {
-                                                        onClose();
-                                                        // Navigate to dependent in a new view or update the current view
-                                                        // For now, we'll just close and let the user click on it from the list
-                                                    } else {
-                                                        router.push(`/clients/${dependent.id}`);
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                                        <h3 className={styles.sectionTitle} style={{ margin: 0 }}>Dependents {dependents.length > 0 && `(${dependents.length})`}</h3>
+                                        <button
+                                            className="btn btn-secondary"
+                                            onClick={() => setShowAddDependentForm(!showAddDependentForm)}
+                                            style={{ fontSize: '0.875rem', padding: '0.375rem 0.75rem' }}
+                                        >
+                                            <Plus size={14} /> {showAddDependentForm ? 'Cancel' : 'Add Dependent'}
+                                        </button>
+                                    </div>
+                                    
+                                    {showAddDependentForm && (
+                                        <div style={{ 
+                                            padding: '1rem', 
+                                            border: '1px solid var(--border-color)', 
+                                            borderRadius: 'var(--radius-md)',
+                                            backgroundColor: 'var(--bg-surface-hover)',
+                                            marginBottom: '0.75rem'
+                                        }}>
+                                            <label className="label" style={{ marginBottom: '0.5rem' }}>Dependent Name</label>
+                                            <input
+                                                className="input"
+                                                placeholder="Enter dependent name"
+                                                value={dependentName}
+                                                onChange={e => setDependentName(e.target.value)}
+                                                onKeyDown={e => {
+                                                    if (e.key === 'Enter' && dependentName.trim()) {
+                                                        handleCreateDependent();
                                                     }
                                                 }}
-                                                style={{
-                                                    padding: '0.75rem',
-                                                    border: '1px solid var(--border-color)',
-                                                    borderRadius: 'var(--radius-md)',
-                                                    backgroundColor: 'var(--bg-surface)',
-                                                    cursor: 'pointer',
-                                                    transition: 'background-color 0.2s'
-                                                }}
-                                                onMouseEnter={(e) => {
-                                                    e.currentTarget.style.backgroundColor = 'var(--bg-surface-hover)';
-                                                }}
-                                                onMouseLeave={(e) => {
-                                                    e.currentTarget.style.backgroundColor = 'var(--bg-surface)';
-                                                }}
-                                            >
-                                                <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>
-                                                    {dependent.fullName}
-                                                </div>
+                                                style={{ marginBottom: '0.75rem' }}
+                                                autoFocus
+                                            />
+                                            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem' }}>
+                                                <button
+                                                    className="btn btn-secondary"
+                                                    onClick={() => {
+                                                        setShowAddDependentForm(false);
+                                                        setDependentName('');
+                                                    }}
+                                                    disabled={creatingDependent}
+                                                >
+                                                    Cancel
+                                                </button>
+                                                <button
+                                                    className="btn btn-primary"
+                                                    onClick={handleCreateDependent}
+                                                    disabled={!dependentName.trim() || creatingDependent}
+                                                >
+                                                    {creatingDependent ? <Loader2 className="spin" size={14} /> : <Plus size={14} />} Create Dependent
+                                                </button>
                                             </div>
-                                        ))}
-                                    </div>
+                                        </div>
+                                    )}
+
+                                    {dependents.length > 0 ? (
+                                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                                            {dependents.map(dependent => (
+                                                <div
+                                                    key={dependent.id}
+                                                    onClick={() => {
+                                                        if (onClose) {
+                                                            onClose();
+                                                        } else {
+                                                            router.push(`/clients/${dependent.id}`);
+                                                        }
+                                                    }}
+                                                    style={{
+                                                        padding: '0.75rem',
+                                                        border: '1px solid var(--border-color)',
+                                                        borderRadius: 'var(--radius-md)',
+                                                        backgroundColor: 'var(--bg-surface)',
+                                                        cursor: 'pointer',
+                                                        transition: 'background-color 0.2s'
+                                                    }}
+                                                    onMouseEnter={(e) => {
+                                                        e.currentTarget.style.backgroundColor = 'var(--bg-surface-hover)';
+                                                    }}
+                                                    onMouseLeave={(e) => {
+                                                        e.currentTarget.style.backgroundColor = 'var(--bg-surface)';
+                                                    }}
+                                                >
+                                                    <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>
+                                                        {dependent.fullName}
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    ) : (
+                                        <p style={{ color: 'var(--text-secondary)', fontStyle: 'italic', margin: 0 }}>
+                                            No dependents yet. Click "Add Dependent" to create one.
+                                        </p>
+                                    )}
                                 </section>
                             )}
 
@@ -2357,261 +2573,270 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                                             </div>
                                         )}
 
-                                        {formData.serviceType === 'Boxes' && (
-                                            <div className="animate-fade-in">
-                                                <div className={styles.formGroup}>
-                                                    <label className="label">Vendor</label>
-                                                    <select
-                                                        className="input"
-                                                        value={orderConfig.vendorId || ''}
-                                                        onChange={e => {
-                                                            const newVendorId = e.target.value;
-                                                            // Auto-select the first active box type when vendor is selected
-                                                            const firstActiveBoxType = boxTypes.find(bt => bt.isActive);
-                                                            setOrderConfig({
-                                                                ...orderConfig,
-                                                                vendorId: newVendorId,
-                                                                boxTypeId: firstActiveBoxType?.id || '', // Auto-select first active box type
-                                                                boxQuantity: 1 // Default quantity
-                                                            });
-                                                        }}
-                                                    >
-                                                        <option value="">Select Vendor...</option>
-                                                        {vendors.filter(v => v.serviceTypes.includes('Boxes') && v.isActive).map(v => (
-                                                            <option key={v.id} value={v.id}>{v.name}</option>
-                                                        ))}
-                                                    </select>
-                                                </div>
+                                        {formData.serviceType === 'Boxes' && (() => {
+                                            /* Debug active vendor state */
+                                            console.log('[ClientProfile] Render Boxes - Vendor Debug', {
+                                                orderConfigVendorId: orderConfig.vendorId,
+                                                vendorsCount: vendors.length,
+                                                activeVendorsWithBoxes: vendors.filter(v => v.serviceTypes.includes('Boxes') && v.isActive).map(v => ({ id: v.id, name: v.name }))
+                                            });
 
-                                                {/* Take Effect Date for this vendor */}
-                                                {orderConfig.vendorId && settings && (() => {
-                                                    const takeEffectDate = getEarliestTakeEffectDateForOrder();
-                                                    if (takeEffectDate) {
+                                            return (
+                                                <div className="animate-fade-in">
+                                                    <div className={styles.formGroup}>
+                                                        <label className="label">Vendor</label>
+                                                        <select
+                                                            className="input"
+                                                            value={orderConfig.vendorId || ''}
+                                                            onChange={e => {
+                                                                const newVendorId = e.target.value;
+                                                                // Auto-select the first active box type when vendor is selected
+                                                                const firstActiveBoxType = boxTypes.find(bt => bt.isActive);
+                                                                setOrderConfig({
+                                                                    ...orderConfig,
+                                                                    vendorId: newVendorId,
+                                                                    boxTypeId: firstActiveBoxType?.id || '', // Auto-select first active box type
+                                                                    boxQuantity: 1 // Default quantity
+                                                                });
+                                                            }}
+                                                        >
+                                                            <option value="">Select Vendor...</option>
+                                                            {vendors.filter(v => v.serviceTypes.includes('Boxes') && v.isActive).map(v => (
+                                                                <option key={v.id} value={v.id}>{v.name}</option>
+                                                            ))}
+                                                        </select>
+                                                    </div>
+
+                                                    {/* Take Effect Date for this vendor */}
+                                                    {orderConfig.vendorId && settings && (() => {
+                                                        const takeEffectDate = getEarliestTakeEffectDateForOrder();
+                                                        if (takeEffectDate) {
+                                                            return (
+                                                                <div style={{
+                                                                    marginTop: 'var(--spacing-md)',
+                                                                    padding: '0.75rem',
+                                                                    backgroundColor: 'var(--bg-surface-hover)',
+                                                                    borderRadius: 'var(--radius-sm)',
+                                                                    border: '1px solid var(--border-color)',
+                                                                    fontSize: '0.85rem',
+                                                                    color: 'var(--text-secondary)',
+                                                                    textAlign: 'center'
+                                                                }}>
+                                                                    <strong style={{ color: 'var(--text-primary)' }}>Take Effect Date:</strong> {takeEffectDate.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })} (always a Sunday)
+                                                                </div>
+                                                            );
+                                                        }
+
                                                         return (
                                                             <div style={{
                                                                 marginTop: 'var(--spacing-md)',
                                                                 padding: '0.75rem',
-                                                                backgroundColor: 'var(--bg-surface-hover)',
+                                                                backgroundColor: 'rgba(239, 68, 68, 0.1)',
                                                                 borderRadius: 'var(--radius-sm)',
-                                                                border: '1px solid var(--border-color)',
+                                                                border: '1px solid var(--color-danger)',
                                                                 fontSize: '0.85rem',
-                                                                color: 'var(--text-secondary)',
-                                                                textAlign: 'center'
+                                                                color: 'var(--color-danger)',
+                                                                display: 'flex',
+                                                                alignItems: 'center',
+                                                                gap: '0.5rem',
+                                                                textAlign: 'center',
+                                                                justifyContent: 'center'
                                                             }}>
-                                                                <strong style={{ color: 'var(--text-primary)' }}>Take Effect Date:</strong> {takeEffectDate.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })} (always a Sunday)
+                                                                <AlertTriangle size={16} />
+                                                                <span><strong>Warning:</strong> This vendor has no delivery days configured. Orders will NOT be created.</span>
                                                             </div>
                                                         );
-                                                    }
+                                                    })()}
 
-                                                    return (
-                                                        <div style={{
-                                                            marginTop: 'var(--spacing-md)',
-                                                            padding: '0.75rem',
-                                                            backgroundColor: 'rgba(239, 68, 68, 0.1)',
-                                                            borderRadius: 'var(--radius-sm)',
-                                                            border: '1px solid var(--color-danger)',
-                                                            fontSize: '0.85rem',
-                                                            color: 'var(--color-danger)',
-                                                            display: 'flex',
-                                                            alignItems: 'center',
-                                                            gap: '0.5rem',
-                                                            textAlign: 'center',
-                                                            justifyContent: 'center'
-                                                        }}>
-                                                            <AlertTriangle size={16} />
-                                                            <span><strong>Warning:</strong> This vendor has no delivery days configured. Orders will NOT be created.</span>
-                                                        </div>
-                                                    );
-                                                })()}
+                                                    <div style={{ display: 'none' }}>
+                                                        <label className="label">Quantity</label>
+                                                        <input
+                                                            type="number"
+                                                            className="input"
+                                                            value={orderConfig.boxQuantity || 1}
+                                                            readOnly
+                                                            style={{ display: 'none' }}
+                                                        />
+                                                    </div>
 
-                                                <div style={{ display: 'none' }}>
-                                                    <label className="label">Quantity</label>
-                                                    <input
-                                                        type="number"
-                                                        className="input"
-                                                        value={orderConfig.boxQuantity || 1}
-                                                        readOnly
-                                                        style={{ display: 'none' }}
-                                                    />
-                                                </div>
+                                                    {/* Box Content Selection */}
+                                                    <div style={{ marginTop: '1rem', borderTop: '1px solid var(--border-color)', paddingTop: '1rem' }}>
+                                                        <h4 style={{ fontSize: '0.9rem', marginBottom: '0.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                                            <Package size={14} /> Box Contents
+                                                        </h4>
 
-                                                {/* Box Content Selection */}
-                                                <div style={{ marginTop: '1rem', borderTop: '1px solid var(--border-color)', paddingTop: '1rem' }}>
-                                                    <h4 style={{ fontSize: '0.9rem', marginBottom: '0.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                                                        <Package size={14} /> Box Contents
-                                                    </h4>
+                                                        {/* Check if vendor has delivery days */}
+                                                        {orderConfig.vendorId && !getNextDeliveryDateForVendor(orderConfig.vendorId) ? (
+                                                            <div style={{
+                                                                padding: '1.5rem',
+                                                                backgroundColor: 'var(--bg-surface-active)',
+                                                                borderRadius: 'var(--radius-md)',
+                                                                border: '1px dashed var(--color-danger)',
+                                                                color: 'var(--text-secondary)',
+                                                                textAlign: 'center',
+                                                                display: 'flex',
+                                                                flexDirection: 'column',
+                                                                alignItems: 'center',
+                                                                gap: '0.5rem',
+                                                                opacity: 0.7
+                                                            }}>
+                                                                <AlertTriangle size={24} color="var(--color-danger)" />
+                                                                <span style={{ color: 'var(--color-danger)', fontWeight: 600 }}>Action Required</span>
+                                                                <span style={{ fontSize: '0.9rem' }}>
+                                                                    Please configure <strong>Delivery Days</strong> for this vendor in Settings before adding items.
+                                                                </span>
+                                                            </div>
+                                                        ) : (
+                                                            <>
+                                                                {/* Show all categories with box items */}
+                                                                {categories.map(category => {
+                                                                    // Filter items for this category
+                                                                    const availableItems = menuItems.filter(i =>
+                                                                        (i.vendorId === null || i.vendorId === '') &&
+                                                                        i.isActive &&
+                                                                        i.categoryId === category.id
+                                                                    );
 
-                                                    {/* Check if vendor has delivery days */}
-                                                    {orderConfig.vendorId && !getNextDeliveryDateForVendor(orderConfig.vendorId) ? (
-                                                        <div style={{
-                                                            padding: '1.5rem',
-                                                            backgroundColor: 'var(--bg-surface-active)',
-                                                            borderRadius: 'var(--radius-md)',
-                                                            border: '1px dashed var(--color-danger)',
-                                                            color: 'var(--text-secondary)',
-                                                            textAlign: 'center',
-                                                            display: 'flex',
-                                                            flexDirection: 'column',
-                                                            alignItems: 'center',
-                                                            gap: '0.5rem',
-                                                            opacity: 0.7
-                                                        }}>
-                                                            <AlertTriangle size={24} color="var(--color-danger)" />
-                                                            <span style={{ color: 'var(--color-danger)', fontWeight: 600 }}>Action Required</span>
-                                                            <span style={{ fontSize: '0.9rem' }}>
-                                                                Please configure <strong>Delivery Days</strong> for this vendor in Settings before adding items.
-                                                            </span>
-                                                        </div>
-                                                    ) : (
-                                                        <>
-                                                            {/* Show all categories with box items */}
-                                                            {categories.map(category => {
-                                                                // Filter items for this category
-                                                                const availableItems = menuItems.filter(i =>
-                                                                    (i.vendorId === null || i.vendorId === '') &&
-                                                                    i.isActive &&
-                                                                    i.categoryId === category.id
-                                                                );
+                                                                    if (availableItems.length === 0) return null;
 
-                                                                if (availableItems.length === 0) return null;
+                                                                    const selectedItems = orderConfig.items || {};
 
-                                                                const selectedItems = orderConfig.items || {};
+                                                                    // Calculate total quota value for this category
+                                                                    let categoryQuotaValue = 0;
+                                                                    Object.entries(selectedItems).forEach(([itemId, qty]) => {
+                                                                        const item = menuItems.find(i => i.id === itemId);
+                                                                        if (item && item.categoryId === category.id) {
+                                                                            const itemQuotaValue = item.quotaValue || 1;
+                                                                            categoryQuotaValue += (qty as number) * itemQuotaValue;
+                                                                        }
+                                                                    });
 
-                                                                // Calculate total quota value for this category
-                                                                let categoryQuotaValue = 0;
-                                                                Object.entries(selectedItems).forEach(([itemId, qty]) => {
-                                                                    const item = menuItems.find(i => i.id === itemId);
-                                                                    if (item && item.categoryId === category.id) {
-                                                                        const itemQuotaValue = item.quotaValue || 1;
-                                                                        categoryQuotaValue += (qty as number) * itemQuotaValue;
-                                                                    }
-                                                                });
+                                                                    // Find quota requirement for this category (from box quotas)
+                                                                    const quota = boxQuotas.find(q => q.categoryId === category.id);
+                                                                    const boxQuantity = orderConfig.boxQuantity || 1;
+                                                                    const requiredQuotaValueFromBox = quota ? quota.targetValue * boxQuantity : null;
 
-                                                                // Find quota requirement for this category (from box quotas)
-                                                                const quota = boxQuotas.find(q => q.categoryId === category.id);
-                                                                const boxQuantity = orderConfig.boxQuantity || 1;
-                                                                const requiredQuotaValueFromBox = quota ? quota.targetValue * boxQuantity : null;
+                                                                    // Check if category has a setValue requirement
+                                                                    const requiredQuotaValueFromCategory = category.setValue !== undefined && category.setValue !== null ? category.setValue : null;
 
-                                                                // Check if category has a setValue requirement
-                                                                const requiredQuotaValueFromCategory = category.setValue !== undefined && category.setValue !== null ? category.setValue : null;
+                                                                    // Use setValue if present, otherwise use box quota requirement
+                                                                    const requiredQuotaValue = requiredQuotaValueFromCategory !== null ? requiredQuotaValueFromCategory : requiredQuotaValueFromBox;
 
-                                                                // Use setValue if present, otherwise use box quota requirement
-                                                                const requiredQuotaValue = requiredQuotaValueFromCategory !== null ? requiredQuotaValueFromCategory : requiredQuotaValueFromBox;
+                                                                    const meetsQuota = requiredQuotaValue !== null ? categoryQuotaValue === requiredQuotaValue : true;
 
-                                                                const meetsQuota = requiredQuotaValue !== null ? categoryQuotaValue === requiredQuotaValue : true;
-
-                                                                return (
-                                                                    <div key={category.id} style={{ marginBottom: '1rem', background: 'var(--bg-surface-hover)', padding: '0.75rem', borderRadius: '6px', border: requiredQuotaValue !== null && !meetsQuota ? '2px solid var(--color-danger)' : '1px solid var(--border-color)' }}>
-                                                                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem', fontSize: '0.85rem' }}>
-                                                                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                                                                                <span style={{ fontWeight: 600 }}>{category.name}</span>
-                                                                                {requiredQuotaValueFromCategory !== null && (
-                                                                                    <span style={{
-                                                                                        fontSize: '0.7rem',
-                                                                                        color: 'var(--color-primary)',
-                                                                                        background: 'var(--bg-app)',
-                                                                                        padding: '2px 6px',
-                                                                                        borderRadius: '4px',
-                                                                                        fontWeight: 500
-                                                                                    }}>
-                                                                                        Set Value: {requiredQuotaValueFromCategory}
-                                                                                    </span>
-                                                                                )}
+                                                                    return (
+                                                                        <div key={category.id} style={{ marginBottom: '1rem', background: 'var(--bg-surface-hover)', padding: '0.75rem', borderRadius: '6px', border: requiredQuotaValue !== null && !meetsQuota ? '2px solid var(--color-danger)' : '1px solid var(--border-color)' }}>
+                                                                            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem', fontSize: '0.85rem' }}>
+                                                                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                                                                    <span style={{ fontWeight: 600 }}>{category.name}</span>
+                                                                                    {requiredQuotaValueFromCategory !== null && (
+                                                                                        <span style={{
+                                                                                            fontSize: '0.7rem',
+                                                                                            color: 'var(--color-primary)',
+                                                                                            background: 'var(--bg-app)',
+                                                                                            padding: '2px 6px',
+                                                                                            borderRadius: '4px',
+                                                                                            fontWeight: 500
+                                                                                        }}>
+                                                                                            Set Value: {requiredQuotaValueFromCategory}
+                                                                                        </span>
+                                                                                    )}
+                                                                                </div>
+                                                                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                                                                    {requiredQuotaValue !== null && (
+                                                                                        <span style={{
+                                                                                            color: meetsQuota ? 'var(--color-success)' : 'var(--color-danger)',
+                                                                                            fontSize: '0.8rem',
+                                                                                            fontWeight: 500
+                                                                                        }}>
+                                                                                            Quota: {categoryQuotaValue} / {requiredQuotaValue}
+                                                                                        </span>
+                                                                                    )}
+                                                                                    {categoryQuotaValue > 0 && requiredQuotaValue === null && (
+                                                                                        <span style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>
+                                                                                            Total: {categoryQuotaValue}
+                                                                                        </span>
+                                                                                    )}
+                                                                                </div>
                                                                             </div>
-                                                                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                                                                                {requiredQuotaValue !== null && (
-                                                                                    <span style={{
-                                                                                        color: meetsQuota ? 'var(--color-success)' : 'var(--color-danger)',
-                                                                                        fontSize: '0.8rem',
-                                                                                        fontWeight: 500
-                                                                                    }}>
-                                                                                        Quota: {categoryQuotaValue} / {requiredQuotaValue}
-                                                                                    </span>
-                                                                                )}
-                                                                                {categoryQuotaValue > 0 && requiredQuotaValue === null && (
-                                                                                    <span style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>
-                                                                                        Total: {categoryQuotaValue}
-                                                                                    </span>
-                                                                                )}
-                                                                            </div>
-                                                                        </div>
-                                                                        {requiredQuotaValue !== null && !meetsQuota && (
-                                                                            <div style={{
-                                                                                marginBottom: '0.5rem',
-                                                                                padding: '0.5rem',
-                                                                                backgroundColor: 'rgba(239, 68, 68, 0.1)',
-                                                                                borderRadius: '4px',
-                                                                                fontSize: '0.75rem',
-                                                                                color: 'var(--color-danger)',
-                                                                                display: 'flex',
-                                                                                alignItems: 'center',
-                                                                                gap: '0.25rem'
-                                                                            }}>
-                                                                                <AlertTriangle size={12} />
-                                                                                <span>You must have a total of {requiredQuotaValue} {category.name} points</span>
-                                                                            </div>
-                                                                        )}
+                                                                            {requiredQuotaValue !== null && !meetsQuota && (
+                                                                                <div style={{
+                                                                                    marginBottom: '0.5rem',
+                                                                                    padding: '0.5rem',
+                                                                                    backgroundColor: 'rgba(239, 68, 68, 0.1)',
+                                                                                    borderRadius: '4px',
+                                                                                    fontSize: '0.75rem',
+                                                                                    color: 'var(--color-danger)',
+                                                                                    display: 'flex',
+                                                                                    alignItems: 'center',
+                                                                                    gap: '0.25rem'
+                                                                                }}>
+                                                                                    <AlertTriangle size={12} />
+                                                                                    <span>You must have a total of {requiredQuotaValue} {category.name} points</span>
+                                                                                </div>
+                                                                            )}
 
-                                                                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
-                                                                            {availableItems.map(item => {
-                                                                                const qty = Number(selectedItems[item.id] || 0);
-                                                                                return (
-                                                                                    <div key={item.id} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', background: 'var(--bg-app)', padding: '4px 8px', borderRadius: '4px', border: '1px solid var(--border-color)' }}>
-                                                                                        <span style={{ fontSize: '0.8rem' }}>{item.name} <span style={{ color: 'var(--text-tertiary)' }}>(x{item.quotaValue || 1})</span></span>
-                                                                                        <div className={styles.quantityControl} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                                                                            <button onClick={() => handleBoxItemChange(item.id, Math.max(0, qty - 1))} className="btn btn-secondary" style={{ padding: '2px 8px' }}>-</button>
-                                                                                            <span style={{ width: '20px', textAlign: 'center' }}>{qty}</span>
-                                                                                            <button onClick={() => handleBoxItemChange(item.id, qty + 1)} className="btn btn-secondary" style={{ padding: '2px 8px' }}>+</button>
+                                                                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
+                                                                                {availableItems.map(item => {
+                                                                                    const qty = Number(selectedItems[item.id] || 0);
+                                                                                    return (
+                                                                                        <div key={item.id} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', background: 'var(--bg-app)', padding: '4px 8px', borderRadius: '4px', border: '1px solid var(--border-color)' }}>
+                                                                                            <span style={{ fontSize: '0.8rem' }}>{item.name} <span style={{ color: 'var(--text-tertiary)' }}>(x{item.quotaValue || 1})</span></span>
+                                                                                            <div className={styles.quantityControl} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                                                                                <button onClick={() => handleBoxItemChange(item.id, Math.max(0, qty - 1))} className="btn btn-secondary" style={{ padding: '2px 8px' }}>-</button>
+                                                                                                <span style={{ width: '20px', textAlign: 'center' }}>{qty}</span>
+                                                                                                <button onClick={() => handleBoxItemChange(item.id, qty + 1)} className="btn btn-secondary" style={{ padding: '2px 8px' }}>+</button>
+                                                                                            </div>
                                                                                         </div>
-                                                                                    </div>
-                                                                                );
-                                                                            })}
+                                                                                    );
+                                                                                })}
+                                                                            </div>
                                                                         </div>
-                                                                    </div>
-                                                                );
-                                                            })}
+                                                                    );
+                                                                })}
 
-                                                            {/* Show uncategorized items if any */}
-                                                            {(() => {
-                                                                const uncategorizedItems = menuItems.filter(i =>
-                                                                    (i.vendorId === null || i.vendorId === '') &&
-                                                                    i.isActive &&
-                                                                    (!i.categoryId || i.categoryId === '')
-                                                                );
+                                                                {/* Show uncategorized items if any */}
+                                                                {(() => {
+                                                                    const uncategorizedItems = menuItems.filter(i =>
+                                                                        (i.vendorId === null || i.vendorId === '') &&
+                                                                        i.isActive &&
+                                                                        (!i.categoryId || i.categoryId === '')
+                                                                    );
 
-                                                                if (uncategorizedItems.length === 0) return null;
+                                                                    if (uncategorizedItems.length === 0) return null;
 
-                                                                const selectedItems = orderConfig.items || {};
+                                                                    const selectedItems = orderConfig.items || {};
 
-                                                                return (
-                                                                    <div style={{ marginBottom: '1rem', background: 'var(--bg-surface-hover)', padding: '0.75rem', borderRadius: '6px' }}>
-                                                                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem', fontSize: '0.85rem' }}>
-                                                                            <span style={{ fontWeight: 600 }}>Uncategorized</span>
-                                                                        </div>
+                                                                    return (
+                                                                        <div style={{ marginBottom: '1rem', background: 'var(--bg-surface-hover)', padding: '0.75rem', borderRadius: '6px' }}>
+                                                                            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem', fontSize: '0.85rem' }}>
+                                                                                <span style={{ fontWeight: 600 }}>Uncategorized</span>
+                                                                            </div>
 
-                                                                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
-                                                                            {uncategorizedItems.map(item => {
-                                                                                const qty = Number(selectedItems[item.id] || 0);
-                                                                                return (
-                                                                                    <div key={item.id} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', background: 'var(--bg-app)', padding: '4px 8px', borderRadius: '4px', border: '1px solid var(--border-color)' }}>
-                                                                                        <span style={{ fontSize: '0.8rem' }}>{item.name} <span style={{ color: 'var(--text-tertiary)' }}>(x{item.quotaValue || 1})</span></span>
-                                                                                        <div className={styles.quantityControl} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                                                                            <button onClick={() => handleBoxItemChange(item.id, Math.max(0, qty - 1))} className="btn btn-secondary" style={{ padding: '2px 8px' }}>-</button>
-                                                                                            <span style={{ width: '20px', textAlign: 'center' }}>{qty}</span>
-                                                                                            <button onClick={() => handleBoxItemChange(item.id, qty + 1)} className="btn btn-secondary" style={{ padding: '2px 8px' }}>+</button>
+                                                                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
+                                                                                {uncategorizedItems.map(item => {
+                                                                                    const qty = Number(selectedItems[item.id] || 0);
+                                                                                    return (
+                                                                                        <div key={item.id} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', background: 'var(--bg-app)', padding: '4px 8px', borderRadius: '4px', border: '1px solid var(--border-color)' }}>
+                                                                                            <span style={{ fontSize: '0.8rem' }}>{item.name} <span style={{ color: 'var(--text-tertiary)' }}>(x{item.quotaValue || 1})</span></span>
+                                                                                            <div className={styles.quantityControl} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                                                                                <button onClick={() => handleBoxItemChange(item.id, Math.max(0, qty - 1))} className="btn btn-secondary" style={{ padding: '2px 8px' }}>-</button>
+                                                                                                <span style={{ width: '20px', textAlign: 'center' }}>{qty}</span>
+                                                                                                <button onClick={() => handleBoxItemChange(item.id, qty + 1)} className="btn btn-secondary" style={{ padding: '2px 8px' }}>+</button>
+                                                                                            </div>
                                                                                         </div>
-                                                                                    </div>
-                                                                                );
-                                                                            })}
+                                                                                    );
+                                                                                })}
+                                                                            </div>
                                                                         </div>
-                                                                    </div>
-                                                                );
-                                                            })()}
-                                                        </>
-                                                    )}
+                                                                    );
+                                                                })()}
+                                                            </>
+                                                        )}
+                                                    </div>
                                                 </div>
-                                            </div>
-                                        )}
+                                            );
+                                        })()}
 
                                         {/* Equipment Order Section - Always visible */}
                                         <div className={styles.divider} style={{ marginTop: '2rem', marginBottom: '1rem' }} />
@@ -3294,9 +3519,14 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                 }
             } else if (formData.serviceType === 'Boxes') {
                 // For Boxes: Explicitly preserve all critical fields
-                cleanedOrderConfig.vendorId = orderConfig.vendorId; // Preserve vendor ID
+                // Preserve vendorId even if empty string (will be handled in sync)
+                if (orderConfig.vendorId !== undefined) {
+                    cleanedOrderConfig.vendorId = orderConfig.vendorId;
+                }
                 cleanedOrderConfig.caseId = orderConfig.caseId; // Preserve case ID (also set above)
-                cleanedOrderConfig.boxTypeId = orderConfig.boxTypeId; // Preserve box type
+                if (orderConfig.boxTypeId !== undefined) {
+                    cleanedOrderConfig.boxTypeId = orderConfig.boxTypeId;
+                }
                 cleanedOrderConfig.boxQuantity = orderConfig.boxQuantity || 1; // Preserve quantity
                 cleanedOrderConfig.items = orderConfig.items || {}; // Preserve items
                 cleanedOrderConfig.itemPrices = orderConfig.itemPrices || {}; // Preserve item prices
@@ -3337,6 +3567,8 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                     statusId: formData.statusId ?? initialStatusId,
                     serviceType: formData.serviceType ?? 'Food',
                     approvedMealsPerWeek: formData.approvedMealsPerWeek ?? 21,
+                    authorizedAmount: formData.authorizedAmount ?? null,
+                    expirationDate: formData.expirationDate ?? null,
                     activeOrder: undefined // Create without order first
                 };
 
@@ -3378,6 +3610,8 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                     statusId: formData.statusId ?? initialStatusId,
                     serviceType: formData.serviceType ?? 'Food',
                     approvedMealsPerWeek: formData.approvedMealsPerWeek ?? 21,
+                    authorizedAmount: formData.authorizedAmount ?? null,
+                    expirationDate: formData.expirationDate ?? null,
                     activeOrder: hasOrderData ? prepareActiveOrder() : undefined
                 };
 
@@ -3479,6 +3713,12 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
             if (client.approvedMealsPerWeek !== formData.approvedMealsPerWeek) changes.push(`Approved Meals: ${client.approvedMealsPerWeek} -> ${formData.approvedMealsPerWeek}`);
             if (client.screeningTookPlace !== formData.screeningTookPlace) changes.push(`Screening Took Place: ${client.screeningTookPlace} -> ${formData.screeningTookPlace}`);
             if (client.screeningSigned !== formData.screeningSigned) changes.push(`Screening Signed: ${client.screeningSigned} -> ${formData.screeningSigned}`);
+            if ((client.authorizedAmount ?? null) !== (formData.authorizedAmount ?? null)) {
+                changes.push(`Authorized Amount: ${client.authorizedAmount ?? 'null'} -> ${formData.authorizedAmount ?? 'null'}`);
+            }
+            if ((client.expirationDate || null) !== (formData.expirationDate || null)) {
+                changes.push(`Expiration Date: ${client.expirationDate || 'null'} -> ${formData.expirationDate || 'null'}`);
+            }
 
             // Check if order configuration changed
             const hasOrderChanges = orderConfig && orderConfig.caseId;
