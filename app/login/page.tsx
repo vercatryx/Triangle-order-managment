@@ -35,6 +35,13 @@ export default function LoginPage() {
             const result = await checkEmailIdentity(username);
             console.log('Identity result:', result);
 
+            // Check for multiple accounts first
+            if (result.multipleAccounts) {
+                setIdentityError('Multiple accounts found with that email address. Please contact support.');
+                setCheckingIdentity(false);
+                return;
+            }
+
             if (result.exists) {
                 if (result.type === 'client' && result.id) {
                     // Check if passwordless is enabled for this user (which means global enabled + is client)

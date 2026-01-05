@@ -63,11 +63,11 @@ export async function POST(request: NextRequest) {
         const statusMap = new Map(statuses.map(s => [s.id, s.deliveriesAllowed]));
         debugLogs.push(`Loaded ${statuses.length} statuses`);
 
-        // Fetch all clients to check their status
+        // Fetch all clients to check their status and creation time
         // WE MUST FETCH ALL CLIENTS to filter by status, as upcoming_orders doesn't have status info
         const { data: clients, error: clientsError } = await supabase
             .from('clients')
-            .select('id, status_id');
+            .select('id, status_id, created_at');
 
         if (clientsError) {
             console.error('Error fetching clients for status check:', clientsError);
@@ -75,8 +75,8 @@ export async function POST(request: NextRequest) {
             errors.push(`Error fetching clients: ${clientsError.message}`);
         }
 
-        const clientStatusMap = new Map(clients?.map(c => [c.id, c.status_id]) || []);
-        debugLogs.push(`Loaded ${clients?.length || 0} clients for status verification`);
+        const clientDataMap = new Map(clients?.map(c => [c.id, { status_id: c.status_id, created_at: c.created_at }]) || []);
+        debugLogs.push(`Loaded ${clients?.length || 0} clients for status/age verification`);
 
         // Get the starting order number (ensures at least 6 digits, starting from 100000)
         const { data: maxOrderData } = await supabase
@@ -104,9 +104,9 @@ export async function POST(request: NextRequest) {
             console.log(`[Simulate Delivery] Processing upcoming order ${upOrder.id} (client: ${upOrder.client_id}, delivery_day: ${upOrder.delivery_day || 'null'})`);
 
             // CHECK ELIGIBILITY
-            const clientStatusId = clientStatusMap.get(upOrder.client_id);
-            if (clientStatusId) {
-                const isAllowed = statusMap.get(clientStatusId);
+            const clientData = clientDataMap.get(upOrder.client_id);
+            if (clientData) {
+                const isAllowed = statusMap.get(clientData.status_id);
                 if (isAllowed === false) { // Explicitly false, enabled defaults to true often but let's be strict
                     const skipMsg = `Order ${upOrder.id}: Client ${upOrder.client_id} has status which disallows deliveries.`;
                     console.log(`[Simulate Delivery] IGNORED (Ineligible Status): ${skipMsg}`);
@@ -229,6 +229,24 @@ export async function POST(request: NextRequest) {
                 skippedReasons.push(skipMsg);
                 skippedCount++;
                 continue;
+            }
+
+            // Client Age Check
+            if (clientData && clientData.created_at) {
+                const clientCreatedAt = new Date(clientData.created_at);
+                const clientAgeMs = currentTime.getTime() - clientCreatedAt.getTime();
+                const clientAgeHours = clientAgeMs / (1000 * 60 * 60);
+
+                // "If the client was created within 48 hours... I mean within the cutoff time."
+                // So if Client Age < Max Cutoff Hours, SKIP.
+                // e.g. Cutoff 48h. Client created 10h ago. 10 < 48. SKIP.
+                if (clientAgeHours < maxCutoffHours) {
+                    const skipMsg = `Order ${upOrder.id}: Client created too recently (${clientAgeHours.toFixed(1)}h ago). Requires ${maxCutoffHours}h maturity (Client Cutoff Check).`;
+                    console.warn(`[Simulate Delivery] SKIPPED (Client Age): ${skipMsg}`);
+                    skippedReasons.push(skipMsg);
+                    skippedCount++;
+                    continue;
+                }
             }
 
             // Check: Is it too early?

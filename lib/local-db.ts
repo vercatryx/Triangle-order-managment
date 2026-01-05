@@ -20,12 +20,20 @@ interface LocalOrdersDB {
 const DB_PATH = path.join(process.cwd(), 'data', 'local-orders-db.json');
 
 // Ensure data directory exists and initialize DB file if it doesn't exist
-async function ensureDBFile(): Promise<void> {
+async function ensureDBFile(): Promise<boolean> {
     const dataDir = path.join(process.cwd(), 'data');
     try {
         await fs.access(dataDir);
     } catch {
-        await fs.mkdir(dataDir, { recursive: true });
+        try {
+            await fs.mkdir(dataDir, { recursive: true });
+        } catch (error: any) {
+            // If we can't create the directory (e.g., read-only filesystem in serverless), skip file operations
+            if (error.code === 'EROFS' || error.code === 'EACCES') {
+                return false;
+            }
+            throw error;
+        }
     }
 
     try {
@@ -43,18 +51,40 @@ async function ensureDBFile(): Promise<void> {
             upcomingOrderBoxSelections: [],
             lastSynced: new Date().toISOString()
         };
-        await fs.writeFile(DB_PATH, JSON.stringify(initialDB, null, 2));
+        try {
+            await fs.writeFile(DB_PATH, JSON.stringify(initialDB, null, 2));
+        } catch (error: any) {
+            // If we can't write (e.g., read-only filesystem in serverless), skip file operations
+            if (error.code === 'EROFS' || error.code === 'EACCES') {
+                return false;
+            }
+            throw error;
+        }
     }
+    return true;
 }
 
 // Read local database
 export async function readLocalDB(): Promise<LocalOrdersDB> {
-    await ensureDBFile();
+    const canWrite = await ensureDBFile();
+    if (!canWrite) {
+        // Return empty DB if filesystem is read-only (e.g., in serverless environment)
+        return {
+            orders: [],
+            upcomingOrders: [],
+            orderVendorSelections: [],
+            orderItems: [],
+            orderBoxSelections: [],
+            upcomingOrderVendorSelections: [],
+            upcomingOrderItems: [],
+            upcomingOrderBoxSelections: [],
+            lastSynced: new Date().toISOString()
+        };
+    }
     try {
         const content = await fs.readFile(DB_PATH, 'utf-8');
         return JSON.parse(content);
     } catch (error) {
-        console.error('Error reading local DB:', error);
         // Return empty DB if read fails
         return {
             orders: [],
@@ -72,9 +102,23 @@ export async function readLocalDB(): Promise<LocalOrdersDB> {
 
 // Write to local database
 async function writeLocalDB(db: LocalOrdersDB): Promise<void> {
-    await ensureDBFile();
-    db.lastSynced = new Date().toISOString();
-    await fs.writeFile(DB_PATH, JSON.stringify(db, null, 2));
+    const canWrite = await ensureDBFile();
+    if (!canWrite) {
+        // Silently skip write if filesystem is read-only (e.g., in serverless environment)
+        // The local DB is just a cache, so this is fine
+        return;
+    }
+    try {
+        db.lastSynced = new Date().toISOString();
+        await fs.writeFile(DB_PATH, JSON.stringify(db, null, 2));
+    } catch (error: any) {
+        // Silently skip write errors (e.g., read-only filesystem in serverless)
+        // The local DB is just a cache, so this is fine
+        if (error.code !== 'EROFS' && error.code !== 'EACCES') {
+            // Only log non-permission errors for debugging
+            console.warn('Error writing local DB (non-permission error):', error);
+        }
+    }
 }
 
 // Check if local DB needs sync (if it's empty or stale > 2 minutes)
@@ -227,9 +271,15 @@ export async function syncLocalDBFromSupabase(): Promise<void> {
 
         await writeLocalDB(localDB);
         // console.log(`Local DB synced successfully. Orders: ${orders?.length || 0}, Upcoming Orders: ${upcomingOrders?.length || 0}`);
-    } catch (error) {
-        console.error('Error syncing local DB:', error);
-        throw error;
+    } catch (error: any) {
+        // Don't throw errors - local DB is just a cache
+        // File system errors (read-only filesystem in serverless) can be silently ignored
+        if (error.code === 'EROFS' || error.code === 'EACCES') {
+            // Silently ignore read-only filesystem errors in serverless environments
+            return;
+        }
+        // Log other errors (e.g., Supabase query errors) but don't fail the operation
+        console.warn('Error syncing local DB:', error);
     }
 }
 

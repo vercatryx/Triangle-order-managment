@@ -157,13 +157,15 @@ export function getNextDeliveryDate(
  * @param vendors - Array of all vendors (for validation if vendorId is provided)
  * @param vendorId - Optional vendor ID to validate the vendor delivers on this day
  * @param referenceDate - Optional reference date (defaults to today)
+ * @param currentTime - Optional current time for cutoff checks (defaults to referenceDate or new Date())
  * @returns Date object for the next occurrence of the delivery day, or null if invalid
  */
 export function getNextDeliveryDateForDay(
     deliveryDay: string,
     vendors: Vendor[],
     vendorId?: string,
-    referenceDate: Date = new Date()
+    referenceDate: Date = new Date(),
+    currentTime?: Date
 ): Date | null {
     if (!deliveryDay) return null;
 
@@ -196,7 +198,7 @@ export function getNextDeliveryDateForDay(
                 if (vendor) {
                     const cutoffHours = vendor.cutoffHours ?? 0;
                     const cutoffMs = cutoffHours * 60 * 60 * 1000;
-                    const now = new Date();
+                    const now = currentTime || referenceDate || new Date();
                     const minimumDate = new Date(now.getTime() + cutoffMs);
 
                     // Compare against end of delivery day

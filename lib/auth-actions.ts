@@ -47,7 +47,7 @@ export async function sendOtp(email: string) {
             return { success: false, message: 'Failed to generate code.' };
         }
 
-        // Send Email
+        // Send Email (using same pattern as nutritionist screening form)
         const emailResult = await sendEmail({
             to: email,
             subject: 'Your Login Code',
@@ -60,12 +60,12 @@ export async function sendOtp(email: string) {
                     </div>
                     <p>This code will expire in 10 minutes.</p>
                 </div>
-            `,
-            text: `Your login code is: ${code}`
+            `
         });
 
         if (!emailResult.success) {
-            return { success: false, message: 'Failed to send email.' };
+            console.error('Error sending passwordless login email:', emailResult.error);
+            return { success: false, message: emailResult.error || 'Failed to send email.' };
         }
 
         return { success: true, message: 'Code sent to your email.' };
@@ -255,8 +255,72 @@ export async function checkEmailIdentity(identifier: string) {
 
     const trimmedInput = identifier.trim();
 
+    // First, check for multiple accounts with this email/username
+    // Use Service Role if available to bypass RLS
+    let supabaseClient = supabase;
+    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    if (serviceRoleKey) {
+        supabaseClient = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, serviceRoleKey, {
+            auth: { persistSession: false }
+        });
+    }
+
+    // Count matches across all tables
+    let matchCount = 0;
+
     // 1. Check Env Super Admin
     const envUser = process.env.ADMIN_USERNAME;
+    if (envUser && trimmedInput === envUser) {
+        matchCount++;
+    }
+
+    // 2. Check Database Admins
+    const { count: adminCount } = await supabase
+        .from('admins')
+        .select('*', { count: 'exact', head: true })
+        .eq('username', trimmedInput);
+    
+    if (adminCount && adminCount > 0) {
+        matchCount += adminCount;
+    }
+
+    // 3. Check Vendors (by Email)
+    const { count: vendorCount } = await supabase
+        .from('vendors')
+        .select('*', { count: 'exact', head: true })
+        .ilike('email', trimmedInput);
+    
+    if (vendorCount && vendorCount > 0) {
+        matchCount += vendorCount;
+    }
+
+    // 4. Check Navigators
+    const { count: navigatorCount } = await supabase
+        .from('navigators')
+        .select('*', { count: 'exact', head: true })
+        .ilike('email', trimmedInput);
+    
+    if (navigatorCount && navigatorCount > 0) {
+        matchCount += navigatorCount;
+    }
+
+    // 5. Check Clients (by Email)
+    const { count: clientCount } = await supabaseClient
+        .from('clients')
+        .select('*', { count: 'exact', head: true })
+        .ilike('email', trimmedInput);
+    
+    if (clientCount && clientCount > 0) {
+        matchCount += clientCount;
+    }
+
+    // If multiple accounts found, return error
+    if (matchCount > 1) {
+        return { exists: false, type: null, enablePasswordless: false, multipleAccounts: true };
+    }
+
+    // Now proceed with normal flow to determine the single account type
+    // 1. Check Env Super Admin
     if (envUser && trimmedInput === envUser) {
         return { exists: true, type: 'admin', enablePasswordless: false };
     }
@@ -298,15 +362,6 @@ export async function checkEmailIdentity(identifier: string) {
     }
 
     // 5. Check Clients (by Email)
-    // Use Service Role if available to bypass RLS
-    let supabaseClient = supabase;
-    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-    if (serviceRoleKey) {
-        supabaseClient = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, serviceRoleKey, {
-            auth: { persistSession: false }
-        });
-    }
-
     const { data: client } = await supabaseClient
         .from('clients')
         .select('id')

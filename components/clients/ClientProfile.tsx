@@ -153,10 +153,13 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
     const [equipmentOrder, setEquipmentOrder] = useState<{ vendorId: string; equipmentId: string } | null>(null);
     const [submittingEquipmentOrder, setSubmittingEquipmentOrder] = useState(false);
 
-    // Refresh vendors when equipment order section is opened to ensure we have latest data
+    // Refresh vendors and equipment when equipment order section is opened to ensure we have latest data
     useEffect(() => {
         if (showEquipmentOrder) {
-            getVendors().then(v => setVendors(v));
+            Promise.all([
+                getVendors().then(v => setVendors(v)),
+                getEquipment().then(e => setEquipment(e))
+            ]);
         }
     }, [showEquipmentOrder]);
     const [settings, setSettings] = useState<AppSettings | null>(null);
@@ -1577,126 +1580,6 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                                     <textarea className="input" style={{ height: '100px' }} value={formData.notes || ''} onChange={e => setFormData({ ...formData, notes: e.target.value })} />
                                 </div>
 
-                                {!isDependent && (
-                                    <div className={styles.formGroup}>
-                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-                                            <label className="label">Dependents {dependents.length > 0 && `(${dependents.length})`}</label>
-                                            <button
-                                                className="btn btn-secondary"
-                                                onClick={() => setShowAddDependentForm(!showAddDependentForm)}
-                                                style={{ fontSize: '0.875rem', padding: '0.375rem 0.75rem' }}
-                                            >
-                                                <Plus size={14} /> {showAddDependentForm ? 'Cancel' : 'Add Dependent'}
-                                            </button>
-                                        </div>
-
-                                        {showAddDependentForm && (
-                                            <div style={{
-                                                padding: '1rem',
-                                                border: '1px solid var(--border-color)',
-                                                borderRadius: 'var(--radius-md)',
-                                                backgroundColor: 'var(--bg-surface-hover)',
-                                                marginBottom: '0.75rem'
-                                            }}>
-                                                <label className="label" style={{ marginBottom: '0.5rem' }}>Dependent Name</label>
-                                                <input
-                                                    className="input"
-                                                    placeholder="Enter dependent name"
-                                                    value={dependentName}
-                                                    onChange={e => setDependentName(e.target.value)}
-                                                    onKeyDown={e => {
-                                                        if (e.key === 'Enter' && dependentName.trim()) {
-                                                            handleCreateDependent();
-                                                        }
-                                                    }}
-                                                    style={{ marginBottom: '0.75rem' }}
-                                                    autoFocus
-                                                />
-                                                <label className="label" style={{ marginBottom: '0.5rem' }}>Date of Birth</label>
-                                                <input
-                                                    type="date"
-                                                    className="input"
-                                                    value={dependentDob}
-                                                    onChange={e => setDependentDob(e.target.value)}
-                                                    style={{ marginBottom: '0.75rem' }}
-                                                />
-                                                <label className="label" style={{ marginBottom: '0.5rem' }}>CIN#</label>
-                                                <input
-                                                    type="number"
-                                                    className="input"
-                                                    placeholder="CIN Number"
-                                                    value={dependentCin}
-                                                    onChange={e => setDependentCin(e.target.value)}
-                                                    style={{ marginBottom: '0.75rem' }}
-                                                />
-                                                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem' }}>
-                                                    <button
-                                                        className="btn btn-secondary"
-                                                        onClick={() => {
-                                                            setShowAddDependentForm(false);
-                                                            setDependentName('');
-                                                            setDependentDob('');
-                                                            setDependentCin('');
-                                                        }}
-                                                        disabled={creatingDependent}
-                                                    >
-                                                        Cancel
-                                                    </button>
-                                                    <button
-                                                        className="btn btn-primary"
-                                                        onClick={handleCreateDependent}
-                                                        disabled={!dependentName.trim() || creatingDependent}
-                                                    >
-                                                        {creatingDependent ? <Loader2 className="spin" size={14} /> : <Plus size={14} />} Create Dependent
-                                                    </button>
-                                                </div>
-                                            </div>
-                                        )}
-
-                                        {dependents.length > 0 && (
-                                            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                                                {dependents.map(dependent => (
-                                                    <div
-                                                        key={dependent.id}
-                                                        onClick={() => {
-                                                            if (onClose) {
-                                                                onClose();
-                                                            } else {
-                                                                router.push(`/clients/${dependent.id}`);
-                                                            }
-                                                        }}
-                                                        style={{
-                                                            padding: '0.75rem',
-                                                            border: '1px solid var(--border-color)',
-                                                            borderRadius: 'var(--radius-md)',
-                                                            backgroundColor: 'var(--bg-surface)',
-                                                            cursor: 'pointer',
-                                                            transition: 'background-color 0.2s'
-                                                        }}
-                                                        onMouseEnter={(e) => {
-                                                            e.currentTarget.style.backgroundColor = 'var(--bg-surface-hover)';
-                                                        }}
-                                                        onMouseLeave={(e) => {
-                                                            e.currentTarget.style.backgroundColor = 'var(--bg-surface)';
-                                                        }}
-                                                    >
-                                                        <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>
-                                                            {dependent.fullName}
-                                                        </div>
-                                                        {(dependent.dob || dependent.cin) && (
-                                                            <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginTop: '0.25rem' }}>
-                                                                {dependent.dob && <span>DOB: {dependent.dob ? new Date(dependent.dob).toLocaleDateString() : '-'}</span>}
-                                                                {dependent.dob && dependent.cin && <span> • </span>}
-                                                                {dependent.cin && <span>CIN#: {dependent.cin}</span>}
-                                                            </div>
-                                                        )}
-                                                    </div>
-                                                ))}
-                                            </div>
-                                        )}
-                                    </div>
-                                )}
-
                                 <div className={styles.formGroup}>
                                     <label className="label">Screening Status</label>
                                     <div style={{
@@ -3006,11 +2889,13 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                                                                 })}
                                                             >
                                                                 <option value="">Select Equipment Item...</option>
-                                                                {equipment.map(eq => (
-                                                                    <option key={eq.id} value={eq.id}>
-                                                                        {eq.name} - ${eq.price.toFixed(2)}
-                                                                    </option>
-                                                                ))}
+                                                                {equipment
+                                                                    .filter(eq => !eq.vendorId || eq.vendorId === equipmentOrder.vendorId)
+                                                                    .map(eq => (
+                                                                        <option key={eq.id} value={eq.id}>
+                                                                            {eq.name} - ${eq.price.toFixed(2)}
+                                                                        </option>
+                                                                    ))}
                                                             </select>
                                                         </div>
                                                     )}

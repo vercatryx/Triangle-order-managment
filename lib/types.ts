@@ -167,6 +167,7 @@ export interface Equipment {
   id: string;
   name: string;
   price: number;
+  vendorId?: string | null; // Vendor that owns this equipment item
 }
 
 export interface AppSettings {

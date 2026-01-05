@@ -49,7 +49,7 @@ export async function sendEmail(options: EmailOptions): Promise<{ success: boole
 
         // Send email with friendly name to hide the email address
         await transporter.sendMail({
-            from: `"Screening Form System" <${user}>`,
+            from: `"Triangle Square System" <${user}>`,
             to: options.to,
             subject: options.subject,
             html: options.html,

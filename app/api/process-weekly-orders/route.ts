@@ -3,6 +3,7 @@ import { supabase } from '@/lib/supabase';
 import { getMenuItems, getVendors, getBoxTypes, getSettings, getClient } from '@/lib/actions';
 import { randomUUID } from 'crypto';
 import { getNextDeliveryDate, getTakeEffectDateLegacy } from '@/lib/order-dates';
+import { getCurrentTime } from '@/lib/time';
 
 /**
  * API Route: Process all current active orders from orders table
@@ -119,7 +120,7 @@ async function precheckAndTransferUpcomingOrders() {
                         if (upcomingOrder.delivery_day) {
                             // Import the function if needed, or calculate inline
                             const deliveryDay = upcomingOrder.delivery_day;
-                            const today = new Date();
+                            const today = await getCurrentTime();
                             today.setHours(0, 0, 0, 0);
                             const dayNameToNumber: { [key: string]: number } = {
                                 'Sunday': 0, 'Monday': 1, 'Tuesday': 2, 'Wednesday': 3,
@@ -145,7 +146,7 @@ async function precheckAndTransferUpcomingOrders() {
                             service_type: upcomingOrder.service_type,
                             case_id: upcomingOrder.case_id,
                             status: 'pending',
-                            last_updated: new Date().toISOString(),
+                            last_updated: (await getCurrentTime()).toISOString(),
                             updated_by: upcomingOrder.updated_by,
                             scheduled_delivery_date: scheduledDeliveryDate,
                             delivery_distribution: null, // Can be set later if needed
@@ -606,7 +607,7 @@ export async function GET(request: NextRequest) {
                         let scheduledDeliveryDate: string | null = null;
                         if ((order as any).delivery_day) {
                             const deliveryDay = (order as any).delivery_day;
-                            const today = new Date();
+                            const today = await getCurrentTime();
                             today.setHours(0, 0, 0, 0);
                             const dayNameToNumber: { [key: string]: number } = {
                                 'Sunday': 0, 'Monday': 1, 'Tuesday': 2, 'Wednesday': 3,
@@ -632,7 +633,7 @@ export async function GET(request: NextRequest) {
                             service_type: order.service_type,
                             case_id: order.case_id,
                             status: 'pending',
-                            last_updated: new Date().toISOString(),
+                            last_updated: (await getCurrentTime()).toISOString(),
                             updated_by: order.updated_by,
                             scheduled_delivery_date: scheduledDeliveryDate,
                             delivery_distribution: null, // Can be set later if needed
@@ -806,14 +807,15 @@ export async function GET(request: NextRequest) {
                             // Generate unique case_id for the updated upcoming order
                             const newCaseId = generateUniqueCaseId();
 
+                            const currentTime = await getCurrentTime();
                             await supabase
                                 .from('upcoming_orders')
                                 .update({
                                     case_id: newCaseId,
-                                    last_updated: new Date().toISOString(),
+                                    last_updated: currentTime.toISOString(),
                                     updated_by: order.updated_by || 'System',
                                     processed_order_id: newOrder.id,
-                                    processed_at: new Date().toISOString()
+                                    processed_at: currentTime.toISOString()
                                     // Keep status as 'scheduled' (don't change to 'processed')
                                     // Keep all other fields the same (scheduled_delivery_date, take_effect_date, etc.)
                                 })
@@ -897,7 +899,7 @@ export async function GET(request: NextRequest) {
                                 service_type: order.service_type,
                                 case_id: uniqueCaseId,
                                 status: 'scheduled',
-                                last_updated: new Date().toISOString(),
+                                last_updated: (await getCurrentTime()).toISOString(),
                                 updated_by: order.updated_by || 'System',
                                 take_effect_date: takeEffectDate.toISOString().split('T')[0],
                                 total_value: vendorDetail.totalValue || 0,
@@ -989,7 +991,7 @@ export async function GET(request: NextRequest) {
                                 service_type: order.service_type,
                                 case_id: uniqueCaseId,
                                 status: 'scheduled',
-                                last_updated: new Date().toISOString(),
+                                last_updated: (await getCurrentTime()).toISOString(),
                                 updated_by: order.updated_by || 'System',
                                 take_effect_date: takeEffectDate.toISOString().split('T')[0],
                                 total_value: totalValue,
