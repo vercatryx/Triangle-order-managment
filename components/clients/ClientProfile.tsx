@@ -1968,7 +1968,7 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                                                 {(() => {
                                                     // Unified Warning / Rule Display
 
-                                                    if (client?.serviceType === 'Boxes' || formData.serviceType === 'Boxes') {
+                                                    if (client?.serviceType === 'Boxes') {
                                                         return (
                                                             <div className={styles.alert} style={{ marginBottom: 'var(--spacing-md)' }}>
                                                                 <Info size={18} style={{ flexShrink: 0 }} />
