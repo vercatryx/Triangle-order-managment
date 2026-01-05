@@ -3,10 +3,12 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import Image from 'next/image';
-import { Users, Truck, Utensils, Box as BoxIcon, Settings, LayoutDashboard, ChevronLeft, ChevronRight, LogOut, Store, History } from 'lucide-react';
+import { Users, Truck, Utensils, Box as BoxIcon, Settings, LayoutDashboard, ChevronLeft, ChevronRight, LogOut, Store, History, PlayCircle, AlertCircle, RefreshCw, Mail, ChevronDown, ChevronUp } from 'lucide-react';
 import styles from './Sidebar.module.css';
 import { logout } from '@/lib/auth-actions';
 import { useState, useEffect } from 'react';
+import { useDataCache } from '@/lib/data-cache';
+import { AppSettings } from '@/lib/types';
 
 const navItems = [
     { label: 'Client Dashboard', href: '/clients', icon: Users },
@@ -17,6 +19,371 @@ const navItems = [
 
 import { useTime } from '@/lib/time-context';
 import { Clock, Edit2, X, Check } from 'lucide-react';
+
+function SimulationButton() {
+    const { getSettings } = useDataCache();
+    const [simulating, setSimulating] = useState(false);
+    const [error, setError] = useState<string | null>(null);
+    const [simulationResult, setSimulationResult] = useState<{
+        success: boolean;
+        message: string;
+        skippedReasons?: string[];
+        errors?: string[];
+        skippedCount?: number;
+    } | null>(null);
+    const [showSkippedDetails, setShowSkippedDetails] = useState(false);
+    const [sendingEmail, setSendingEmail] = useState(false);
+    const [emailSent, setEmailSent] = useState(false);
+    const [settings, setSettings] = useState<AppSettings | null>(null);
+
+    useEffect(() => {
+        loadSettings().catch(err => {
+            console.error('Error loading settings:', err);
+            setError('Failed to load settings');
+        });
+    }, []);
+
+    async function loadSettings() {
+        try {
+            const data = await getSettings();
+            setSettings(data);
+        } catch (err) {
+            console.error('Error in loadSettings:', err);
+            setError('Failed to load settings');
+        }
+    }
+
+    async function handleSendEmail(skipData?: { skippedReasons?: string[]; errors?: string[]; skippedCount?: number }) {
+        const dataToUse = skipData || simulationResult;
+
+        if (!dataToUse?.skippedReasons || dataToUse.skippedReasons.length === 0) {
+            if (!skipData) {
+                alert('No skipped orders to report.');
+            }
+            return;
+        }
+
+        if (!settings?.reportEmail || !settings.reportEmail.trim()) {
+            if (!skipData) {
+                alert('Please configure a report email address in settings first.');
+            }
+            return;
+        }
+
+        setSendingEmail(true);
+        setEmailSent(false);
+
+        try {
+            const res = await fetch('/api/send-skipped-orders-report', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    email: settings.reportEmail.trim(),
+                    skippedReasons: dataToUse.skippedReasons,
+                    errors: dataToUse.errors || [],
+                    skippedCount: dataToUse.skippedCount || 0
+                })
+            });
+
+            const result = await res.json();
+            if (result.success) {
+                setEmailSent(true);
+                setTimeout(() => setEmailSent(false), 5000);
+            } else {
+                if (!skipData) {
+                    alert(`Failed to send email: ${result.error || 'Unknown error'}`);
+                } else {
+                    console.error('Failed to send email automatically:', result.error);
+                }
+            }
+        } catch (error) {
+            console.error('Error sending email:', error);
+            if (!skipData) {
+                alert('Failed to send email. Please check the console for details.');
+            }
+        } finally {
+            setSendingEmail(false);
+        }
+    }
+
+    async function handleSimulateRun() {
+        if (!confirm('This will create orders for all scheduled upcoming orders. The original Upcoming Orders will be preserved. Proceed?')) return;
+
+        setSimulating(true);
+        setSimulationResult(null);
+        setShowSkippedDetails(false);
+        setEmailSent(false);
+
+        try {
+            console.log('[Simulate Delivery] Starting simulation...');
+            const res = await fetch('/api/simulate-delivery-cycle', { method: 'POST' });
+            const data = await res.json();
+
+            // Log detailed results to browser console
+            console.log('[Simulate Delivery] Response:', data);
+            console.log(`[Simulate Delivery] Summary: Found ${data.totalFound || 0} upcoming orders, Created ${data.processedCount || 0} orders, Skipped ${data.skippedCount || 0} orders`);
+
+            if (data.skippedReasons && data.skippedReasons.length > 0) {
+                console.group('[Simulate Delivery] Skipped Orders:');
+                data.skippedReasons.forEach((reason: string, index: number) => {
+                    console.warn(`${index + 1}. ${reason}`);
+                });
+                console.groupEnd();
+            }
+
+            if (data.errors && data.errors.length > 0) {
+                console.group('[Simulate Delivery] Errors:');
+                data.errors.forEach((error: string, index: number) => {
+                    console.error(`${index + 1}. ${error}`);
+                });
+                console.groupEnd();
+            }
+
+            if (data.debugLogs && data.debugLogs.length > 0) {
+                console.group('[Simulate Delivery] Debug Logs:');
+                data.debugLogs.forEach((log: string) => {
+                    console.log(log);
+                });
+                console.groupEnd();
+            }
+
+            setSimulationResult({
+                success: data.success,
+                message: data.message || (data.success ? 'Simulation completed successfully.' : 'Simulation failed.'),
+                skippedReasons: data.skippedReasons,
+                errors: data.errors,
+                skippedCount: data.skippedCount
+            });
+            // Auto-expand skipped details if there are skipped orders
+            if (data.skippedReasons && data.skippedReasons.length > 0) {
+                setShowSkippedDetails(true);
+                // Automatically send email if email is configured
+                if (settings?.reportEmail && settings.reportEmail.trim()) {
+                    // Pass the data directly to avoid state timing issues
+                    handleSendEmail({
+                        skippedReasons: data.skippedReasons,
+                        errors: data.errors,
+                        skippedCount: data.skippedCount
+                    });
+                }
+            }
+        } catch (error) {
+            console.error('[Simulate Delivery] Exception:', error);
+            setSimulationResult({ success: false, message: 'An error occurred during simulation.' });
+        } finally {
+            setSimulating(false);
+        }
+    }
+
+    return (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', width: '100%' }}>
+            <button
+                onClick={handleSimulateRun}
+                disabled={simulating}
+                style={{
+                    width: '100%',
+                    padding: '0.75rem',
+                    backgroundColor: simulating ? 'var(--bg-surface-hover)' : '#4f46e5',
+                    color: 'white',
+                    border: '1px solid var(--border-color)',
+                    borderRadius: '0.5rem',
+                    cursor: simulating ? 'not-allowed' : 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: '0.5rem',
+                    fontSize: '0.875rem',
+                    fontWeight: 600,
+                    transition: 'all 0.2s ease',
+                    opacity: simulating ? 0.7 : 1,
+                    boxShadow: '0 2px 4px rgba(0, 0, 0, 0.1)'
+                }}
+                onMouseEnter={(e) => {
+                    if (!simulating) {
+                        e.currentTarget.style.backgroundColor = 'var(--color-primary)';
+                        e.currentTarget.style.color = '#000000';
+                        e.currentTarget.style.boxShadow = '0 4px 6px rgba(0, 0, 0, 0.15)';
+                    }
+                }}
+                onMouseLeave={(e) => {
+                    if (!simulating) {
+                        e.currentTarget.style.backgroundColor = '#4f46e5';
+                        e.currentTarget.style.color = 'white';
+                        e.currentTarget.style.boxShadow = '0 2px 4px rgba(0, 0, 0, 0.1)';
+                    }
+                }}
+            >
+                {simulating ? <RefreshCw className="spin" size={16} /> : <PlayCircle size={16} />}
+                {simulating ? 'Creating...' : 'Create Orders'}
+            </button>
+
+            {simulationResult && (
+                <div style={{
+                    backgroundColor: 'var(--bg-panel)',
+                    border: '1px solid var(--border-color)',
+                    borderRadius: '0.5rem',
+                    padding: '0.75rem',
+                    fontSize: '0.8rem',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '0.5rem',
+                    maxHeight: '400px',
+                    overflowY: 'auto'
+                }}>
+                    <div style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '0.5rem',
+                        color: simulationResult.success ? 'var(--color-success)' : 'var(--color-danger)',
+                        fontWeight: 600
+                    }}>
+                        {simulationResult.success ? <Truck size={14} /> : <AlertCircle size={14} />}
+                        {simulationResult.message}
+                    </div>
+
+                    {(simulationResult.skippedReasons && simulationResult.skippedReasons.length > 0) && (
+                        <div style={{
+                            border: '1px solid var(--border-color)',
+                            borderRadius: '0.25rem',
+                            backgroundColor: 'var(--bg-surface)',
+                            overflow: 'hidden'
+                        }}>
+                            <button
+                                onClick={() => setShowSkippedDetails(!showSkippedDetails)}
+                                style={{
+                                    width: '100%',
+                                    padding: '0.5rem',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'space-between',
+                                    backgroundColor: 'transparent',
+                                    border: 'none',
+                                    color: 'var(--text-primary)',
+                                    cursor: 'pointer',
+                                    fontSize: '0.75rem',
+                                    fontWeight: 500
+                                }}
+                            >
+                                <span style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                    <AlertCircle size={12} style={{ color: 'var(--color-warning)' }} />
+                                    {simulationResult.skippedCount || simulationResult.skippedReasons.length} Skipped
+                                </span>
+                                {showSkippedDetails ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+                            </button>
+
+                            {showSkippedDetails && (
+                                <div style={{
+                                    padding: '0.5rem',
+                                    borderTop: '1px solid var(--border-color)',
+                                    backgroundColor: 'rgba(239, 68, 68, 0.05)',
+                                    maxHeight: '200px',
+                                    overflowY: 'auto'
+                                }}>
+                                    <ul style={{
+                                        margin: 0,
+                                        paddingLeft: '16px',
+                                        listStyle: 'disc',
+                                        fontSize: '0.7rem',
+                                        color: 'var(--text-secondary)'
+                                    }}>
+                                        {simulationResult.skippedReasons.map((reason, index) => (
+                                            <li key={index} style={{ marginBottom: '4px' }}>
+                                                {reason}
+                                            </li>
+                                        ))}
+                                    </ul>
+
+                                    {settings?.reportEmail && (
+                                        <div style={{
+                                            marginTop: '0.5rem',
+                                            paddingTop: '0.5rem',
+                                            borderTop: '1px solid var(--border-color)',
+                                            display: 'flex',
+                                            gap: '0.5rem',
+                                            alignItems: 'center'
+                                        }}>
+                                            <button
+                                                onClick={() => handleSendEmail()}
+                                                disabled={sendingEmail || emailSent}
+                                                style={{
+                                                    fontSize: '0.7rem',
+                                                    padding: '4px 8px',
+                                                    display: 'flex',
+                                                    alignItems: 'center',
+                                                    gap: '4px',
+                                                    backgroundColor: emailSent ? 'var(--color-success)' : 'var(--color-secondary)',
+                                                    color: 'white',
+                                                    border: 'none',
+                                                    borderRadius: '0.25rem',
+                                                    cursor: sendingEmail ? 'not-allowed' : 'pointer',
+                                                    opacity: sendingEmail ? 0.6 : 1
+                                                }}
+                                            >
+                                                {sendingEmail ? (
+                                                    <>
+                                                        <RefreshCw className="spin" size={10} />
+                                                        Sending...
+                                                    </>
+                                                ) : emailSent ? (
+                                                    <>
+                                                        <Mail size={10} />
+                                                        Sent!
+                                                    </>
+                                                ) : (
+                                                    <>
+                                                        <Mail size={10} />
+                                                        Send Report
+                                                    </>
+                                                )}
+                                            </button>
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+                        </div>
+                    )}
+
+                    {(simulationResult.errors && simulationResult.errors.length > 0) && (
+                        <div style={{
+                            border: '1px solid var(--color-danger)',
+                            borderRadius: '0.25rem',
+                            padding: '0.5rem',
+                            backgroundColor: 'rgba(239, 68, 68, 0.1)',
+                            maxHeight: '150px',
+                            overflowY: 'auto'
+                        }}>
+                            <div style={{
+                                fontSize: '0.7rem',
+                                fontWeight: 600,
+                                color: 'var(--color-danger)',
+                                marginBottom: '4px',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '4px'
+                            }}>
+                                <AlertCircle size={10} />
+                                Errors ({simulationResult.errors.length})
+                            </div>
+                            <ul style={{
+                                margin: 0,
+                                paddingLeft: '16px',
+                                listStyle: 'disc',
+                                fontSize: '0.7rem',
+                                color: 'var(--text-secondary)'
+                            }}>
+                                {simulationResult.errors.map((error, index) => (
+                                    <li key={index} style={{ marginBottom: '2px' }}>
+                                        {error}
+                                    </li>
+                                ))}
+                            </ul>
+                        </div>
+                    )}
+                </div>
+            )}
+        </div>
+    );
+}
 
 function TimeWidget() {
     const { currentTime, isFakeTime, setFakeTime } = useTime();
@@ -241,15 +608,22 @@ export function Sidebar({
                 })}
             </nav>
 
-            {/* Time Display Widget */}
-            <div style={{
-                padding: '0 1rem',
-                marginTop: 'auto',
-                marginBottom: '1rem',
-                display: isCollapsed ? 'none' : 'block'
-            }}>
-                <TimeWidget />
-            </div>
+            {/* Create Orders Button and Time Display Widget */}
+            {!isCollapsed && (
+                <div style={{
+                    padding: '0 1rem',
+                    marginTop: 'auto',
+                    marginBottom: '1rem',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '0.75rem'
+                }}>
+                    {(userRole === 'admin' || userRole === 'super-admin') && (
+                        <SimulationButton />
+                    )}
+                    <TimeWidget />
+                </div>
+            )}
 
             <div className={styles.footer}>
                 <div

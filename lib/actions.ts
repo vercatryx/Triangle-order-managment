@@ -4402,11 +4402,12 @@ export async function getOrderById(orderId: string) {
         .single();
 
     // Fetch reference data
-    const [menuItems, vendors, boxTypes, equipmentList] = await Promise.all([
+    const [menuItems, vendors, boxTypes, equipmentList, categories] = await Promise.all([
         getMenuItems(),
         getVendors(),
         getBoxTypes(),
-        getEquipment()
+        getEquipment(),
+        getCategories()
     ]);
 
     let orderDetails: any = undefined;
@@ -4472,6 +4473,34 @@ export async function getOrderById(orderId: string) {
                 ? parseFloat(boxSelection.total_value)
                 : parseFloat(orderData.total_value || 0);
 
+            // Structure box items by category
+            const boxItems = boxSelection.items || {};
+            const itemsByCategory: { [categoryId: string]: { categoryName: string; items: Array<{ itemId: string; itemName: string; quantity: number; quotaValue: number }> } } = {};
+
+            // Group items by category
+            Object.entries(boxItems).forEach(([itemId, qty]: [string, any]) => {
+                const menuItem = menuItems.find(mi => mi.id === itemId);
+                if (menuItem && menuItem.categoryId) {
+                    const category = categories.find(c => c.id === menuItem.categoryId);
+                    if (category) {
+                        if (!itemsByCategory[category.id]) {
+                            itemsByCategory[category.id] = {
+                                categoryName: category.name,
+                                items: []
+                            };
+                        }
+                        // Handle both object format {quantity: X} and direct number format
+                        const quantity = typeof qty === 'object' && qty !== null ? (qty as any).quantity : qty;
+                        itemsByCategory[category.id].items.push({
+                            itemId: itemId,
+                            itemName: menuItem.name,
+                            quantity: Number(quantity) || 0,
+                            quotaValue: menuItem.quotaValue || 1
+                        });
+                    }
+                }
+            });
+
             orderDetails = {
                 serviceType: orderData.service_type,
                 vendorId: boxSelection.vendor_id,
@@ -4480,6 +4509,7 @@ export async function getOrderById(orderId: string) {
                 boxTypeName: boxType?.name || 'Unknown Box Type',
                 boxQuantity: boxSelection.quantity,
                 items: boxSelection.items || {},
+                itemsByCategory: itemsByCategory,
                 totalValue: boxTotalValue
             };
         }

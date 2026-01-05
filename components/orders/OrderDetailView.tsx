@@ -93,6 +93,9 @@ export function OrderDetailView({ order }: OrderDetailViewProps) {
                 </div>
             );
         } else if (order.orderDetails.serviceType === 'Boxes') {
+            const itemsByCategory = order.orderDetails.itemsByCategory || {};
+            const hasItems = Object.keys(itemsByCategory).length > 0;
+
             return (
                 <div className={styles.orderItemsSection}>
                     <div className={styles.sectionHeader}>
@@ -101,10 +104,38 @@ export function OrderDetailView({ order }: OrderDetailViewProps) {
                     </div>
                     <div className={styles.boxDetails}>
                         <div><strong>Vendor:</strong> {order.orderDetails.vendorName}</div>
-                        <div><strong>Box Type:</strong> {order.orderDetails.boxTypeName}</div>
-                        <div><strong>Quantity:</strong> {order.orderDetails.boxQuantity}</div>
                         <div><strong>Total Value:</strong> ${order.orderDetails.totalValue.toFixed(2)}</div>
                     </div>
+                    {hasItems && (
+                        <div className={styles.boxContents}>
+                            <h3 style={{ marginTop: '1.5rem', marginBottom: '1rem', fontSize: '1rem', fontWeight: 600 }}>Box Contents</h3>
+                            {Object.entries(itemsByCategory).map(([categoryId, categoryData]: [string, any]) => (
+                                <div key={categoryId} className={styles.categorySection}>
+                                    <div className={styles.categoryHeader}>
+                                        <strong>{categoryData.categoryName}</strong>
+                                    </div>
+                                    <table className={styles.itemsTable}>
+                                        <thead>
+                                            <tr>
+                                                <th>Item</th>
+                                                <th>Quantity</th>
+                                                <th>Quota Value</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {categoryData.items.map((item: any, itemIdx: number) => (
+                                                <tr key={itemIdx}>
+                                                    <td>{item.itemName}</td>
+                                                    <td>{item.quantity}</td>
+                                                    <td>{item.quotaValue}</td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            ))}
+                        </div>
+                    )}
                 </div>
             );
         } else if (order.orderDetails.serviceType === 'Equipment') {
@@ -219,12 +250,6 @@ export function OrderDetailView({ order }: OrderDetailViewProps) {
                                 <strong>Total Value:</strong>
                                 <span>${order.totalValue.toFixed(2)}</span>
                             </div>
-                            {order.totalItems !== null && (
-                                <div className={styles.infoRow}>
-                                    <strong>Total Items:</strong>
-                                    <span>{order.totalItems}</span>
-                                </div>
-                            )}
                             {order.notes && (
                                 <div className={styles.infoRow}>
                                     <strong>Notes:</strong>
