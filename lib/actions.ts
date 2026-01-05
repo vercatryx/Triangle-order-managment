@@ -2561,6 +2561,7 @@ export async function syncCurrentOrderToUpcoming(clientId: string, client: Clien
     await syncLocalDBFromSupabase();
 
     revalidatePath('/clients');
+    revalidatePath(`/client-portal/${clientId}`);
 }
 
 /**

@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { useRouter } from 'next/navigation';
 import { ClientProfile, ClientStatus, Navigator, Vendor, MenuItem, BoxType, ItemCategory, BoxQuota } from '@/lib/types';
 import { syncCurrentOrderToUpcoming, getBoxQuotas, invalidateOrderData, updateClient } from '@/lib/actions';
 import { Package, Truck, User, Loader2, Info, Plus, Calendar, AlertTriangle, Check, Trash2 } from 'lucide-react';
@@ -20,6 +21,7 @@ interface Props {
 }
 
 export function ClientPortalInterface({ client: initialClient, statuses, navigators, vendors, menuItems, boxTypes, categories, upcomingOrder, activeOrder, previousOrders }: Props) {
+    const router = useRouter();
     const [client, setClient] = useState<ClientProfile>(initialClient);
     const [activeBoxQuotas, setActiveBoxQuotas] = useState<BoxQuota[]>([]);
 
@@ -321,6 +323,9 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
 
             // Sync to upcoming_orders table
             await syncCurrentOrderToUpcoming(client.id, tempClient);
+
+            // Refresh the router to refetch server data
+            router.refresh();
 
             // After saving, update originalOrderConfig to prevent re-saving
             const savedConfig = JSON.parse(JSON.stringify(orderConfig));
