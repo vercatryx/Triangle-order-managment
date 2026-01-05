@@ -2,42 +2,6 @@
   "orders": [],
   "upcomingOrders": [
     {
-      "id": "b329077e-d020-4d30-b59a-87ccf31fedd6",
-      "client_id": "CLIENT-017",
-      "service_type": "Food",
-      "case_id": "dfg",
-      "status": "scheduled",
-      "last_updated": "2026-01-05T23:05:26.668+00:00",
-      "updated_by": "Client",
-      "created_at": "2026-01-05T22:58:44.96017+00:00",
-      "take_effect_date": "2026-01-11",
-      "total_value": 159,
-      "total_items": 13,
-      "notes": null,
-      "processed_order_id": null,
-      "processed_at": null,
-      "delivery_day": "Monday",
-      "order_number": 100100
-    },
-    {
-      "id": "f1c2428a-219c-473d-ad56-c17520442131",
-      "client_id": "CLIENT-017",
-      "service_type": "Food",
-      "case_id": "dfg",
-      "status": "scheduled",
-      "last_updated": "2026-01-05T23:05:26.668+00:00",
-      "updated_by": "Client",
-      "created_at": "2026-01-05T22:58:46.843026+00:00",
-      "take_effect_date": "2026-01-11",
-      "total_value": 60,
-      "total_items": 4,
-      "notes": null,
-      "processed_order_id": null,
-      "processed_at": null,
-      "delivery_day": "Thursday",
-      "order_number": 100101
-    },
-    {
       "id": "f70ca5d7-b786-40f8-826e-56e77ca1f97d",
       "client_id": "CLIENT-001",
       "service_type": "Food",
@@ -92,6 +56,24 @@
       "order_number": 100086
     },
     {
+      "id": "b329077e-d020-4d30-b59a-87ccf31fedd6",
+      "client_id": "CLIENT-017",
+      "service_type": "Food",
+      "case_id": "dfg",
+      "status": "scheduled",
+      "last_updated": "2026-01-05T23:13:41.908+00:00",
+      "updated_by": "Client",
+      "created_at": "2026-01-05T22:58:44.96017+00:00",
+      "take_effect_date": "2026-01-11",
+      "total_value": 91,
+      "total_items": 13,
+      "notes": null,
+      "processed_order_id": null,
+      "processed_at": null,
+      "delivery_day": "Monday",
+      "order_number": 100100
+    },
+    {
       "id": "6febf381-c8a5-4177-bc6f-106f309566d2",
       "client_id": "CLIENT-002",
       "service_type": "Food",
@@ -108,6 +90,24 @@
       "processed_at": null,
       "delivery_day": "Monday",
       "order_number": 100005
+    },
+    {
+      "id": "e2881389-ad47-4c0c-8ab7-1c32a6bffd04",
+      "client_id": "CLIENT-017",
+      "service_type": "Food",
+      "case_id": "dfg",
+      "status": "scheduled",
+      "last_updated": "2026-01-05T23:13:41.908+00:00",
+      "updated_by": "Client",
+      "created_at": "2026-01-05T23:13:45.305185+00:00",
+      "take_effect_date": "2026-01-11",
+      "total_value": 80,
+      "total_items": 4,
+      "notes": null,
+      "processed_order_id": null,
+      "processed_at": null,
+      "delivery_day": "Thursday",
+      "order_number": 100102
     },
     {
       "id": "db8837a4-5bcf-42e9-acfb-7543b9ae09c0",
@@ -205,6 +205,24 @@
   "orderBoxSelections": [],
   "upcomingOrderVendorSelections": [
     {
+      "id": "9fc59ae5-ce3d-452c-81bb-683e399860ed",
+      "upcoming_order_id": "b329077e-d020-4d30-b59a-87ccf31fedd6",
+      "vendor_id": "ceafa2b7-abdf-400e-bf9e-666fc4733dfb",
+      "created_at": "2026-01-05T23:13:44.025312+00:00"
+    },
+    {
+      "id": "8dfcf0ef-0094-400a-90ba-2b68506de22d",
+      "upcoming_order_id": "b329077e-d020-4d30-b59a-87ccf31fedd6",
+      "vendor_id": "4d35b74d-0779-4555-a87c-b672a635cda0",
+      "created_at": "2026-01-05T23:13:44.45282+00:00"
+    },
+    {
+      "id": "f30c02fd-35c7-462a-bc55-55a8c6fbe83e",
+      "upcoming_order_id": "e2881389-ad47-4c0c-8ab7-1c32a6bffd04",
+      "vendor_id": "4d35b74d-0779-4555-a87c-b672a635cda0",
+      "created_at": "2026-01-05T23:13:45.904011+00:00"
+    },
+    {
       "id": "04fd952f-37ce-4d47-99f0-d3d3bc938201",
       "upcoming_order_id": "6febf381-c8a5-4177-bc6f-106f309566d2",
       "vendor_id": "4d35b74d-0779-4555-a87c-b672a635cda0",
@@ -245,27 +263,29 @@
       "upcoming_order_id": "f70ca5d7-b786-40f8-826e-56e77ca1f97d",
       "vendor_id": "4d35b74d-0779-4555-a87c-b672a635cda0",
       "created_at": "2026-01-05T13:31:01.96635+00:00"
-    },
-    {
-      "id": "f42d36a2-262f-42ff-9484-4419e4cd3adf",
-      "upcoming_order_id": "b329077e-d020-4d30-b59a-87ccf31fedd6",
-      "vendor_id": "ceafa2b7-abdf-400e-bf9e-666fc4733dfb",
-      "created_at": "2026-01-05T23:05:28.396586+00:00"
-    },
-    {
-      "id": "a507a8da-66d4-4b41-9362-a4ae27ad122b",
-      "upcoming_order_id": "b329077e-d020-4d30-b59a-87ccf31fedd6",
-      "vendor_id": "4d35b74d-0779-4555-a87c-b672a635cda0",
-      "created_at": "2026-01-05T23:05:28.806335+00:00"
-    },
-    {
-      "id": "17e0c02d-5c10-44d5-8e4c-3a76b6a300fe",
-      "upcoming_order_id": "f1c2428a-219c-473d-ad56-c17520442131",
-      "vendor_id": "4d35b74d-0779-4555-a87c-b672a635cda0",
-      "created_at": "2026-01-05T23:05:30.082524+00:00"
     }
   ],
   "upcomingOrderItems": [
+    {
+      "id": "747270ae-09c7-4492-a4c4-4e7b59da6208",
+      "upcoming_order_id": "b329077e-d020-4d30-b59a-87ccf31fedd6",
+      "vendor_selection_id": "9fc59ae5-ce3d-452c-81bb-683e399860ed",
+      "menu_item_id": "6e89bfc0-f336-4e8e-99e9-33cf820095f1",
+      "quantity": 5,
+      "unit_value": 3,
+      "total_value": 15,
+      "created_at": "2026-01-05T23:13:44.17845+00:00"
+    },
+    {
+      "id": "d78b2987-5aa3-49e0-b775-3c3af9ef6a6b",
+      "upcoming_order_id": "b329077e-d020-4d30-b59a-87ccf31fedd6",
+      "vendor_selection_id": "9fc59ae5-ce3d-452c-81bb-683e399860ed",
+      "menu_item_id": "e9ce1fdf-28e5-46dd-ba16-0603468cef43",
+      "quantity": 4,
+      "unit_value": 4,
+      "total_value": 16,
+      "created_at": "2026-01-05T23:13:44.315892+00:00"
+    },
     {
       "id": "c2a887c1-6dd6-4422-b5b0-e68e38fbc5f4",
       "upcoming_order_id": "379c90ea-bee8-4df8-ab67-35c74bec5184",
@@ -305,6 +325,26 @@
       "unit_value": 4,
       "total_value": 4,
       "created_at": "2026-01-04T21:40:55.219817+00:00"
+    },
+    {
+      "id": "cbf1b06c-7b8c-4d81-a92e-799fd88a5eac",
+      "upcoming_order_id": "b329077e-d020-4d30-b59a-87ccf31fedd6",
+      "vendor_selection_id": "8dfcf0ef-0094-400a-90ba-2b68506de22d",
+      "menu_item_id": "9f4378d4-458c-4f82-a7a8-1e19e4b64f71",
+      "quantity": 4,
+      "unit_value": 15,
+      "total_value": 60,
+      "created_at": "2026-01-05T23:13:44.674822+00:00"
+    },
+    {
+      "id": "5ad8e7d1-d21f-4c0d-be07-45e20079f1a0",
+      "upcoming_order_id": "e2881389-ad47-4c0c-8ab7-1c32a6bffd04",
+      "vendor_selection_id": "f30c02fd-35c7-462a-bc55-55a8c6fbe83e",
+      "menu_item_id": "f44aa11b-137d-427a-b157-bfd4878e1dcf",
+      "quantity": 4,
+      "unit_value": 20,
+      "total_value": 80,
+      "created_at": "2026-01-05T23:13:46.032381+00:00"
     },
     {
       "id": "0b8235ef-7a37-4515-8d4d-e7fad568bccf",
@@ -375,46 +415,6 @@
       "unit_value": 20,
       "total_value": 20,
       "created_at": "2026-01-05T23:00:40.767254+00:00"
-    },
-    {
-      "id": "17bbe468-1dee-49dd-9236-2e58ae2d72c4",
-      "upcoming_order_id": "b329077e-d020-4d30-b59a-87ccf31fedd6",
-      "vendor_selection_id": "f42d36a2-262f-42ff-9484-4419e4cd3adf",
-      "menu_item_id": "6e89bfc0-f336-4e8e-99e9-33cf820095f1",
-      "quantity": 5,
-      "unit_value": 3,
-      "total_value": 15,
-      "created_at": "2026-01-05T23:05:28.539615+00:00"
-    },
-    {
-      "id": "928c44f4-057d-40eb-af8f-bdf4be26189f",
-      "upcoming_order_id": "b329077e-d020-4d30-b59a-87ccf31fedd6",
-      "vendor_selection_id": "f42d36a2-262f-42ff-9484-4419e4cd3adf",
-      "menu_item_id": "e9ce1fdf-28e5-46dd-ba16-0603468cef43",
-      "quantity": 1,
-      "unit_value": 4,
-      "total_value": 4,
-      "created_at": "2026-01-05T23:05:28.679356+00:00"
-    },
-    {
-      "id": "d6e68154-cbfc-4374-8ac7-3f38ad7ddf56",
-      "upcoming_order_id": "b329077e-d020-4d30-b59a-87ccf31fedd6",
-      "vendor_selection_id": "a507a8da-66d4-4b41-9362-a4ae27ad122b",
-      "menu_item_id": "f44aa11b-137d-427a-b157-bfd4878e1dcf",
-      "quantity": 7,
-      "unit_value": 20,
-      "total_value": 140,
-      "created_at": "2026-01-05T23:05:28.980224+00:00"
-    },
-    {
-      "id": "10aa04b1-da69-4c34-b0a3-e290c776940e",
-      "upcoming_order_id": "f1c2428a-219c-473d-ad56-c17520442131",
-      "vendor_selection_id": "17e0c02d-5c10-44d5-8e4c-3a76b6a300fe",
-      "menu_item_id": "9f4378d4-458c-4f82-a7a8-1e19e4b64f71",
-      "quantity": 4,
-      "unit_value": 15,
-      "total_value": 60,
-      "created_at": "2026-01-05T23:05:30.247384+00:00"
     },
     {
       "id": "ea56baae-5f3b-430b-8e77-10617e6c263a",
@@ -491,5 +491,5 @@
       }
     }
   ],
-  "lastSynced": "2026-01-05T23:05:31.085Z"
+  "lastSynced": "2026-01-05T23:18:06.365Z"
 }

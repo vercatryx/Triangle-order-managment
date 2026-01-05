@@ -2087,7 +2087,7 @@ async function syncSingleOrderForDeliveryDay(
 
         if (error) {
             console.error('[syncSingleOrderForDeliveryDay] Error updating upcoming order:', error);
-            return;
+            throw new Error(`Failed to update upcoming order: ${error.message}`);
         }
         upcomingOrderId = data.id;
     } else {
@@ -2100,7 +2100,7 @@ async function syncSingleOrderForDeliveryDay(
 
         if (error) {
             console.error('[syncSingleOrderForDeliveryDay] Error creating upcoming order:', error);
-            return;
+            throw new Error(`Failed to create upcoming order: ${error.message}`);
         }
         upcomingOrderId = data.id;
     }
@@ -2331,6 +2331,8 @@ export async function syncCurrentOrderToUpcoming(clientId: string, client: Clien
         supabaseClient = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, serviceRoleKey, {
             auth: { persistSession: false }
         });
+    } else {
+        console.warn('[syncCurrentOrderToUpcoming] Service role key not found - using regular client (may be blocked by RLS)');
     }
 
     // 1. DRAFT PERSISTENCE: Save the raw activeOrder metadata to the clients table.
@@ -2338,10 +2340,15 @@ export async function syncCurrentOrderToUpcoming(clientId: string, client: Clien
     // full sync to upcoming_orders fails (e.g. if the vendor/delivery day isn't fully set yet).
     if (!skipClientUpdate && client.activeOrder) {
         const currentTime = await getCurrentTime();
-        await supabaseClient.from('clients').update({
+        const { error: updateError } = await supabaseClient.from('clients').update({
             active_order: client.activeOrder,
             updated_at: currentTime.toISOString()
         }).eq('id', clientId);
+        
+        if (updateError) {
+            console.error('[syncCurrentOrderToUpcoming] Error updating clients.active_order:', updateError);
+            throw new Error(`Failed to save order: ${updateError.message}`);
+        }
         revalidatePath('/clients');
     }
 
@@ -4276,6 +4283,8 @@ export async function invalidateOrderData(path?: string) {
 
 export async function getOrdersPaginated(page: number, pageSize: number, filter?: 'needs-vendor') {
     // For the Orders tab, show orders from the orders table
+    // Exclude billing_pending orders (those should only show on billing page)
+    // Only show scheduled orders (orders with scheduled_delivery_date)
     let query = supabase
         .from('orders')
         .select(`
@@ -4283,7 +4292,9 @@ export async function getOrdersPaginated(page: number, pageSize: number, filter?
             clients (
                 full_name
             )
-        `, { count: 'exact' });
+        `, { count: 'exact' })
+        .neq('status', 'billing_pending')
+        .not('scheduled_delivery_date', 'is', null);
 
     // If filtering for orders needing vendor assignment, only get Boxes orders with null vendor_id in box_selections
     if (filter === 'needs-vendor') {

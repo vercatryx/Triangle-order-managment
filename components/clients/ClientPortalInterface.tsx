@@ -338,10 +338,12 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
             setSaving(false);
             setMessage('Saved');
             setTimeout(() => setMessage(null), 2000);
-        } catch (error) {
+        } catch (error: any) {
             console.error('Error saving Service Configuration:', error);
             setSaving(false);
-            setMessage('Error saving');
+            const errorMessage = error?.message || 'Error saving';
+            setMessage(errorMessage);
+            setTimeout(() => setMessage(null), 5000);
         }
     };
 
@@ -1261,14 +1263,14 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
                     )}
 
                     {/* Spacer to prevent content from being hidden behind fixed save bar */}
-                    {configChanged && !saving && (
+                    {(configChanged || saving) && (
                         <div style={{ height: 'clamp(140px, 20vh, 200px)' }} />
                     )}
                 </div>
             </div>
 
             {/* Fixed Floating Save Section at Bottom of Viewport */}
-            {configChanged && !saving && (
+            {(configChanged || saving) && (
                 <>
                     <style>{`
                         @media (max-width: 768px) {
@@ -1342,9 +1344,9 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
                         bottom: 0,
                         left: 0,
                         right: 0,
-                        backgroundColor: '#fef3c7',
-                        borderTop: '4px solid #f59e0b',
-                        boxShadow: '0 -10px 30px -5px rgba(245, 158, 11, 0.4)',
+                        backgroundColor: saving ? '#d1fae5' : '#fef3c7',
+                        borderTop: saving ? '4px solid #10b981' : '4px solid #f59e0b',
+                        boxShadow: saving ? '0 -10px 30px -5px rgba(16, 185, 129, 0.4)' : '0 -10px 30px -5px rgba(245, 158, 11, 0.4)',
                         zIndex: 1000,
                         backdropFilter: 'blur(10px)'
                     }}>
@@ -1360,56 +1362,100 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
                                 alignItems: 'center',
                                 flex: 1
                             }}>
-                                <AlertTriangle className="save-bar-icon" size={24} style={{ color: '#92400e', flexShrink: 0 }} />
-                                <div style={{ flex: 1 }}>
-                                    <div className="save-bar-title" style={{
-                                        fontWeight: 700,
-                                        color: '#92400e',
-                                        marginBottom: '0.25rem'
-                                    }}>
-                                        ⚠️ UNSAVED CHANGES
-                                    </div>
-                                    <div className="save-bar-message" style={{
-                                        color: '#78350f',
-                                        fontWeight: 600
-                                    }}>
-                                        Your changes will NOT be saved unless you click "Save Changes"
-                                    </div>
-                                </div>
+                                {saving ? (
+                                    <>
+                                        <Loader2 className="save-bar-icon animate-spin" size={24} style={{ color: '#059669', flexShrink: 0 }} />
+                                        <div style={{ flex: 1 }}>
+                                            <div className="save-bar-title" style={{
+                                                fontWeight: 700,
+                                                color: '#059669',
+                                                marginBottom: '0.25rem'
+                                            }}>
+                                                💾 SAVING CHANGES...
+                                            </div>
+                                            <div className="save-bar-message" style={{
+                                                color: '#047857',
+                                                fontWeight: 600
+                                            }}>
+                                                Please wait while your changes are being saved to the database
+                                            </div>
+                                        </div>
+                                    </>
+                                ) : (
+                                    <>
+                                        <AlertTriangle className="save-bar-icon" size={24} style={{ color: '#92400e', flexShrink: 0 }} />
+                                        <div style={{ flex: 1 }}>
+                                            <div className="save-bar-title" style={{
+                                                fontWeight: 700,
+                                                color: '#92400e',
+                                                marginBottom: '0.25rem'
+                                            }}>
+                                                ⚠️ UNSAVED CHANGES
+                                            </div>
+                                            <div className="save-bar-message" style={{
+                                                color: '#78350f',
+                                                fontWeight: 600
+                                            }}>
+                                                Your changes will NOT be saved unless you click "Save Changes"
+                                            </div>
+                                        </div>
+                                    </>
+                                )}
                             </div>
                             <div className="save-bar-buttons" style={{ display: 'flex', flexWrap: 'wrap' }}>
                                 <button
                                     onClick={handleDiscard}
+                                    disabled={saving}
                                     className="btn btn-secondary save-bar-button"
                                     style={{
                                         fontWeight: 600,
-                                        border: '2px solid var(--border-color)'
+                                        border: '2px solid var(--border-color)',
+                                        opacity: saving ? 0.5 : 1,
+                                        cursor: saving ? 'not-allowed' : 'pointer'
                                     }}
                                 >
                                     Discard
                                 </button>
                                 <button
                                     onClick={handleSave}
+                                    disabled={saving}
                                     className="btn btn-primary save-bar-button save-bar-button-primary"
                                     style={{
                                         fontWeight: 700,
-                                        boxShadow: '0 8px 16px -4px rgba(0, 0, 0, 0.3)',
-                                        backgroundColor: '#f59e0b',
-                                        border: '2px solid #d97706',
+                                        boxShadow: saving ? '0 4px 8px -2px rgba(0, 0, 0, 0.2)' : '0 8px 16px -4px rgba(0, 0, 0, 0.3)',
+                                        backgroundColor: saving ? '#10b981' : '#f59e0b',
+                                        border: saving ? '2px solid #059669' : '2px solid #d97706',
                                         color: '#1f2937',
-                                        transform: 'scale(1.05)',
-                                        transition: 'all 0.2s'
+                                        transform: saving ? 'scale(1)' : 'scale(1.05)',
+                                        transition: 'all 0.2s',
+                                        opacity: saving ? 0.9 : 1,
+                                        cursor: saving ? 'wait' : 'pointer',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        gap: '8px',
+                                        justifyContent: 'center'
                                     }}
                                     onMouseEnter={(e) => {
-                                        e.currentTarget.style.transform = 'scale(1.08)';
-                                        e.currentTarget.style.boxShadow = '0 12px 24px -4px rgba(0, 0, 0, 0.4)';
+                                        if (!saving) {
+                                            e.currentTarget.style.transform = 'scale(1.08)';
+                                            e.currentTarget.style.boxShadow = '0 12px 24px -4px rgba(0, 0, 0, 0.4)';
+                                        }
                                     }}
                                     onMouseLeave={(e) => {
-                                        e.currentTarget.style.transform = 'scale(1.05)';
-                                        e.currentTarget.style.boxShadow = '0 8px 16px -4px rgba(0, 0, 0, 0.3)';
+                                        if (!saving) {
+                                            e.currentTarget.style.transform = 'scale(1.05)';
+                                            e.currentTarget.style.boxShadow = '0 8px 16px -4px rgba(0, 0, 0, 0.3)';
+                                        }
                                     }}
                                 >
-                                     SAVE CHANGES
+                                    {saving ? (
+                                        <>
+                                            <Loader2 className="animate-spin" size={20} />
+                                            SAVING...
+                                        </>
+                                    ) : (
+                                        'SAVE CHANGES'
+                                    )}
                                 </button>
                             </div>
                         </div>
