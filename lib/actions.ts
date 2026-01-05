@@ -1,5 +1,6 @@
 'use server';
 
+import { getCurrentTime } from './time';
 import { revalidatePath } from 'next/cache';
 import { supabase } from './supabase';
 import { ClientStatus, Vendor, MenuItem, BoxType, AppSettings, Navigator, Nutritionist, ClientProfile, DeliveryRecord, ItemCategory, BoxQuota, ServiceType, Equipment } from './types';
@@ -94,7 +95,8 @@ export async function getVendors() {
         deliveryDays: v.delivery_days || [],
         allowsMultipleDeliveries: v.delivery_frequency === 'Multiple',
         isActive: v.is_active,
-        minimumMeals: v.minimum_meals ?? 0
+        minimumMeals: v.minimum_meals ?? 0,
+        cutoffHours: v.cutoff_hours ?? 0
     }));
 }
 
@@ -110,7 +112,8 @@ export async function getVendor(id: string) {
         deliveryDays: v.delivery_days || [],
         allowsMultipleDeliveries: v.delivery_frequency === 'Multiple',
         isActive: v.is_active,
-        minimumMeals: v.minimum_meals ?? 0
+        minimumMeals: v.minimum_meals ?? 0,
+        cutoffHours: v.cutoff_hours ?? 0
     };
 }
 
@@ -121,7 +124,8 @@ export async function addVendor(data: Omit<Vendor, 'id'> & { password?: string; 
         delivery_days: data.deliveryDays,
         delivery_frequency: data.allowsMultipleDeliveries ? 'Multiple' : 'Once',
         is_active: data.isActive,
-        minimum_meals: data.minimumMeals ?? 0
+        minimum_meals: data.minimumMeals ?? 0,
+        cutoff_hours: data.cutoffHours ?? 0
     };
 
     if (data.email !== undefined && data.email !== null) {
@@ -150,6 +154,7 @@ export async function updateVendor(id: string, data: Partial<Vendor & { password
     }
     if (data.isActive !== undefined) payload.is_active = data.isActive;
     if (data.minimumMeals !== undefined) payload.minimum_meals = data.minimumMeals;
+    if (data.cutoffHours !== undefined) payload.cutoff_hours = data.cutoffHours;
     if (data.email !== undefined) {
         // Trim email and set to null if empty string
         const trimmedEmail = data.email?.trim() || '';
@@ -333,7 +338,8 @@ export async function saveEquipmentOrder(clientId: string, vendorId: string, equ
     let scheduledDeliveryDate: Date | null = null;
 
     if (vendor && vendor.deliveryDays && vendor.deliveryDays.length > 0) {
-        const today = new Date();
+        const today = await getCurrentTime();
+        // Reset to start of day for accurate day-of-week adding
         today.setHours(0, 0, 0, 0);
         const dayNameToNumber: { [key: string]: number } = {
             'Sunday': 0, 'Monday': 1, 'Tuesday': 2, 'Wednesday': 3,
@@ -368,7 +374,7 @@ export async function saveEquipmentOrder(clientId: string, vendorId: string, equ
         service_type: 'Equipment',
         case_id: caseId || null,
         status: 'pending',
-        last_updated: new Date().toISOString(),
+        last_updated: (await getCurrentTime()).toISOString(),
         updated_by: currentUserName,
         scheduled_delivery_date: scheduledDeliveryDate ? scheduledDeliveryDate.toISOString().split('T')[0] : null,
         total_value: equipmentItem.price,
@@ -523,7 +529,8 @@ export async function getSettings() {
     return {
         weeklyCutoffDay: data.weekly_cutoff_day,
         weeklyCutoffTime: data.weekly_cutoff_time,
-        reportEmail: data.report_email || ''
+        reportEmail: data.report_email || '',
+        enablePasswordlessLogin: data.enable_passwordless_login
     };
 }
 
@@ -539,7 +546,8 @@ export async function updateSettings(settings: AppSettings) {
         .update({
             weekly_cutoff_day: settings.weeklyCutoffDay,
             weekly_cutoff_time: settings.weeklyCutoffTime,
-            report_email: settings.reportEmail || null
+            report_email: settings.reportEmail || null,
+            enable_passwordless_login: settings.enablePasswordlessLogin
         })
         .neq('id', '00000000-0000-0000-0000-000000000000'); // Hack to update all rows
 
@@ -681,6 +689,8 @@ function mapClientFromDB(c: any): ClientProfile {
         serviceType: c.service_type as any,
         approvedMealsPerWeek: c.approved_meals_per_week,
         parentClientId: c.parent_client_id || null,
+        dob: c.dob || null,
+        cin: c.cin ?? null,
         authorizedAmount: c.authorized_amount ?? null,
         expirationDate: c.expiration_date || null,
         activeOrder: c.active_order, // Metadata matches structure
@@ -766,7 +776,7 @@ export async function addClient(data: Omit<ClientProfile, 'id' | 'createdAt' | '
     return newClient;
 }
 
-export async function addDependent(name: string, parentClientId: string) {
+export async function addDependent(name: string, parentClientId: string, dob?: string | null, cin?: number | null) {
     if (!name.trim() || !parentClientId) {
         throw new Error('Dependent name and parent client are required');
     }
@@ -796,7 +806,9 @@ export async function addDependent(name: string, parentClientId: string) {
         authorized_amount: null,
         expiration_date: null,
         active_order: {},
-        parent_client_id: parentClientId
+        parent_client_id: parentClientId,
+        dob: dob || null,
+        cin: cin ?? null
     };
 
     const { data: res, error } = await supabase.from('clients').insert([payload]).select().single();
@@ -880,6 +892,8 @@ export async function updateClient(id: string, data: Partial<ClientProfile>) {
     if (data.serviceType) payload.service_type = data.serviceType;
     if (data.approvedMealsPerWeek !== undefined) payload.approved_meals_per_week = data.approvedMealsPerWeek;
     if (data.parentClientId !== undefined) payload.parent_client_id = data.parentClientId || null;
+    if (data.dob !== undefined) payload.dob = data.dob || null;
+    if (data.cin !== undefined) payload.cin = data.cin ?? null;
     if (data.authorizedAmount !== undefined) payload.authorized_amount = data.authorizedAmount ?? null;
     if (data.expirationDate !== undefined) payload.expiration_date = data.expirationDate || null;
     if (data.activeOrder) payload.active_order = data.activeOrder;

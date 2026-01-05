@@ -1,9 +1,10 @@
 /**
  * Weekly Locking Logic (Authoritative Implementation)
  * 
- * The system evaluates order changes using weekly blocks, not individual delivery dates.
- * A week is strictly defined as: Sunday at 12:00 AM through Saturday at 11:59 PM
- * Weeks always reset on Sunday and are never calculated by counting forward seven days.
+ * Rules:
+ * 1. Active Week (Sunday-Saturday containing current date) is ALWAYS locked.
+ * 2. Cutoff determines if the NEXT week is locked.
+ * 3. Cutoff applies to the occurrence of the cutoff day/time in the week BEFORE the next week (i.e., within the active week).
  */
 
 import { AppSettings } from './types';
@@ -14,13 +15,13 @@ import { AppSettings } from './types';
 export function getWeekStart(date: Date): Date {
     const d = new Date(date);
     d.setHours(0, 0, 0, 0);
-    
+
     // Get day of week (0 = Sunday, 6 = Saturday)
     const day = d.getDay();
-    
+
     // Calculate days to subtract to get to Sunday
     const daysToSunday = day === 0 ? 0 : day;
-    
+
     d.setDate(d.getDate() - daysToSunday);
     return d;
 }
@@ -45,210 +46,170 @@ export function isDateInWeek(date: Date, weekStart: Date): boolean {
 }
 
 /**
- * Get the cutoff datetime for the current time period
- * Returns a Date object representing when the cutoff occurs
+ * Get the cutoff datetime for a specific effective week.
+ * The cutoff is the designated day/time in the week PRIOR to the effective week.
  */
-function getCutoffDateTime(settings: AppSettings, referenceDate: Date): Date {
-    const cutoffDayName = settings.weeklyCutoffDay;
-    const cutoffTimeStr = settings.weeklyCutoffTime || '17:00';
+function getCutoffForEffectiveWeek(settings: AppSettings, effectiveWeekStart: Date): Date {
+    // The cutoff is in the week BEFORE the effective week
+    // So if effective week starts Sunday Jan 11, the cutoff is in the week of Jan 4-10.
+    const weekBeforeStart = new Date(effectiveWeekStart);
+    weekBeforeStart.setDate(effectiveWeekStart.getDate() - 7);
+
+    const cutoffDayName = settings.weeklyCutoffDay || 'Friday';
+    const cutoffTimeStr = settings.weeklyCutoffTime || '12:00'; // Default to noon as per example if missing
     const [cutoffHours, cutoffMinutes] = cutoffTimeStr.split(':').map(Number);
 
     const dayNameToNumber: { [key: string]: number } = {
-        'Sunday': 0,
-        'Monday': 1,
-        'Tuesday': 2,
-        'Wednesday': 3,
-        'Thursday': 4,
-        'Friday': 5,
-        'Saturday': 6
+        'Sunday': 0, 'Monday': 1, 'Tuesday': 2, 'Wednesday': 3,
+        'Thursday': 4, 'Friday': 5, 'Saturday': 6
     };
 
-    const cutoffDayNumber = dayNameToNumber[cutoffDayName];
-    if (cutoffDayNumber === undefined) {
-        throw new Error(`Invalid cutoff day: ${cutoffDayName}`);
-    }
+    const cutoffDayNumber = dayNameToNumber[cutoffDayName] ?? 5; // Default Friday
 
-    // Find the most recent cutoff occurrence before or on the reference date
-    const cutoffDate = new Date(referenceDate);
+    // Calculate the actual date of the cutoff
+    const cutoffDate = new Date(weekBeforeStart);
+    // Move to the correct day of that week
+    // weekBeforeStart is Sunday. Add offset.
+    cutoffDate.setDate(weekBeforeStart.getDate() + cutoffDayNumber);
     cutoffDate.setHours(cutoffHours, cutoffMinutes, 0, 0);
-    
-    // If reference date's time is before cutoff time on the same day, we need to go back
-    let daysBack = 0;
-    while (daysBack < 14) {
-        const checkDate = new Date(referenceDate);
-        checkDate.setDate(referenceDate.getDate() - daysBack);
-        checkDate.setHours(cutoffHours, cutoffMinutes, 0, 0);
-        
-        if (checkDate.getDay() === cutoffDayNumber && checkDate <= referenceDate) {
-            cutoffDate.setTime(checkDate.getTime());
-            break;
-        }
-        daysBack++;
-    }
 
     return cutoffDate;
 }
 
 /**
- * Determine which week is locked based on the cutoff settings and current time.
- * Returns the start date (Sunday) of the locked week, or null if no week is locked.
+ * Check if a delivery date is locked.
  * 
- * Rules:
- * - If cutoff is reached before Sunday (i.e., cutoff day is Saturday or earlier in the week), 
- *   the next full week (Sunday–Saturday) is locked
- * - If cutoff is reached on Sunday or later, the current week (from cutoff forward) is locked
- */
-export function getLockedWeekStart(settings: AppSettings, currentTime: Date = new Date()): Date | null {
-    const cutoffDateTime = getCutoffDateTime(settings, currentTime);
-    
-    // If cutoff hasn't been reached yet, no week is locked
-    if (currentTime < cutoffDateTime) {
-        return null;
-    }
-
-    const cutoffDayOfWeek = cutoffDateTime.getDay();
-    const cutoffWeekStart = getWeekStart(cutoffDateTime);
-
-    // If cutoff occurred before Sunday (Saturday or earlier), lock the NEXT week
-    // If cutoff occurred on Sunday or later, lock the CURRENT week
-    if (cutoffDayOfWeek === 6) {
-        // Cutoff on Saturday - lock the next week
-        const nextWeekStart = new Date(cutoffWeekStart);
-        nextWeekStart.setDate(cutoffWeekStart.getDate() + 7);
-        return nextWeekStart;
-    } else if (cutoffDayOfWeek === 0) {
-        // Cutoff on Sunday - lock the current week (the week starting on this Sunday)
-        return cutoffWeekStart;
-    } else {
-        // Cutoff on Monday-Friday - lock the current week (the week containing the cutoff)
-        return cutoffWeekStart;
-    }
-}
-
-/**
- * Check if a delivery date falls within a locked week
+ * Logic:
+ * 1. If date is in the past: LOCKED.
+ * 2. If date is in the Active Week (current week): LOCKED.
+ * 3. If date is in the Next Week (Active Week + 1):
+ *    - Check against Cutoff. 
+ *    - Cutoff for Next Week is simply the configured day/time in the Active Week.
+ *    - If Current Time > Cutoff: LOCKED.
+ *    - Else: OPEN.
+ * 4. If date is > Next Week (Active Week + 2 or more): OPEN.
  */
 export function isDeliveryDateLocked(
     deliveryDate: Date,
     settings: AppSettings,
     currentTime: Date = new Date()
 ): boolean {
-    const lockedWeekStart = getLockedWeekStart(settings, currentTime);
-    
-    if (!lockedWeekStart) {
-        return false; // No week is locked
+    const activeWeekStart = getWeekStart(currentTime);
+    const activeWeekEnd = getWeekEnd(currentTime);
+
+    // 1. Check if date is in the past (before active week start)
+    if (deliveryDate < activeWeekStart) {
+        return true;
     }
 
-    return isDateInWeek(deliveryDate, lockedWeekStart);
+    // 2. Check if date is in the Active Week
+    if (deliveryDate <= activeWeekEnd) {
+        return true; // Active week is ALWAYS locked
+    }
+
+    const nextWeekStart = new Date(activeWeekStart);
+    nextWeekStart.setDate(activeWeekStart.getDate() + 7);
+
+    // Check if delivery date is in the "Next Week" (Active Week + 1)
+    if (isDateInWeek(deliveryDate, nextWeekStart)) {
+        // 3. Check Cutoff for this Next Week
+        // The cutoff for Next Week occurs in the Active Week.
+        const cutoff = getCutoffForEffectiveWeek(settings, nextWeekStart);
+
+        // If current time is AFTER cutoff, then Next Week is locked.
+        if (currentTime > cutoff) {
+            return true;
+        }
+        return false;
+    }
+
+    // 4. If date is further in future (Active Week + 2 or more)
+    // It is open.
+    return false;
 }
 
 /**
  * Check if ANY delivery date in a set is locked
- * This enforces the rule: "If any delivery in a week is blocked, then all deliveries in that week must be blocked"
  */
 export function areAnyDeliveriesLocked(
     deliveryDates: Date[],
     settings: AppSettings,
     currentTime: Date = new Date()
 ): boolean {
-    if (deliveryDates.length === 0) {
-        return false;
-    }
-
-    // Group deliveries by week
-    const deliveriesByWeek = new Map<string, Date[]>();
-    
-    for (const deliveryDate of deliveryDates) {
-        const weekStart = getWeekStart(deliveryDate);
-        const weekKey = weekStart.toISOString();
-        
-        if (!deliveriesByWeek.has(weekKey)) {
-            deliveriesByWeek.set(weekKey, []);
-        }
-        deliveriesByWeek.get(weekKey)!.push(deliveryDate);
-    }
-
-    // Check if any week containing deliveries is locked
-    for (const [weekKey, dates] of deliveriesByWeek) {
-        const weekStart = new Date(weekKey);
-        
-        // Check if any delivery in this week falls in a locked week
-        for (const deliveryDate of dates) {
-            if (isDeliveryDateLocked(deliveryDate, settings, currentTime)) {
-                // This week is locked - all deliveries in this week must be considered locked
-                return true;
-            }
+    for (const date of deliveryDates) {
+        if (isDeliveryDateLocked(date, settings, currentTime)) {
+            return true;
         }
     }
-
     return false;
 }
 
 /**
- * Calculate the earliest effective date for order changes.
- * The earliest effective date is always a Sunday.
+ * Calculate the earliest effective date (always a Sunday).
  * 
- * If a week is locked:
- * - Return the Sunday following the locked week
- * If no week is locked:
- * - Return the upcoming Sunday (or current Sunday if it's still Sunday and before cutoff)
+ * Logic:
+ * 1. Determine Active Week.
+ * 2. Determine Next Week (Active + 1).
+ * 3. Check Cutoff for Next Week.
+ * 4. If Current Time <= Cutoff:
+ *    - Changes can take effect in Next Week.
+ *    - Return Next Week Start.
+ * 5. If Current Time > Cutoff:
+ *    - Next Week is locked.
+ *    - Changes take effect in Week After Next (Active + 2).
+ *    - Return (Next Week Start + 7 days).
  */
 export function getEarliestEffectiveDate(
     settings: AppSettings,
     currentTime: Date = new Date()
 ): Date {
-    const lockedWeekStart = getLockedWeekStart(settings, currentTime);
-    
-    if (!lockedWeekStart) {
-        // No week is locked - earliest effective date is the upcoming Sunday
-        const todayWeekStart = getWeekStart(currentTime);
-        const todayDayOfWeek = currentTime.getDay();
-        
-        // If today is Sunday and before cutoff, we can still make changes for this week
-        // Otherwise, the earliest effective date is next Sunday
-        if (todayDayOfWeek === 0) {
-            const cutoffDateTime = getCutoffDateTime(settings, currentTime);
-            if (currentTime < cutoffDateTime) {
-                // Still before cutoff on Sunday - can make changes for this week
-                return todayWeekStart;
-            }
-        }
-        
-        // Next Sunday
-        const nextSunday = new Date(todayWeekStart);
-        nextSunday.setDate(todayWeekStart.getDate() + 7);
-        return nextSunday;
-    }
+    const activeWeekStart = getWeekStart(currentTime);
+    const nextWeekStart = new Date(activeWeekStart);
+    nextWeekStart.setDate(activeWeekStart.getDate() + 7);
 
-    // A week is locked - earliest effective date is the Sunday after the locked week
-    const sundayAfterLockedWeek = new Date(lockedWeekStart);
-    sundayAfterLockedWeek.setDate(lockedWeekStart.getDate() + 7);
-    return sundayAfterLockedWeek;
+    const cutoffForNextWeek = getCutoffForEffectiveWeek(settings, nextWeekStart);
+
+    if (currentTime <= cutoffForNextWeek) {
+        return nextWeekStart;
+    } else {
+        const weekAfterNextStart = new Date(nextWeekStart);
+        weekAfterNextStart.setDate(nextWeekStart.getDate() + 7);
+        return weekAfterNextStart;
+    }
 }
 
 /**
- * Get the locked week range as a human-readable string
+ * Get the locked week description for display.
+ * This is slightly nuanced now because "Locked Week" could mean just Active Week
+ * OR Active Week + Next Week depending on cutoff.
  */
 export function getLockedWeekDescription(
     settings: AppSettings,
     currentTime: Date = new Date()
 ): string | null {
-    const lockedWeekStart = getLockedWeekStart(settings, currentTime);
-    
-    if (!lockedWeekStart) {
-        return null;
+    const activeWeekStart = getWeekStart(currentTime);
+    const activeWeekEnd = getWeekEnd(currentTime);
+
+    const nextWeekStart = new Date(activeWeekStart);
+    nextWeekStart.setDate(activeWeekStart.getDate() + 7);
+    const nextWeekEnd = getWeekEnd(nextWeekStart);
+
+    const cutoffForNextWeek = getCutoffForEffectiveWeek(settings, nextWeekStart);
+
+    let lockedEnd = activeWeekEnd;
+
+    // If we passed the cutoff, then next week is ALSO locked
+    if (currentTime > cutoffForNextWeek) {
+        lockedEnd = nextWeekEnd;
     }
 
-    const lockedWeekEnd = getWeekEnd(lockedWeekStart);
-    
     const formatDate = (date: Date) => {
-        return date.toLocaleDateString('en-US', { 
-            weekday: 'long', 
-            month: 'long', 
-            day: 'numeric' 
+        return date.toLocaleDateString('en-US', {
+            weekday: 'long',
+            month: 'long',
+            day: 'numeric'
         });
     };
 
-    return `${formatDate(lockedWeekStart)} - ${formatDate(lockedWeekEnd)}`;
+    return `${formatDate(activeWeekStart)} - ${formatDate(lockedEnd)}`;
 }
-

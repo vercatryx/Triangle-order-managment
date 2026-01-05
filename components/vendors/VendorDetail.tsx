@@ -111,7 +111,8 @@ export function VendorDetail({ vendorId, isVendorView, vendor: initialVendor }: 
             return new Date(dateString).toLocaleDateString('en-US', {
                 month: 'short',
                 day: 'numeric',
-                year: 'numeric'
+                year: 'numeric',
+                timeZone: 'UTC'
             });
         } catch {
             return dateString;
@@ -254,7 +255,7 @@ export function VendorDetail({ vendorId, isVendorView, vendor: initialVendor }: 
                     </div>
                     {validItemEntries.map(([itemId, quantityOrObj]: [string, any]) => {
                         const menuItem = menuItems.find(mi => mi.id === itemId);
-                        
+
                         // Handle both formats: { itemId: quantity } or { itemId: { quantity: X, price: Y } }
                         let qty = 0;
                         if (typeof quantityOrObj === 'number') {
@@ -282,7 +283,7 @@ export function VendorDetail({ vendorId, isVendorView, vendor: initialVendor }: 
         } else if (order.service_type === 'Equipment') {
             // Equipment orders - details from equipmentSelection or notes
             let equipmentDetails = order.equipmentSelection;
-            
+
             // If not in equipmentSelection, try to parse from notes
             if (!equipmentDetails && order.notes) {
                 try {
@@ -351,7 +352,7 @@ export function VendorDetail({ vendorId, isVendorView, vendor: initialVendor }: 
             }
             const items = boxSelection.items || {};
             const itemEntries = Object.entries(items);
-            
+
             // Filter out entries with zero quantity and handle both formats
             const validItemEntries = itemEntries.filter(([itemId, quantityOrObj]: [string, any]) => {
                 let qty = 0;
@@ -364,7 +365,7 @@ export function VendorDetail({ vendorId, isVendorView, vendor: initialVendor }: 
                 }
                 return qty > 0;
             });
-            
+
             if (validItemEntries.length === 0) {
                 const boxTypeName = getBoxTypeName(boxSelection.box_type_id);
                 return `Box Type: ${boxTypeName} (Quantity: ${boxSelection.quantity || 1})`;
@@ -373,7 +374,7 @@ export function VendorDetail({ vendorId, isVendorView, vendor: initialVendor }: 
             const itemStrings = validItemEntries.map(([itemId, quantityOrObj]: [string, any]) => {
                 const menuItem = menuItems.find(mi => mi.id === itemId);
                 const itemName = menuItem?.name || 'Unknown Item';
-                
+
                 // Handle both formats: { itemId: quantity } or { itemId: { quantity: X, price: Y } }
                 let qty = 0;
                 if (typeof quantityOrObj === 'number') {
@@ -383,14 +384,14 @@ export function VendorDetail({ vendorId, isVendorView, vendor: initialVendor }: 
                 } else {
                     qty = parseInt(quantityOrObj) || 0;
                 }
-                
+
                 return `${itemName} (Qty: ${qty})`;
             });
             return `Box Type: ${boxTypeName} (Box Qty: ${boxSelection.quantity || 1}); Items: ${itemStrings.join('; ')}`;
         } else if (order.service_type === 'Equipment') {
             // Equipment orders - details from equipmentSelection or notes
             let equipmentDetails = order.equipmentSelection;
-            
+
             // If not in equipmentSelection, try to parse from notes
             if (!equipmentDetails && order.notes) {
                 try {

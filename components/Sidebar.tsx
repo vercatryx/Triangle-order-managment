@@ -65,7 +65,7 @@ function TimeWidget() {
                 gap: '0.5rem'
             }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
-                    <span style={{ fontWeight: 600, color: 'var(--primary-color)' }}>Set System Time</span>
+                    <span style={{ fontWeight: 600, color: 'var(--color-primary)' }}>Set System Time</span>
                     <button onClick={() => setIsEditing(false)} style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer' }}>
                         <X size={14} />
                     </button>
@@ -91,8 +91,8 @@ function TimeWidget() {
                         onClick={handleSave}
                         style={{
                             flex: 1,
-                            backgroundColor: 'var(--primary-color)',
-                            color: 'white',
+                            backgroundColor: 'var(--color-primary)',
+                            color: 'black',
                             border: 'none',
                             borderRadius: '0.25rem',
                             padding: '0.25rem',

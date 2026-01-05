@@ -974,34 +974,6 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
                             {saving && <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '4px' }}><Loader2 className="animate-spin" size={14} /> Saving...</span>}
                             {message && !saving && <span style={{ fontSize: '0.8rem', color: 'var(--color-success)' }}>{message}</span>}
                         </div>
-                        {configChanged && !saving && (
-                            <div style={{ display: 'flex', gap: '12px', marginTop: '4px' }}>
-                                <button
-                                    onClick={handleDiscard}
-                                    className="btn btn-secondary"
-                                    style={{
-                                        fontSize: '1rem',
-                                        padding: '10px 20px',
-                                        fontWeight: 600,
-                                        border: '1px solid var(--border-color)'
-                                    }}
-                                >
-                                    Discard
-                                </button>
-                                <button
-                                    onClick={handleSave}
-                                    className="btn btn-primary"
-                                    style={{
-                                        fontSize: '1rem',
-                                        padding: '10px 24px',
-                                        fontWeight: 600,
-                                        boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)'
-                                    }}
-                                >
-                                    Save Changes
-                                </button>
-                            </div>
-                        )}
                     </div>
 
                     <div className={styles.alert} style={{ marginBottom: '1rem' }}>
@@ -1009,44 +981,51 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
                         <div>
                             <div>Update your order preferences below.</div>
                             {(() => {
-                                // Only show date if there's a vendor set (for Boxes orders)
-                                // For Food orders, always show if date exists
-                                const hasVendor = client.serviceType === 'Food' ||
-                                    orderConfig?.vendorId ||
-                                    upcomingOrder?.vendorId ||
-                                    (client.serviceType === 'Boxes' && orderConfig?.boxTypeId && boxTypes.find(bt => bt.id === orderConfig.boxTypeId)?.vendorId);
+                                if (client.serviceType === 'Boxes') {
+                                    return (
+                                        <div style={{ marginTop: '0.5rem', fontSize: '0.9rem', fontWeight: 500 }}>
+                                            Your changes may not take effect until next week.
+                                        </div>
+                                    );
+                                }
 
-                                // Get take effect date from upcomingOrder (could be in different formats)
-                                let takeEffectDate = null;
-                                if (upcomingOrder && hasVendor) {
-                                    if (upcomingOrder.takeEffectDate) {
-                                        takeEffectDate = upcomingOrder.takeEffectDate;
-                                    } else if (typeof upcomingOrder === 'object' && !upcomingOrder.serviceType) {
-                                        // Multi-day format - get from first day
-                                        const firstDay = Object.keys(upcomingOrder)[0];
-                                        if (firstDay && (upcomingOrder as any)[firstDay]?.takeEffectDate) {
-                                            takeEffectDate = (upcomingOrder as any)[firstDay].takeEffectDate;
+                                if (client.serviceType === 'Food') {
+                                    const uniqueVendorIds = new Set<string>();
+
+                                    // Collect vendors from either format
+                                    if (orderConfig.deliveryDayOrders) {
+                                        Object.values(orderConfig.deliveryDayOrders).forEach((dayOrder: any) => {
+                                            if (dayOrder.vendorSelections) {
+                                                dayOrder.vendorSelections.forEach((s: any) => s.vendorId && uniqueVendorIds.add(s.vendorId));
+                                            }
+                                        });
+                                    } else if (orderConfig.vendorSelections) {
+                                        orderConfig.vendorSelections.forEach((s: any) => s.vendorId && uniqueVendorIds.add(s.vendorId));
+                                    }
+
+                                    const messages: string[] = [];
+                                    uniqueVendorIds.forEach(vId => {
+                                        const v = vendors.find(vend => vend.id === vId);
+                                        if (v) {
+                                            const cutoff = v.cutoffHours || 0; // Default to 0 if not set, or maybe don't show? 
+                                            // User said "write by each vendor that changes must be made by however many hours".
+                                            // If cutoff is 0, arguably "Changes take effect immediately" or just show 0 hours?
+                                            // Let's show it if it exists or even if 0 to be explicit.
+                                            messages.push(`Orders for ${v.name} must be placed ${cutoff} hours before delivery.`);
                                         }
+                                    });
+
+                                    if (messages.length > 0) {
+                                        return (
+                                            <div style={{ marginTop: '0.5rem', fontSize: '0.9rem', fontWeight: 500 }}>
+                                                {messages.map((msg, i) => (
+                                                    <div key={i}>{msg}</div>
+                                                ))}
+                                            </div>
+                                        );
                                     }
                                 }
 
-                                if (takeEffectDate) {
-                                    return (
-                                        <div style={{ marginTop: '0.5rem', fontSize: '0.9rem', fontWeight: 500 }}>
-                                            Your changes will take effect on {new Date(takeEffectDate).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}
-                                        </div>
-                                    );
-                                } else if (client.serviceType === 'Boxes') {
-                                    // Fallback for Boxes if no vendor/date assigned yet
-                                    const nextSunday = new Date();
-                                    nextSunday.setDate(nextSunday.getDate() + (7 - nextSunday.getDay()) % 7 || 7); // Provide next Sunday
-
-                                    return (
-                                        <div style={{ marginTop: '0.5rem', fontSize: '0.9rem', fontWeight: 500 }}>
-                                            These changes will not take effect until the week starting with {nextSunday.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}
-                                        </div>
-                                    );
-                                }
                                 return null;
                             })()}
                         </div>
@@ -1275,8 +1254,163 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
                             })()}
                         </div>
                     )}
+
+                    {/* Spacer to prevent content from being hidden behind fixed save bar */}
+                    {configChanged && !saving && (
+                        <div style={{ height: 'clamp(140px, 20vh, 200px)' }} />
+                    )}
                 </div>
             </div>
+
+            {/* Fixed Floating Save Section at Bottom of Viewport */}
+            {configChanged && !saving && (
+                <>
+                    <style>{`
+                        @media (max-width: 768px) {
+                            .save-bar-container {
+                                padding: 0.75rem 1rem !important;
+                            }
+                            .save-bar-content {
+                                flex-direction: column !important;
+                                gap: 0.75rem !important;
+                            }
+                            .save-bar-warning {
+                                flex-direction: row !important;
+                                gap: 0.5rem !important;
+                                min-width: unset !important;
+                            }
+                            .save-bar-icon {
+                                width: 20px !important;
+                                height: 20px !important;
+                            }
+                            .save-bar-title {
+                                font-size: 0.9rem !important;
+                                margin-bottom: 0.125rem !important;
+                            }
+                            .save-bar-message {
+                                font-size: 0.8rem !important;
+                            }
+                            .save-bar-buttons {
+                                width: 100% !important;
+                                flex-direction: column !important;
+                                gap: 0.75rem !important;
+                            }
+                            .save-bar-button {
+                                width: 100% !important;
+                                font-size: 1rem !important;
+                                padding: 12px 20px !important;
+                                min-width: unset !important;
+                            }
+                            .save-bar-button-primary {
+                                font-size: 1.1rem !important;
+                                padding: 14px 24px !important;
+                            }
+                        }
+                        @media (min-width: 769px) {
+                            .save-bar-container {
+                                padding: 1.5rem 2rem;
+                            }
+                            .save-bar-content {
+                                gap: 1.5rem;
+                            }
+                            .save-bar-warning {
+                                gap: 12px;
+                            }
+                            .save-bar-title {
+                                font-size: 1.25rem;
+                            }
+                            .save-bar-message {
+                                font-size: 0.95rem;
+                            }
+                            .save-bar-button {
+                                font-size: 1.1rem;
+                                padding: 14px 28px;
+                            }
+                            .save-bar-button-primary {
+                                font-size: 1.25rem;
+                                padding: 16px 40px;
+                            }
+                        }
+                    `}</style>
+                    <div className="save-bar-container" style={{
+                        position: 'fixed',
+                        bottom: 0,
+                        left: 0,
+                        right: 0,
+                        backgroundColor: '#fef3c7',
+                        borderTop: '4px solid #f59e0b',
+                        boxShadow: '0 -10px 30px -5px rgba(245, 158, 11, 0.4)',
+                        zIndex: 1000,
+                        backdropFilter: 'blur(10px)'
+                    }}>
+                        <div className="save-bar-content" style={{
+                            maxWidth: '1200px',
+                            margin: '0 auto',
+                            display: 'flex',
+                            alignItems: 'center',
+                            flexWrap: 'wrap'
+                        }}>
+                            <div className="save-bar-warning" style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                flex: 1
+                            }}>
+                                <AlertTriangle className="save-bar-icon" size={24} style={{ color: '#92400e', flexShrink: 0 }} />
+                                <div style={{ flex: 1 }}>
+                                    <div className="save-bar-title" style={{
+                                        fontWeight: 700,
+                                        color: '#92400e',
+                                        marginBottom: '0.25rem'
+                                    }}>
+                                        ⚠️ UNSAVED CHANGES
+                                    </div>
+                                    <div className="save-bar-message" style={{
+                                        color: '#78350f',
+                                        fontWeight: 600
+                                    }}>
+                                        Your changes will NOT be saved unless you click "Save Changes"
+                                    </div>
+                                </div>
+                            </div>
+                            <div className="save-bar-buttons" style={{ display: 'flex', flexWrap: 'wrap' }}>
+                                <button
+                                    onClick={handleDiscard}
+                                    className="btn btn-secondary save-bar-button"
+                                    style={{
+                                        fontWeight: 600,
+                                        border: '2px solid var(--border-color)'
+                                    }}
+                                >
+                                    Discard
+                                </button>
+                                <button
+                                    onClick={handleSave}
+                                    className="btn btn-primary save-bar-button save-bar-button-primary"
+                                    style={{
+                                        fontWeight: 700,
+                                        boxShadow: '0 8px 16px -4px rgba(0, 0, 0, 0.3)',
+                                        backgroundColor: '#f59e0b',
+                                        border: '2px solid #d97706',
+                                        color: '#1f2937',
+                                        transform: 'scale(1.05)',
+                                        transition: 'all 0.2s'
+                                    }}
+                                    onMouseEnter={(e) => {
+                                        e.currentTarget.style.transform = 'scale(1.08)';
+                                        e.currentTarget.style.boxShadow = '0 12px 24px -4px rgba(0, 0, 0, 0.4)';
+                                    }}
+                                    onMouseLeave={(e) => {
+                                        e.currentTarget.style.transform = 'scale(1.05)';
+                                        e.currentTarget.style.boxShadow = '0 8px 16px -4px rgba(0, 0, 0, 0.3)';
+                                    }}
+                                >
+                                     SAVE CHANGES
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </>
+            )}
         </div >
     );
 }

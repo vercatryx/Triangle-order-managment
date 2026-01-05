@@ -3,7 +3,7 @@
 import { useActionState, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Image from 'next/image';
-import { login, checkEmailIdentity } from '@/lib/auth-actions';
+import { login, checkEmailIdentity, sendOtp, verifyOtp } from '@/lib/auth-actions';
 import styles from './page.module.css';
 
 export default function LoginPage() {
@@ -13,6 +13,13 @@ export default function LoginPage() {
     const [username, setUsername] = useState('');
     const [checkingIdentity, setCheckingIdentity] = useState(false);
     const [identityError, setIdentityError] = useState('');
+
+    // New state for OTP
+    const [useOtp, setUseOtp] = useState(false);
+    const [otpCode, setOtpCode] = useState('');
+    const [verifyingOtp, setVerifyingOtp] = useState(false);
+    const [otpMessage, setOtpMessage] = useState('');
+    const [resendTimer, setResendTimer] = useState(0);
 
     const handleNext = async () => {
         if (!username.trim()) {
@@ -30,13 +37,34 @@ export default function LoginPage() {
 
             if (result.exists) {
                 if (result.type === 'client' && result.id) {
-                    console.log('Redirecting to client portal:', result.id);
-                    // Redirect to client portal
-                    router.push(`/client-portal/${result.id}`);
-                    // Don't turn off checkingIdentity so we show loading state during redirect
-                    return;
+                    // Check if passwordless is enabled for this user (which means global enabled + is client)
+                    if (result.enablePasswordless) {
+                        setUseOtp(true);
+
+                        // Trigger OTP send immediately
+                        setOtpMessage('Sending security code...');
+                        const sendResult = await sendOtp(username);
+                        if (sendResult.success) {
+                            setOtpMessage(`Code sent to ${username}`);
+                            setStep(2);
+                            startResendTimer();
+                        } else {
+                            setIdentityError(sendResult.message || 'Failed to send verification code.');
+                            setCheckingIdentity(false);
+                            return;
+                        }
+                    } else {
+                        // Original flow for client without passwordless
+                        console.log('Redirecting to client portal:', result.id);
+                        router.push(`/client-portal/${result.id}`);
+                        // Don't turn off checkingIdentity so we show loading state during redirect
+                        return;
+                    }
+                } else {
+                    // Not a client, or passwordless disabled
+                    setUseOtp(false);
+                    setStep(2);
                 }
-                setStep(2);
                 setCheckingIdentity(false);
             } else {
                 setIdentityError('No account found with that email/username.');
@@ -49,9 +77,57 @@ export default function LoginPage() {
         }
     };
 
+    const startResendTimer = () => {
+        setResendTimer(60);
+        const interval = setInterval(() => {
+            setResendTimer((prev) => {
+                if (prev <= 1) {
+                    clearInterval(interval);
+                    return 0;
+                }
+                return prev - 1;
+            });
+        }, 1000);
+    };
+
+    const handleResendOtp = async () => {
+        if (resendTimer > 0) return;
+        setOtpMessage('Resending code...');
+        const result = await sendOtp(username);
+        if (result.success) {
+            setOtpMessage(`Code resent to ${username}`);
+            startResendTimer();
+        } else {
+            setOtpMessage(result.message || 'Failed to resend code.');
+        }
+    };
+
+    const handleVerifyOtp = async (e?: React.FormEvent) => {
+        if (e) e.preventDefault();
+        if (!otpCode) return;
+
+        setVerifyingOtp(true);
+        setOtpMessage('');
+
+        try {
+            const result = await verifyOtp(username, otpCode);
+            if (!result.success) {
+                setOtpMessage(result.message || 'Verification failed.');
+                setVerifyingOtp(false);
+            } else {
+                // Redirect happens in verifyOtp
+            }
+        } catch (error: any) {
+            // redirect throws error, ignore
+        }
+    };
+
     const handleBack = () => {
         setStep(1);
         setIdentityError('');
+        setOtpCode('');
+        setOtpMessage('');
+        setUseOtp(false);
     };
 
     return (
@@ -69,14 +145,14 @@ export default function LoginPage() {
                         />
                     </div>
                     <h2 className={styles.title}>
-                        Welcome Back
+                        {step === 1 ? 'Welcome Back' : (useOtp ? 'Enter Code' : 'Welcome Back')}
                     </h2>
                     <p className={styles.subtitle}>
                     </p>
                 </div>
-                
 
-                <form className={styles.form} action={action}>
+
+                <form className={styles.form} action={useOtp ? () => { } : action} onSubmit={useOtp ? handleVerifyOtp : undefined}>
                     <div className={styles.formGroup}>
                         {step === 1 && (
                             <div className="animate-in fade-in slide-in-from-right-4 duration-300">
@@ -112,38 +188,75 @@ export default function LoginPage() {
 
                         {step === 2 && (
                             <div className="animate-in fade-in slide-in-from-right-4 duration-300">
-                                <div className={styles.userInfoDisplay} style={{ marginBottom: '1.5rem', padding: '0.75rem', background: 'var(--background-secondary)', borderRadius: 'var(--radius-md)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                                    <span style={{ fontWeight: 500, fontSize: '0.9rem' }}>{username}</span>
+                                <div className={styles.userInfo}>
+                                    <span className={styles.userInfoText}>{username}</span>
                                     <button
                                         type="button"
                                         onClick={handleBack}
-                                        style={{ background: 'none', border: 'none', color: 'var(--color-primary)', fontSize: '0.8rem', cursor: 'pointer', fontWeight: 600 }}
+                                        className={styles.changeBtn}
                                     >
                                         Change
                                     </button>
                                 </div>
                                 <input type="hidden" name="username" value={username} />
-                                <div>
-                                    <label htmlFor="password" className={styles.label}>
-                                        Password
-                                    </label>
-                                    <input
-                                        id="password"
-                                        name="password"
-                                        type="password"
-                                        required
-                                        className={styles.inputLarge}
-                                        placeholder="Enter your password"
-                                        autoFocus
-                                    />
-                                </div>
+
+                                {useOtp ? (
+                                    <div>
+                                        <label htmlFor="otp" className={styles.label}>
+                                            Security Code
+                                        </label>
+                                        <input
+                                            id="otp"
+                                            name="otpCode"
+                                            type="text"
+                                            required
+                                            className={styles.inputOtp}
+                                            placeholder="------"
+                                            value={otpCode}
+                                            onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                                            autoFocus
+                                            autoComplete="one-time-code"
+                                        />
+                                        <div className={styles.resendContainer}>
+                                            <span>{otpMessage}</span>
+                                            {resendTimer > 0 ? (
+                                                <span style={{ color: 'var(--text-tertiary)' }}>Resend in {resendTimer}s</span>
+                                            ) : (
+                                                <button type="button" onClick={handleResendOtp} className={styles.resendBtn}>
+                                                    Resend Code
+                                                </button>
+                                            )}
+                                        </div>
+                                    </div>
+                                ) : (
+                                    <div>
+                                        <label htmlFor="password" className={styles.label}>
+                                            Password
+                                        </label>
+                                        <input
+                                            id="password"
+                                            name="password"
+                                            type="password"
+                                            required
+                                            className={styles.inputLarge}
+                                            placeholder="Enter your password"
+                                            autoFocus
+                                        />
+                                    </div>
+                                )}
                             </div>
                         )}
                     </div>
 
-                    {step === 2 && state?.message && (
+                    {!useOtp && step === 2 && state?.message && (
                         <div className={styles.errorMessage}>
                             {state.message}
+                        </div>
+                    )}
+
+                    {useOtp && step === 2 && otpMessage && !otpMessage.includes('sent') && !otpMessage.includes('Resend') && (
+                        <div className={styles.errorMessage}>
+                            {otpMessage}
                         </div>
                     )}
 
@@ -167,16 +280,16 @@ export default function LoginPage() {
                         ) : (
                             <button
                                 type="submit"
-                                disabled={isPending}
+                                disabled={isPending || verifyingOtp}
                                 className={styles.btnLarge}
                             >
-                                {isPending ? (
+                                {isPending || verifyingOtp ? (
                                     <>
                                         <div className={styles.spinner} />
-                                        Signing in...
+                                        {useOtp ? 'Verifying...' : 'Signing in...'}
                                     </>
                                 ) : (
-                                    'Sign In'
+                                    useOtp ? 'Verify & Sign In' : 'Sign In'
                                 )}
                             </button>
                         )}

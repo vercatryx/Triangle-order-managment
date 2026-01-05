@@ -52,7 +52,7 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
     // Prefetching State
     const [detailsCache, setDetailsCache] = useState<Record<string, ClientFullDetails>>({});
     const pendingPrefetches = useRef<Set<string>>(new Set());
-    
+
     // Track which clients have already logged missing vendor ID warnings (to avoid spam)
     const loggedMissingVendorIds = useRef<Set<string>>(new Set());
 
@@ -74,6 +74,8 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
     // Add Dependent Modal state
     const [isAddingDependent, setIsAddingDependent] = useState(false);
     const [dependentName, setDependentName] = useState('');
+    const [dependentDob, setDependentDob] = useState('');
+    const [dependentCin, setDependentCin] = useState('');
     const [selectedParentClientId, setSelectedParentClientId] = useState<string>('');
     const [regularClients, setRegularClients] = useState<ClientProfile[]>([]);
     const [parentClientSearch, setParentClientSearch] = useState('');
@@ -280,7 +282,7 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
             // First, check if client is eligible (status allows deliveries)
             const status = statuses.find(s => s.id === c.statusId);
             const isEligible = status ? status.deliveriesAllowed : false;
-            
+
             // Only show eligible clients that need attention
             if (!isEligible) {
                 matchesView = false;
@@ -290,12 +292,12 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
                 // 2. Clients whose expiration date is within the current month
                 // 3. Clients with boxes whose authorized amount is less than 584
                 // 4. Clients with food whose authorized amount is less than 1344
-                
+
                 const now = new Date();
                 const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
                 const firstDayOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
                 const lastDayOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0);
-                
+
                 // 1. Check if client with boxes doesn't have vendor assigned
                 let boxesNeedsVendor = false;
                 if (c.serviceType === 'Boxes') {
@@ -307,20 +309,20 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
                         boxesNeedsVendor = true; // No active order means needs vendor
                     }
                 }
-                
+
                 // 2. Check if expiration date is within current month
                 let expirationInCurrentMonth = false;
                 if (c.expirationDate) {
                     const expDate = new Date(c.expirationDate);
                     expirationInCurrentMonth = expDate >= firstDayOfMonth && expDate <= lastDayOfMonth;
                 }
-                
+
                 // 3. Check if boxes client has authorized amount < 584 or is null/undefined
                 const boxesLowOrNoAmount = c.serviceType === 'Boxes' && (c.authorizedAmount === null || c.authorizedAmount === undefined || c.authorizedAmount < 584);
-                
+
                 // 4. Check if food client has authorized amount < 1344 or is null/undefined
                 const foodLowOrNoAmount = c.serviceType === 'Food' && (c.authorizedAmount === null || c.authorizedAmount === undefined || c.authorizedAmount < 1344);
-                
+
                 matchesView = boxesNeedsVendor || expirationInCurrentMonth || boxesLowOrNoAmount || foodLowOrNoAmount;
             }
         }
@@ -496,21 +498,28 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
         if (!dependentName.trim() || !selectedParentClientId) return;
 
         try {
+            const dobValue = dependentDob.trim() || null;
+            const cinValue = dependentCin.trim() ? parseFloat(dependentCin.trim()) : null;
+            
             if (editingDependentId) {
                 // Update existing dependent
                 await updateClient(editingDependentId, {
                     fullName: dependentName.trim(),
-                    parentClientId: selectedParentClientId
+                    parentClientId: selectedParentClientId,
+                    dob: dobValue,
+                    cin: cinValue
                 });
             } else {
                 // Create new dependent
-                const newDependent = await addDependent(dependentName.trim(), selectedParentClientId);
+                const newDependent = await addDependent(dependentName.trim(), selectedParentClientId, dobValue, cinValue);
                 if (!newDependent) return;
             }
 
             invalidateClientData(); // Invalidate cache
             setIsAddingDependent(false);
             setDependentName('');
+            setDependentDob('');
+            setDependentCin('');
             setSelectedParentClientId('');
             setParentClientSearch('');
             setEditingDependentId(null);
@@ -947,7 +956,7 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
         const now = new Date();
         const firstDayOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
         const lastDayOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0);
-        
+
         // 1. Check if client with boxes doesn't have vendor assigned
         if (client.serviceType === 'Boxes') {
             if (client.activeOrder && client.activeOrder.serviceType === 'Boxes') {
@@ -960,7 +969,7 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
                 reasons.push('Boxes: No vendor assigned');
             }
         }
-        
+
         // 2. Check if expiration date is within current month
         if (client.expirationDate) {
             const expDate = new Date(client.expirationDate);
@@ -968,26 +977,26 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
                 reasons.push('Expiration date this month');
             }
         }
-        
-            // 3. Check if boxes client has authorized amount < 584 or is null/undefined
-            if (client.serviceType === 'Boxes') {
-                if (client.authorizedAmount === null || client.authorizedAmount === undefined) {
-                    reasons.push('Boxes: No authorized amount');
-                } else if (client.authorizedAmount < 584) {
-                    reasons.push(`Boxes: Auth amount $${client.authorizedAmount} < $584`);
-                }
+
+        // 3. Check if boxes client has authorized amount < 584 or is null/undefined
+        if (client.serviceType === 'Boxes') {
+            if (client.authorizedAmount === null || client.authorizedAmount === undefined) {
+                reasons.push('Boxes: No authorized amount');
+            } else if (client.authorizedAmount < 584) {
+                reasons.push(`Boxes: Auth amount $${client.authorizedAmount} < $584`);
             }
-            
-            // 4. Check if food client has authorized amount < 1344 or is null/undefined
-            if (client.serviceType === 'Food') {
-                if (client.authorizedAmount === null || client.authorizedAmount === undefined) {
-                    reasons.push('Food: No authorized amount');
-                } else if (client.authorizedAmount < 1344) {
-                    reasons.push(`Food: Auth amount $${client.authorizedAmount} < $1344`);
-                }
+        }
+
+        // 4. Check if food client has authorized amount < 1344 or is null/undefined
+        if (client.serviceType === 'Food') {
+            if (client.authorizedAmount === null || client.authorizedAmount === undefined) {
+                reasons.push('Food: No authorized amount');
+            } else if (client.authorizedAmount < 1344) {
+                reasons.push(`Food: Auth amount $${client.authorizedAmount} < $1344`);
             }
-            
-            return reasons.length > 0 ? reasons.join(', ') : 'No reason specified';
+        }
+
+        return reasons.length > 0 ? reasons.join(', ') : 'No reason specified';
     }
 
     // Helper function to check if a date is in the current week
@@ -1162,6 +1171,25 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
                             />
                         </div>
                         <div className={styles.formGroup}>
+                            <label className="label">Date of Birth</label>
+                            <input
+                                type="date"
+                                className="input"
+                                value={dependentDob}
+                                onChange={e => setDependentDob(e.target.value)}
+                            />
+                        </div>
+                        <div className={styles.formGroup}>
+                            <label className="label">CIN#</label>
+                            <input
+                                type="number"
+                                className="input"
+                                placeholder="CIN Number"
+                                value={dependentCin}
+                                onChange={e => setDependentCin(e.target.value)}
+                            />
+                        </div>
+                        <div className={styles.formGroup}>
                             <label className="label">Parent Client</label>
                             <div style={{ position: 'relative' }}>
                                 <input
@@ -1227,6 +1255,8 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
                             <button className="btn btn-secondary" onClick={() => {
                                 setIsAddingDependent(false);
                                 setDependentName('');
+                                setDependentDob('');
+                                setDependentCin('');
                                 setSelectedParentClientId('');
                                 setParentClientSearch('');
                                 setEditingDependentId(null);
@@ -1236,6 +1266,8 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
                     <div className={styles.overlay} onClick={() => {
                         setIsAddingDependent(false);
                         setDependentName('');
+                        setDependentDob('');
+                        setDependentCin('');
                         setSelectedParentClientId('');
                         setParentClientSearch('');
                         setEditingDependentId(null);
@@ -1492,6 +1524,8 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
                                 if (isDependent) {
                                     setEditingDependentId(client.id);
                                     setDependentName(client.fullName);
+                                    setDependentDob(client.dob || '');
+                                    setDependentCin(client.cin?.toString() || '');
                                     setSelectedParentClientId(client.parentClientId || '');
                                     const parentClient = allClientsForLookup.find(c => c.id === client.parentClientId);
                                     if (parentClient) {
@@ -1540,13 +1574,13 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
                                         {getNeedsAttentionReason(client)}
                                     </span>
                                     <span style={{ minWidth: '150px', flex: 1.2, fontSize: '0.85rem', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: '16px' }}>
-                                        {client.authorizedAmount !== null && client.authorizedAmount !== undefined 
-                                            ? `$${client.authorizedAmount.toFixed(2)}` 
+                                        {client.authorizedAmount !== null && client.authorizedAmount !== undefined
+                                            ? `$${client.authorizedAmount.toFixed(2)}`
                                             : '-'}
                                     </span>
                                     <span style={{ minWidth: '150px', flex: 1.2, fontSize: '0.85rem', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: '16px' }}>
-                                        {client.expirationDate 
-                                            ? new Date(client.expirationDate).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
+                                        {client.expirationDate
+                                            ? new Date(client.expirationDate).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric', timeZone: 'UTC' })
                                             : '-'}
                                     </span>
                                 </>

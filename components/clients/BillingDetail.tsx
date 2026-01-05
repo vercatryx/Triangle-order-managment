@@ -170,8 +170,8 @@ export function BillingDetail({ clientId }: Props) {
                         {history.map(item => {
                             const isExpanded = expandedRows.has(item.id);
                             const hasOrderDetails = !!item.orderDetails;
-                            const date = item.date || (item.createdAt ? new Date(item.createdAt).toLocaleDateString() : 'N/A');
-                            
+                            const date = item.date || (item.createdAt ? new Date(item.createdAt).toLocaleDateString('en-US', { timeZone: 'UTC' }) : 'N/A');
+
                             return (
                                 <>
                                     <tr key={item.id} className={hasOrderDetails ? styles.expandableRow : ''}>
@@ -189,7 +189,7 @@ export function BillingDetail({ clientId }: Props) {
                                         </td>
                                         <td className={styles.td}>
                                             {hasOrderDetails ? (
-                                                <button 
+                                                <button
                                                     className={styles.iconBtn}
                                                     onClick={() => toggleRow(item.id)}
                                                     title={isExpanded ? 'Hide order details' : 'Show order details'}

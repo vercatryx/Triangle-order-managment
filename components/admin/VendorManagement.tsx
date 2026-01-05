@@ -24,7 +24,8 @@ export function VendorManagement() {
         deliveryDays: [],
         allowsMultipleDeliveries: false,
         serviceTypes: ['Food'],
-        minimumMeals: 0
+        minimumMeals: 0,
+        cutoffHours: 0
     });
     const [multiCreateInput, setMultiCreateInput] = useState(''); // New state
 
@@ -46,7 +47,8 @@ export function VendorManagement() {
             deliveryDays: [],
             allowsMultipleDeliveries: false,
             serviceTypes: ['Food'],
-            minimumMeals: 0
+            minimumMeals: 0,
+            cutoffHours: 0
         });
         setIsCreating(false);
         setIsMultiCreating(false);
@@ -301,6 +303,21 @@ export function VendorManagement() {
                         </p>
                     </div>
 
+                    <div className={styles.formGroup}>
+                        <label className="label">Cutoff Time (Hours)</label>
+                        <input
+                            type="number"
+                            className="input"
+                            min="0"
+                            value={formData.cutoffHours ?? 0}
+                            onChange={e => setFormData({ ...formData, cutoffHours: Number(e.target.value) || 0 })}
+                            placeholder="0"
+                        />
+                        <p className={styles.hint} style={{ marginTop: '0.25rem' }}>
+                            Hours before midnight of the delivery day that orders must be finalized. (e.g. 48 = 2 days before)
+                        </p>
+                    </div>
+
                     <div className={styles.formActions}>
                         <button className="btn btn-primary" onClick={handleSubmit}>
                             <Check size={16} /> Save Vendor
@@ -322,6 +339,7 @@ export function VendorManagement() {
                             <th>Days</th>
                             <th>Frequency</th>
                             <th>Min Meals</th>
+                            <th>Cutoff (h)</th>
                             <th style={{ textAlign: 'right' }}>Actions</th>
                         </tr>
                     </thead>
@@ -344,6 +362,7 @@ export function VendorManagement() {
                                     </span>
                                 </td>
                                 <td>{vendor.minimumMeals && vendor.minimumMeals > 0 ? vendor.minimumMeals : '-'}</td>
+                                <td>{vendor.cutoffHours && vendor.cutoffHours > 0 ? vendor.cutoffHours : '-'}</td>
                                 <td style={{ textAlign: 'right' }}>
                                     <div className={styles.actions}>
                                         <button className={styles.iconBtn} onClick={() => handleEditInit(vendor)}>

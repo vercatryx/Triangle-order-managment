@@ -135,7 +135,7 @@ export function BillingList() {
                     const billingStatus = order.billingStatus || 'billing_pending';
                     const statusLabel = billingStatus === 'billing_successful' ? 'Billing Successful' : 'Billing Pending';
                     const statusClass = billingStatus === 'billing_successful' ? styles.statusSuccess : styles.statusPending;
-                    
+
                     return (
                         <Link key={order.id} href={`/orders/${order.id}`} className={styles.row}>
                             <span style={{ width: '100px', fontWeight: 600 }}>{order.order_number || 'N/A'}</span>
@@ -148,10 +148,10 @@ export function BillingList() {
                                 </span>
                             </span>
                             <span style={{ flex: 1.5, fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                                {order.actual_delivery_date 
-                                    ? new Date(order.actual_delivery_date).toLocaleDateString()
-                                    : order.scheduled_delivery_date 
-                                        ? new Date(order.scheduled_delivery_date).toLocaleDateString()
+                                {order.actual_delivery_date
+                                    ? new Date(order.actual_delivery_date).toLocaleDateString('en-US', { timeZone: 'UTC' })
+                                    : order.scheduled_delivery_date
+                                        ? new Date(order.scheduled_delivery_date).toLocaleDateString('en-US', { timeZone: 'UTC' })
                                         : '-'}
                             </span>
                             <span style={{ width: '40px' }}><ChevronRight size={16} /></span>

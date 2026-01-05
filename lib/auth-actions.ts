@@ -6,6 +6,145 @@ import { supabase } from './supabase';
 import { redirect } from 'next/navigation';
 import { createClient } from '@supabase/supabase-js';
 
+import { getSettings } from './actions';
+import { sendEmail } from './email';
+
+function generateOtp() {
+    return Math.floor(100000 + Math.random() * 900000).toString();
+}
+
+export async function sendOtp(email: string) {
+    if (!email) return { success: false, message: 'Email is required.' };
+
+    try {
+        const { exists, type } = await checkEmailIdentity(email);
+        if (!exists) {
+            return { success: false, message: 'No account found with that email.' };
+        }
+
+        // Generate Code
+        const code = generateOtp();
+        const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString(); // 10 minutes
+
+        // Store in DB (delete old codes first)
+        let supabaseClient = supabase;
+        const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+        if (serviceRoleKey) {
+            supabaseClient = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, serviceRoleKey, {
+                auth: { persistSession: false }
+            });
+        }
+
+        await supabaseClient.from('passwordless_codes').delete().eq('email', email);
+        const { error } = await supabaseClient.from('passwordless_codes').insert({
+            email,
+            code,
+            expires_at: expiresAt
+        });
+
+        if (error) {
+            console.error('Error storing OTP:', error);
+            return { success: false, message: 'Failed to generate code.' };
+        }
+
+        // Send Email
+        const emailResult = await sendEmail({
+            to: email,
+            subject: 'Your Login Code',
+            html: `
+                <div style="font-family: sans-serif; padding: 20px;">
+                    <h2>Your Login Code</h2>
+                    <p>Enter the following code to log in:</p>
+                    <div style="font-size: 32px; font-weight: bold; letter-spacing: 5px; margin: 20px 0;">
+                        ${code}
+                    </div>
+                    <p>This code will expire in 10 minutes.</p>
+                </div>
+            `,
+            text: `Your login code is: ${code}`
+        });
+
+        if (!emailResult.success) {
+            return { success: false, message: 'Failed to send email.' };
+        }
+
+        return { success: true, message: 'Code sent to your email.' };
+
+    } catch (error) {
+        console.error('Send OTP Error:', error);
+        return { success: false, message: 'An unexpected error occurred.' };
+    }
+}
+
+export async function verifyOtp(email: string, code: string) {
+    if (!email || !code) return { success: false, message: 'Email and code are required.' };
+
+    try {
+        let supabaseClient = supabase;
+        const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+        if (serviceRoleKey) {
+            supabaseClient = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, serviceRoleKey, {
+                auth: { persistSession: false }
+            });
+        }
+
+        const { data: record, error } = await supabaseClient
+            .from('passwordless_codes')
+            .select('*')
+            .eq('email', email)
+            .eq('code', code)
+            .maybeSingle();
+
+        if (error || !record) {
+            return { success: false, message: 'Invalid code.' };
+        }
+
+        if (new Date(record.expires_at) < new Date()) {
+            return { success: false, message: 'Code has expired.' };
+        }
+
+        // Code valid! Delete it.
+        await supabaseClient.from('passwordless_codes').delete().eq('id', record.id);
+
+        // Perform Login (Create Session)
+        const { exists, type, id } = await checkEmailIdentity(email);
+
+        if (!exists) {
+            return { success: false, message: 'User not found.' };
+        }
+
+        if (type === 'admin') {
+            if (!id && process.env.ADMIN_USERNAME === email) {
+                await createSession('super-admin', 'Admin', 'super-admin');
+                redirect('/');
+            } else if (id) {
+                const { data: admin } = await supabase.from('admins').select('name').eq('id', id).single();
+                await createSession(id, admin?.name || 'Admin', 'admin');
+                redirect('/');
+            }
+        } else if (type === 'vendor' && id) {
+            const { data: vendor } = await supabase.from('vendors').select('name').eq('id', id).single();
+            await createSession(id, vendor?.name || 'Vendor', 'vendor');
+            redirect('/vendor');
+        } else if (type === 'navigator' && id) {
+            const { data: nav } = await supabase.from('navigators').select('name').eq('id', id).single();
+            await createSession(id, nav?.name || 'Navigator', 'navigator');
+            redirect('/clients');
+        } else if (type === 'client' && id) {
+            redirect(`/client-portal/${id}`);
+        }
+
+        return { success: false, message: 'Could not resolve user session.' };
+
+    } catch (error) {
+        if (error instanceof Error && error.message === 'NEXT_REDIRECT') {
+            throw error;
+        }
+        console.error('Verify OTP Error:', error);
+        return { success: false, message: 'An error occurred during verification.' };
+    }
+}
+
 export async function login(prevState: any, formData: FormData) {
     const loginInput = formData.get('username') as string;
     const password = formData.get('password') as string;
@@ -106,14 +245,20 @@ export async function logout() {
 }
 
 
+// Helper to check identity AND return global passwordless setting
 export async function checkEmailIdentity(identifier: string) {
-    if (!identifier) return { exists: false, type: null };
+    if (!identifier) return { exists: false, type: null, enablePasswordless: false };
+
+    // Check global settings
+    const settings = await getSettings();
+    const enablePasswordless = settings.enablePasswordlessLogin || false;
+
     const trimmedInput = identifier.trim();
 
     // 1. Check Env Super Admin
     const envUser = process.env.ADMIN_USERNAME;
     if (envUser && trimmedInput === envUser) {
-        return { exists: true, type: 'admin' };
+        return { exists: true, type: 'admin', enablePasswordless: false };
     }
 
     // 2. Check Database Admins
@@ -124,7 +269,7 @@ export async function checkEmailIdentity(identifier: string) {
         .maybeSingle();
 
     if (admin) {
-        return { exists: true, type: 'admin' };
+        return { exists: true, type: 'admin', enablePasswordless: false };
     }
 
     // 3. Check Vendors (by Email)
@@ -136,15 +281,9 @@ export async function checkEmailIdentity(identifier: string) {
 
     if (vendor) {
         if (!vendor.is_active) {
-            // Technically exists, but we might want to handle this specifically or just say exists
-            // For safety/UX, let's treat inactive as "exists" but maybe the login will fail later?
-            // Or we can return a specific error here. The plan said "if not exists, show invalid".
-            // If inactive, we probably still want to show password prompt so we don't leak status,
-            // OR effectively the prompt asks for password, then fails.
-            // Let's just return exists=true, and let login handle the 'inactive' error message.
-            return { exists: true, type: 'vendor' };
+            return { exists: true, type: 'vendor', enablePasswordless: false };
         }
-        return { exists: true, type: 'vendor' };
+        return { exists: true, type: 'vendor', enablePasswordless: false };
     }
 
     // 4. Check Navigators
@@ -155,7 +294,7 @@ export async function checkEmailIdentity(identifier: string) {
         .maybeSingle();
 
     if (navigator) {
-        return { exists: true, type: 'navigator' };
+        return { exists: true, type: 'navigator', enablePasswordless: false };
     }
 
     // 5. Check Clients (by Email)
@@ -175,7 +314,7 @@ export async function checkEmailIdentity(identifier: string) {
         .maybeSingle();
 
     if (client) {
-        return { exists: true, type: 'client', id: client.id };
+        return { exists: true, type: 'client', id: client.id, enablePasswordless };
     }
 
     return { exists: false, type: null };

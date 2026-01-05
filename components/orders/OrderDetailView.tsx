@@ -206,13 +206,13 @@ export function OrderDetailView({ order }: OrderDetailViewProps) {
                             {order.scheduledDeliveryDate && (
                                 <div className={styles.infoRow}>
                                     <strong>Scheduled Delivery:</strong>
-                                    <span>{new Date(order.scheduledDeliveryDate).toLocaleDateString()}</span>
+                                    <span>{new Date(order.scheduledDeliveryDate).toLocaleDateString('en-US', { timeZone: 'UTC' })}</span>
                                 </div>
                             )}
                             {order.actualDeliveryDate && (
                                 <div className={styles.infoRow}>
                                     <strong>Actual Delivery:</strong>
-                                    <span>{new Date(order.actualDeliveryDate).toLocaleDateString()}</span>
+                                    <span>{new Date(order.actualDeliveryDate).toLocaleDateString('en-US', { timeZone: 'UTC' })}</span>
                                 </div>
                             )}
                             <div className={styles.infoRow}>

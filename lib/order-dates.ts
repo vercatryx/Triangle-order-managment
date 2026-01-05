@@ -73,14 +73,79 @@ export function getNextDeliveryDate(
     today.setHours(0, 0, 0, 0);
 
     // Find the first occurrence (next delivery day, starting from today)
-    for (let i = 0; i <= 14; i++) {
+    // If a cutoff is defined, ensure we are outside the cutoff window
+    // Start checking from 0 (today) up to 21 days (3 weeks) to be safe
+    for (let i = 0; i <= 21; i++) {
         const checkDate = new Date(today);
         checkDate.setDate(today.getDate() + i);
+
+        // If today, check if we passed cutoff? 
+        // Logic: (DeliveryDate - Now) > CutoffHours
+        // DeliveryDate is start of day (00:00)? Or end of day?
+        // Typically delivery is during the day. Let's assume end of previous day or start of current day?
+        // Let's assume strict cutoff: Now + CutoffHours < DeliveryDateEnd (23:59:59)
+        // Or simpler: Now + CutoffHours < DeliveryDate (00:00) makes it strict "before the day starts"
+        // Let's use: DeliveryDate items cutoff at X hours before 00:00 of that day?
+        // Usually "48 hour cutoff" means 48 hours before the delivery event.
+        // Let's assume delivery is at 8am or something? Or just use the date object (00:00).
+
+        // Revised logic:
+        // We want to find a date D such that Now + CutoffHours < D (where D is set to some time, e.g. 23:59 or something)
+        // If cutoff is 48 hours, and delivery is Wednesday.
+        // If it's Monday 10am. 48h later is Wednesday 10am. So Wednesday delivery is OK (assuming delivery is later than 10am).
+        // If it's Tuesday 10am. 48h later is Thursday 10am. Wednesday is TOO SOON.
+
+        // Let's set the "delivery cutoff time" to be the end of the day (23:59:59) for maximum leniency, 
+        // OR better: treat the delivery date as 00:00 local time.
+        // If Now + CutoffHours > DeliveryDate(00:00), then it's too late.
+
+        // Example: Cutoff 48h. Delivery Wednesday 00:00.
+        // Must order by Monday 00:00.
+        // If Now is Monday 01:00. Now+48 = Wednesday 01:00. > Wednesday 00:00. Too late. Correct.
+
+        const cutoffHours = vendor.cutoffHours ?? 0;
+        const cutoffMs = cutoffHours * 60 * 60 * 1000;
+        const now = new Date();
+        const minimumDate = new Date(now.getTime() + cutoffMs);
+
+        // Check if this date is a valid delivery day
         if (deliveryDayNumbers.includes(checkDate.getDay())) {
-            return checkDate;
+            // Check cutoff
+            // Compare checkDate (which is 00:00 local) with minimumDate
+            // Note: checkDate is already set to 00:00 of the target day.
+
+            // However, verify timezone handling?
+            // "today" was created from referenceDate (default new Date()).
+            // checkDate is 00:00 local time.
+
+            // Let's compare timestamps.
+            // If checkDate (00:00) is AFTER minimumDate, it's valid.
+            // Wait, if cutoff is 0 (immediate), minimumDate is Now.
+            // If checkDate is Today (00:00) and Now is Today (10:00).
+            // checkDate < minimumDate. So Today is skipped?
+            // That implies same-day delivery is impossible if we use strictly 00:00.
+            // If cutoff is 0, we usually allow same day if it's "not too late"? 
+            // Or maybe we say Cutoff applies to the START of the day.
+
+            // For now, let's stick to the 00:00 rule.
+            // If cutoff is 0, checkDate (Today 00:00) < minimumDate (Today 10:00). So Today is invalid.
+            // This effectively disables same-day orders unless we adjust checkDate to end of day?
+            // Use 23:59:59 for the checkDate comparison?
+            // If I order at 10am for Today. IDK if that's allowed.
+            // Let's assume standard "Order ahead" model.
+            // If cutoff is 0, maybe we allow today.
+
+            // Special case: if cutoffHours is 0, allow today even if passed 00:00?
+            // Let's use a "Grace Period" or assume delivery is at end of day (23:59).
+            // Let's compare against End of Day for the Delivery Day.
+            const deliveryDeadline = new Date(checkDate);
+            deliveryDeadline.setHours(23, 59, 59, 999);
+
+            if (deliveryDeadline.getTime() > minimumDate.getTime()) {
+                return checkDate;
+            }
         }
     }
-
     return null;
 }
 
@@ -119,10 +184,35 @@ export function getNextDeliveryDateForDay(
     today.setHours(0, 0, 0, 0);
 
     // Find the next occurrence of this day
-    for (let i = 0; i <= 14; i++) {
+    // Extend search to 21 days to handle skipped weeks due to cutoff
+    for (let i = 0; i <= 21; i++) {
         const checkDate = new Date(today);
         checkDate.setDate(today.getDate() + i);
         if (checkDate.getDay() === targetDayNumber) {
+
+            // Check cutoff if vendor info is available
+            if (vendorId) {
+                const vendor = vendors.find(v => v.id === vendorId);
+                if (vendor) {
+                    const cutoffHours = vendor.cutoffHours ?? 0;
+                    const cutoffMs = cutoffHours * 60 * 60 * 1000;
+                    const now = new Date();
+                    const minimumDate = new Date(now.getTime() + cutoffMs);
+
+                    // Compare against end of delivery day
+                    const deliveryDeadline = new Date(checkDate);
+                    deliveryDeadline.setHours(23, 59, 59, 999);
+
+                    if (deliveryDeadline.getTime() > minimumDate.getTime()) {
+                        return checkDate;
+                    } else {
+                        // Cutoff passed, look for next week
+                        continue;
+                    }
+                }
+            }
+
+            // If no vendor validation needed or passed, return
             return checkDate;
         }
     }
@@ -341,6 +431,76 @@ export function formatDeliveryDateShort(date: Date): string {
         day: 'numeric'
     });
 }
+
+/**
+ * Get the date for a specific day in the NEXT week (the week following the current one).
+ * Week starts on Sunday.
+ * 
+ * @param deliveryDay - Day name (e.g., "Monday")
+ * @param referenceDate - Optional reference date (defaults to today)
+ * @returns Date object for that day in the next week, or null if day name invalid
+ */
+export function getDateInNextWeek(
+    deliveryDay: string,
+    referenceDate: Date = new Date()
+): Date | null {
+    const targetDayNumber = DAY_NAME_TO_NUMBER[deliveryDay];
+    if (targetDayNumber === undefined) return null;
+
+    const today = new Date(referenceDate);
+    today.setHours(0, 0, 0, 0);
+
+    // 1. Find start of CURRENT week (Sunday)
+    const currentDayNum = today.getDay();
+    const currentWeekStart = new Date(today);
+    currentWeekStart.setDate(today.getDate() - currentDayNum);
+
+    // 2. Add 7 days to get start of NEXT week (Sunday)
+    const nextWeekStart = new Date(currentWeekStart);
+    nextWeekStart.setDate(currentWeekStart.getDate() + 7);
+
+    // 3. Add target day number to get the specific date
+    const targetDate = new Date(nextWeekStart);
+    targetDate.setDate(nextWeekStart.getDate() + targetDayNumber);
+
+    // Ensure accurate time (start of day)
+    targetDate.setHours(0, 0, 0, 0);
+
+    return targetDate;
+}
+
+/**
+ * Get the immediate next occurrence of a specific day of the week.
+ * This looks for the first matching day starting from today (0 to 6 days ahead).
+ * Does NOT skip weeks or check cutoffs.
+ * 
+ * @param deliveryDay - Day name (e.g., "Monday")
+ * @param referenceDate - Optional reference date (defaults to today)
+ * @returns Date object for the next occurrence, or null if day name is invalid
+ */
+export function getNextOccurrence(
+    deliveryDay: string,
+    referenceDate: Date = new Date()
+): Date | null {
+    const targetDayNumber = DAY_NAME_TO_NUMBER[deliveryDay];
+    if (targetDayNumber === undefined) return null;
+
+    const today = new Date(referenceDate);
+    today.setHours(0, 0, 0, 0);
+
+    // Look ahead 0-6 days to find the next match
+    for (let i = 0; i < 7; i++) {
+        const checkDate = new Date(today);
+        checkDate.setDate(today.getDate() + i);
+        if (checkDate.getDay() === targetDayNumber) {
+            return checkDate;
+        }
+    }
+
+    return null;
+}
+
+
 
 
 

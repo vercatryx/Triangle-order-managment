@@ -100,8 +100,8 @@ export function GlobalSettings() {
     const [message, setMessage] = useState<string | null>(null);
 
     const [simulating, setSimulating] = useState(false);
-    const [simulationResult, setSimulationResult] = useState<{ 
-        success: boolean; 
+    const [simulationResult, setSimulationResult] = useState<{
+        success: boolean;
         message: string;
         skippedReasons?: string[];
         errors?: string[];
@@ -131,7 +131,7 @@ export function GlobalSettings() {
 
     async function handleSendEmail(skipData?: { skippedReasons?: string[]; errors?: string[]; skippedCount?: number }) {
         const dataToUse = skipData || simulationResult;
-        
+
         if (!dataToUse?.skippedReasons || dataToUse.skippedReasons.length === 0) {
             if (!skipData) {
                 alert('No skipped orders to report.');
@@ -198,7 +198,7 @@ export function GlobalSettings() {
             // Log detailed results to browser console
             console.log('[Simulate Delivery] Response:', data);
             console.log(`[Simulate Delivery] Summary: Found ${data.totalFound || 0} upcoming orders, Created ${data.processedCount || 0} orders, Skipped ${data.skippedCount || 0} orders`);
-            
+
             if (data.skippedReasons && data.skippedReasons.length > 0) {
                 console.group('[Simulate Delivery] Skipped Orders:');
                 data.skippedReasons.forEach((reason: string, index: number) => {
@@ -206,7 +206,7 @@ export function GlobalSettings() {
                 });
                 console.groupEnd();
             }
-            
+
             if (data.errors && data.errors.length > 0) {
                 console.group('[Simulate Delivery] Errors:');
                 data.errors.forEach((error: string, index: number) => {
@@ -297,6 +297,26 @@ export function GlobalSettings() {
                     <p style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)', marginTop: '0.5rem' }}>
                         Email address to receive delivery simulation reports for skipped orders.
                     </p>
+                </div>
+
+                <div className={styles.formGroup} style={{ marginBottom: 'var(--spacing-lg)' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                        <div>
+                            <label className="label" style={{ marginBottom: 0 }}>Enable Passwordless Login (Email OTP)</label>
+                            <p style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)', marginTop: '0.25rem' }}>
+                                When enabled, customers will log in using a 6-digit code sent to their email.
+                            </p>
+                        </div>
+                        <label className="relative inline-flex items-center cursor-pointer">
+                            <input
+                                type="checkbox"
+                                className="sr-only peer"
+                                checked={settings.enablePasswordlessLogin || false}
+                                onChange={e => setSettings({ ...settings, enablePasswordlessLogin: e.target.checked })}
+                            />
+                            <div className="w-11 h-6 bg-gray-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+                        </label>
+                    </div>
                 </div>
 
                 <div className={styles.actions}>

@@ -142,7 +142,8 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate, isVendorView }: P
             return new Date(dateString).toLocaleDateString('en-US', {
                 month: 'short',
                 day: 'numeric',
-                year: 'numeric'
+                year: 'numeric',
+                timeZone: 'UTC'
             });
         } catch {
             return dateString;
@@ -203,15 +204,15 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate, isVendorView }: P
             }
             const items = boxSelection.items || {};
             const itemEntries = Object.entries(items);
-            
+
             // Process items and filter out zero-quantity items, group by category
             const itemsByCategory: { [categoryId: string]: string[] } = {};
             const uncategorizedItems: string[] = [];
-            
+
             for (const [itemId, quantityOrObj] of itemEntries) {
                 const menuItem = menuItems.find(mi => mi.id === itemId);
                 const itemName = menuItem?.name || 'Unknown Item';
-                
+
                 // Handle both formats: { itemId: quantity } or { itemId: { quantity: X, price: Y } }
                 let qty = 0;
                 if (typeof quantityOrObj === 'number') {
@@ -221,11 +222,11 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate, isVendorView }: P
                 } else {
                     qty = parseInt(String(quantityOrObj)) || 0;
                 }
-                
+
                 if (qty > 0) {
                     const itemString = `${itemName} (Qty: ${qty})`;
                     const categoryId = menuItem?.categoryId || null;
-                    
+
                     if (categoryId) {
                         if (!itemsByCategory[categoryId]) {
                             itemsByCategory[categoryId] = [];
@@ -236,36 +237,36 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate, isVendorView }: P
                     }
                 }
             }
-            
+
             const boxQuantity = boxSelection.quantity || 1;
             const parts: string[] = [];
-            
+
             // Add items by category
             const sortedCategoryIds = Object.keys(itemsByCategory).sort((a, b) => {
                 const catA = categories.find(c => c.id === a);
                 const catB = categories.find(c => c.id === b);
                 return (catA?.name || '').localeCompare(catB?.name || '');
             });
-            
+
             for (const categoryId of sortedCategoryIds) {
                 const category = categories.find(c => c.id === categoryId);
                 const categoryName = category?.name || 'Unknown Category';
                 parts.push(`${categoryName}: ${itemsByCategory[categoryId].join(', ')}`);
             }
-            
+
             if (uncategorizedItems.length > 0) {
                 parts.push(`Uncategorized: ${uncategorizedItems.join(', ')}`);
             }
-            
+
             if (parts.length === 0) {
                 return '(No items)';
             }
-            
+
             return parts.join('; ');
         } else if (order.service_type === 'Equipment') {
             // Equipment orders - details from equipmentSelection or notes
             let equipmentDetails = order.equipmentSelection;
-            
+
             // If not in equipmentSelection, try to parse from notes
             if (!equipmentDetails && order.notes) {
                 try {
@@ -815,7 +816,7 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate, isVendorView }: P
                     const menuItem = menuItems.find(mi => mi.id === itemId);
                     const categoryId = menuItem?.categoryId || null;
                     const itemData = { itemId, menuItem, qty };
-                    
+
                     if (categoryId) {
                         if (!itemsByCategory[categoryId]) {
                             itemsByCategory[categoryId] = [];
@@ -824,7 +825,7 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate, isVendorView }: P
                     } else {
                         uncategorizedItems.push(itemData);
                     }
-                    
+
                     totalItems += qty;
                 }
             }
@@ -861,12 +862,12 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate, isVendorView }: P
                     {sortedCategoryIds.map((categoryId) => {
                         const categoryItems = itemsByCategory[categoryId];
                         const category = categories.find(c => c.id === categoryId);
-                        
+
                         return (
                             <div key={categoryId} style={{ marginBottom: '1.5rem' }}>
-                                <h4 style={{ 
-                                    fontSize: '0.95rem', 
-                                    fontWeight: 600, 
+                                <h4 style={{
+                                    fontSize: '0.95rem',
+                                    fontWeight: 600,
                                     color: 'var(--text-primary)',
                                     marginBottom: '0.5rem',
                                     paddingBottom: '0.25rem',
@@ -893,13 +894,13 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate, isVendorView }: P
                             </div>
                         );
                     })}
-                    
+
                     {/* Display uncategorized items if any */}
                     {uncategorizedItems.length > 0 && (
                         <div style={{ marginBottom: '1.5rem' }}>
-                            <h4 style={{ 
-                                fontSize: '0.95rem', 
-                                fontWeight: 600, 
+                            <h4 style={{
+                                fontSize: '0.95rem',
+                                fontWeight: 600,
                                 color: 'var(--text-primary)',
                                 marginBottom: '0.5rem',
                                 paddingBottom: '0.25rem',
@@ -925,7 +926,7 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate, isVendorView }: P
                             </table>
                         </div>
                     )}
-                    
+
                     <div className={styles.orderSummary}>
                         <div><strong>Total Items:</strong> {totalItems}</div>
                     </div>
@@ -934,7 +935,7 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate, isVendorView }: P
         } else if (order.service_type === 'Equipment') {
             // Equipment orders - details from equipmentSelection or notes
             let equipmentDetails = order.equipmentSelection;
-            
+
             // If not in equipmentSelection, try to parse from notes
             if (!equipmentDetails && order.notes) {
                 try {

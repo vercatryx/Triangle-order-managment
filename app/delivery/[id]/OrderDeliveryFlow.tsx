@@ -80,7 +80,7 @@ export function OrderDeliveryFlow({ order }: { order: OrderDetails }) {
                         Order #{order.orderNumber}
                     </h2>
                     <p className="text-subtitle">
-                        {new Date(order.deliveryDate).toLocaleDateString()}
+                        {new Date(order.deliveryDate).toLocaleDateString('en-US', { timeZone: 'UTC' })}
                     </p>
                 </div>
 

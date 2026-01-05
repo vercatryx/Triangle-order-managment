@@ -43,7 +43,7 @@
     color: var(--text-secondary);
     font-size: 1.125rem;
     text-align: center;
-    margin-bottom: 2.5rem;
+    margin-bottom: 1.5rem;
 }
 
 .form {
@@ -141,6 +141,88 @@
     align-items: center;
     justify-content: center;
     gap: 0.5rem;
+}
+
+.userInfo {
+    margin-bottom: 1.5rem;
+    padding: 0.75rem 1rem;
+    background-color: var(--bg-panel);
+    background-color: var(--background-secondary);
+    border-radius: var(--radius-md);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border: 1px solid var(--border-color);
+}
+
+.userInfoText {
+    font-weight: 500;
+    font-size: 0.9rem;
+    color: var(--text-primary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    margin-right: 1rem;
+}
+
+.changeBtn {
+    background: none;
+    border: none;
+    color: var(--color-primary);
+    font-size: 0.85rem;
+    cursor: pointer;
+    font-weight: 600;
+    padding: 0.25rem 0.5rem;
+    border-radius: var(--radius-sm);
+    transition: background-color 0.2s;
+    white-space: nowrap;
+}
+
+.changeBtn:hover {
+    background-color: rgba(37, 99, 235, 0.1);
+}
+
+.inputOtp {
+    width: 100%;
+    background-color: var(--bg-panel);
+    border: 1px solid var(--border-color);
+    color: var(--text-primary);
+    padding: 1rem;
+    font-size: 1.5rem;
+    border-radius: var(--radius-md);
+    transition: all 0.2s ease;
+    text-align: center;
+    letter-spacing: 0.5em;
+    font-family: monospace;
+    font-weight: 700;
+}
+
+.inputOtp:focus {
+    outline: none;
+    border-color: var(--color-primary);
+    box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.1);
+}
+
+.resendContainer {
+    margin-top: 0.75rem;
+    font-size: 0.875rem;
+    color: var(--text-secondary);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.resendBtn {
+    color: var(--color-primary);
+    border: none;
+    background: none;
+    cursor: pointer;
+    padding: 0;
+    font-weight: 500;
+}
+
+.resendBtn:hover {
+    text-decoration: underline;
 }
 
 @keyframes fadeIn {

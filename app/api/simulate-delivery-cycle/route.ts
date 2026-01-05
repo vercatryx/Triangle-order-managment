@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { supabase } from '@/lib/supabase';
 import { getCurrentTime } from '@/lib/time';
 import { getMenuItems, getSettings, getVendors, getStatuses } from '@/lib/actions';
-import { isDeliveryDateLocked, getLockedWeekDescription } from '@/lib/weekly-lock';
+// import { isDeliveryDateLocked, getLockedWeekDescription, getEarliestEffectiveDate } from '@/lib/weekly-lock';
 import { getNextDeliveryDateForDay } from '@/lib/order-dates';
 
 /**
@@ -45,6 +45,7 @@ export async function POST(request: NextRequest) {
 
         let processedCount = 0;
         let skippedCount = 0;
+        let ineligibleCount = 0;
         const errors: string[] = [];
         const skippedReasons: string[] = [];
         const debugLogs: string[] = []; // Collect logs to return in response
@@ -108,46 +109,160 @@ export async function POST(request: NextRequest) {
                 const isAllowed = statusMap.get(clientStatusId);
                 if (isAllowed === false) { // Explicitly false, enabled defaults to true often but let's be strict
                     const skipMsg = `Order ${upOrder.id}: Client ${upOrder.client_id} has status which disallows deliveries.`;
-                    console.warn(`[Simulate Delivery] SKIPPED: ${skipMsg}`);
-                    skippedReasons.push(skipMsg);
-                    skippedCount++;
+                    console.log(`[Simulate Delivery] IGNORED (Ineligible Status): ${skipMsg}`);
+                    // skippedReasons.push(skipMsg); // User requested these not be considered skips
+                    ineligibleCount++;
                     continue;
                 }
             } else {
                 console.warn(`[Simulate Delivery] Warning: Client ${upOrder.client_id} not found in client list or has no status.`);
             }
 
-            // Calculate the actual delivery date from the delivery_day (day of week)
+            // Fetch vendors for cutoff checks
             const vendors = await getVendors();
-            const referenceDate = await getCurrentTime();
-            const deliveryDate = upOrder.delivery_day
-                ? getNextDeliveryDateForDay(upOrder.delivery_day, vendors, undefined, referenceDate)
-                : null;
 
-            if (!deliveryDate) {
-                const errorMsg = `Cannot calculate delivery date for upcoming order ${upOrder.id}: delivery_day is "${upOrder.delivery_day || 'null'}"`;
+            // --------------------------------------------------------------------------------
+            // TIMING & CUTOFF LOGIC (Next Week Only + Strict Cutoff)
+            // --------------------------------------------------------------------------------
+
+            // 1. Determine "Next Week" Delivery Date
+            // --------------------------------------------------------------------------------
+            // TIMING & CUTOFF LOGIC (Just-In-Time / JIT)
+            // --------------------------------------------------------------------------------
+
+            // 1. Determine Immediate Next Delivery Date
+            // We look for the NEXT occurrence of the day, starting from today.
+            const { getNextOccurrence } = await import('@/lib/order-dates');
+            const currentTime = await getCurrentTime();
+
+            const nextDeliveryDate = getNextOccurrence(upOrder.delivery_day || '', currentTime);
+
+            if (!nextDeliveryDate) {
+                const errorMsg = `Cannot calculate delivery date for order ${upOrder.id}: delivery_day is "${upOrder.delivery_day || 'null'}"`;
                 console.warn(`[Simulate Delivery] SKIPPED: ${errorMsg}`);
                 errors.push(errorMsg);
-                skippedReasons.push(`Order ${upOrder.id}: Missing or invalid delivery_day`);
+                skippedReasons.push(`Order ${upOrder.id}: Invalid delivery_day "${upOrder.delivery_day}"`);
                 skippedCount++;
                 continue;
             }
 
-            // Check if this delivery date is locked due to weekly cutoff
-            const settings = await getSettings();
-            const currentTime = await getCurrentTime();
-            if (isDeliveryDateLocked(deliveryDate, settings, currentTime)) {
-                const lockedWeekDesc = getLockedWeekDescription(settings, currentTime);
-                const skipMsg = `Order ${upOrder.id}: Delivery date ${deliveryDate.toISOString().split('T')[0]} is in a locked week${lockedWeekDesc ? ` (${lockedWeekDesc})` : ''}`;
+            const deliveryDateStr = nextDeliveryDate.toISOString().split('T')[0];
+            const deliveryDateLog = nextDeliveryDate.toDateString();
+
+            // 2. JIT Cutoff Check
+            // Rule: Create order ONLY if (DeliveryDate - Now) <= Max(VendorCutoffs)
+            // If we are "too early" (TimeRemaining > Cutoff), we SKIP.
+            // If we are "within window" (TimeRemaining <= Cutoff), we CREATE.
+
+            // Calculate 'Time Remaining' until the delivery date (using 00:00 of delivery day as target, or end of day?)
+            // User requirement: "Orders that are too early will be skipped."
+            // "Create order if (DeliveryDate - Now) <= VendorCutoff"
+            // Let's treat "DeliveryDate" as the start of the delivery day (00:00).
+            // So if Delivery is Friday 00:00, and Cutoff is 48h. We trigger at Wednesday 00:00.
+
+            const timeRemainingMs = nextDeliveryDate.getTime() - currentTime.getTime();
+            const timeRemainingHours = timeRemainingMs / (1000 * 60 * 60);
+
+            let maxCutoffHours = 0;
+            let hasValidVendor = false; // To ensure we don't proceed without any vendor info
+
+            // Determine max cutoff based on vendors
+            if (upOrder.service_type === 'Food') {
+                const { data: vendorSelections } = await supabase
+                    .from('upcoming_order_vendor_selections')
+                    .select('vendor_id')
+                    .eq('upcoming_order_id', upOrder.id);
+
+                if (vendorSelections && vendorSelections.length > 0) {
+                    const uniqueVendorIds = Array.from(new Set(vendorSelections.map(vs => vs.vendor_id)));
+                    for (const vId of uniqueVendorIds) {
+                        const vendor = vendors.find(v => v.id === vId);
+                        if (vendor) {
+                            hasValidVendor = true;
+                            // Track the MAXIMUM cutoff (earliest requirement wins? No, lenient one?)
+                            // Wait. User logic: "Create order if (Delivery - Now) <= VendorCutoff"
+                            // If Cutoff A = 48h (Trigger 2 days before).
+                            // If Cutoff B = 24h (Trigger 1 day before).
+                            // If we are 36h away.
+                            // 36 <= 48 (A) -> True.
+                            // 36 <= 24 (B) -> False.
+                            // If we create now, we satisfy A. B gets order early. This is OK.
+                            // We must use MAX logic to catch the earliest trigger.
+                            const cutoff = vendor.cutoffHours ?? 0;
+                            if (cutoff > maxCutoffHours) {
+                                maxCutoffHours = cutoff;
+                            }
+                        }
+                    }
+                }
+            } else if (upOrder.service_type === 'Boxes') {
+                const { data: boxSelections } = await supabase
+                    .from('upcoming_order_box_selections')
+                    .select('vendor_id')
+                    .eq('upcoming_order_id', upOrder.id);
+
+                if (!boxSelections || boxSelections.length === 0 || !boxSelections[0].vendor_id) {
+                    const skipMsg = `Order ${upOrder.id} (Boxes): No vendor assigned. Skipped.`;
+                    console.warn(`[Simulate Delivery] SKIPPED: ${skipMsg}`);
+                    skippedReasons.push(skipMsg);
+                    skippedCount++;
+                    continue;
+                }
+
+                const uniqueVendorIds = Array.from(new Set(boxSelections.map(bs => bs.vendor_id).filter(Boolean)));
+                for (const vId of uniqueVendorIds) {
+                    // @ts-ignore
+                    const vendor = vendors.find(v => v.id === vId);
+                    if (vendor) {
+                        hasValidVendor = true;
+                        const cutoff = vendor.cutoffHours ?? 0;
+                        if (cutoff > maxCutoffHours) {
+                            maxCutoffHours = cutoff;
+                        }
+                    }
+                }
+            }
+
+            if (!hasValidVendor) {
+                const skipMsg = `Order ${upOrder.id}: No valid vendors found to determine cutoff. Skipped safety.`;
                 console.warn(`[Simulate Delivery] SKIPPED: ${skipMsg}`);
                 skippedReasons.push(skipMsg);
                 skippedCount++;
                 continue;
             }
 
+            // Check: Is it too early?
+            // If TimeRemaining > MaxCutoff, we generate NOTHING.
+            // Example: 96h remaining. MaxCutoff 48h. 96 > 48. Too early.
+
+            // Note: If timeRemaining is negative (Delivery is in past or today), we definitely proceed (it's <= cutoff).
+            // But if it's WAY in the past, maybe we should skip? 
+            // "Simulate" usually deals with future. But if we missed it?
+            // User didn't specify "Too Late" logic here, only "Too Early".
+            // Assuming "Too Late" is handled by the fact that `nextDeliveryDate` scans from Today.
+            // If `nextDeliveryDate` is Today (0h remaining). 0 <= 48. Create.
+
+            if (timeRemainingHours > maxCutoffHours) {
+                const skipMsg = `Order ${upOrder.id}: Too early. Delivery: ${deliveryDateLog} (${timeRemainingHours.toFixed(1)}h away). Max Cutoff: ${maxCutoffHours}h.`;
+                console.log(`[Simulate Delivery] SKIPPED (JIT): ${skipMsg}`);
+                // Not a warning, just "Waiting".
+                // skippedReasons.push(skipMsg); 
+                // Don't clutter skippedReasons with "Waiting" unless requested? 
+                // User said "Orders that are too early will be skipped."
+                // I'll log it but maybe not count as "Skipped" in the error report sense?
+                // Let's count it as valid skip.
+                skippedCount++;
+                continue;
+            }
+
+            console.log(`[Simulate Delivery] Order ${upOrder.id}: JIT Triggered! Delivery: ${deliveryDateLog} (${timeRemainingHours.toFixed(1)}h away) <= Cutoff: ${maxCutoffHours}h`);
+
+
+            // If we get here, the order is valid for Creation
+            const deliveryDate = nextDeliveryDate; // Set for downstream usage
+
             // Check for duplicates: Does an order with this client_id and delivery date already exist?
             // We check client_id + delivery date to prevent creating duplicate orders for the same delivery
-            const deliveryDateStr = deliveryDate.toISOString().split('T')[0];
             const { count: duplicateCount, error: duplicateError } = await supabase
                 .from('orders')
                 .select('*', { count: 'exact', head: true })
@@ -183,8 +298,8 @@ export async function POST(request: NextRequest) {
                 total_items: upOrder.total_items,
                 notes: upOrder.notes,
                 order_number: nextOrderNumber, // Set explicit 6-digit order number (at least 100000)
-                created_at: new Date().toISOString(),
-                last_updated: new Date().toISOString(),
+                created_at: (await getCurrentTime()).toISOString(),
+                last_updated: (await getCurrentTime()).toISOString(),
                 updated_by: upOrder.updated_by // Preserve updated_by from the upcoming order
             };
 
@@ -431,7 +546,7 @@ export async function POST(request: NextRequest) {
         const totalFound = upcomingOrders.length;
         const message = totalFound === 0
             ? 'No scheduled upcoming orders found.'
-            : `Simulation complete. Found ${totalFound} upcoming order(s). Created ${processedCount} order(s). Skipped ${skippedCount} order(s).`;
+            : `Simulation complete. Found ${totalFound} upcoming order(s). Created ${processedCount} order(s). Skipped ${skippedCount} order(s). (Ignored ${ineligibleCount} ineligible).`;
 
         return NextResponse.json({
             success: true,
@@ -439,6 +554,7 @@ export async function POST(request: NextRequest) {
             totalFound,
             processedCount,
             skippedCount,
+            ineligibleCount,
             errors: errors.length > 0 ? errors : undefined,
             skippedReasons: skippedReasons.length > 0 ? skippedReasons : undefined,
             debugLogs: debugLogs.length > 0 ? debugLogs : undefined

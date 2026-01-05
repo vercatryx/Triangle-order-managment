@@ -25,6 +25,10 @@ export interface ClientProfile {
   // Dependent relationship - if set, this client is a dependent of another client
   parentClientId?: string | null;
 
+  // Dependent-specific fields
+  dob?: string | null; // Date of birth (ISO Date string)
+  cin?: number | null; // CIN number
+
   // Authorization fields
   authorizedAmount?: number | null;
   expirationDate?: string | null; // ISO Date string (DATE type in database)
@@ -108,6 +112,7 @@ export interface Vendor {
   allowsMultipleDeliveries: boolean;
   serviceTypes: ServiceType[]; // Vendor can support multiple service types
   minimumMeals?: number; // Minimum meals/value required when ordering from this vendor (default 0, meaning no minimum)
+  cutoffHours?: number; // Hours before delivery cutoff
 }
 
 export interface ItemCategory {
@@ -168,6 +173,7 @@ export interface AppSettings {
   weeklyCutoffDay: string; // e.g. "Friday"
   weeklyCutoffTime: string; // e.g. "17:00"
   reportEmail?: string; // Email address for delivery simulation reports
+  enablePasswordlessLogin?: boolean;
 }
 
 export interface OrderHistoryLog {
