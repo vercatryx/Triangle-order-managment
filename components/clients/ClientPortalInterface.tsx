@@ -1180,7 +1180,14 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
 
                                                             return (
                                                                 <div key={item.id} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', background: 'var(--bg-app)', padding: '4px 8px', borderRadius: '4px', border: '1px solid var(--border-color)' }}>
-                                                                    <span style={{ fontSize: '0.8rem' }}>{item.name} <span style={{ color: 'var(--text-tertiary)' }}>({item.quotaValue || 1})</span></span>
+                                                                    <span style={{ fontSize: '0.8rem' }}>
+                                                                        {item.name}
+                                                                        {(item.quotaValue || 1) > 1 && (
+                                                                            <span style={{ color: 'var(--text-tertiary)', marginLeft: '4px' }}>
+                                                                                (counts as {item.quotaValue || 1} meals)
+                                                                            </span>
+                                                                        )}
+                                                                    </span>
                                                                     <div className={styles.quantityControl} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                                                                         <button onClick={() => handleBoxItemChange(item.id, Math.max(0, qty - 1))} className="btn btn-secondary" style={{ padding: '2px 8px' }}>-</button>
                                                                         <span style={{ width: '20px', textAlign: 'center' }}>{qty}</span>
@@ -1229,7 +1236,14 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
                                                             const qty = Number(selectedItems[item.id] || 0);
                                                             return (
                                                                 <div key={item.id} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', background: 'var(--bg-app)', padding: '4px 8px', borderRadius: '4px', border: '1px solid var(--border-color)' }}>
-                                                                    <span style={{ fontSize: '0.8rem' }}>{item.name} <span style={{ color: 'var(--text-tertiary)' }}>({item.quotaValue || 1})</span></span>
+                                                                    <span style={{ fontSize: '0.8rem' }}>
+                                                                        {item.name}
+                                                                        {(item.quotaValue || 1) > 1 && (
+                                                                            <span style={{ color: 'var(--text-tertiary)', marginLeft: '4px' }}>
+                                                                                (counts as {item.quotaValue || 1} meals)
+                                                                            </span>
+                                                                        )}
+                                                                    </span>
                                                                     <div className={styles.quantityControl} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                                                                         <button onClick={() => handleBoxItemChange(item.id, Math.max(0, qty - 1))} className="btn btn-secondary" style={{ padding: '2px 8px' }}>-</button>
                                                                         <span style={{ width: '20px', textAlign: 'center' }}>{qty}</span>

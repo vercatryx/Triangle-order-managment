@@ -10,3 +10,4 @@ ADD COLUMN IF NOT EXISTS cin NUMERIC;
 COMMENT ON COLUMN clients.dob IS 'Date of birth for the dependent (DATE type).';
 COMMENT ON COLUMN clients.cin IS 'CIN number for the dependent (numeric).';
 
+

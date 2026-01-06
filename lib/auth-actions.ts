@@ -27,6 +27,8 @@ export async function sendOtp(email: string) {
         const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString(); // 10 minutes
 
         // Store in DB (delete old codes first)
+        // Normalize email for storage to ensure consistent matching
+        const normalizedEmail = normalizeEmail(email);
         let supabaseClient = supabase;
         const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
         if (serviceRoleKey) {
@@ -35,9 +37,9 @@ export async function sendOtp(email: string) {
             });
         }
 
-        await supabaseClient.from('passwordless_codes').delete().eq('email', email);
+        await supabaseClient.from('passwordless_codes').delete().eq('email', normalizedEmail);
         const { error } = await supabaseClient.from('passwordless_codes').insert({
-            email,
+            email: normalizedEmail,
             code,
             expires_at: expiresAt
         });
@@ -48,6 +50,7 @@ export async function sendOtp(email: string) {
         }
 
         // Send Email (using same pattern as nutritionist screening form)
+        // Use original email for sending (not normalized)
         const emailResult = await sendEmail({
             to: email,
             subject: 'Your Login Code',
@@ -80,6 +83,8 @@ export async function verifyOtp(email: string, code: string) {
     if (!email || !code) return { success: false, message: 'Email and code are required.' };
 
     try {
+        // Normalize email for lookup (consistent with sendOtp)
+        const normalizedEmail = normalizeEmail(email);
         let supabaseClient = supabase;
         const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
         if (serviceRoleKey) {
@@ -91,7 +96,7 @@ export async function verifyOtp(email: string, code: string) {
         const { data: record, error } = await supabaseClient
             .from('passwordless_codes')
             .select('*')
-            .eq('email', email)
+            .eq('email', normalizedEmail)
             .eq('code', code)
             .maybeSingle();
 
@@ -179,14 +184,14 @@ export async function login(prevState: any, formData: FormData) {
             redirect('/');
         }
 
-        // 3. Check Vendors (by Email)
-        const trimmedInput = loginInput.trim();
-
-        const { data: vendor } = await supabase
+        // 3. Check Vendors (by Email) - normalize email for matching (ignore spaces and case)
+        const normalizedEmail = normalizeEmail(loginInput);
+        const { data: vendors } = await supabase
             .from('vendors')
             .select('*')
-            .ilike('email', trimmedInput)
-            .maybeSingle();
+            .not('email', 'is', null);
+
+        const vendor = vendors?.find(v => v.email && normalizeEmail(v.email) === normalizedEmail);
 
         if (vendor) {
             if (!vendor.is_active) {
@@ -204,12 +209,13 @@ export async function login(prevState: any, formData: FormData) {
             redirect('/vendor');
         }
 
-        // 4. Check Navigators (by Email)
-        const { data: navigator } = await supabase
+        // 4. Check Navigators (by Email) - normalize email for matching (ignore spaces and case)
+        const { data: navigators } = await supabase
             .from('navigators')
             .select('*')
-            .ilike('email', trimmedInput)
-            .maybeSingle();
+            .not('email', 'is', null);
+
+        const navigator = navigators?.find(n => n.email && normalizeEmail(n.email) === normalizedEmail);
 
         if (navigator) {
             if (!navigator.is_active) {
@@ -245,6 +251,12 @@ export async function logout() {
 }
 
 
+// Helper function to normalize email addresses (remove all spaces, lowercase)
+function normalizeEmail(email: string): string {
+    if (!email) return '';
+    return email.replace(/\s+/g, '').toLowerCase();
+}
+
 // Helper to check identity AND return global passwordless setting
 export async function checkEmailIdentity(identifier: string) {
     if (!identifier) return { exists: false, type: null, enablePasswordless: false };
@@ -253,9 +265,10 @@ export async function checkEmailIdentity(identifier: string) {
     const settings = await getSettings();
     const enablePasswordless = settings.enablePasswordlessLogin || false;
 
-    const trimmedInput = identifier.trim();
+    // Normalize input: remove all spaces and convert to lowercase
+    const normalizedInput = normalizeEmail(identifier);
+    const trimmedInput = identifier.trim().toLowerCase();
 
-    // First, check for multiple accounts with this email/username
     // Use Service Role if available to bypass RLS
     let supabaseClient = supabase;
     const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -265,111 +278,136 @@ export async function checkEmailIdentity(identifier: string) {
         });
     }
 
-    // Count matches across all tables
-    let matchCount = 0;
+    // Collect all matches to determine if there are multiple accounts
+    // Priority order: admin > vendor > navigator > client
+    const matches: Array<{ type: 'admin' | 'vendor' | 'navigator' | 'client', id?: string, isActive?: boolean }> = [];
 
-    // 1. Check Env Super Admin
+    // 1. Check Env Super Admin (match by username)
     const envUser = process.env.ADMIN_USERNAME;
-    if (envUser && trimmedInput === envUser) {
-        matchCount++;
+    const originalTrimmed = identifier.trim();
+    if (envUser && originalTrimmed === envUser) {
+        matches.push({ type: 'admin' });
     }
 
-    // 2. Check Database Admins
-    const { count: adminCount } = await supabase
+    // 2. Check Database Admins (by username - case sensitive)
+    const { data: admins } = await supabase
         .from('admins')
-        .select('*', { count: 'exact', head: true })
-        .eq('username', trimmedInput);
+        .select('id')
+        .eq('username', originalTrimmed);
     
-    if (adminCount && adminCount > 0) {
-        matchCount += adminCount;
+    if (admins && admins.length > 0) {
+        matches.push(...admins.map(a => ({ type: 'admin' as const, id: a.id })));
     }
 
-    // 3. Check Vendors (by Email)
-    const { count: vendorCount } = await supabase
+    // 3. Check Vendors (by Email) - fetch all and normalize for comparison
+    // This ensures we match emails regardless of spaces or case
+    const { data: vendorsData } = await supabaseClient
         .from('vendors')
-        .select('*', { count: 'exact', head: true })
-        .ilike('email', trimmedInput);
+        .select('id, email, is_active')
+        .not('email', 'is', null);
     
-    if (vendorCount && vendorCount > 0) {
-        matchCount += vendorCount;
+    if (vendorsData && vendorsData.length > 0) {
+        // Normalize both input and database emails (remove all spaces, lowercase)
+        const exactMatches = vendorsData.filter(v => 
+            v.email && normalizeEmail(v.email) === normalizedInput
+        );
+        if (exactMatches.length > 0) {
+            matches.push(...exactMatches.map(v => ({ 
+                type: 'vendor' as const, 
+                id: v.id, 
+                isActive: v.is_active 
+            })));
+        }
     }
 
-    // 4. Check Navigators
-    const { count: navigatorCount } = await supabase
+    // 4. Check Navigators (by Email)
+    const { data: navigatorsData } = await supabaseClient
         .from('navigators')
-        .select('*', { count: 'exact', head: true })
-        .ilike('email', trimmedInput);
+        .select('id, email')
+        .not('email', 'is', null);
     
-    if (navigatorCount && navigatorCount > 0) {
-        matchCount += navigatorCount;
+    if (navigatorsData && navigatorsData.length > 0) {
+        const exactMatches = navigatorsData.filter(n => 
+            n.email && normalizeEmail(n.email) === normalizedInput
+        );
+        if (exactMatches.length > 0) {
+            matches.push(...exactMatches.map(n => ({ 
+                type: 'navigator' as const, 
+                id: n.id 
+            })));
+        }
     }
 
     // 5. Check Clients (by Email)
-    const { count: clientCount } = await supabaseClient
+    const { data: clientsData } = await supabaseClient
         .from('clients')
-        .select('*', { count: 'exact', head: true })
-        .ilike('email', trimmedInput);
+        .select('id, email')
+        .not('email', 'is', null);
     
-    if (clientCount && clientCount > 0) {
-        matchCount += clientCount;
+    if (clientsData && clientsData.length > 0) {
+        const exactMatches = clientsData.filter(c => 
+            c.email && normalizeEmail(c.email) === normalizedInput
+        );
+        if (exactMatches.length > 0) {
+            matches.push(...exactMatches.map(c => ({ 
+                type: 'client' as const, 
+                id: c.id 
+            })));
+        }
     }
 
-    // If multiple accounts found, return error
-    if (matchCount > 1) {
+    // If no matches found
+    if (matches.length === 0) {
+        return { exists: false, type: null };
+    }
+
+    // If multiple accounts found, prefer admin account
+    if (matches.length > 1) {
+        const adminMatch = matches.find(m => m.type === 'admin');
+        if (adminMatch) {
+            // Prefer admin account when multiple accounts exist
+            return { 
+                exists: true, 
+                type: 'admin', 
+                id: adminMatch.id,
+                enablePasswordless: false 
+            };
+        }
+        // If no admin but multiple accounts, return error
         return { exists: false, type: null, enablePasswordless: false, multipleAccounts: true };
     }
 
-    // Now proceed with normal flow to determine the single account type
-    // 1. Check Env Super Admin
-    if (envUser && trimmedInput === envUser) {
-        return { exists: true, type: 'admin', enablePasswordless: false };
-    }
-
-    // 2. Check Database Admins
-    const { data: admin } = await supabase
-        .from('admins')
-        .select('id')
-        .eq('username', trimmedInput)
-        .maybeSingle();
-
-    if (admin) {
-        return { exists: true, type: 'admin', enablePasswordless: false };
-    }
-
-    // 3. Check Vendors (by Email)
-    const { data: vendor } = await supabase
-        .from('vendors')
-        .select('id, is_active')
-        .ilike('email', trimmedInput)
-        .maybeSingle();
-
-    if (vendor) {
-        if (!vendor.is_active) {
-            return { exists: true, type: 'vendor', enablePasswordless: false };
-        }
-        return { exists: true, type: 'vendor', enablePasswordless: false };
-    }
-
-    // 4. Check Navigators
-    const { data: navigator } = await supabase
-        .from('navigators')
-        .select('id')
-        .ilike('email', trimmedInput)
-        .maybeSingle();
-
-    if (navigator) {
-        return { exists: true, type: 'navigator', enablePasswordless: false };
-    }
-
-    // 5. Check Clients (by Email)
-    const { data: client } = await supabaseClient
-        .from('clients')
-        .select('id')
-        .ilike('email', trimmedInput)
-        .maybeSingle();
-
-    if (client) {
-        return { exists: true, type: 'client', id: client.id, enablePasswordless };
+    // Single match found
+    const match = matches[0];
+    
+    if (match.type === 'admin') {
+        return { 
+            exists: true, 
+            type: 'admin', 
+            id: match.id,
+            enablePasswordless: false 
+        };
+    } else if (match.type === 'vendor') {
+        return { 
+            exists: true, 
+            type: 'vendor', 
+            id: match.id,
+            enablePasswordless: false 
+        };
+    } else if (match.type === 'navigator') {
+        return { 
+            exists: true, 
+            type: 'navigator', 
+            id: match.id,
+            enablePasswordless: false 
+        };
+    } else if (match.type === 'client') {
+        return { 
+            exists: true, 
+            type: 'client', 
+            id: match.id, 
+            enablePasswordless 
+        };
     }
 
     return { exists: false, type: null };

@@ -6,7 +6,7 @@ import { Sidebar } from './Sidebar';
 import { usePathname } from 'next/navigation';
 import { DataCacheProvider } from '@/lib/data-cache';
 
-export function LayoutShell({ children, userName, userRole }: { children: React.ReactNode, userName?: string, userRole?: string }) {
+export function LayoutShell({ children, userName, userRole, userId }: { children: React.ReactNode, userName?: string, userRole?: string, userId?: string }) {
     const [isCollapsed, setIsCollapsed] = useState(false);
     const pathname = usePathname();
 
@@ -36,6 +36,7 @@ export function LayoutShell({ children, userName, userRole }: { children: React.
                         toggle={() => setIsCollapsed(!isCollapsed)}
                         userName={userName}
                         userRole={userRole}
+                        userId={userId}
                     />
                 )}
 

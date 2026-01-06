@@ -5,8 +5,9 @@ import { useRouter } from 'next/navigation';
 import { Vendor, ClientProfile, MenuItem, BoxType } from '@/lib/types';
 import { getVendors, getClients, getMenuItems, getBoxTypes } from '@/lib/cached-data';
 import { getOrdersByVendor, isOrderUnderVendor, updateOrderDeliveryProof, orderHasDeliveryProof, resolveOrderId } from '@/lib/actions';
-import { ArrowLeft, Truck, Calendar, Package, CheckCircle, XCircle, Clock, User, DollarSign, ShoppingCart, Download, ChevronDown, ChevronUp, FileText, Upload, X, AlertCircle } from 'lucide-react';
+import { ArrowLeft, Truck, Calendar, Package, CheckCircle, XCircle, Clock, User, DollarSign, ShoppingCart, Download, ChevronDown, ChevronUp, FileText, Upload, X, AlertCircle, LogOut } from 'lucide-react';
 import { generateLabelsPDF } from '@/lib/label-utils';
+import { logout } from '@/lib/auth-actions';
 import styles from './VendorDetail.module.css';
 
 interface Props {
@@ -982,6 +983,19 @@ export function VendorDetail({ vendorId, isVendorView, vendor: initialVendor }: 
     if (isLoading) {
         return (
             <div className={styles.container}>
+                {isVendorView && (
+                    <div className={styles.header}>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', flex: 1 }}>
+                            <button
+                                onClick={() => logout()}
+                                className={styles.logoutButton}
+                            >
+                                <LogOut size={18} />
+                                <span>Log Out</span>
+                            </button>
+                        </div>
+                    </div>
+                )}
                 <div className={styles.loadingContainer}>
                     <div className="spinner"></div>
                     <p>Loading vendor details...</p>
@@ -998,6 +1012,17 @@ export function VendorDetail({ vendorId, isVendorView, vendor: initialVendor }: 
                         <button className={styles.backButton} onClick={() => router.push('/vendors')}>
                             <ArrowLeft size={16} /> Back to Vendors
                         </button>
+                    )}
+                    {isVendorView && (
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', flex: 1 }}>
+                            <button
+                                onClick={() => logout()}
+                                className={styles.logoutButton}
+                            >
+                                <LogOut size={18} />
+                                <span>Log Out</span>
+                            </button>
+                        </div>
                     )}
                 </div>
                 <div className={styles.errorMessage}>
@@ -1020,6 +1045,15 @@ export function VendorDetail({ vendorId, isVendorView, vendor: initialVendor }: 
                         <Truck size={24} style={{ marginRight: '12px', verticalAlign: 'middle' }} />
                         {vendor.name}
                     </h1>
+                    {isVendorView && (
+                        <button
+                            onClick={() => logout()}
+                            className={styles.logoutButton}
+                        >
+                            <LogOut size={18} />
+                            <span>Log Out</span>
+                        </button>
+                    )}
                 </div>
             </div>
 

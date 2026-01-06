@@ -25,6 +25,7 @@ export default async function RootLayout({
   const session = await getSession();
   const userName = session?.name || 'Admin';
   const userRole = session?.role || 'admin';
+  const userId = session?.userId || '';
 
   const cookieStore = await cookies();
   const fakeTimeCookie = cookieStore.get('x-fake-time');
@@ -34,7 +35,7 @@ export default async function RootLayout({
     <html lang="en">
       <body className={inter.className}>
         <TimeProvider initialFakeTime={initialFakeTime}>
-          <LayoutShell userName={userName} userRole={userRole}>
+          <LayoutShell userName={userName} userRole={userRole} userId={userId}>
             {children}
           </LayoutShell>
         </TimeProvider>

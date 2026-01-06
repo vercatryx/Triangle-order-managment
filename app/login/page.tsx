@@ -36,6 +36,8 @@ export default function LoginPage() {
             console.log('Identity result:', result);
 
             // Check for multiple accounts first
+            // Note: If multiple accounts exist and one is admin, checkEmailIdentity now returns the admin account
+            // So multipleAccounts will only be true if there are multiple non-admin accounts
             if (result.multipleAccounts) {
                 setIdentityError('Multiple accounts found with that email address. Please contact support.');
                 setCheckingIdentity(false);

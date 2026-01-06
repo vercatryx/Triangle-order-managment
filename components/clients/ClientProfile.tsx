@@ -2125,7 +2125,14 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                                                                                                                 return (
                                                                                                                     <div key={item.id} className={styles.menuItem}>
                                                                                                                         <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
-                                                                                                                            <span>{item.name} <span style={{ color: 'var(--text-tertiary)' }}>(x{item.quotaValue || 1})</span></span>
+                                                                                                                            <span>
+                                                                                                                                {item.name}
+                                                                                                                                {(item.quotaValue || 1) > 1 && (
+                                                                                                                                    <span style={{ color: 'var(--text-tertiary)', fontSize: '0.9em', marginLeft: '4px' }}>
+                                                                                                                                        (counts as {item.quotaValue || 1} meals)
+                                                                                                                                    </span>
+                                                                                                                                )}
+                                                                                                                            </span>
                                                                                                                             <div className={styles.quantityControl} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                                                                                                                                 <button onClick={() => {
                                                                                                                                     const updated = [...currentSelections];
@@ -2225,7 +2232,14 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                                                                                                 return (
                                                                                                     <div key={item.id} className={styles.menuItem}>
                                                                                                         <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
-                                                                                                            <span>{item.name} <span style={{ color: 'var(--text-tertiary)' }}>(x{item.quotaValue || 1})</span></span>
+                                                                                                            <span>
+                                                                                                                {item.name}
+                                                                                                                {(item.quotaValue || 1) > 1 && (
+                                                                                                                    <span style={{ color: 'var(--text-tertiary)', fontSize: '0.9em', marginLeft: '4px' }}>
+                                                                                                                        (counts as {item.quotaValue || 1} meals)
+                                                                                                                    </span>
+                                                                                                                )}
+                                                                                                            </span>
                                                                                                             <div className={styles.quantityControl} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                                                                                                                 <button onClick={() => updateItemQuantity(index, item.id, Math.max(0, qty - 1), null)} className="btn btn-secondary" style={{ padding: '2px 8px' }}>-</button>
                                                                                                                 <span style={{ width: '20px', textAlign: 'center' }}>{qty}</span>
@@ -2429,7 +2443,14 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                                                                                                             return (
                                                                                                                 <div key={item.id} className={styles.menuItem}>
                                                                                                                     <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
-                                                                                                                        <span>{item.name} <span style={{ color: 'var(--text-tertiary)' }}>(x{item.quotaValue || 1})</span></span>
+                                                                                                                        <span>
+                                                                                                                            {item.name}
+                                                                                                                            {(item.quotaValue || 1) > 1 && (
+                                                                                                                                <span style={{ color: 'var(--text-tertiary)', fontSize: '0.9em', marginLeft: '4px' }}>
+                                                                                                                                    (counts as {item.quotaValue || 1} meals)
+                                                                                                                                </span>
+                                                                                                                            )}
+                                                                                                                        </span>
                                                                                                                         <div className={styles.quantityControl} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                                                                                                                             <button onClick={() => {
                                                                                                                                 const updated = [...currentSelections];
@@ -2535,7 +2556,14 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                                                                                             return (
                                                                                                 <div key={item.id} className={styles.menuItem}>
                                                                                                     <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
-                                                                                                        <span>{item.name} <span style={{ color: 'var(--text-tertiary)' }}>(x{item.quotaValue || 1})</span></span>
+                                                                                                        <span>
+                                                                                                            {item.name}
+                                                                                                            {(item.quotaValue || 1) > 1 && (
+                                                                                                                <span style={{ color: 'var(--text-tertiary)', fontSize: '0.9em', marginLeft: '4px' }}>
+                                                                                                                    (counts as {item.quotaValue || 1} meals)
+                                                                                                                </span>
+                                                                                                            )}
+                                                                                                        </span>
                                                                                                         <div className={styles.quantityControl} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                                                                                                             <button onClick={() => updateItemQuantity(index, item.id, Math.max(0, qty - 1), null)} className="btn btn-secondary" style={{ padding: '2px 8px' }}>-</button>
                                                                                                             <span style={{ width: '20px', textAlign: 'center' }}>{qty}</span>
@@ -2770,7 +2798,14 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                                                                                     const qty = Number(selectedItems[item.id] || 0);
                                                                                     return (
                                                                                         <div key={item.id} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', background: 'var(--bg-app)', padding: '4px 8px', borderRadius: '4px', border: '1px solid var(--border-color)' }}>
-                                                                                            <span style={{ fontSize: '0.8rem' }}>{item.name} <span style={{ color: 'var(--text-tertiary)' }}>(x{item.quotaValue || 1})</span></span>
+                                                                                            <span style={{ fontSize: '0.8rem' }}>
+                                                                                                {item.name}
+                                                                                                {(item.quotaValue || 1) > 1 && (
+                                                                                                    <span style={{ color: 'var(--text-tertiary)', marginLeft: '4px' }}>
+                                                                                                        (counts as {item.quotaValue || 1} meals)
+                                                                                                    </span>
+                                                                                                )}
+                                                                                            </span>
                                                                                             <div className={styles.quantityControl} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                                                                                                 <button onClick={() => handleBoxItemChange(item.id, Math.max(0, qty - 1))} className="btn btn-secondary" style={{ padding: '2px 8px' }}>-</button>
                                                                                                 <span style={{ width: '20px', textAlign: 'center' }}>{qty}</span>
@@ -2807,7 +2842,14 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                                                                                     const qty = Number(selectedItems[item.id] || 0);
                                                                                     return (
                                                                                         <div key={item.id} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', background: 'var(--bg-app)', padding: '4px 8px', borderRadius: '4px', border: '1px solid var(--border-color)' }}>
-                                                                                            <span style={{ fontSize: '0.8rem' }}>{item.name} <span style={{ color: 'var(--text-tertiary)' }}>(x{item.quotaValue || 1})</span></span>
+                                                                                            <span style={{ fontSize: '0.8rem' }}>
+                                                                                                {item.name}
+                                                                                                {(item.quotaValue || 1) > 1 && (
+                                                                                                    <span style={{ color: 'var(--text-tertiary)', marginLeft: '4px' }}>
+                                                                                                        (counts as {item.quotaValue || 1} meals)
+                                                                                                    </span>
+                                                                                                )}
+                                                                                            </span>
                                                                                             <div className={styles.quantityControl} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                                                                                                 <button onClick={() => handleBoxItemChange(item.id, Math.max(0, qty - 1))} className="btn btn-secondary" style={{ padding: '2px 8px' }}>-</button>
                                                                                                 <span style={{ width: '20px', textAlign: 'center' }}>{qty}</span>
@@ -3769,6 +3811,17 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                 }
             }
 
+            // Always close modal and client portal after saving (especially for navigators adding units)
+            const wasNavigatorAddingUnits = currentUser?.role === 'navigator' && pendingStatusChange !== null;
+            setShowUnitsModal(false);
+            setPendingStatusChange(null);
+            
+            // If navigator added units, always close the portal
+            if (wasNavigatorAddingUnits && onClose) {
+                onClose();
+                return true;
+            }
+            
             if (onClose) {
                 onClose();
             } else {
@@ -3784,9 +3837,17 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
         } catch (error) {
             setMessage('Error saving changes.');
             console.error(error);
+            // Even on error, close modal and portal if navigator was adding units
+            const wasNavigatorAddingUnits = currentUser?.role === 'navigator' && pendingStatusChange !== null;
+            setShowUnitsModal(false);
+            setPendingStatusChange(null);
+            if (onClose && wasNavigatorAddingUnits) {
+                onClose();
+            }
             return false;
         } finally {
             setSaving(false);
+            // Ensure modal is closed
             setShowUnitsModal(false);
             setPendingStatusChange(null);
         }

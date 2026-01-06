@@ -4,7 +4,8 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { Vendor } from '@/lib/types';
 import { getVendors } from '@/lib/cached-data';
-import { Search, Truck, CheckCircle, XCircle, ChevronRight } from 'lucide-react';
+import { Search, Truck, CheckCircle, XCircle, ChevronRight, LogOut } from 'lucide-react';
+import { logout } from '@/lib/auth-actions';
 import styles from './VendorList.module.css';
 
 export function VendorList() {
@@ -36,6 +37,13 @@ export function VendorList() {
             <div className={styles.container}>
                 <div className={styles.header}>
                     <h1 className={styles.title}>Vendors</h1>
+                    <button
+                        onClick={() => logout()}
+                        className={styles.logoutButton}
+                    >
+                        <LogOut size={18} />
+                        <span>Log Out</span>
+                    </button>
                 </div>
                 <div className={styles.loadingContainer}>
                     <div className="spinner"></div>
@@ -49,6 +57,13 @@ export function VendorList() {
         <div className={styles.container}>
             <div className={styles.header}>
                 <h1 className={styles.title}>Vendors</h1>
+                <button
+                    onClick={() => logout()}
+                    className={styles.logoutButton}
+                >
+                    <LogOut size={18} />
+                    <span>Log Out</span>
+                </button>
             </div>
 
             <div className={styles.filters}>
