@@ -22,45 +22,42 @@ const supabase = createClient(
 );
 
 async function run() {
-    console.log('Fetching a client...');
-    const { data: clients } = await supabase.from('clients').select('*').limit(1);
-    if (!clients || clients.length === 0) {
-        console.log('No clients found.');
-        return;
-    }
+    console.log('Creating a new client...');
 
-    const client = clients[0];
-    console.log('Original Active Order:', client.active_order);
-
-    const newCaseId = 'TEST-CASE-' + Math.floor(Math.random() * 1000);
-    const updatedOrder = {
-        ...client.active_order,
-        caseId: newCaseId,
-        serviceType: client.service_type || 'Food' // Ensure serviceType matches
-    };
-
-    console.log('Updating with Case ID:', newCaseId);
-
-    const { error } = await supabase
+    const { data: newClient, error } = await supabase
         .from('clients')
-        .update({ active_order: updatedOrder })
-        .eq('id', client.id);
+        .insert([{
+            full_name: 'Test Client ' + Date.now(),
+            service_type: 'Food',
+            active_order: {}
+        }])
+        .select()
+        .single();
 
     if (error) {
-        console.error('Update failed:', error);
+        console.error('Error creating client:', error);
         return;
     }
 
-    console.log('Update successful. Fetching back...');
-    const { data: updatedClient } = await supabase.from('clients').select('*').eq('id', client.id).single();
+    console.log('Created Client ID:', newClient.id);
+    console.log('ID Data Type:', typeof newClient.id);
 
-    console.log('New Active Order:', updatedClient.active_order);
+    // Check for "ghost" upcoming orders immediately
+    const { data: upcomingOrders } = await supabase
+        .from('upcoming_orders')
+        .select('*')
+        .eq('client_id', newClient.id);
 
-    if (updatedClient.active_order?.caseId === newCaseId) {
-        console.log('SUCCESS: Case ID persisted.');
+    console.log('Upcoming Orders for new client:', upcomingOrders);
+
+    if (upcomingOrders && upcomingOrders.length > 0) {
+        console.log('ISSUE REPRODUCED: Found ghost upcoming orders for fresh client ID');
     } else {
-        console.log('FAILURE: Case ID NOT found.');
+        console.log('No ghost orders found on creation.');
     }
+
+    // Clean up
+    await supabase.from('clients').delete().eq('id', newClient.id);
 }
 
 run();
