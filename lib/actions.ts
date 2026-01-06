@@ -239,8 +239,26 @@ export async function updateMenuItem(id: string, data: Partial<MenuItem>) {
 
 export async function deleteMenuItem(id: string) {
     const { error } = await supabase.from('menu_items').delete().eq('id', id);
-    handleError(error);
+
+    if (error) {
+        // If the item is referenced by orders (FK violation 23503), we can't hard delete it.
+        // Instead, we mark it as inactive (soft delete) so it doesn't appear in new order selections
+        // but preserves history for existing orders.
+        if (error.code === '23503') {
+            const { error: updateError } = await supabase
+                .from('menu_items')
+                .update({ is_active: false })
+                .eq('id', id);
+
+            if (updateError) handleError(updateError);
+
+            revalidatePath('/admin');
+            return { success: false, message: 'Item is in use by existing orders. It has been deactivated instead of permanently deleted.' };
+        }
+        handleError(error);
+    }
     revalidatePath('/admin');
+    return { success: true };
 }
 
 // --- ITEM CATEGORY ACTIONS ---

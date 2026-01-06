@@ -84,7 +84,10 @@ export function MenuManagement() {
 
     async function handleDelete(id: string) {
         if (confirm('Delete this menu item?')) {
-            await deleteMenuItem(id);
+            const result = await deleteMenuItem(id);
+            if (result && !result.success && result.message) {
+                alert(result.message);
+            }
             invalidateReferenceData(); // Invalidate cache after delete
             const mData = await getMenuItems();
             setMenuItems(mData);
