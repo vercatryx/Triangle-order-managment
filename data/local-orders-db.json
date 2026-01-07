@@ -17,7 +17,8 @@
       "processed_order_id": null,
       "processed_at": null,
       "delivery_day": null,
-      "order_number": 100114
+      "order_number": 100114,
+      "meal_type": "Lunch"
     },
     {
       "id": "156a0067-8d1e-4536-9a91-136774ed1417",
@@ -35,7 +36,8 @@
       "processed_order_id": null,
       "processed_at": null,
       "delivery_day": null,
-      "order_number": 100115
+      "order_number": 100115,
+      "meal_type": "Lunch"
     },
     {
       "id": "b7ce8934-6b15-40cb-a2e5-7e3a6f64566b",
@@ -53,7 +55,8 @@
       "processed_order_id": null,
       "processed_at": null,
       "delivery_day": null,
-      "order_number": 100116
+      "order_number": 100116,
+      "meal_type": "Lunch"
     },
     {
       "id": "189b838e-cc59-4095-8905-2a69d2c0398b",
@@ -71,7 +74,8 @@
       "processed_order_id": null,
       "processed_at": null,
       "delivery_day": null,
-      "order_number": 100117
+      "order_number": 100117,
+      "meal_type": "Lunch"
     },
     {
       "id": "ef3a951f-af34-40af-85b1-779d2d4161b0",
@@ -89,7 +93,8 @@
       "processed_order_id": null,
       "processed_at": null,
       "delivery_day": null,
-      "order_number": 100118
+      "order_number": 100118,
+      "meal_type": "Lunch"
     },
     {
       "id": "4c39140d-16be-415b-842a-989811c629e9",
@@ -107,7 +112,8 @@
       "processed_order_id": null,
       "processed_at": null,
       "delivery_day": null,
-      "order_number": 100119
+      "order_number": 100119,
+      "meal_type": "Lunch"
     },
     {
       "id": "63b5d9c4-00e5-4adb-8c14-35ade4ddc26c",
@@ -125,7 +131,8 @@
       "processed_order_id": null,
       "processed_at": null,
       "delivery_day": null,
-      "order_number": 100120
+      "order_number": 100120,
+      "meal_type": "Lunch"
     },
     {
       "id": "f5dfc806-72bc-475e-b619-d4420d385448",
@@ -143,7 +150,8 @@
       "processed_order_id": null,
       "processed_at": null,
       "delivery_day": null,
-      "order_number": 100121
+      "order_number": 100121,
+      "meal_type": "Lunch"
     },
     {
       "id": "fe6de497-bee7-4148-be1e-05a57f05a58c",
@@ -161,7 +169,8 @@
       "processed_order_id": null,
       "processed_at": null,
       "delivery_day": null,
-      "order_number": 100122
+      "order_number": 100122,
+      "meal_type": "Lunch"
     },
     {
       "id": "5e7836c6-5093-4bc6-9c4a-b53aa285c362",
@@ -179,7 +188,8 @@
       "processed_order_id": null,
       "processed_at": null,
       "delivery_day": null,
-      "order_number": 100123
+      "order_number": 100123,
+      "meal_type": "Lunch"
     },
     {
       "id": "80c492de-59fe-4776-ab51-e0dec779124c",
@@ -197,7 +207,8 @@
       "processed_order_id": null,
       "processed_at": null,
       "delivery_day": null,
-      "order_number": 100124
+      "order_number": 100124,
+      "meal_type": "Lunch"
     },
     {
       "id": "9d7bd3d6-fa4d-42d6-a89a-8e65a74e759e",
@@ -215,7 +226,8 @@
       "processed_order_id": null,
       "processed_at": null,
       "delivery_day": null,
-      "order_number": 100125
+      "order_number": 100125,
+      "meal_type": "Lunch"
     },
     {
       "id": "0a87e9b0-2870-4c04-a1e5-ed426f6bc7be",
@@ -233,7 +245,8 @@
       "processed_order_id": null,
       "processed_at": null,
       "delivery_day": null,
-      "order_number": 100126
+      "order_number": 100126,
+      "meal_type": "Lunch"
     },
     {
       "id": "8cf3338e-915a-4ea2-a4f5-bf9173ced737",
@@ -251,7 +264,8 @@
       "processed_order_id": null,
       "processed_at": null,
       "delivery_day": null,
-      "order_number": 100127
+      "order_number": 100127,
+      "meal_type": "Lunch"
     },
     {
       "id": "d2a46370-edad-4ba2-a042-1534334e255f",
@@ -269,7 +283,8 @@
       "processed_order_id": null,
       "processed_at": null,
       "delivery_day": null,
-      "order_number": 100128
+      "order_number": 100128,
+      "meal_type": "Lunch"
     },
     {
       "id": "a39d253d-4ab8-44f5-bfe4-136575a331e7",
@@ -287,7 +302,8 @@
       "processed_order_id": null,
       "processed_at": null,
       "delivery_day": null,
-      "order_number": 100129
+      "order_number": 100129,
+      "meal_type": "Lunch"
     },
     {
       "id": "b30e8bad-ae8b-45a3-902b-de7f210c6dba",
@@ -305,7 +321,8 @@
       "processed_order_id": null,
       "processed_at": null,
       "delivery_day": null,
-      "order_number": 100130
+      "order_number": 100130,
+      "meal_type": "Lunch"
     },
     {
       "id": "72e76d44-4852-4675-896c-477b0fac8373",
@@ -323,7 +340,8 @@
       "processed_order_id": null,
       "processed_at": null,
       "delivery_day": null,
-      "order_number": 100131
+      "order_number": 100131,
+      "meal_type": "Lunch"
     },
     {
       "id": "de5a2cf1-3eb4-473e-95aa-5fe4e3fd2f6d",
@@ -341,7 +359,8 @@
       "processed_order_id": null,
       "processed_at": null,
       "delivery_day": null,
-      "order_number": 100132
+      "order_number": 100132,
+      "meal_type": "Lunch"
     },
     {
       "id": "a253edba-ac0f-468d-8f12-d9dad893b67d",
@@ -359,7 +378,8 @@
       "processed_order_id": null,
       "processed_at": null,
       "delivery_day": null,
-      "order_number": 100133
+      "order_number": 100133,
+      "meal_type": "Lunch"
     },
     {
       "id": "16bcda2b-d463-41d1-893c-b098c37c3fcd",
@@ -377,7 +397,8 @@
       "processed_order_id": null,
       "processed_at": null,
       "delivery_day": null,
-      "order_number": 100134
+      "order_number": 100134,
+      "meal_type": "Lunch"
     },
     {
       "id": "bc6c2e44-478c-4a88-ac1d-fad66cc8bb4f",
@@ -395,7 +416,8 @@
       "processed_order_id": null,
       "processed_at": null,
       "delivery_day": null,
-      "order_number": 100135
+      "order_number": 100135,
+      "meal_type": "Lunch"
     },
     {
       "id": "35998759-8463-431c-b599-fdcd56f8bdc3",
@@ -413,7 +435,8 @@
       "processed_order_id": null,
       "processed_at": null,
       "delivery_day": null,
-      "order_number": 100136
+      "order_number": 100136,
+      "meal_type": "Lunch"
     },
     {
       "id": "cf90071c-9231-41ab-b1b5-74c1794a5736",
@@ -431,7 +454,8 @@
       "processed_order_id": null,
       "processed_at": null,
       "delivery_day": null,
-      "order_number": 100137
+      "order_number": 100137,
+      "meal_type": "Lunch"
     },
     {
       "id": "bf389b6e-b940-4930-9445-d9f487cd8405",
@@ -449,7 +473,8 @@
       "processed_order_id": null,
       "processed_at": null,
       "delivery_day": null,
-      "order_number": 100138
+      "order_number": 100138,
+      "meal_type": "Lunch"
     },
     {
       "id": "9599b8ff-8502-42e9-9e45-b6540141cdd9",
@@ -467,7 +492,8 @@
       "processed_order_id": null,
       "processed_at": null,
       "delivery_day": null,
-      "order_number": 100139
+      "order_number": 100139,
+      "meal_type": "Lunch"
     },
     {
       "id": "d2ba6a17-f8b3-49b3-810a-2a76b94a5c61",
@@ -485,7 +511,8 @@
       "processed_order_id": null,
       "processed_at": null,
       "delivery_day": null,
-      "order_number": 100140
+      "order_number": 100140,
+      "meal_type": "Lunch"
     },
     {
       "id": "734f4e68-11dd-45e9-bf4a-cfedea823fd0",
@@ -503,7 +530,8 @@
       "processed_order_id": null,
       "processed_at": null,
       "delivery_day": null,
-      "order_number": 100141
+      "order_number": 100141,
+      "meal_type": "Lunch"
     },
     {
       "id": "6572fca2-8a38-42c9-86dd-04056eb5fc61",
@@ -521,7 +549,8 @@
       "processed_order_id": null,
       "processed_at": null,
       "delivery_day": null,
-      "order_number": 100142
+      "order_number": 100142,
+      "meal_type": "Lunch"
     },
     {
       "id": "e923b6af-ebd0-4d79-a201-7d7a69df383f",
@@ -539,7 +568,8 @@
       "processed_order_id": null,
       "processed_at": null,
       "delivery_day": null,
-      "order_number": 100143
+      "order_number": 100143,
+      "meal_type": "Lunch"
     },
     {
       "id": "0dba640e-3f95-4ec5-a70c-bed55e8a8837",
@@ -557,7 +587,8 @@
       "processed_order_id": null,
       "processed_at": null,
       "delivery_day": null,
-      "order_number": 100144
+      "order_number": 100144,
+      "meal_type": "Lunch"
     },
     {
       "id": "f3258e4e-117f-4622-8e5a-9cbf1619b7e9",
@@ -575,7 +606,8 @@
       "processed_order_id": null,
       "processed_at": null,
       "delivery_day": null,
-      "order_number": 100146
+      "order_number": 100146,
+      "meal_type": "Lunch"
     },
     {
       "id": "06601b50-bd7d-49ef-8cc0-cd4b4cf1e3ee",
@@ -593,7 +625,8 @@
       "processed_order_id": null,
       "processed_at": null,
       "delivery_day": null,
-      "order_number": 100147
+      "order_number": 100147,
+      "meal_type": "Lunch"
     },
     {
       "id": "5aaee636-fa32-4a2f-b4db-46acac03832f",
@@ -611,7 +644,8 @@
       "processed_order_id": null,
       "processed_at": null,
       "delivery_day": null,
-      "order_number": 100148
+      "order_number": 100148,
+      "meal_type": "Lunch"
     },
     {
       "id": "34e6b3a3-c1fb-4708-9454-b1a16a3e301e",
@@ -629,7 +663,8 @@
       "processed_order_id": null,
       "processed_at": null,
       "delivery_day": null,
-      "order_number": 100149
+      "order_number": 100149,
+      "meal_type": "Lunch"
     },
     {
       "id": "eed9d860-846b-4db6-b905-d48d97c3a9d9",
@@ -647,7 +682,8 @@
       "processed_order_id": null,
       "processed_at": null,
       "delivery_day": null,
-      "order_number": 100150
+      "order_number": 100150,
+      "meal_type": "Lunch"
     },
     {
       "id": "ea5f64b8-04e7-4549-a89f-1778ad541d3c",
@@ -665,7 +701,8 @@
       "processed_order_id": null,
       "processed_at": null,
       "delivery_day": null,
-      "order_number": 100151
+      "order_number": 100151,
+      "meal_type": "Lunch"
     },
     {
       "id": "ced690f0-5af5-4f4c-a143-120cff867045",
@@ -683,7 +720,8 @@
       "processed_order_id": null,
       "processed_at": null,
       "delivery_day": null,
-      "order_number": 100152
+      "order_number": 100152,
+      "meal_type": "Lunch"
     },
     {
       "id": "ca5dd0ca-b4ad-4917-978e-be76850fc25f",
@@ -701,7 +739,8 @@
       "processed_order_id": null,
       "processed_at": null,
       "delivery_day": null,
-      "order_number": 100153
+      "order_number": 100153,
+      "meal_type": "Lunch"
     },
     {
       "id": "f2b1607d-ca9e-4d2e-a0d5-abe59be3dffe",
@@ -719,7 +758,8 @@
       "processed_order_id": null,
       "processed_at": null,
       "delivery_day": null,
-      "order_number": 100154
+      "order_number": 100154,
+      "meal_type": "Lunch"
     },
     {
       "id": "f03572fd-eaa1-4c9a-ade3-f81315f80ce7",
@@ -737,7 +777,8 @@
       "processed_order_id": null,
       "processed_at": null,
       "delivery_day": null,
-      "order_number": 100155
+      "order_number": 100155,
+      "meal_type": "Lunch"
     },
     {
       "id": "85befd68-0723-4bea-a512-0bceaf150da9",
@@ -755,7 +796,8 @@
       "processed_order_id": null,
       "processed_at": null,
       "delivery_day": null,
-      "order_number": 100156
+      "order_number": 100156,
+      "meal_type": "Lunch"
     },
     {
       "id": "587803dc-d590-437d-aa31-af0b7f9ae8b5",
@@ -773,7 +815,8 @@
       "processed_order_id": null,
       "processed_at": null,
       "delivery_day": null,
-      "order_number": 100157
+      "order_number": 100157,
+      "meal_type": "Lunch"
     },
     {
       "id": "b41dd4b9-7930-4b18-9eef-544b35daeb97",
@@ -791,7 +834,8 @@
       "processed_order_id": null,
       "processed_at": null,
       "delivery_day": null,
-      "order_number": 100158
+      "order_number": 100158,
+      "meal_type": "Lunch"
     },
     {
       "id": "397e5dd7-621e-4ae6-a028-a2a9ead8e3f3",
@@ -809,7 +853,8 @@
       "processed_order_id": null,
       "processed_at": null,
       "delivery_day": null,
-      "order_number": 100159
+      "order_number": 100159,
+      "meal_type": "Lunch"
     },
     {
       "id": "80485dbb-a6b8-40bf-b20e-ef7fff8195c7",
@@ -827,7 +872,8 @@
       "processed_order_id": null,
       "processed_at": null,
       "delivery_day": null,
-      "order_number": 100160
+      "order_number": 100160,
+      "meal_type": "Lunch"
     },
     {
       "id": "ed8262db-fae0-4ba4-86eb-e9d69b2e6eee",
@@ -845,7 +891,8 @@
       "processed_order_id": null,
       "processed_at": null,
       "delivery_day": null,
-      "order_number": 100161
+      "order_number": 100161,
+      "meal_type": "Lunch"
     },
     {
       "id": "74304e50-ad0e-49b4-9ec7-ea822d766cf2",
@@ -863,7 +910,8 @@
       "processed_order_id": null,
       "processed_at": null,
       "delivery_day": null,
-      "order_number": 100162
+      "order_number": 100162,
+      "meal_type": "Lunch"
     },
     {
       "id": "ca6cbb68-6607-4575-96c7-c720ea0d14fa",
@@ -881,7 +929,8 @@
       "processed_order_id": null,
       "processed_at": null,
       "delivery_day": null,
-      "order_number": 100163
+      "order_number": 100163,
+      "meal_type": "Lunch"
     },
     {
       "id": "07532aee-2d0d-4c31-b281-c7191ef68c2c",
@@ -899,7 +948,8 @@
       "processed_order_id": null,
       "processed_at": null,
       "delivery_day": null,
-      "order_number": 100164
+      "order_number": 100164,
+      "meal_type": "Lunch"
     },
     {
       "id": "b5b7e97f-0770-4791-8044-b22d2030f604",
@@ -917,7 +967,8 @@
       "processed_order_id": null,
       "processed_at": null,
       "delivery_day": null,
-      "order_number": 100165
+      "order_number": 100165,
+      "meal_type": "Lunch"
     },
     {
       "id": "b777439d-ffd5-4f60-ab6b-f07de88c5fd7",
@@ -935,7 +986,8 @@
       "processed_order_id": null,
       "processed_at": null,
       "delivery_day": null,
-      "order_number": 100166
+      "order_number": 100166,
+      "meal_type": "Lunch"
     },
     {
       "id": "e6664df3-a602-4a02-b583-7d5391b69dff",
@@ -953,7 +1005,8 @@
       "processed_order_id": null,
       "processed_at": null,
       "delivery_day": null,
-      "order_number": 100167
+      "order_number": 100167,
+      "meal_type": "Lunch"
     },
     {
       "id": "defc43cf-5b4d-49ef-b2b1-70887890df7f",
@@ -971,7 +1024,8 @@
       "processed_order_id": null,
       "processed_at": null,
       "delivery_day": null,
-      "order_number": 100168
+      "order_number": 100168,
+      "meal_type": "Lunch"
     },
     {
       "id": "2dac1b9e-b153-488b-a4d6-1e56dc7f6106",
@@ -989,7 +1043,8 @@
       "processed_order_id": null,
       "processed_at": null,
       "delivery_day": null,
-      "order_number": 100169
+      "order_number": 100169,
+      "meal_type": "Lunch"
     },
     {
       "id": "79dd9404-e413-4c7a-a178-8a8fcf2a97a5",
@@ -1007,7 +1062,8 @@
       "processed_order_id": null,
       "processed_at": null,
       "delivery_day": null,
-      "order_number": 100170
+      "order_number": 100170,
+      "meal_type": "Lunch"
     },
     {
       "id": "beb1290a-2198-4d2f-8a17-0f6ee5e9d39e",
@@ -1025,7 +1081,8 @@
       "processed_order_id": null,
       "processed_at": null,
       "delivery_day": null,
-      "order_number": 100171
+      "order_number": 100171,
+      "meal_type": "Lunch"
     },
     {
       "id": "f133440b-2585-4e74-97c8-83b4695fc79f",
@@ -1043,7 +1100,8 @@
       "processed_order_id": null,
       "processed_at": null,
       "delivery_day": null,
-      "order_number": 100172
+      "order_number": 100172,
+      "meal_type": "Lunch"
     },
     {
       "id": "5111c708-3225-4871-bc5f-b2bad0f59a77",
@@ -1061,7 +1119,8 @@
       "processed_order_id": null,
       "processed_at": null,
       "delivery_day": null,
-      "order_number": 100173
+      "order_number": 100173,
+      "meal_type": "Lunch"
     },
     {
       "id": "ccd93db3-c016-46db-bb6d-bf1c91aa537a",
@@ -1079,7 +1138,8 @@
       "processed_order_id": null,
       "processed_at": null,
       "delivery_day": null,
-      "order_number": 100174
+      "order_number": 100174,
+      "meal_type": "Lunch"
     },
     {
       "id": "0169abf0-7696-4f1c-b0f9-332c710d905b",
@@ -1097,7 +1157,8 @@
       "processed_order_id": null,
       "processed_at": null,
       "delivery_day": null,
-      "order_number": 100175
+      "order_number": 100175,
+      "meal_type": "Lunch"
     },
     {
       "id": "9c7e7939-bff2-4927-8572-c0cf1fb448e0",
@@ -1115,7 +1176,8 @@
       "processed_order_id": null,
       "processed_at": null,
       "delivery_day": null,
-      "order_number": 100176
+      "order_number": 100176,
+      "meal_type": "Lunch"
     },
     {
       "id": "a86e2658-ade4-4781-b5a3-761795d759f1",
@@ -1133,7 +1195,8 @@
       "processed_order_id": null,
       "processed_at": null,
       "delivery_day": null,
-      "order_number": 100177
+      "order_number": 100177,
+      "meal_type": "Lunch"
     },
     {
       "id": "636af249-875b-4770-8720-3eff01e7c1be",
@@ -1151,7 +1214,8 @@
       "processed_order_id": null,
       "processed_at": null,
       "delivery_day": null,
-      "order_number": 100178
+      "order_number": 100178,
+      "meal_type": "Lunch"
     },
     {
       "id": "a4d50684-3d59-481b-a38a-efabe82aee4d",
@@ -1169,7 +1233,8 @@
       "processed_order_id": null,
       "processed_at": null,
       "delivery_day": null,
-      "order_number": 100145
+      "order_number": 100145,
+      "meal_type": "Lunch"
     },
     {
       "id": "38aff45a-eda9-4579-8fea-1dc0bc3e37d3",
@@ -1187,7 +1252,8 @@
       "processed_order_id": null,
       "processed_at": null,
       "delivery_day": null,
-      "order_number": 100180
+      "order_number": 100180,
+      "meal_type": "Lunch"
     },
     {
       "id": "cbe7ccd4-20a0-48ec-904e-1783f93b4cf7",
@@ -1205,7 +1271,8 @@
       "processed_order_id": null,
       "processed_at": null,
       "delivery_day": null,
-      "order_number": 100181
+      "order_number": 100181,
+      "meal_type": "Lunch"
     },
     {
       "id": "a74300c2-a84e-4eda-9e0b-9c53dda1abf9",
@@ -1223,7 +1290,8 @@
       "processed_order_id": null,
       "processed_at": null,
       "delivery_day": null,
-      "order_number": 100182
+      "order_number": 100182,
+      "meal_type": "Lunch"
     },
     {
       "id": "138f4c86-1f22-4448-a463-201220cb8776",
@@ -1241,7 +1309,8 @@
       "processed_order_id": null,
       "processed_at": null,
       "delivery_day": null,
-      "order_number": 100183
+      "order_number": 100183,
+      "meal_type": "Lunch"
     },
     {
       "id": "9123b1e2-c844-47ae-8ed5-b86903917625",
@@ -1259,7 +1328,8 @@
       "processed_order_id": null,
       "processed_at": null,
       "delivery_day": null,
-      "order_number": 100184
+      "order_number": 100184,
+      "meal_type": "Lunch"
     },
     {
       "id": "02013e4e-7275-42d2-b6c4-c50d62b6534f",
@@ -1277,7 +1347,8 @@
       "processed_order_id": null,
       "processed_at": null,
       "delivery_day": null,
-      "order_number": 100185
+      "order_number": 100185,
+      "meal_type": "Lunch"
     },
     {
       "id": "e5dcb0ad-f52e-45d7-a14f-c1f7d21ab53e",
@@ -1295,7 +1366,8 @@
       "processed_order_id": null,
       "processed_at": null,
       "delivery_day": null,
-      "order_number": 100186
+      "order_number": 100186,
+      "meal_type": "Lunch"
     },
     {
       "id": "40a7e7b2-dbf9-445a-95aa-d7f04b0461c7",
@@ -1313,7 +1385,8 @@
       "processed_order_id": null,
       "processed_at": null,
       "delivery_day": null,
-      "order_number": 100187
+      "order_number": 100187,
+      "meal_type": "Lunch"
     },
     {
       "id": "6e86fc43-8fcb-4b4f-9a4c-a835de63f78c",
@@ -1331,7 +1404,8 @@
       "processed_order_id": null,
       "processed_at": null,
       "delivery_day": null,
-      "order_number": 100188
+      "order_number": 100188,
+      "meal_type": "Lunch"
     },
     {
       "id": "bb34bc40-6f27-4f3e-aea2-8250d0bbaf0d",
@@ -1349,7 +1423,8 @@
       "processed_order_id": null,
       "processed_at": null,
       "delivery_day": null,
-      "order_number": 100189
+      "order_number": 100189,
+      "meal_type": "Lunch"
     },
     {
       "id": "9d2a29ce-ec69-4cb1-a98c-0766ceed9967",
@@ -1367,7 +1442,8 @@
       "processed_order_id": null,
       "processed_at": null,
       "delivery_day": null,
-      "order_number": 100190
+      "order_number": 100190,
+      "meal_type": "Lunch"
     },
     {
       "id": "3d0d5313-93d9-4a54-892d-a84887f25158",
@@ -1385,7 +1461,8 @@
       "processed_order_id": null,
       "processed_at": null,
       "delivery_day": null,
-      "order_number": 100191
+      "order_number": 100191,
+      "meal_type": "Lunch"
     },
     {
       "id": "60ec6e46-b9dc-4196-b8a0-4a7bb6f38f83",
@@ -1403,7 +1480,8 @@
       "processed_order_id": null,
       "processed_at": null,
       "delivery_day": null,
-      "order_number": 100192
+      "order_number": 100192,
+      "meal_type": "Lunch"
     },
     {
       "id": "fcb5402c-55e6-4943-9b4e-59fc99e4e4b1",
@@ -1421,7 +1499,8 @@
       "processed_order_id": null,
       "processed_at": null,
       "delivery_day": null,
-      "order_number": 100193
+      "order_number": 100193,
+      "meal_type": "Lunch"
     },
     {
       "id": "a9ce885f-6c8b-4516-a5f5-bfad039b5e86",
@@ -1439,7 +1518,8 @@
       "processed_order_id": null,
       "processed_at": null,
       "delivery_day": null,
-      "order_number": 100194
+      "order_number": 100194,
+      "meal_type": "Lunch"
     },
     {
       "id": "f816f7c6-f104-41ca-b76f-1743ff03ca31",
@@ -1457,7 +1537,8 @@
       "processed_order_id": null,
       "processed_at": null,
       "delivery_day": null,
-      "order_number": 100195
+      "order_number": 100195,
+      "meal_type": "Lunch"
     },
     {
       "id": "f8781b86-6db4-40b9-bb5e-990978cc74d4",
@@ -1475,7 +1556,8 @@
       "processed_order_id": null,
       "processed_at": null,
       "delivery_day": null,
-      "order_number": 100196
+      "order_number": 100196,
+      "meal_type": "Lunch"
     },
     {
       "id": "20817485-6b88-4e66-a501-f38733fc3c9d",
@@ -1493,7 +1575,8 @@
       "processed_order_id": null,
       "processed_at": null,
       "delivery_day": null,
-      "order_number": 100197
+      "order_number": 100197,
+      "meal_type": "Lunch"
     },
     {
       "id": "d3150c4a-d518-4253-8423-e477843bf407",
@@ -1511,7 +1594,8 @@
       "processed_order_id": null,
       "processed_at": null,
       "delivery_day": null,
-      "order_number": 100198
+      "order_number": 100198,
+      "meal_type": "Lunch"
     },
     {
       "id": "1250ea9d-169b-4413-9342-9d220a089607",
@@ -1529,7 +1613,8 @@
       "processed_order_id": null,
       "processed_at": null,
       "delivery_day": null,
-      "order_number": 100199
+      "order_number": 100199,
+      "meal_type": "Lunch"
     },
     {
       "id": "a3472d68-3093-4e84-87fb-ebbfb8992294",
@@ -1547,25 +1632,65 @@
       "processed_order_id": null,
       "processed_at": null,
       "delivery_day": null,
-      "order_number": 100200
+      "order_number": 100200,
+      "meal_type": "Lunch"
     },
     {
-      "id": "87ca2f1b-e33e-44cc-a209-faa522158079",
+      "id": "d275c8de-ebe5-4011-abd8-51918f401951",
       "client_id": "CLIENT-005",
       "service_type": "Food",
       "case_id": "1234",
       "status": "scheduled",
-      "last_updated": "2026-01-07T14:05:28.099+00:00",
+      "last_updated": "2026-01-07T15:24:05.01+00:00",
       "updated_by": "Avraham ",
-      "created_at": "2026-01-07T11:57:17.135665+00:00",
-      "take_effect_date": "2026-01-11",
+      "created_at": "2026-01-07T15:24:07.408789+00:00",
+      "take_effect_date": null,
       "total_value": 160,
       "total_items": 10,
       "notes": null,
       "processed_order_id": null,
       "processed_at": null,
+      "delivery_day": "Wednesday",
+      "order_number": 100214,
+      "meal_type": "Lunch"
+    },
+    {
+      "id": "96712e8e-8e06-4d35-b57c-83a4075465c2",
+      "client_id": "CLIENT-005",
+      "service_type": "Food",
+      "case_id": "1234",
+      "status": "scheduled",
+      "last_updated": "2026-01-07T15:24:05.01+00:00",
+      "updated_by": "Avraham ",
+      "created_at": "2026-01-07T15:24:09.290832+00:00",
+      "take_effect_date": null,
+      "total_value": 0,
+      "total_items": 0,
+      "notes": null,
+      "processed_order_id": null,
+      "processed_at": null,
       "delivery_day": "Monday",
-      "order_number": 100202
+      "order_number": 100215,
+      "meal_type": "Breakfast"
+    },
+    {
+      "id": "50b5ec95-4e60-432e-b9e9-0fb3e1f46388",
+      "client_id": "CLIENT-005",
+      "service_type": "Food",
+      "case_id": "1234",
+      "status": "scheduled",
+      "last_updated": "2026-01-07T15:24:05.01+00:00",
+      "updated_by": "Avraham ",
+      "created_at": "2026-01-07T15:00:17.088566+00:00",
+      "take_effect_date": null,
+      "total_value": 0,
+      "total_items": 0,
+      "notes": null,
+      "processed_order_id": null,
+      "processed_at": null,
+      "delivery_day": "Wednesday",
+      "order_number": 100213,
+      "meal_type": "Breakfast"
     }
   ],
   "orderVendorSelections": [],
@@ -1573,22 +1698,22 @@
   "orderBoxSelections": [],
   "upcomingOrderVendorSelections": [
     {
-      "id": "b7c34604-e5fe-402e-85b6-74efcf8820c4",
-      "upcoming_order_id": "87ca2f1b-e33e-44cc-a209-faa522158079",
+      "id": "727dc554-7ff1-4144-b6c3-3d82d040f471",
+      "upcoming_order_id": "d275c8de-ebe5-4011-abd8-51918f401951",
       "vendor_id": "1e9e2218-fdff-434f-b279-93d9d7bf4bd2",
-      "created_at": "2026-01-07T14:05:30.805867+00:00"
+      "created_at": "2026-01-07T15:24:08.046084+00:00"
     }
   ],
   "upcomingOrderItems": [
     {
-      "id": "73accf2c-8ad7-47f0-93c7-7c3ed6b664f1",
-      "upcoming_order_id": "87ca2f1b-e33e-44cc-a209-faa522158079",
-      "vendor_selection_id": "b7c34604-e5fe-402e-85b6-74efcf8820c4",
+      "id": "4bf1c821-87e1-4665-b599-79bb4ef81b03",
+      "upcoming_order_id": "d275c8de-ebe5-4011-abd8-51918f401951",
+      "vendor_selection_id": "727dc554-7ff1-4144-b6c3-3d82d040f471",
       "menu_item_id": "fa59f4c7-3557-46be-ab98-0b569d16f69e",
       "quantity": 10,
       "unit_value": 16,
       "total_value": 160,
-      "created_at": "2026-01-07T14:05:30.993152+00:00"
+      "created_at": "2026-01-07T15:24:08.182183+00:00"
     }
   ],
   "upcomingOrderBoxSelections": [
@@ -2453,5 +2578,5 @@
       "items": {}
     }
   ],
-  "lastSynced": "2026-01-07T14:05:32.004Z"
+  "lastSynced": "2026-01-07T15:24:11.741Z"
 }

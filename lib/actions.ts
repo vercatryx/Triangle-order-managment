@@ -1973,7 +1973,8 @@ async function syncSingleOrderForDeliveryDay(
     vendors: Vendor[],
     menuItems: any[],
     boxTypes: any[],
-    supabaseClientObj?: any
+    supabaseClientObj?: any,
+    mealType: string = 'Lunch' // Default to 'Lunch' for backward compatibility
 ): Promise<void> {
     const supabaseClient = supabaseClientObj || supabase;
 
@@ -2096,10 +2097,10 @@ async function syncSingleOrderForDeliveryDay(
     }
 
     // For Boxes orders, dates are optional - they can be set later
-    // Only require dates for Food orders
+    // Only require dates for Food orders - but allow processing to continue so we save draft state
     if (orderConfig.serviceType === 'Food' && (!takeEffectDate || !scheduledDeliveryDate)) {
-        console.warn(`[syncSingleOrderForDeliveryDay] Skipping sync - missing dates for Food order`);
-        return;
+        console.warn(`[syncSingleOrderForDeliveryDay] Missing dates for Food order - will save with NULL dates`);
+        // We continue instead of returning, to allow saving "draft" orders
     }
 
     // For Boxes orders without dates, we'll save with null dates (can be set later)
@@ -2107,6 +2108,10 @@ async function syncSingleOrderForDeliveryDay(
         console.log(`[syncSingleOrderForDeliveryDay] Boxes order without dates - will save with null dates (can be set later)`);
         // Allow null dates for Boxes orders
     }
+
+    // Fallback removed to allow NULL dates per user request
+
+
 
     // Calculate totals
     let totalValue = 0;
@@ -2198,10 +2203,10 @@ async function syncSingleOrderForDeliveryDay(
         updated_by: updatedBy,
         // For Boxes orders, dates are optional (can be null)
         // Note: scheduled_delivery_date column doesn't exist in upcoming_orders table
-        take_effect_date: takeEffectDate ? takeEffectDate.toISOString().split('T')[0] : null,
         total_value: totalValue,
         total_items: totalItems,
-        notes: null
+        notes: null,
+        meal_type: mealType
     };
 
     // Add delivery_day if provided
@@ -2221,6 +2226,9 @@ async function syncSingleOrderForDeliveryDay(
         // For backward compatibility, check for orders without delivery_day
         query = query.is('delivery_day', null);
     }
+
+    // Add meal_type check
+    query = query.eq('meal_type', mealType);
 
     const { data: existing } = await query.maybeSingle();
 
@@ -2595,7 +2603,7 @@ export async function syncCurrentOrderToUpcoming(clientId: string, client: Clien
 
                 // Only sync if there are vendors with items
                 if (dayOrderConfig.vendorSelections.length > 0) {
-                    // console.log(`[syncCurrentOrderToUpcoming] Syncing order for ${deliveryDay} with ${dayOrderConfig.vendorSelections.length} vendor(s)`);
+                    console.log(`[syncCurrentOrderToUpcoming] Syncing order for ${deliveryDay} with ${dayOrderConfig.vendorSelections.length} vendor(s)`);
                     await syncSingleOrderForDeliveryDay(
                         clientId,
                         dayOrderConfig,
@@ -2603,10 +2611,44 @@ export async function syncCurrentOrderToUpcoming(clientId: string, client: Clien
                         vendors,
                         menuItems,
                         boxTypes,
-                        supabaseClient
+                        supabaseClient,
+                        'Lunch' // Default meal type for main selections
                     );
                 } else {
-                    // console.log(`[syncCurrentOrderToUpcoming] Skipping ${deliveryDay} - no vendors with items`);
+                    console.log(`[syncCurrentOrderToUpcoming] Skipping ${deliveryDay} - no vendors with items`);
+                }
+            }
+        }
+
+        // 3. MEAL SELECTIONS SYNC (Breakfast, Dinner, etc.)
+        // Note: We use the local orderConfig variable which is already checked for null/undefined
+        if (orderConfig && orderConfig.mealSelections) {
+            console.log('[syncCurrentOrderToUpcoming] Syncing meal selections', Object.keys(orderConfig.mealSelections));
+            for (const [mealType, selection] of Object.entries(orderConfig.mealSelections)) {
+                // Create a temporary config for this meal
+                // It needs to look like a standard orderConfig with vendorSelections
+                const mealOrderConfig = {
+                    ...orderConfig,
+                    serviceType: 'Food' as ServiceType, // Meals are always Food for now
+                    vendorSelections: [{
+                        vendorId: selection.vendorId || '', // Vendor might be optional/null for some meals?
+                        items: selection.items
+                    }]
+                };
+
+                // Updates: Check if we have deliveryDayOrders.
+                if (orderConfig.deliveryDayOrders) {
+                    for (const day of Object.keys(orderConfig.deliveryDayOrders)) {
+                        // We sync this meal for EACH day defined in the main order?
+                        // Or is there a separate meal selection per day?
+                        // The current Type definition for MealSelections is simple: { [mealType]: { vendorId, items } }
+                        // This suggests it's a global selection for the order duration.
+                        // So we should probably sync it for EACH active delivery day.
+                        await syncSingleOrderForDeliveryDay(clientId, mealOrderConfig, day, vendors, menuItems, boxTypes, supabaseClient, mealType);
+                    }
+                } else {
+                    // Single delivery day or null
+                    await syncSingleOrderForDeliveryDay(clientId, mealOrderConfig, null, vendors, menuItems, boxTypes, supabaseClient, mealType);
                 }
             }
         }
@@ -2725,7 +2767,7 @@ export async function syncCurrentOrderToUpcoming(clientId: string, client: Clien
     await syncLocalDBFromSupabase();
 
     revalidatePath('/clients');
-    revalidatePath(`/client-portal/${clientId}`);
+    revalidatePath(`/ client - portal / ${clientId} `);
 }
 
 /**
@@ -2802,7 +2844,7 @@ export async function processUpcomingOrders() {
             // But usually select() returns it. Let's verify type if needed.
 
             if (orderError || !newOrder) {
-                errors.push(`Failed to create order for client ${upcomingOrder.client_id}: ${orderError?.message}`);
+                errors.push(`Failed to create order for client ${upcomingOrder.client_id}: ${orderError?.message} `);
                 continue;
             }
 
@@ -2899,7 +2941,7 @@ export async function processUpcomingOrders() {
 
             processedCount++;
         } catch (error: any) {
-            errors.push(`Error processing upcoming order ${upcomingOrder.id}: ${error.message}`);
+            errors.push(`Error processing upcoming order ${upcomingOrder.id}: ${error.message} `);
         }
     }
 
@@ -3278,11 +3320,11 @@ export async function getNavigatorLogs(navigatorId: string) {
         const { data, error } = await supabase
             .from('navigator_logs')
             .select(`
-                *,
-                clients (
-                    full_name
-                )
-            `)
+                        *,
+                        clients(
+                            full_name
+                        )
+                            `)
             .eq('navigator_id', navigatorId)
             .gt('units_added', 0) // Only get logs where units were added
             .order('created_at', { ascending: false });
@@ -3333,14 +3375,14 @@ export async function getClientsPaginated(page: number, pageSize: number, query:
         const { data: boxSelections, error: bsError } = await supabase
             .from('upcoming_order_box_selections')
             .select(`
-                vendor_id,
-                box_type_id,
-                upcoming_orders!inner (
-                    client_id,
-                    service_type,
-                    status
-                )
-            `)
+                    vendor_id,
+                        box_type_id,
+                        upcoming_orders!inner(
+                            client_id,
+                            service_type,
+                            status
+                        )
+                            `)
             .in('upcoming_orders.client_id', boxesClientIds)
             .eq('upcoming_orders.service_type', 'Boxes')
             .eq('upcoming_orders.status', 'scheduled');
@@ -3428,7 +3470,7 @@ export async function getClientsPaginated(page: number, pageSize: number, query:
             .in('id', clientIdsNeedingVendor);
 
         if (query) {
-            queryBuilder = queryBuilder.ilike('full_name', `%${query}%`);
+            queryBuilder = queryBuilder.ilike('full_name', `% ${query}% `);
         }
 
         const { data, count, error } = await queryBuilder
@@ -3452,7 +3494,7 @@ export async function getClientsPaginated(page: number, pageSize: number, query:
         .select('*', { count: 'exact' });
 
     if (query) {
-        queryBuilder = queryBuilder.ilike('full_name', `%${query}%`);
+        queryBuilder = queryBuilder.ilike('full_name', `% ${query}% `);
     }
 
     const { data, count, error } = await queryBuilder
@@ -3866,7 +3908,7 @@ export async function saveDeliveryProofUrlAndProcessOrder(
     proofUrl: string
 ) {
     console.log(`[Process Pending Order] START saveDeliveryProofUrlAndProcessOrder for Order: "${orderId}", Type: "${orderType}"`);
-    console.log(`[Process Pending Order] Proof URL: ${proofUrl}`);
+    console.log(`[Process Pending Order] Proof URL: ${proofUrl} `);
 
     const session = await getSession();
     const currentUserName = session?.name || 'Admin';
@@ -3962,7 +4004,7 @@ export async function saveDeliveryProofUrlAndProcessOrder(
 
                     finalOrderId = newOrder.id;
                     wasProcessed = true;
-                    console.log(`[Process Pending Order] Successfully created Order ${newOrder.id}`);
+                    console.log(`[Process Pending Order] Successfully created Order ${newOrder.id} `);
 
                     // Create billing record for the processed order
                     const { data: client } = await supabase
@@ -4003,16 +4045,16 @@ export async function saveDeliveryProofUrlAndProcessOrder(
                     // Reduce client's authorized amount by the order amount (only if billing record didn't already exist)
                     if (!existingBilling && client) {
                         console.log(`[Process Pending Order] Processing deduction for client ${upcomingOrder.client_id}`);
-                        console.log(`[Process Pending Order] Client Object:`, client);
-                        console.log(`[Process Pending Order] Current authorized_amount: ${client?.authorized_amount}`);
-                        console.log(`[Process Pending Order] Order total_value: ${upcomingOrder.total_value}`);
+                        console.log(`[Process Pending Order] Client Object: `, client);
+                        console.log(`[Process Pending Order] Current authorized_amount: ${client?.authorized_amount} `);
+                        console.log(`[Process Pending Order] Order total_value: ${upcomingOrder.total_value} `);
 
                         // Treat null/undefined as 0 and allow negative result
                         const currentAmount = client.authorized_amount ?? 0;
                         const orderAmount = upcomingOrder.total_value || 0;
                         const newAuthorizedAmount = roundCurrency(currentAmount - orderAmount);
 
-                        console.log(`[Process Pending Order] Deducting ${orderAmount} from ${currentAmount}. New amount: ${newAuthorizedAmount}`);
+                        console.log(`[Process Pending Order] Deducting ${orderAmount} from ${currentAmount}. New amount: ${newAuthorizedAmount} `);
 
                         const { error: authAmountError } = await supabase
                             .from('clients')
@@ -4046,7 +4088,7 @@ export async function saveDeliveryProofUrlAndProcessOrder(
                                     .single();
 
                                 if (vsError || !newVs) {
-                                    errors.push(`Failed to copy vendor selection: ${vsError?.message}`);
+                                    errors.push(`Failed to copy vendor selection: ${vsError?.message} `);
                                     continue;
                                 }
 
@@ -4070,7 +4112,7 @@ export async function saveDeliveryProofUrlAndProcessOrder(
                                             });
 
                                         if (itemError) {
-                                            errors.push(`Failed to copy item: ${itemError.message}`);
+                                            errors.push(`Failed to copy item: ${itemError.message} `);
                                         }
                                     }
                                 }
@@ -4100,7 +4142,7 @@ export async function saveDeliveryProofUrlAndProcessOrder(
                                     });
 
                                 if (bsError) {
-                                    errors.push(`Failed to copy box selection: ${bsError.message}`);
+                                    errors.push(`Failed to copy box selection: ${bsError.message} `);
                                 }
                             }
                         }
@@ -4445,11 +4487,11 @@ export async function getOrdersPaginated(page: number, pageSize: number, filter?
     let query = supabase
         .from('orders')
         .select(`
-            *,
-            clients (
-                full_name
-            )
-        `, { count: 'exact' })
+                        *,
+                        clients(
+                            full_name
+                        )
+                            `, { count: 'exact' })
         .neq('status', 'billing_pending')
         .not('scheduled_delivery_date', 'is', null);
 
@@ -4754,7 +4796,7 @@ export async function getBatchClientDetails(clientIds: string[]) {
     if (!clientIds || clientIds.length === 0) return {};
 
     try {
-        // console.log(`[BatchFetch] Starting batch fetch for ${clientIds.length} clients`);
+        // console.log(`[BatchFetch] Starting batch fetch for ${ clientIds.length } clients`);
         // We could optimize this further with a single SQL query or stored proc,
         // but for now, parallelizing the existing optimized getters is a massive step up from serial
         // fetching in a loop.
@@ -4767,7 +4809,7 @@ export async function getBatchClientDetails(clientIds: string[]) {
                     const details = await getClientFullDetails(id);
                     return { id, details };
                 } catch (e) {
-                    console.error(`Error fetching details for client ${id}:`, e);
+                    console.error(`Error fetching details for client ${id}: `, e);
                     return { id, details: null };
                 }
             })
@@ -4781,7 +4823,7 @@ export async function getBatchClientDetails(clientIds: string[]) {
             }
         });
 
-        // console.log(`[BatchFetch] Completed batch fetch for ${clientIds.length} clients`);
+        // console.log(`[BatchFetch] Completed batch fetch for ${ clientIds.length } clients`);
         return resultMap;
     } catch (error) {
         console.error('Error in getBatchClientDetails:', error);

@@ -715,6 +715,20 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate, isVendorView }: P
                 totalItems += qty;
             });
 
+            // Calculate total value
+            let totalValue = 0;
+            items.forEach((item: any) => {
+                const menuItem = menuItems.find(mi => mi.id === item.menu_item_id);
+                const quantity = parseInt(item.quantity || 0);
+                const unitValue = item.unit_value 
+                    ? parseFloat(item.unit_value) 
+                    : (menuItem?.value ?? 0);
+                const itemTotal = item.total_value 
+                    ? parseFloat(item.total_value) 
+                    : (unitValue * quantity);
+                totalValue += itemTotal;
+            });
+
             return (
                 <div className={styles.vendorSection}>
                     <table className={styles.itemsTable}>
@@ -722,6 +736,8 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate, isVendorView }: P
                             <tr>
                                 <th>Item</th>
                                 <th>Quantity</th>
+                                <th>Unit Value</th>
+                                <th>Total</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -729,11 +745,22 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate, isVendorView }: P
                                 const menuItem = menuItems.find(mi => mi.id === item.menu_item_id);
                                 const quantity = parseInt(item.quantity || 0);
                                 const itemKey = item.id || `${order.id}-item-${index}`;
+                                
+                                // Calculate unit value: prefer stored unit_value, then menuItem.value
+                                const unitValue = item.unit_value 
+                                    ? parseFloat(item.unit_value) 
+                                    : (menuItem?.value ?? 0);
+                                // Calculate total: prefer stored total_value, otherwise calculate from unit value * quantity
+                                const totalValue = item.total_value 
+                                    ? parseFloat(item.total_value) 
+                                    : (unitValue * quantity);
 
                                 return (
                                     <tr key={itemKey}>
                                         <td>{menuItem?.name || item.menuItemName || 'Unknown Item'}</td>
                                         <td>{quantity}</td>
+                                        <td>${unitValue.toFixed(2)}</td>
+                                        <td>${totalValue.toFixed(2)}</td>
                                     </tr>
                                 );
                             })}
@@ -741,6 +768,7 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate, isVendorView }: P
                     </table>
                     <div className={styles.orderSummary}>
                         <div><strong>Total Items:</strong> {totalItems}</div>
+                        <div><strong>Total Value:</strong> ${totalValue.toFixed(2)}</div>
                     </div>
                 </div>
             );

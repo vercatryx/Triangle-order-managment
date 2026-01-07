@@ -196,11 +196,22 @@ export function VendorDetail({ vendorId, isVendorView, vendor: initialVendor }: 
                     <div className={styles.itemsHeader}>
                         <span style={{ minWidth: '300px', flex: 3 }}>Item Name</span>
                         <span style={{ minWidth: '100px', flex: 1 }}>Quantity</span>
+                        <span style={{ minWidth: '100px', flex: 1 }}>Unit Value</span>
+                        <span style={{ minWidth: '100px', flex: 1 }}>Total</span>
                     </div>
                     {items.map((item: any, index: number) => {
                         const menuItem = menuItems.find(mi => mi.id === item.menu_item_id);
                         const quantity = parseInt(item.quantity || 0);
                         const itemKey = item.id || `${order.id}-item-${index}`;
+                        
+                        // Calculate unit value: prefer stored unit_value, then menuItem.value
+                        const unitValue = item.unit_value 
+                            ? parseFloat(item.unit_value) 
+                            : (menuItem?.value ?? 0);
+                        // Calculate total: prefer stored total_value, otherwise calculate from unit value * quantity
+                        const totalValue = item.total_value 
+                            ? parseFloat(item.total_value) 
+                            : (unitValue * quantity);
 
                         return (
                             <div key={itemKey} className={styles.itemRow}>
@@ -208,6 +219,8 @@ export function VendorDetail({ vendorId, isVendorView, vendor: initialVendor }: 
                                     {menuItem?.name || item.menuItemName || 'Unknown Item'}
                                 </span>
                                 <span style={{ minWidth: '100px', flex: 1 }}>{quantity}</span>
+                                <span style={{ minWidth: '100px', flex: 1 }}>${unitValue.toFixed(2)}</span>
+                                <span style={{ minWidth: '100px', flex: 1 }}>${totalValue.toFixed(2)}</span>
                             </div>
                         );
                     })}

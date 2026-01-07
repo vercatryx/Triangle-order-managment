@@ -5,23 +5,24 @@ import { decrypt } from '@/lib/session';
 // 1. Specify protected and public routes
 const protectedRoutes = ['/admin', '/clients', '/billing', '/vendors', '/'];
 const vendorRoutes = ['/vendor'];
-const publicRoutes = ['/login', '/api/auth/login', '/api/process-weekly-orders', '/api/extension', '/verify-order', '/delivery'];
+const publicRoutes = ['/login', '/verify-order', '/delivery'];
 
 export default async function proxy(req: NextRequest) {
     // 2. Check if the current route is protected or public
     const path = req.nextUrl.pathname;
 
-    // Exclude static assets/api if needed.
-    if (path.startsWith('/_next') || path.startsWith('/static') || path.includes('.')) {
-        return NextResponse.next();
-    }
-
-    // Exclude all API routes from authentication checks - they handle their own auth
+    // CRITICAL: Exclude all API routes FIRST - they handle their own auth (API keys, etc.)
+    // API routes should NEVER redirect to login, they should return JSON errors
     if (path.startsWith('/api/')) {
         return NextResponse.next();
     }
 
-    const isPublicRoute = publicRoutes.includes(path) || path.startsWith('/verify-order/') || path.startsWith('/client-portal') || path.startsWith('/delivery/') || path.startsWith('/api/extension');
+    // Exclude static assets if needed.
+    if (path.startsWith('/_next') || path.startsWith('/static') || path.includes('.')) {
+        return NextResponse.next();
+    }
+
+    const isPublicRoute = publicRoutes.includes(path) || path.startsWith('/verify-order/') || path.startsWith('/client-portal') || path.startsWith('/delivery/');
     const isVendorRoute = vendorRoutes.some(route => path.startsWith(route));
     // Check protected routes - handle root path separately to avoid matching all paths
     const isProtectedRoute = protectedRoutes.some(route =>

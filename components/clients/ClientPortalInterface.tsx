@@ -771,11 +771,17 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
                                                         const qty = Number(dayItems[item.id] || 0);
                                                         const val = item.value || 1;
                                                         const canAdd = (totalMeals + val) <= (client.approvedMealsPerWeek || 0);
+                                                        const itemValue = item.value ?? 0;
 
                                                         return (
                                                             <div key={item.id} className={styles.menuItemCard} style={{ padding: '0.75rem', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-sm)', background: 'var(--bg-surface)' }}>
                                                                 <div style={{ marginBottom: '8px', fontSize: '0.9rem', fontWeight: 500 }}>
                                                                     {item.name}
+                                                                    {itemValue > 0 && (
+                                                                        <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginLeft: '4px' }}>
+                                                                            (Value: {itemValue})
+                                                                        </span>
+                                                                    )}
                                                                     {val > 1 && (
                                                                         <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginLeft: '4px' }}>
                                                                             (counts as {val} meals)
@@ -832,11 +838,17 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
                                                 const qty = Number((selection.items || {})[item.id] || 0);
                                                 const val = item.value || 1;
                                                 const canAdd = (totalMeals + val) <= (client.approvedMealsPerWeek || 0);
+                                                const itemValue = item.value ?? 0;
 
                                                 return (
                                                     <div key={item.id} className={styles.menuItemCard} style={{ padding: '0.75rem', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-sm)', background: 'var(--bg-surface)' }}>
                                                         <div style={{ marginBottom: '8px', fontSize: '0.9rem', fontWeight: 500 }}>
                                                             {item.name}
+                                                            {itemValue > 0 && (
+                                                                <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginLeft: '4px' }}>
+                                                                    (Value: {itemValue})
+                                                                </span>
+                                                            )}
                                                             {val > 1 && (
                                                                 <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginLeft: '4px' }}>
                                                                     (counts as {val} meals)

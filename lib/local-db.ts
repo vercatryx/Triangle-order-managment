@@ -570,36 +570,77 @@ export async function getUpcomingOrderForClientLocal(clientId: string) {
         // Structure: { [deliveryDay]: OrderConfiguration }
         const ordersByDeliveryDay: any = {};
 
+        console.log(`[getUpcomingOrderForClientLocal] Processing ${upcomingOrders.length} orders for client ${clientId}`);
+
         for (const data of upcomingOrders) {
             const deliveryDay = data.delivery_day || 'default';
+            const mealType = data.meal_type || 'Lunch'; // Default to Lunch if not specified
 
-            const orderConfig: any = {
+            console.log(`[getUpcomingOrderForClientLocal] Processing order:`, {
                 id: data.id,
-                serviceType: data.service_type,
-                caseId: data.case_id,
-                status: data.status,
-                lastUpdated: data.last_updated,
-                updatedBy: data.updated_by,
-                scheduledDeliveryDate: data.scheduled_delivery_date,
-                takeEffectDate: data.take_effect_date,
-                deliveryDistribution: data.delivery_distribution,
-                totalValue: data.total_value,
-                totalItems: data.total_items,
-                notes: data.notes,
-                deliveryDay: deliveryDay
-            };
+                deliveryDay,
+                mealType,
+                existingForDay: !!ordersByDeliveryDay[deliveryDay]
+            });
+
+            // Initialize order config if not exists for this day
+            if (!ordersByDeliveryDay[deliveryDay]) {
+                ordersByDeliveryDay[deliveryDay] = {
+                    id: data.id, // Use ID of first order encountered (usually main/Lunch)
+                    serviceType: data.service_type,
+                    caseId: data.case_id,
+                    status: data.status,
+                    lastUpdated: data.last_updated,
+                    updatedBy: data.updated_by,
+                    scheduledDeliveryDate: data.scheduled_delivery_date,
+                    takeEffectDate: data.take_effect_date,
+                    deliveryDistribution: data.delivery_distribution,
+                    totalValue: 0, // Will sum up
+                    totalItems: 0, // Will sum up
+                    notes: data.notes,
+                    deliveryDay: deliveryDay === 'default' ? null : deliveryDay,
+                    mealSelections: {}
+                };
+            }
+
+            const currentConfig = ordersByDeliveryDay[deliveryDay];
+
+            // Accumulate totals
+            // Note: If we are merging multiple orders, we sum their values/items
+            // But we only set common fields (like caseId) once (from the first one, or overwrite if needed)
+            // Ideally, caseId shouldn't differ.
+
+            // CAUTION: totalValue in DB is per-row. We need to aggregate them for the UI?
+            // The UI usually calculates totals itself from items. 
+            // But let's sum them for the order header.
+            if (ordersByDeliveryDay[deliveryDay].id === data.id) {
+                // If we just initialized it with this data, these are already correct (except we initialized 0 above)
+                // Let's set them now.
+                currentConfig.totalValue = data.total_value;
+                currentConfig.totalItems = data.total_items;
+            } else {
+                // Merging a second order (e.g. Breakfast adding to Lunch)
+                // We shouldn't blindly sum if the UI recalculates, but DB validity matters.
+                // Let's add them.
+                currentConfig.totalValue = (currentConfig.totalValue || 0) + (data.total_value || 0);
+                currentConfig.totalItems = (currentConfig.totalItems || 0) + (data.total_items || 0);
+            }
+
+            // Extract items/vendors for this specific order row
+            let extractedVendorSelections: any[] = [];
+            let extractedItems: any = {}; // For boxes
+            let extractedItemPrices: any = {}; // For boxes
 
             if (data.service_type === 'Food') {
                 const vendorSelections = db.upcomingOrderVendorSelections.filter(vs => vs.upcoming_order_id === data.id);
                 if (vendorSelections.length > 0) {
-                    orderConfig.vendorSelections = [];
                     for (const vs of vendorSelections) {
                         const items = db.upcomingOrderItems.filter(item => item.vendor_selection_id === vs.id);
                         const itemsMap: any = {};
                         for (const item of items) {
                             itemsMap[item.menu_item_id] = item.quantity;
                         }
-                        orderConfig.vendorSelections.push({
+                        extractedVendorSelections.push({
                             vendorId: vs.vendor_id,
                             items: itemsMap
                         });
@@ -607,51 +648,73 @@ export async function getUpcomingOrderForClientLocal(clientId: string) {
                 }
             } else if (data.service_type === 'Boxes') {
                 const boxSelection = db.upcomingOrderBoxSelections.find(bs => bs.upcoming_order_id === data.id);
-                // console.log('[getUpcomingOrderForClientLocal] Loading Boxes order:', {
-                //     upcomingOrderId: data.id,
-                //     foundBoxSelection: !!boxSelection,
-                //     boxSelectionItems: boxSelection?.items,
-                //     boxSelectionItemsType: typeof boxSelection?.items,
-                //     boxSelectionItemsKeys: boxSelection?.items ? Object.keys(boxSelection.items) : []
-                // });
                 if (boxSelection) {
-                    orderConfig.vendorId = boxSelection.vendor_id;
-                    orderConfig.boxTypeId = boxSelection.box_type_id;
-                    orderConfig.boxQuantity = boxSelection.quantity;
+                    // For boxes, we usually just have one main order. 
+                    // But if we had "Breakfast Box" vs "Lunch Box" (unlikely feature currently), we'd handle it.
+                    // Assuming Boxes are always 'Lunch'/'Main'.
+                    if (mealType === 'Lunch') {
+                        currentConfig.vendorId = boxSelection.vendor_id;
+                        currentConfig.boxTypeId = boxSelection.box_type_id;
+                        currentConfig.boxQuantity = boxSelection.quantity;
+                    }
+
                     const itemsRaw = boxSelection.items || {};
-                    // console.log('[getUpcomingOrderForClientLocal] Processing box items:', {
-                    //     itemsRaw,
-                    //     itemsRawType: typeof itemsRaw,
-                    //     itemsRawKeys: Object.keys(itemsRaw)
-                    // });
-                    const items: any = {};
-                    const itemPrices: any = {};
                     for (const [itemId, value] of Object.entries(itemsRaw)) {
                         if (typeof value === 'number') {
-                            items[itemId] = value;
+                            extractedItems[itemId] = value;
                         } else if (value && typeof value === 'object' && 'quantity' in value) {
-                            items[itemId] = (value as any).quantity;
+                            extractedItems[itemId] = (value as any).quantity;
                             if ('price' in value && (value as any).price !== undefined && (value as any).price !== null) {
-                                itemPrices[itemId] = (value as any).price;
+                                extractedItemPrices[itemId] = (value as any).price;
                             }
                         }
                     }
-                    orderConfig.items = items;
-                    // console.log('[getUpcomingOrderForClientLocal] Final box items:', {
-                    //     itemsCount: Object.keys(items).length,
-                    //     items,
-                    //     itemPrices
-                    // });
-                    if (Object.keys(itemPrices).length > 0) {
-                        orderConfig.itemPrices = itemPrices;
-                    }
-                } else {
-                    console.warn('[getUpcomingOrderForClientLocal] No box selection found for upcoming order:', data.id);
                 }
             }
 
-            ordersByDeliveryDay[deliveryDay] = orderConfig;
+            // Now merge into the main config based on mealType
+            if (mealType === 'Lunch') {
+                // This is the MAIN order selections
+                if (data.service_type === 'Food') {
+                    currentConfig.vendorSelections = extractedVendorSelections;
+                } else if (data.service_type === 'Boxes') {
+                    currentConfig.items = extractedItems;
+                    if (Object.keys(extractedItemPrices).length > 0) {
+                        currentConfig.itemPrices = extractedItemPrices;
+                    }
+                }
+                // Update main ID to match the Lunch ID (preferred reference)
+                currentConfig.id = data.id;
+            } else {
+                // This is a MEAL selection (Breakfast, Dinner)
+                // We need to convert it to the mealSelections format: { vendorId?, items: {..} }
+
+                // Assuming meals are typically 'Food' type with vendor selections
+                // If multiple vendors for one meal (rare?), we might need to pick the first one or warn.
+                // The Type definition for mealSelections is { [mealType]: { vendorId, items } } (singular vendor).
+
+                let mealVendorId = null;
+                let mealItems = {};
+
+                if (extractedVendorSelections.length > 0) {
+                    // Take the first vendor's items. 
+                    // TODO: Support multi-vendor meals if data structure allows? Currently types say single vendor per meal.
+                    mealVendorId = extractedVendorSelections[0].vendorId;
+                    mealItems = extractedVendorSelections[0].items;
+
+                    if (extractedVendorSelections.length > 1) {
+                        console.warn(`[getUpcomingOrderForClientLocal] Multiple vendors found for meal ${mealType}, using first one only.`);
+                    }
+                }
+
+                currentConfig.mealSelections[mealType] = {
+                    vendorId: mealVendorId,
+                    items: mealItems
+                };
+            }
         }
+
+        console.log(`[getUpcomingOrderForClientLocal] Final ordersByDeliveryDay keys:`, Object.keys(ordersByDeliveryDay));
 
         // If only one delivery day, return it directly for backward compatibility
         const deliveryDays = Object.keys(ordersByDeliveryDay);
