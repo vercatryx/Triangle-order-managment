@@ -9,13 +9,14 @@ import { BoxCategoriesManagement } from '@/components/admin/BoxCategoriesManagem
 import { EquipmentManagement } from '@/components/admin/EquipmentManagement';
 import { NavigatorManagement } from '@/components/admin/NavigatorManagement';
 import { AdminManagement } from '@/components/admin/AdminManagement';
+import { MealSelectionManagement } from '@/components/admin/MealSelectionManagement';
 import { NutritionistManagement } from '@/components/admin/NutritionistManagement';
 import FormBuilder from '@/components/forms/FormBuilder';
 import { saveSingleForm } from '@/lib/form-actions';
 
 import { GlobalSettings } from '@/components/admin/GlobalSettings';
 
-type Tab = 'vendors' | 'menus' | 'statuses' | 'boxes' | 'equipment' | 'navigators' | 'nutritionists' | 'settings' | 'admins' | 'form';
+type Tab = 'vendors' | 'menus' | 'mealSelect' | 'statuses' | 'boxes' | 'equipment' | 'navigators' | 'nutritionists' | 'settings' | 'admins' | 'form';
 
 export default function AdminPage() {
     const [activeTab, setActiveTab] = useState<Tab>('menus');
@@ -33,6 +34,12 @@ export default function AdminPage() {
                     onClick={() => setActiveTab('menus')}
                 >
                     Menus
+                </button>
+                <button
+                    className={`${styles.tab} ${activeTab === 'mealSelect' ? styles.activeTab : ''}`}
+                    onClick={() => setActiveTab('mealSelect')}
+                >
+                    Meal Selection
                 </button>
                 <button
                     className={`${styles.tab} ${activeTab === 'boxes' ? styles.activeTab : ''}`}
@@ -92,6 +99,7 @@ export default function AdminPage() {
 
             <div className={styles.content}>
                 {activeTab === 'menus' && <MenuManagement />}
+                {activeTab === 'mealSelect' && <MealSelectionManagement />}
                 {activeTab === 'boxes' && <BoxCategoriesManagement />}
                 {activeTab === 'equipment' && <EquipmentManagement />}
 
@@ -102,7 +110,7 @@ export default function AdminPage() {
                 {activeTab === 'form' && (
                     <div className="bg-[#1a1a1a] p-6 rounded-xl border border-white/5">
                         <h2 className="text-xl font-bold mb-4 text-white">Screening Form Configuration</h2>
-                      <br/><br/>
+                        <br /><br />
                         {/* We will update FormBuilder to handle singleton logic internally or pass a specific onSave */}
                         <FormBuilder onSave={async (schema) => {
                             // This is a bit of a hack until we fully update FormBuilder to be singleton-aware internally

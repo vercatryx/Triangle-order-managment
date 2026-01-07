@@ -46,7 +46,7 @@ export function BoxCategoriesManagement() {
 
     async function handleAddCategory() {
         if (!newCategoryName.trim()) return;
-        const setValue = newCategorySetValue.trim() === '' ? null : parseInt(newCategorySetValue, 10);
+        const setValue = newCategorySetValue.trim() === '' ? null : parseFloat(newCategorySetValue);
         if (setValue !== null && (isNaN(setValue) || setValue <= 0)) {
             alert('Set value must be a positive number or empty');
             return;
@@ -89,7 +89,7 @@ export function BoxCategoriesManagement() {
 
     async function handleSaveEditCategory() {
         if (!editingCategoryId || !tempCategoryName.trim()) return;
-        const setValue = tempCategorySetValue.trim() === '' ? null : parseInt(tempCategorySetValue, 10);
+        const setValue = tempCategorySetValue.trim() === '' ? null : parseFloat(tempCategorySetValue);
         if (setValue !== null && (isNaN(setValue) || setValue <= 0)) {
             alert('Set value must be a positive number or empty');
             return;
@@ -210,7 +210,8 @@ export function BoxCategoriesManagement() {
                                 value={newCategorySetValue}
                                 onChange={e => setNewCategorySetValue(e.target.value)}
                                 onKeyDown={e => e.key === 'Enter' && handleAddCategory()}
-                                min="1"
+                                min="0.01"
+                                step="0.01"
                                 style={{ width: '120px' }}
                                 title="Required quota value - users must select items that sum to exactly this value"
                             />
@@ -258,7 +259,8 @@ export function BoxCategoriesManagement() {
                                             value={tempCategorySetValue}
                                             onChange={e => setTempCategorySetValue(e.target.value)}
                                             onKeyDown={e => e.key === 'Enter' && handleSaveEditCategory()}
-                                            min="1"
+                                            min="0.01"
+                                            step="0.01"
                                             style={{ width: '120px' }}
                                             title="Required quota value - users must select items that sum to exactly this value"
                                         />
@@ -337,9 +339,10 @@ export function BoxCategoriesManagement() {
                                                 type="number"
                                                 className="input"
                                                 value={tempItemQuotaValue}
-                                                onChange={e => setTempItemQuotaValue(Number(e.target.value))}
+                                                onChange={e => setTempItemQuotaValue(parseFloat(e.target.value) || 0)}
                                                 style={{ padding: '2px 6px', fontSize: '0.8rem', width: '50px', height: '24px' }}
-                                                min="1"
+                                                min="0.01"
+                                                step="0.01"
                                                 placeholder="Qty"
                                             />
                                             <input
@@ -370,7 +373,7 @@ export function BoxCategoriesManagement() {
                                     ) : (
                                         <div key={item.id} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', background: 'var(--bg-surface)', padding: '4px 10px', borderRadius: '4px', border: '1px solid var(--border-color)', fontSize: '0.85rem' }}>
                                             <span>{item.name}</span>
-                                            <span style={{ color: 'var(--text-tertiary)' }}>(x{item.quotaValue || 1})</span>
+                                            <span style={{ color: 'var(--text-tertiary)' }}>(x{typeof item.quotaValue === 'number' && item.quotaValue % 1 !== 0 ? item.quotaValue.toFixed(2) : (item.quotaValue || 1)})</span>
                                             {item.priceEach !== undefined && item.priceEach !== null && (
                                                 <span style={{ color: 'var(--text-primary)', fontWeight: 600 }}>${item.priceEach.toFixed(2)}</span>
                                             )}
@@ -406,8 +409,9 @@ export function BoxCategoriesManagement() {
                                         className="input"
                                         style={{ padding: '4px 8px', fontSize: '0.85rem', width: '65px', height: '28px' }}
                                         value={newItemQuotaValue}
-                                        onChange={e => setNewItemQuotaValue(Number(e.target.value))}
-                                        min="1"
+                                        onChange={e => setNewItemQuotaValue(parseFloat(e.target.value) || 0)}
+                                        min="0.01"
+                                        step="0.01"
                                     />
                                     <input
                                         type="number"

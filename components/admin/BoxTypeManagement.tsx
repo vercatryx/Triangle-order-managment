@@ -376,9 +376,10 @@ export function BoxTypeManagement() {
                                                                 type="number"
                                                                 className="input"
                                                                 value={tempItemQuotaValue}
-                                                                onChange={e => setTempItemQuotaValue(Number(e.target.value))}
+                                                                onChange={e => setTempItemQuotaValue(parseFloat(e.target.value) || 0)}
                                                                 style={{ padding: '2px 6px', fontSize: '0.8rem', width: '50px', height: '24px' }}
-                                                                min="1"
+                                                                min="0.01"
+                                                                step="0.01"
                                                                 placeholder="Quota"
                                                             />
                                                             <input
@@ -409,7 +410,7 @@ export function BoxTypeManagement() {
                                                     ) : (
                                                         <div key={item.id} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', background: 'var(--bg-surface)', padding: '2px 6px', borderRadius: '4px', border: '1px solid var(--border-color)', fontSize: '0.8rem' }}>
                                                             <span>{item.name}</span>
-                                                            <span style={{ color: 'var(--text-tertiary)' }}>(x{item.quotaValue || 1})</span>
+                                                            <span style={{ color: 'var(--text-tertiary)' }}>(x{typeof item.quotaValue === 'number' && item.quotaValue % 1 !== 0 ? item.quotaValue.toFixed(2) : (item.quotaValue || 1)})</span>
                                                             {item.priceEach !== undefined && item.priceEach !== null && (
                                                                 <span style={{ color: 'var(--color-primary)', fontWeight: 500 }}>${item.priceEach.toFixed(2)}</span>
                                                             )}
@@ -444,8 +445,9 @@ export function BoxTypeManagement() {
                                                         className="input"
                                                         style={{ padding: '2px 6px', fontSize: '0.8rem', width: '60px', height: '24px' }}
                                                         value={newItemQuotaValue}
-                                                        onChange={e => setNewItemQuotaValue(Number(e.target.value))}
-                                                        min="1"
+                                                        onChange={e => setNewItemQuotaValue(parseFloat(e.target.value) || 0)}
+                                                        min="0.01"
+                                                        step="0.01"
                                                     />
                                                     <input
                                                         type="number"

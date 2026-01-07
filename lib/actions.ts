@@ -299,6 +299,119 @@ export async function updateCategory(id: string, name: string, setValue?: number
     const { error } = await supabase.from('item_categories').update(payload).eq('id', id);
     handleError(error);
     revalidatePath('/admin');
+    revalidatePath('/admin');
+}
+
+// --- ITEM CATEGORY ACTIONS (Generic / Food) ---
+// Kept for backward compatibility if needed, but the new system uses Meal Categories below.
+
+// --- MEAL SELECTION ACTIONS (Generic for Breakfast, Lunch, Dinner, etc.) ---
+// Uses 'breakfast_categories' and 'breakfast_items' tables but is generic via 'meal_type'
+
+export async function getMealCategories() {
+    const { data, error } = await supabase.from('breakfast_categories').select('*').order('name');
+    if (error) return [];
+    return data.map((c: any) => ({
+        id: c.id,
+        name: c.name,
+        mealType: c.meal_type || 'Breakfast', // Default to Breakfast if missing, though schema enforces it
+        setValue: c.set_value ?? undefined
+    }));
+}
+
+export async function addMealCategory(mealType: string, name: string, setValue?: number | null) {
+    const payload: any = {
+        name,
+        meal_type: mealType
+    };
+    if (setValue !== undefined) {
+        payload.set_value = setValue;
+    }
+    const { data, error } = await supabase.from('breakfast_categories').insert([payload]).select().single();
+    handleError(error);
+    revalidatePath('/admin');
+    return {
+        id: data.id,
+        name: data.name,
+        mealType: data.meal_type,
+        setValue: data.set_value ?? undefined
+    };
+}
+
+export async function updateMealCategory(id: string, name: string, setValue?: number | null) {
+    const payload: any = { name };
+    if (setValue !== undefined) {
+        payload.set_value = setValue;
+    }
+    const { error } = await supabase.from('breakfast_categories').update(payload).eq('id', id);
+    handleError(error);
+    revalidatePath('/admin');
+}
+
+export async function deleteMealCategory(id: string) {
+    const { error } = await supabase.from('breakfast_categories').delete().eq('id', id);
+    handleError(error);
+    revalidatePath('/admin');
+}
+
+export async function deleteMealType(mealType: string) {
+    // Delete all categories for this meal type. 
+    // Items will cascade delete because of FK 'ON DELETE CASCADE' on breakfast_items.category_id
+    const { error } = await supabase
+        .from('breakfast_categories')
+        .delete()
+        .eq('meal_type', mealType);
+
+    handleError(error);
+    revalidatePath('/admin');
+}
+
+export async function getMealItems() {
+    const { data, error } = await supabase.from('breakfast_items').select('*');
+    if (error) return [];
+    return data.map((i: any) => ({
+        id: i.id,
+        categoryId: i.category_id,
+        name: i.name,
+        quotaValue: i.quota_value,
+        priceEach: i.price_each ?? undefined,
+        isActive: i.is_active
+    }));
+}
+
+export async function addMealItem(data: { categoryId: string, name: string, quotaValue: number, priceEach?: number, isActive: boolean }) {
+    const payload: any = {
+        category_id: data.categoryId,
+        name: data.name,
+        quota_value: data.quotaValue,
+        is_active: data.isActive
+    };
+    if (data.priceEach !== undefined) {
+        payload.price_each = data.priceEach;
+    }
+
+    const { data: res, error } = await supabase.from('breakfast_items').insert([payload]).select().single();
+    handleError(error);
+    revalidatePath('/admin');
+    return { ...data, id: res.id };
+}
+
+export async function updateMealItem(id: string, data: Partial<{ name: string, quotaValue: number, priceEach?: number, isActive: boolean }>) {
+    const payload: any = {};
+    if (data.name) payload.name = data.name;
+    if (data.quotaValue !== undefined) payload.quota_value = data.quotaValue;
+    if (data.priceEach !== undefined) payload.price_each = data.priceEach;
+    if (data.isActive !== undefined) payload.is_active = data.isActive;
+
+    const { error } = await supabase.from('breakfast_items').update(payload).eq('id', id);
+    handleError(error);
+    revalidatePath('/admin');
+}
+
+export async function deleteMealItem(id: string) {
+    const { error } = await supabase.from('breakfast_items').delete().eq('id', id);
+    handleError(error);
+    revalidatePath('/admin');
 }
 
 // --- EQUIPMENT ACTIONS ---
@@ -737,22 +850,22 @@ export async function getClient(id: string) {
 
 export async function checkClientNameExists(fullName: string, excludeId?: string): Promise<boolean> {
     if (!fullName || !fullName.trim()) return false;
-    
+
     let query = supabase
         .from('clients')
         .select('id')
         .ilike('full_name', fullName.trim());
-    
+
     if (excludeId) {
         query = query.neq('id', excludeId);
     }
-    
+
     const { data, error } = await query;
     if (error) {
         console.error('Error checking client name:', error);
         return false;
     }
-    
+
     return (data?.length || 0) > 0;
 }
 

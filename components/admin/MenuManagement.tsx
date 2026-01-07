@@ -119,7 +119,7 @@ export function MenuManagement() {
             <div className={styles.main}>
                 <div className={styles.header}>
                     <div>
-                        <h2 className={styles.title}>Menu Items (v2)</h2>
+                        <h2 className={styles.title}>Menu Items</h2>
                         <p className={styles.subtitle}>Manage items for {vendors.find(v => v.id === selectedVendorId)?.name}</p>
                     </div>
                     {!isCreating && !editingId && (
