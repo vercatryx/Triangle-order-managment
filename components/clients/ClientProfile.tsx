@@ -3,7 +3,7 @@
 import { useState, useEffect, Fragment, useMemo, useRef, ReactNode } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import { ClientProfile, ClientStatus, Navigator, Vendor, MenuItem, BoxType, ServiceType, AppSettings, DeliveryRecord, ItemCategory, ClientFullDetails, BoxQuota } from '@/lib/types';
-import { updateClient, addClient, deleteClient, updateDeliveryProof, recordClientChange, syncCurrentOrderToUpcoming, logNavigatorAction, getBoxQuotas, saveEquipmentOrder, getRegularClients, getDependentsByParentId, addDependent } from '@/lib/actions';
+import { updateClient, addClient, deleteClient, updateDeliveryProof, recordClientChange, syncCurrentOrderToUpcoming, logNavigatorAction, getBoxQuotas, saveEquipmentOrder, getRegularClients, getDependentsByParentId, addDependent, checkClientNameExists, getClientFullDetails } from '@/lib/actions';
 import { getSingleForm, getClientSubmissions } from '@/lib/form-actions';
 import { getClient, getStatuses, getNavigators, getVendors, getMenuItems, getBoxTypes, getSettings, getCategories, getEquipment, getClients, invalidateClientData, invalidateReferenceData, getActiveOrderForClient, getUpcomingOrderForClient, getOrderHistory, getClientHistory, getBillingHistory, invalidateOrderData } from '@/lib/cached-data';
 import { areAnyDeliveriesLocked, getEarliestEffectiveDate, getLockedWeekDescription } from '@/lib/weekly-lock';
@@ -127,6 +127,43 @@ function DeleteConfirmationModal({
     );
 }
 
+function DuplicateNameConfirmationModal({
+    isOpen,
+    onClose,
+    onConfirm,
+    clientName,
+    creating
+}: {
+    isOpen: boolean;
+    onClose: () => void;
+    onConfirm: () => void;
+    clientName: string;
+    creating: boolean;
+}) {
+    if (!isOpen) return null;
+
+    return (
+        <div className={styles.modalOverlay} style={{ zIndex: 1000 }}>
+            <div className={styles.modalContent} style={{ maxWidth: '450px', height: 'auto', padding: '24px' }}>
+                <h2 style={{ fontSize: '1.25rem', fontWeight: 600, marginBottom: '16px', color: 'var(--color-warning)' }}>Duplicate Client Name</h2>
+                <p style={{ marginBottom: '24px', color: 'var(--text-secondary)' }}>
+                    A client with the name <strong>{clientName}</strong> already exists. Do you want to create another client with the same name?
+                </p>
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px' }}>
+                    <button className="btn" onClick={onClose} disabled={creating}>Cancel</button>
+                    <button
+                        className="btn btn-primary"
+                        onClick={onConfirm}
+                        disabled={creating}
+                    >
+                        {creating ? <Loader2 className="spin" size={16} /> : 'Yes, Create Another'}
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+}
+
 export function ClientProfileDetail({ clientId: propClientId, onClose, initialData, statuses: initialStatuses, navigators: initialNavigators, vendors: initialVendors, menuItems: initialMenuItems, boxTypes: initialBoxTypes, currentUser }: Props): ReactNode {
     const router = useRouter();
     const params = useParams();
@@ -198,6 +235,10 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
 
     // Delete Confirmation Modal
     const [showDeleteModal, setShowDeleteModal] = useState(false);
+
+    // Duplicate Name Confirmation Modal
+    const [showDuplicateNameModal, setShowDuplicateNameModal] = useState(false);
+    const [pendingClientData, setPendingClientData] = useState<Omit<ClientProfile, 'id' | 'createdAt' | 'updatedAt'> | null>(null);
 
     // Dependent Creation State
     const [showAddDependentForm, setShowAddDependentForm] = useState(false);
@@ -1109,6 +1150,73 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
         }
     }
 
+    async function handleConfirmDuplicateName() {
+        if (!pendingClientData) {
+            setShowDuplicateNameModal(false);
+            return;
+        }
+
+        setSaving(true);
+        try {
+            const newClient = await addClient(pendingClientData);
+
+            if (!newClient) {
+                setSaving(false);
+                setShowDuplicateNameModal(false);
+                setPendingClientData(null);
+                return;
+            }
+
+            // Now update the client with order details (same as editing an existing client)
+            // Determine if orderConfig has meaningful data to save
+            const hasCaseId = orderConfig?.caseId && orderConfig.caseId.trim() !== '';
+            const hasVendorSelections = orderConfig?.vendorSelections &&
+                Array.isArray(orderConfig.vendorSelections) &&
+                orderConfig.vendorSelections.some((s: any) => s.vendorId && s.vendorId.trim() !== '');
+            const hasDeliveryDayOrders = orderConfig?.deliveryDayOrders &&
+                Object.keys(orderConfig.deliveryDayOrders).length > 0;
+            const hasBoxConfig = (orderConfig?.vendorId && orderConfig.vendorId.trim() !== '') ||
+                (orderConfig?.boxTypeId && orderConfig.boxTypeId.trim() !== '');
+
+            if (hasCaseId && (hasVendorSelections || hasDeliveryDayOrders || hasBoxConfig)) {
+                const cleanedOrderConfig = prepareActiveOrder();
+                if (cleanedOrderConfig) {
+                    await updateClient(newClient.id, { activeOrder: cleanedOrderConfig });
+                    // Sync to upcoming orders
+                    await syncCurrentOrderToUpcoming(newClient.id, { ...newClient, activeOrder: cleanedOrderConfig }, true);
+                }
+            }
+
+            // Update the actual client ID so the component switches to edit mode
+            setActualClientId(newClient.id);
+            justCreatedClientRef.current = true;
+
+            // Reload client data
+            const fullDetails = await getClientFullDetails(newClient.id);
+            if (fullDetails) {
+                setClient(fullDetails.client);
+                setFormData(fullDetails.client);
+                if (fullDetails.upcomingOrder) {
+                    setOrderConfig(fullDetails.upcomingOrder);
+                    setOriginalOrderConfig(JSON.parse(JSON.stringify(fullDetails.upcomingOrder)));
+                } else {
+                    setOrderConfig({});
+                    setOriginalOrderConfig({});
+                }
+            }
+
+            invalidateClientData();
+            setMessage('Client created successfully.');
+            setShowDuplicateNameModal(false);
+            setPendingClientData(null);
+        } catch (error) {
+            console.error('Error creating client:', error);
+            setMessage(error instanceof Error ? error.message : 'Failed to create client');
+        } finally {
+            setSaving(false);
+        }
+    }
+
     // Old handleSave removed
 
 
@@ -1295,6 +1403,18 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
         // If changing vendor, clear items for that vendor
         if (field === 'vendorId') {
             current[index].items = {};
+            current[index].itemsByDay = {};
+            current[index].selectedDeliveryDays = [];
+
+            // Auto-select delivery day if vendor has exactly one delivery day
+            if (value) {
+                const selectedVendor = vendors.find(v => v.id === value);
+                if (selectedVendor && selectedVendor.deliveryDays && selectedVendor.deliveryDays.length === 1) {
+                    const singleDay = selectedVendor.deliveryDays[0];
+                    current[index].selectedDeliveryDays = [singleDay];
+                    current[index].itemsByDay = { [singleDay]: {} };
+                }
+            }
 
             // If we're in single-day format and the vendor has multiple delivery days,
             // we'll show the selection UI (handled in render), but don't auto-switch format
@@ -1354,7 +1474,7 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
         setCreatingDependent(true);
         try {
             const dobValue = dependentDob.trim() || null;
-            const cinValue = dependentCin.trim() ? parseFloat(dependentCin.trim()) : null;
+            const cinValue = dependentCin.trim() || null;
             const newDependent = await addDependent(dependentName.trim(), client.id, dobValue, cinValue);
             if (newDependent) {
                 // Refresh dependents list
@@ -1441,11 +1561,11 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                                 <div className={styles.formGroup}>
                                     <label className="label">CIN#</label>
                                     <input 
-                                        type="number" 
+                                        type="text" 
                                         className="input" 
                                         placeholder="CIN Number"
                                         value={formData.cin || ''} 
-                                        onChange={e => setFormData({ ...formData, cin: e.target.value ? parseFloat(e.target.value) : null })} 
+                                        onChange={e => setFormData({ ...formData, cin: e.target.value.trim() || null })} 
                                     />
                                 </div>
 
@@ -1678,7 +1798,7 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                                             />
                                             <label className="label" style={{ marginBottom: '0.5rem' }}>CIN#</label>
                                             <input
-                                                type="number"
+                                                type="text"
                                                 className="input"
                                                 placeholder="CIN Number"
                                                 value={dependentCin}
@@ -2064,8 +2184,8 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                                                                                     return null;
                                                                                 }
 
-                                                                                // If vendor has multiple days and days are selected, show forms for each day
-                                                                                if (vendorHasMultipleDays && vendorSelectedDays.length > 0) {
+                                                                                // If days are selected (either multiple days or single day that was auto-selected), show forms for each day
+                                                                                if (vendorSelectedDays.length > 0) {
                                                                                     return (
                                                                                         <>
                                                                                             {vendorSelectedDays.map((day: string) => {
@@ -2382,8 +2502,8 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                                                                                 return null;
                                                                             }
 
-                                                                            // If vendor has multiple days and days are selected, show forms for each day
-                                                                            if (vendorHasMultipleDays && vendorSelectedDays.length > 0) {
+                                                                            // If days are selected (either multiple days or single day that was auto-selected), show forms for each day
+                                                                            if (vendorSelectedDays.length > 0) {
                                                                                 return (
                                                                                     <>
                                                                                         {vendorSelectedDays.map((day: string) => {
@@ -3415,6 +3535,16 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                 clientName={formData.fullName || 'this client'}
                 deleting={saving}
             />
+            <DuplicateNameConfirmationModal
+                isOpen={showDuplicateNameModal}
+                onClose={() => {
+                    setShowDuplicateNameModal(false);
+                    setPendingClientData(null);
+                }}
+                onConfirm={handleConfirmDuplicateName}
+                clientName={pendingClientData?.fullName || formData.fullName || ''}
+                creating={saving}
+            />
         </>
     );
 
@@ -3483,9 +3613,8 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
         return await executeSave(0);
     }
 
-    async function executeSave(unitsAdded: number = 0): Promise<boolean> {
-        // Helper to prepare cleaned active order
-        const prepareActiveOrder = () => {
+    // Helper to prepare cleaned active order (extracted to be reusable)
+    function prepareActiveOrder() {
             if (!orderConfig) return undefined;
 
             const cleanedOrderConfig = { ...orderConfig };
@@ -3571,8 +3700,9 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                 lastUpdated: new Date().toISOString(),
                 updatedBy: 'Admin'
             };
-        };
+    }
 
+    async function executeSave(unitsAdded: number = 0): Promise<boolean> {
         if (!client && !isNewClient) return false;
         setSaving(true);
         setMessage(null);
@@ -3605,6 +3735,18 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                     activeOrder: undefined // Create without order first
                 };
 
+                // Check if a client with this name already exists
+                const clientName = clientDataWithoutOrder.fullName?.trim();
+                if (clientName) {
+                    const nameExists = await checkClientNameExists(clientName);
+                    if (nameExists) {
+                        // Store the client data and show confirmation modal
+                        setPendingClientData(clientDataWithoutOrder);
+                        setShowDuplicateNameModal(true);
+                        setSaving(false);
+                        return false;
+                    }
+                }
 
                 const newClient = await addClient(clientDataWithoutOrder);
 

@@ -27,7 +27,7 @@ export interface ClientProfile {
 
   // Dependent-specific fields
   dob?: string | null; // Date of birth (ISO Date string)
-  cin?: number | null; // CIN number
+  cin?: string | null; // CIN number (can contain letters and numbers)
 
   // Authorization fields
   authorizedAmount?: number | null;

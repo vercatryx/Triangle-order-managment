@@ -499,7 +499,7 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
 
         try {
             const dobValue = dependentDob.trim() || null;
-            const cinValue = dependentCin.trim() ? parseFloat(dependentCin.trim()) : null;
+            const cinValue = dependentCin.trim() || null;
             
             if (editingDependentId) {
                 // Update existing dependent
@@ -1182,7 +1182,7 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
                         <div className={styles.formGroup}>
                             <label className="label">CIN#</label>
                             <input
-                                type="number"
+                                type="text"
                                 className="input"
                                 placeholder="CIN Number"
                                 value={dependentCin}
@@ -1639,8 +1639,8 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
                                     delete next[closedClientId];
                                     return next;
                                 });
-                                // Trigger background refresh to update the list with any changes
-                                refreshDataInBackground();
+                                // Simple refresh to update the list with any changes
+                                loadInitialData();
                             }}
                         />
                     </div>
@@ -1653,8 +1653,8 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
                             delete next[closedClientId];
                             return next;
                         });
-                        // Trigger background refresh to update the list with any changes
-                        refreshDataInBackground();
+                        // Simple refresh to update the list with any changes
+                        loadInitialData();
                     }}></div>
                 </div>
             )}

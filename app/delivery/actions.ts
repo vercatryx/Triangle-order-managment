@@ -4,6 +4,7 @@ import { uploadFile } from '@/lib/storage';
 import { createClient } from '@supabase/supabase-js';
 import { revalidatePath } from 'next/cache';
 import { saveDeliveryProofUrlAndProcessOrder } from '@/lib/actions';
+import { roundCurrency } from '@/lib/utils';
 
 export async function processDeliveryProof(formData: FormData) {
     const file = formData.get('file') as File;
@@ -158,7 +159,7 @@ export async function processDeliveryProof(formData: FormData) {
                 // Treat null/undefined as 0 and allow negative result
                 const currentAmount = client.authorized_amount ?? 0;
                 const orderAmount = orderDetails.total_value || 0;
-                const newAuthorizedAmount = currentAmount - orderAmount;
+                const newAuthorizedAmount = roundCurrency(currentAmount - orderAmount);
 
                 const { error: deductionError } = await supabaseAdmin
                     .from('clients')

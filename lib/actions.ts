@@ -7,6 +7,7 @@ import { ClientStatus, Vendor, MenuItem, BoxType, AppSettings, Navigator, Nutrit
 import { randomUUID } from 'crypto';
 import { getSession } from './session';
 import { createClient } from '@supabase/supabase-js';
+import { roundCurrency } from './utils';
 
 // --- HELPERS ---
 function handleError(error: any) {
@@ -734,6 +735,27 @@ export async function getClient(id: string) {
     return mapClientFromDB(data);
 }
 
+export async function checkClientNameExists(fullName: string, excludeId?: string): Promise<boolean> {
+    if (!fullName || !fullName.trim()) return false;
+    
+    let query = supabase
+        .from('clients')
+        .select('id')
+        .ilike('full_name', fullName.trim());
+    
+    if (excludeId) {
+        query = query.neq('id', excludeId);
+    }
+    
+    const { data, error } = await query;
+    if (error) {
+        console.error('Error checking client name:', error);
+        return false;
+    }
+    
+    return (data?.length || 0) > 0;
+}
+
 export async function getPublicClient(id: string) {
     if (!id) return undefined;
 
@@ -766,7 +788,7 @@ export async function addClient(data: Omit<ClientProfile, 'id' | 'createdAt' | '
         status_id: data.statusId || null,
         service_type: data.serviceType,
         approved_meals_per_week: data.approvedMealsPerWeek || 0,
-        authorized_amount: data.authorizedAmount ?? null,
+        authorized_amount: data.authorizedAmount !== null && data.authorizedAmount !== undefined ? roundCurrency(data.authorizedAmount) : null,
         expiration_date: data.expirationDate || null
     };
 
@@ -799,7 +821,7 @@ export async function addClient(data: Omit<ClientProfile, 'id' | 'createdAt' | '
     return newClient;
 }
 
-export async function addDependent(name: string, parentClientId: string, dob?: string | null, cin?: number | null) {
+export async function addDependent(name: string, parentClientId: string, dob?: string | null, cin?: string | null) {
     if (!name.trim() || !parentClientId) {
         throw new Error('Dependent name and parent client are required');
     }
@@ -917,7 +939,7 @@ export async function updateClient(id: string, data: Partial<ClientProfile>) {
     if (data.parentClientId !== undefined) payload.parent_client_id = data.parentClientId || null;
     if (data.dob !== undefined) payload.dob = data.dob || null;
     if (data.cin !== undefined) payload.cin = data.cin ?? null;
-    if (data.authorizedAmount !== undefined) payload.authorized_amount = data.authorizedAmount ?? null;
+    if (data.authorizedAmount !== undefined) payload.authorized_amount = data.authorizedAmount !== null ? roundCurrency(data.authorizedAmount) : null;
     if (data.expirationDate !== undefined) payload.expiration_date = data.expirationDate || null;
     if (data.activeOrder) payload.active_order = data.activeOrder;
 
@@ -3709,7 +3731,7 @@ export async function updateOrderDeliveryProof(orderId: string, proofUrl: string
     // Reduce client's authorized amount by the order amount (only if billing record didn't already exist)
     if (!existingBilling && client && client.authorized_amount !== null && client.authorized_amount !== undefined) {
         const orderAmount = order.total_value || 0;
-        const newAuthorizedAmount = Math.max(0, client.authorized_amount - orderAmount);
+        const newAuthorizedAmount = roundCurrency(Math.max(0, client.authorized_amount - orderAmount));
 
         const { error: authAmountError } = await supabase
             .from('clients')
@@ -3875,7 +3897,7 @@ export async function saveDeliveryProofUrlAndProcessOrder(
                         // Treat null/undefined as 0 and allow negative result
                         const currentAmount = client.authorized_amount ?? 0;
                         const orderAmount = upcomingOrder.total_value || 0;
-                        const newAuthorizedAmount = currentAmount - orderAmount;
+                        const newAuthorizedAmount = roundCurrency(currentAmount - orderAmount);
 
                         console.log(`[Process Pending Order] Deducting ${orderAmount} from ${currentAmount}. New amount: ${newAuthorizedAmount}`);
 
@@ -4067,7 +4089,7 @@ export async function saveDeliveryProofUrlAndProcessOrder(
         // Reduce client's authorized amount by the order amount (only if billing record didn't already exist)
         if (!existingBilling && client && client.authorized_amount !== null && client.authorized_amount !== undefined) {
             const orderAmount = order.total_value || 0;
-            const newAuthorizedAmount = Math.max(0, client.authorized_amount - orderAmount);
+            const newAuthorizedAmount = roundCurrency(Math.max(0, client.authorized_amount - orderAmount));
 
             const { error: authAmountError } = await supabase
                 .from('clients')

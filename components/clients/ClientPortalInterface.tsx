@@ -641,7 +641,25 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
                                     value={selection.vendorId}
                                     onChange={e => {
                                         const newSelections = [...selectionsToRender];
-                                        newSelections[index] = { ...newSelections[index], vendorId: e.target.value, items: {}, itemsByDay: {}, selectedDeliveryDays: [] };
+                                        const newVendorId = e.target.value;
+                                        const selectedVendor = vendors.find(v => v.id === newVendorId);
+                                        
+                                        // Auto-select delivery day if vendor has exactly one delivery day
+                                        let autoSelectedDays: string[] = [];
+                                        let autoItemsByDay: any = {};
+                                        if (selectedVendor && selectedVendor.deliveryDays && selectedVendor.deliveryDays.length === 1) {
+                                            const singleDay = selectedVendor.deliveryDays[0];
+                                            autoSelectedDays = [singleDay];
+                                            autoItemsByDay = { [singleDay]: {} };
+                                        }
+                                        
+                                        newSelections[index] = { 
+                                            ...newSelections[index], 
+                                            vendorId: newVendorId, 
+                                            items: {}, 
+                                            itemsByDay: autoItemsByDay, 
+                                            selectedDeliveryDays: autoSelectedDays 
+                                        };
                                         setOrderConfig({ ...orderConfig, vendorSelections: newSelections, deliveryDayOrders: undefined });
                                     }}
                                 >
@@ -715,8 +733,8 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
 
                             {/* Item Inputs */}
                             {selection.vendorId && (() => {
-                                // If multiple days
-                                if (vendorHasMultipleDays && vendorSelectedDays.length > 0) {
+                                // If days are selected (either multiple days or single day that was auto-selected)
+                                if (vendorSelectedDays.length > 0) {
                                     return vendorSelectedDays.map((day: string) => {
                                         const dayItems = (selection.itemsByDay || {})[day] || {};
 
