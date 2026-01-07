@@ -749,7 +749,9 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
     // -- Logic Helpers --
 
     function getVendorMenuItems(vendorId: string) {
-        return menuItems.filter(i => i.vendorId === vendorId && i.isActive);
+        return menuItems
+            .filter(i => i.vendorId === vendorId && i.isActive)
+            .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }));
     }
 
     function getCurrentOrderTotalValue(day: string | null = null) {
@@ -1717,26 +1719,28 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                         {mealItems.filter(i => {
                             const cat = mealCategories.find(c => c.id === i.categoryId);
                             return cat?.mealType === mealType;
-                        }).map(item => {
-                            const qty = config.items?.[item.id] || 0;
-                            return (
-                                <div key={item.id} className={styles.menuItem}>
-                                    <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
-                                        <span>
-                                            {item.name}
-                                            <span style={{ color: 'var(--text-tertiary)', fontSize: '0.9em', marginLeft: '4px' }}>
-                                                (Value: {item.quotaValue})
+                        })
+                            .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }))
+                            .map(item => {
+                                const qty = config.items?.[item.id] || 0;
+                                return (
+                                    <div key={item.id} className={styles.menuItem}>
+                                        <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
+                                            <span>
+                                                {item.name}
+                                                <span style={{ color: 'var(--text-tertiary)', fontSize: '0.9em', marginLeft: '4px' }}>
+                                                    (Value: {item.quotaValue})
+                                                </span>
                                             </span>
-                                        </span>
-                                        <div className={styles.quantityControl} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                            <button onClick={() => handleMealItemChange(mealType, item.id, Math.max(0, qty - 1))} className="btn btn-secondary" style={{ padding: '2px 8px' }}>-</button>
-                                            <span style={{ width: '20px', textAlign: 'center' }}>{qty}</span>
-                                            <button onClick={() => handleMealItemChange(mealType, item.id, qty + 1)} className="btn btn-secondary" style={{ padding: '2px 8px' }}>+</button>
-                                        </div>
-                                    </label>
-                                </div>
-                            );
-                        })}
+                                            <div className={styles.quantityControl} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                                <button onClick={() => handleMealItemChange(mealType, item.id, Math.max(0, qty - 1))} className="btn btn-secondary" style={{ padding: '2px 8px' }}>-</button>
+                                                <span style={{ width: '20px', textAlign: 'center' }}>{qty}</span>
+                                                <button onClick={() => handleMealItemChange(mealType, item.id, qty + 1)} className="btn btn-secondary" style={{ padding: '2px 8px' }}>+</button>
+                                            </div>
+                                        </label>
+                                    </div>
+                                );
+                            })}
                         {mealItems.filter(i => mealCategories.find(c => c.id === i.categoryId)?.mealType === mealType).length === 0 && (
                             <span className={styles.hint}>No items found for {mealType}.</span>
                         )}
