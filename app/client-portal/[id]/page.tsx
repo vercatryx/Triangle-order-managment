@@ -1,4 +1,4 @@
-import { getPublicClient, getStatuses, getNavigators, getVendors, getMenuItems, getBoxTypes, getCategories, getUpcomingOrderForClient, getActiveOrderForClient, getOrderHistory } from '@/lib/actions';
+import { getPublicClient, getStatuses, getNavigators, getVendors, getMenuItems, getBoxTypes, getCategories, getUpcomingOrderForClient, getActiveOrderForClient, getOrderHistory, getMealCategories, getMealItems } from '@/lib/actions';
 import { ClientPortalInterface } from '@/components/clients/ClientPortalInterface';
 import { notFound } from 'next/navigation';
 import { logout } from '@/lib/auth-actions';
@@ -18,7 +18,9 @@ export default async function ClientPortalPage({ params }: { params: { id: strin
         categories,
         upcomingOrder,
         activeOrder,
-        previousOrders
+        previousOrders,
+        mealCategories,
+        mealItems
     ] = await Promise.all([
         getPublicClient(id),
         getStatuses(),
@@ -29,7 +31,9 @@ export default async function ClientPortalPage({ params }: { params: { id: strin
         getCategories(),
         getUpcomingOrderForClient(id),
         getActiveOrderForClient(id),
-        getOrderHistory(id)
+        getOrderHistory(id),
+        getMealCategories(),
+        getMealItems()
     ]);
 
     if (!client) {
@@ -83,6 +87,8 @@ export default async function ClientPortalPage({ params }: { params: { id: strin
                 upcomingOrder={upcomingOrder}
                 activeOrder={activeOrder}
                 previousOrders={previousOrders || []}
+                mealCategories={mealCategories}
+                mealItems={mealItems}
             />
         </div>
     );

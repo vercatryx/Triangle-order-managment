@@ -2109,6 +2109,11 @@ async function syncSingleOrderForDeliveryDay(
         // Allow null dates for Boxes orders
     }
 
+    // For Meal orders, also allow null dates (inherit from context or set later)
+    if (orderConfig.serviceType === 'Meal' && (!takeEffectDate || !scheduledDeliveryDate)) {
+        console.log(`[syncSingleOrderForDeliveryDay] Meal order without dates - will save with null dates`);
+    }
+
     // Fallback removed to allow NULL dates per user request
 
 
@@ -2125,13 +2130,14 @@ async function syncSingleOrderForDeliveryDay(
     });
 
     if (orderConfig.serviceType === 'Food' && orderConfig.vendorSelections) {
-        console.log(`[syncSingleOrderForDeliveryDay] Processing Food order with ${orderConfig.vendorSelections.length} vendor selections`);
+        // Reduced logging for regular Food orders per user request
+        // console.log(`[syncSingleOrderForDeliveryDay] Processing Food order with ${orderConfig.vendorSelections.length} vendor selections`);
         for (const selection of orderConfig.vendorSelections) {
             if (!selection.items) {
-                console.log(`[syncSingleOrderForDeliveryDay] Skipping vendor selection - no items`);
+                // console.log(`[syncSingleOrderForDeliveryDay] Skipping vendor selection - no items`);
                 continue;
             }
-            console.log(`[syncSingleOrderForDeliveryDay] Processing vendor ${selection.vendorId} with ${Object.keys(selection.items).length} items`);
+            // console.log(`[syncSingleOrderForDeliveryDay] Processing vendor ${selection.vendorId} with ${Object.keys(selection.items).length} items`);
             for (const [itemId, qty] of Object.entries(selection.items)) {
                 const item = menuItems.find(i => i.id === itemId);
                 const quantity = qty as number;
@@ -2139,22 +2145,46 @@ async function syncSingleOrderForDeliveryDay(
                     // Use priceEach if available, otherwise fall back to value
                     const itemPrice = item.priceEach ?? item.value;
                     const itemTotal = itemPrice * quantity;
-                    console.log(`[syncSingleOrderForDeliveryDay] Item: ${item.name}`, {
-                        itemId,
-                        quantity,
-                        itemPrice,
-                        itemValue: item.value,
-                        itemPriceEach: item.priceEach,
-                        itemTotal,
-                        currentTotalValue: totalValue
-                    });
+                    // console.log(`[syncSingleOrderForDeliveryDay] Item: ${item.name}`, { ... });
                     totalValue += itemTotal;
                     totalItems += quantity;
-                    console.log(`[syncSingleOrderForDeliveryDay] Updated totalValue: ${totalValue}, totalItems: ${totalItems}`);
+                    // console.log(`[syncSingleOrderForDeliveryDay] Updated totalValue: ${totalValue}, totalItems: ${totalItems}`);
                 } else {
-                    console.log(`[syncSingleOrderForDeliveryDay] Skipping item ${itemId} - item not found or quantity is 0`, {
-                        itemFound: !!item,
-                        quantity
+                    // Keep error/warning logs
+                    if (!item) {
+                        console.warn(`[syncSingleOrderForDeliveryDay] Skipping item ${itemId} - item not found in menuItems list!`);
+                    }
+                }
+            }
+        }
+    } else if (orderConfig.serviceType === 'Meal' && orderConfig.vendorSelections) {
+        // Detailed logging for Meal orders
+        console.log(`[syncSingleOrderForDeliveryDay] Processing Meal order (${mealType}) with ${orderConfig.vendorSelections.length} selections`);
+        for (const selection of orderConfig.vendorSelections) {
+            if (!selection.items) continue;
+
+            for (const [itemId, qty] of Object.entries(selection.items)) {
+                // Look up in the passed menuItems (which should be mealItems)
+                const item = menuItems.find(i => i.id === itemId);
+                const quantity = qty as number;
+
+                if (item && quantity > 0) {
+                    const itemPrice = item.priceEach ?? 0; // Meal items usually have 0 value unless priced
+                    const itemTotal = itemPrice * quantity;
+
+                    console.log(`[syncSingleOrderForDeliveryDay] Meal Item Found: ${item.name}`, {
+                        itemId,
+                        quantity,
+                        price: itemPrice,
+                        total: itemTotal
+                    });
+
+                    totalValue += itemTotal;
+                    totalItems += quantity;
+                } else {
+                    console.error(`[syncSingleOrderForDeliveryDay] Meal Item NOT FOUND: ${itemId}`, {
+                        availableItemsCount: menuItems.length,
+                        firstAvailableId: menuItems[0]?.id
                     });
                 }
             }
@@ -2382,6 +2412,51 @@ async function syncSingleOrderForDeliveryDay(
                 unit_value: calculatedTotalFromItems,
                 total_value: calculatedTotalFromItems
             });
+        }
+    } else if (orderConfig.serviceType === 'Meal' && orderConfig.vendorSelections) {
+        // Insert logic for Meal items
+        const { data: vendorSelection, error: vsError } = await supabaseClient
+            .from('upcoming_order_vendor_selections')
+            .insert({
+                upcoming_order_id: upcomingOrderId,
+                vendor_id: orderConfig.vendorSelections[0]?.vendorId || null // Meal might not have vendor
+            })
+            .select()
+            .single();
+
+        if (vsError) {
+            console.error(`[syncSingleOrderForDeliveryDay] Error inserting Meal VS:`, vsError);
+            throw new Error(`Failed to insert Meal vendor selection: ${vsError.message}`);
+        }
+
+        if (vendorSelection) {
+            for (const selection of orderConfig.vendorSelections) {
+                if (!selection.items) continue;
+                for (const [itemId, qty] of Object.entries(selection.items)) {
+                    const item = menuItems.find(i => i.id === itemId);
+                    const quantity = qty as number;
+                    if (item && quantity > 0) {
+                        const itemPrice = item.priceEach ?? 0;
+                        const itemTotal = itemPrice * quantity;
+
+                        const itemInsertData = {
+                            upcoming_order_id: upcomingOrderId,
+                            vendor_selection_id: vendorSelection.id,
+                            menu_item_id: null,
+                            meal_item_id: itemId,
+                            quantity: quantity,
+                            unit_value: itemPrice,
+                            total_value: itemTotal
+                        };
+                        const { error: itemInsertError } = await supabaseClient.from('upcoming_order_items').insert(itemInsertData);
+
+                        if (itemInsertError) {
+                            console.error(`[syncSingleOrderForDeliveryDay] FAILED to insert Meal item ${itemId}:`, itemInsertError);
+                            throw new Error(`Failed to insert Meal item ${itemId}: ${itemInsertError.message}`);
+                        }
+                    }
+                }
+            }
         }
     } else if (orderConfig.serviceType === 'Boxes') {
         console.log('[syncSingleOrderForDeliveryDay] Processing Boxes order for upcoming_order_id:', upcomingOrderId);
@@ -2620,38 +2695,7 @@ export async function syncCurrentOrderToUpcoming(clientId: string, client: Clien
             }
         }
 
-        // 3. MEAL SELECTIONS SYNC (Breakfast, Dinner, etc.)
-        // Note: We use the local orderConfig variable which is already checked for null/undefined
-        if (orderConfig && orderConfig.mealSelections) {
-            console.log('[syncCurrentOrderToUpcoming] Syncing meal selections', Object.keys(orderConfig.mealSelections));
-            for (const [mealType, selection] of Object.entries(orderConfig.mealSelections)) {
-                // Create a temporary config for this meal
-                // It needs to look like a standard orderConfig with vendorSelections
-                const mealOrderConfig = {
-                    ...orderConfig,
-                    serviceType: 'Food' as ServiceType, // Meals are always Food for now
-                    vendorSelections: [{
-                        vendorId: selection.vendorId || '', // Vendor might be optional/null for some meals?
-                        items: selection.items
-                    }]
-                };
 
-                // Updates: Check if we have deliveryDayOrders.
-                if (orderConfig.deliveryDayOrders) {
-                    for (const day of Object.keys(orderConfig.deliveryDayOrders)) {
-                        // We sync this meal for EACH day defined in the main order?
-                        // Or is there a separate meal selection per day?
-                        // The current Type definition for MealSelections is simple: { [mealType]: { vendorId, items } }
-                        // This suggests it's a global selection for the order duration.
-                        // So we should probably sync it for EACH active delivery day.
-                        await syncSingleOrderForDeliveryDay(clientId, mealOrderConfig, day, vendors, menuItems, boxTypes, supabaseClient, mealType);
-                    }
-                } else {
-                    // Single delivery day or null
-                    await syncSingleOrderForDeliveryDay(clientId, mealOrderConfig, null, vendors, menuItems, boxTypes, supabaseClient, mealType);
-                }
-            }
-        }
     } else {
         // Old format: single order config
         // Check if any selected vendors have multiple delivery days
@@ -2759,6 +2803,66 @@ export async function syncCurrentOrderToUpcoming(clientId: string, client: Clien
                 boxTypes,
                 supabaseClient
             );
+        }
+    }
+
+    // 3. MEAL SELECTIONS SYNC (Breakfast, Dinner, etc.)
+    // MOVED OUTSIDE of hasDeliveryDayOrders check to ensure it runs for all formats
+    if (orderConfig && orderConfig.mealSelections) {
+        console.log('[syncCurrentOrderToUpcoming] Syncing meal selections', Object.keys(orderConfig.mealSelections));
+        for (const [mealType, selection] of Object.entries(orderConfig.mealSelections)) {
+            // Create a temporary config for this meal
+            // It needs to look like a standard orderConfig with vendorSelections
+            // FIX: Ensure vendorId is null if missing, NOT empty string, to avoid UUID errors
+            const mealOrderConfig = {
+                ...orderConfig,
+                serviceType: 'Food' as ServiceType,
+                vendorSelections: [{
+                    vendorId: selection.vendorId || null,
+                    items: selection.items
+                }]
+            };
+
+            // Updates: Check if we have deliveryDayOrders.
+            if (orderConfig.deliveryDayOrders) {
+                // If using new format, sync for each day that has "Food" orders?
+                // OR should we sync blindly for all days?
+                // Let's iterate days in deliveryDayOrders
+                for (const day of Object.keys(orderConfig.deliveryDayOrders)) {
+                    const mealItems = await getMealItems();
+                    const mappedMealItems = mealItems.map(mi => ({
+                        id: mi.id,
+                        vendorId: '',
+                        name: mi.name,
+                        value: 0,
+                        priceEach: mi.priceEach,
+                        isActive: mi.isActive,
+                        categoryId: mi.categoryId,
+                        quotaValue: mi.quotaValue
+                    }));
+
+                    mealOrderConfig.serviceType = 'Meal';
+
+                    await syncSingleOrderForDeliveryDay(clientId, mealOrderConfig, day, vendors, mappedMealItems, boxTypes, supabaseClient, mealType);
+                }
+            } else {
+                // Single delivery day or null (Legacy/Simple format)
+                const mealItems = await getMealItems();
+                const mappedMealItems = mealItems.map(mi => ({
+                    id: mi.id,
+                    vendorId: '',
+                    name: mi.name,
+                    value: 0,
+                    priceEach: mi.priceEach,
+                    isActive: mi.isActive,
+                    categoryId: mi.categoryId,
+                    quotaValue: mi.quotaValue
+                }));
+
+                mealOrderConfig.serviceType = 'Meal';
+                // Pass null as delivery day to rely on default or allow draft
+                await syncSingleOrderForDeliveryDay(clientId, mealOrderConfig, null, vendors, mappedMealItems, boxTypes, supabaseClient, mealType);
+            }
         }
     }
 

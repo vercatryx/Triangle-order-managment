@@ -654,12 +654,23 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                 if (isMultiDayFormat) {
                     // Convert to deliveryDayOrders format
                     const deliveryDayOrders: any = {};
+                    const allMealSelections: any = {};
                     for (const day of Object.keys(upcomingOrderData)) {
                         const dayOrder = (upcomingOrderData as any)[day];
                         if (dayOrder && (dayOrder.serviceType || dayOrder.id)) {
                             deliveryDayOrders[day] = {
-                                vendorSelections: dayOrder.vendorSelections || []
+                                vendorSelections: dayOrder.vendorSelections || [],
+                                mealSelections: dayOrder.mealSelections || {}
                             };
+
+                            // Merge meal selections to top level for display
+                            if (dayOrder.mealSelections) {
+                                Object.entries(dayOrder.mealSelections).forEach(([key, val]) => {
+                                    if (!allMealSelections[key]) {
+                                        allMealSelections[key] = val;
+                                    }
+                                });
+                            }
                         }
                     }
                     // Check if it's Boxes - if so, flatten it to single order config
@@ -673,7 +684,8 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                         configToSet = {
                             serviceType: firstDayOrder?.serviceType || c.serviceType,
                             caseId: firstDayOrder?.caseId,
-                            deliveryDayOrders
+                            deliveryDayOrders,
+                            mealSelections: allMealSelections
                         };
                     }
                 } else if (upcomingOrderData.serviceType === 'Food' && !upcomingOrderData.vendorSelections && !upcomingOrderData.deliveryDayOrders) {
@@ -835,6 +847,17 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
             }
         }
 
+        // Include meal selections (Breakfast, Lunch, etc.)
+        if (orderConfig.mealSelections) {
+            for (const config of Object.values(orderConfig.mealSelections)) {
+                if (config.items) {
+                    for (const qty of Object.values(config.items)) {
+                        total += (Number(qty) || 0);
+                    }
+                }
+            }
+        }
+
         return total;
     }
 
@@ -869,6 +892,20 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
         if (orderConfig.deliveryDayOrders) {
             for (const day of Object.keys(orderConfig.deliveryDayOrders)) {
                 total += getCurrentOrderTotalValue(day);
+            }
+        }
+
+        // Include meal selections (Breakfast, Lunch, etc.)
+        if (orderConfig.mealSelections) {
+            for (const config of Object.values(orderConfig.mealSelections)) {
+                if (config.items) {
+                    for (const [itemId, qty] of Object.entries(config.items)) {
+                        const item = mealItems.find(i => i.id === itemId);
+                        if (item) {
+                            total += item.quotaValue * (qty as number);
+                        }
+                    }
+                }
             }
         }
 
@@ -1502,13 +1539,71 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
 
     function updateItemQuantity(blockIndex: number, itemId: string, qty: number, day: string | null = null) {
         const current = [...getVendorSelectionsForDay(day)];
-        const items = { ...(current[blockIndex].items || {}) };
-        if (qty > 0) {
-            items[itemId] = qty;
+        const selection = current[blockIndex];
+
+        // Check if we're in multi-day format (has selectedDeliveryDays or orderConfig uses deliveryDayOrders)
+        const isMultiDayFormat = (selection.selectedDeliveryDays && selection.selectedDeliveryDays.length > 0) ||
+            (orderConfig.deliveryDayOrders && day === null);
+
+        if (isMultiDayFormat) {
+            // Multi-day format - use itemsByDay
+            const itemsByDay = { ...(selection.itemsByDay || {}) };
+            const targetDay = day ? day : (selection.selectedDeliveryDays && selection.selectedDeliveryDays.length > 0
+                ? selection.selectedDeliveryDays[0]
+                : (orderConfig.deliveryDayOrders ? Object.keys(orderConfig.deliveryDayOrders)[0] : null));
+
+            if (targetDay) {
+                if (!itemsByDay[targetDay]) itemsByDay[targetDay] = {};
+
+                // In consolidated view (day === null), qty represents the desired total sum across all days
+                // We need to adjust the target day's quantity to achieve this total while preserving other days
+                if (day === null && selection.selectedDeliveryDays && selection.selectedDeliveryDays.length > 1) {
+                    // Calculate sum of quantities on other days (excluding target day)
+                    const otherDaysSum = selection.selectedDeliveryDays
+                        .filter(sd => sd !== targetDay)
+                        .reduce((sum: number, sd: string) =>
+                            sum + Number((itemsByDay[sd] || {})[itemId] || 0), 0);
+                    // Set target day quantity to achieve desired total
+                    const targetDayQty = qty - otherDaysSum;
+                    if (targetDayQty > 0) {
+                        itemsByDay[targetDay][itemId] = targetDayQty;
+                    } else {
+                        delete itemsByDay[targetDay][itemId];
+                    }
+                } else {
+                    // Specific day update - set directly
+                    if (qty > 0) {
+                        itemsByDay[targetDay][itemId] = qty;
+                    } else {
+                        delete itemsByDay[targetDay][itemId];
+                    }
+                }
+            }
+
+            // Ensure selectedDeliveryDays is set if not already
+            const selectedDays = selection.selectedDeliveryDays || (orderConfig.deliveryDayOrders ? Object.keys(orderConfig.deliveryDayOrders) : []);
+
+            // Clear items to avoid confusion when using itemsByDay
+            current[blockIndex] = {
+                ...selection,
+                itemsByDay,
+                selectedDeliveryDays: selectedDays,
+                items: {} // Clear items when using itemsByDay to prevent double counting
+            };
         } else {
-            delete items[itemId];
+            // Single day format - update items directly
+            const items = { ...(selection.items || {}) };
+            if (qty > 0) {
+                items[itemId] = qty;
+            } else {
+                delete items[itemId];
+            }
+            current[blockIndex] = {
+                ...selection,
+                items
+            };
         }
-        current[blockIndex].items = items;
+
         setVendorSelectionsForDay(day, current);
     }
 
@@ -2613,16 +2708,18 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                                                                         <Plus size={16} /> Add Vendor
                                                                     </button>
                                                                     {/* Meal Buttons */}
-                                                                    {Array.from(new Set(mealCategories.map(c => c.mealType))).map(type => (
-                                                                        <button
-                                                                            key={type}
-                                                                            className="btn btn-secondary"
-                                                                            onClick={() => handleAddMeal(type)}
-                                                                            style={{ borderColor: 'var(--color-primary)', color: 'var(--color-primary)' }}
-                                                                        >
-                                                                            <Plus size={16} /> Add {type}
-                                                                        </button>
-                                                                    ))}
+                                                                    {Array.from(new Set(mealCategories.map(c => c.mealType)))
+                                                                        .filter(type => !orderConfig?.mealSelections?.[type])
+                                                                        .map(type => (
+                                                                            <button
+                                                                                key={type}
+                                                                                className="btn btn-secondary"
+                                                                                onClick={() => handleAddMeal(type)}
+                                                                                style={{ borderColor: 'var(--color-primary)', color: 'var(--color-primary)' }}
+                                                                            >
+                                                                                <Plus size={16} /> Add {type}
+                                                                            </button>
+                                                                        ))}
                                                                 </div>
                                                             </div>
                                                         );
@@ -2807,11 +2904,17 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                                                                                                         <div className={styles.menuItems}>
                                                                                                             {getVendorMenuItems(selection.vendorId).map((item) => {
                                                                                                                 const qty = Number(dayItems[item.id] || 0);
+                                                                                                                const itemValue = item.value ?? 0;
                                                                                                                 return (
                                                                                                                     <div key={item.id} className={styles.menuItem}>
                                                                                                                         <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
                                                                                                                             <span>
                                                                                                                                 {item.name}
+                                                                                                                                {itemValue > 0 && (
+                                                                                                                                    <span style={{ color: 'var(--text-secondary)', fontSize: '0.9em', marginLeft: '4px' }}>
+                                                                                                                                        (Value: {itemValue})
+                                                                                                                                    </span>
+                                                                                                                                )}
                                                                                                                                 {(item.quotaValue || 1) > 1 && (
                                                                                                                                     <span style={{ color: 'var(--text-tertiary)', fontSize: '0.9em', marginLeft: '4px' }}>
                                                                                                                                         (counts as {item.quotaValue || 1} meals)
@@ -2920,11 +3023,17 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                                                                                                 } else {
                                                                                                     qty = Number(selection.items?.[item.id] || 0);
                                                                                                 }
+                                                                                                const itemValue = item.value ?? 0;
                                                                                                 return (
                                                                                                     <div key={item.id} className={styles.menuItem}>
                                                                                                         <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
                                                                                                             <span>
                                                                                                                 {item.name}
+                                                                                                                {itemValue > 0 && (
+                                                                                                                    <span style={{ color: 'var(--text-secondary)', fontSize: '0.9em', marginLeft: '4px' }}>
+                                                                                                                        (Value: {itemValue})
+                                                                                                                    </span>
+                                                                                                                )}
                                                                                                                 {(item.quotaValue || 1) > 1 && (
                                                                                                                     <span style={{ color: 'var(--text-tertiary)', fontSize: '0.9em', marginLeft: '4px' }}>
                                                                                                                         (counts as {item.quotaValue || 1} meals)
@@ -2950,22 +3059,24 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                                                                     </Fragment>
                                                                 );
                                                             })}
-                                                            {renderMealBlocks()}
+                                                            {(currentSelections || []).length === 0 && renderMealBlocks()}
                                                             <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem', flexWrap: 'wrap' }}>
                                                                 <button className="btn btn-secondary" onClick={() => addVendorBlock(null)}>
                                                                     <Plus size={16} /> Add Vendor
                                                                 </button>
                                                                 {/* Meal Buttons */}
-                                                                {Array.from(new Set(mealCategories.map(c => c.mealType))).map(type => (
-                                                                    <button
-                                                                        key={type}
-                                                                        className="btn btn-secondary"
-                                                                        onClick={() => handleAddMeal(type)}
-                                                                        style={{ borderColor: 'var(--color-primary)', color: 'var(--color-primary)' }}
-                                                                    >
-                                                                        <Plus size={16} /> Add {type}
-                                                                    </button>
-                                                                ))}
+                                                                {Array.from(new Set(mealCategories.map(c => c.mealType)))
+                                                                    .filter(type => !orderConfig?.mealSelections?.[type])
+                                                                    .map(type => (
+                                                                        <button
+                                                                            key={type}
+                                                                            className="btn btn-secondary"
+                                                                            onClick={() => handleAddMeal(type)}
+                                                                            style={{ borderColor: 'var(--color-primary)', color: 'var(--color-primary)' }}
+                                                                        >
+                                                                            <Plus size={16} /> Add {type}
+                                                                        </button>
+                                                                    ))}
                                                             </div>
                                                         </div>
                                                     );
@@ -4273,9 +4384,14 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
             const wasNavigatorAddingUnits = currentUser?.role === 'navigator' && pendingStatusChange !== null;
             setShowUnitsModal(false);
             setPendingStatusChange(null);
-            if (onClose && wasNavigatorAddingUnits) {
-                onClose();
+
+            // Only close if it was a navigator unit flow, otherwise keep modal open to show error
+            if (wasNavigatorAddingUnits && onClose) {
+                // For now, let's keep it open even for navigators if there's an error so they can see it
+                // onClose(); 
             }
+
+            setSaving(false);
             return false;
         } finally {
             setSaving(false);
