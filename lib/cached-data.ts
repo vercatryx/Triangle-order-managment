@@ -22,9 +22,11 @@ import {
     getBillingHistory as serverGetBillingHistory,
     getUpcomingOrderForClient as serverGetUpcomingOrderForClient,
     getCompletedOrdersWithDeliveryProof as serverGetCompletedOrdersWithDeliveryProof,
+    getMealCategories as serverGetMealCategories,
+    getMealItems as serverGetMealItems,
 } from './actions';
 
-import { ClientProfile, ClientStatus, Navigator, Vendor, MenuItem, BoxType, AppSettings, ItemCategory, DeliveryRecord, CompletedOrderWithDeliveryProof, Equipment } from './types';
+import { ClientProfile, ClientStatus, Navigator, Vendor, MenuItem, BoxType, AppSettings, ItemCategory, DeliveryRecord, CompletedOrderWithDeliveryProof, Equipment, MealCategory, MealItem } from './types';
 
 // Cache entry with timestamp
 interface CacheEntry<T> {
@@ -270,5 +272,27 @@ export function invalidateOrderData(clientId: string) {
     deliveryHistoryCache.delete(clientId);
     billingHistoryCache.delete(clientId);
     completedOrdersWithDeliveryProofCache.delete(clientId);
+}
+
+// --- MEAL SELECTION HELPERS (Cached) ---
+
+export async function getMealCategories(): Promise<MealCategory[]> {
+    const cached = referenceCache.get('mealCategories');
+    if (!isStale(cached, CACHE_DURATION.REFERENCE_DATA)) {
+        return cached!.data;
+    }
+    const data = await serverGetMealCategories();
+    referenceCache.set('mealCategories', { data, timestamp: Date.now() });
+    return data;
+}
+
+export async function getMealItems(): Promise<MealItem[]> {
+    const cached = referenceCache.get('mealItems');
+    if (!isStale(cached, CACHE_DURATION.REFERENCE_DATA)) {
+        return cached!.data;
+    }
+    const data = await serverGetMealItems();
+    referenceCache.set('mealItems', { data, timestamp: Date.now() });
+    return data;
 }
 

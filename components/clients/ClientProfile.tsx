@@ -2,10 +2,10 @@
 
 import { useState, useEffect, Fragment, useMemo, useRef, ReactNode } from 'react';
 import { useRouter, useParams } from 'next/navigation';
-import { ClientProfile, ClientStatus, Navigator, Vendor, MenuItem, BoxType, ServiceType, AppSettings, DeliveryRecord, ItemCategory, ClientFullDetails, BoxQuota } from '@/lib/types';
+import { ClientProfile, ClientStatus, Navigator, Vendor, MenuItem, BoxType, ServiceType, AppSettings, DeliveryRecord, ItemCategory, ClientFullDetails, BoxQuota, MealCategory, MealItem } from '@/lib/types';
 import { updateClient, addClient, deleteClient, updateDeliveryProof, recordClientChange, syncCurrentOrderToUpcoming, logNavigatorAction, getBoxQuotas, saveEquipmentOrder, getRegularClients, getDependentsByParentId, addDependent, checkClientNameExists, getClientFullDetails } from '@/lib/actions';
 import { getSingleForm, getClientSubmissions } from '@/lib/form-actions';
-import { getClient, getStatuses, getNavigators, getVendors, getMenuItems, getBoxTypes, getSettings, getCategories, getEquipment, getClients, invalidateClientData, invalidateReferenceData, getActiveOrderForClient, getUpcomingOrderForClient, getOrderHistory, getClientHistory, getBillingHistory, invalidateOrderData } from '@/lib/cached-data';
+import { getClient, getStatuses, getNavigators, getVendors, getMenuItems, getBoxTypes, getSettings, getCategories, getEquipment, getClients, invalidateClientData, invalidateReferenceData, getActiveOrderForClient, getUpcomingOrderForClient, getOrderHistory, getClientHistory, getBillingHistory, invalidateOrderData, getMealCategories, getMealItems } from '@/lib/cached-data';
 import { areAnyDeliveriesLocked, getEarliestEffectiveDate, getLockedWeekDescription } from '@/lib/weekly-lock';
 import {
     getNextDeliveryDate as getNextDeliveryDateUtil,
@@ -184,6 +184,8 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
     const [menuItems, setMenuItems] = useState<MenuItem[]>(initialMenuItems || []);
     const [boxTypes, setBoxTypes] = useState<BoxType[]>(initialBoxTypes || []);
     const [categories, setCategories] = useState<ItemCategory[]>([]);
+    const [mealCategories, setMealCategories] = useState<MealCategory[]>([]);
+    const [mealItems, setMealItems] = useState<MealItem[]>([]);
     const [boxQuotas, setBoxQuotas] = useState<BoxQuota[]>([]);
     const [equipment, setEquipment] = useState<any[]>([]);
     const [showEquipmentOrder, setShowEquipmentOrder] = useState(false);
@@ -425,16 +427,20 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
 
 
     async function loadAuxiliaryData(clientToCheck?: ClientProfile) {
-        const [appSettings, catData, allClientsData, regularClientsData] = await Promise.all([
+        const [appSettings, catData, allClientsData, regularClientsData, mealCatData, mealItemData] = await Promise.all([
             getSettings(),
             getCategories(),
             getClients(),
-            getRegularClients()
+            getRegularClients(),
+            getMealCategories(),
+            getMealItems()
         ]);
         setSettings(appSettings);
         setCategories(catData);
         setAllClients(allClientsData);
         setRegularClients(regularClientsData);
+        setMealCategories(mealCatData);
+        setMealItems(mealItemData);
 
         // Load dependents if this is a regular client (not a dependent)
         const clientForDependents = clientToCheck || client;
@@ -545,7 +551,7 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
     }
 
     async function loadLookups() {
-        const [s, n, v, m, b, appSettings, catData, eData, allClientsData, regularClientsData] = await Promise.all([
+        const [s, n, v, m, b, appSettings, catData, eData, allClientsData, regularClientsData, mealCatData, mealItemData] = await Promise.all([
             getStatuses(),
             getNavigators(),
             getVendors(),
@@ -555,7 +561,9 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
             getCategories(),
             getEquipment(),
             getClients(),
-            getRegularClients()
+            getRegularClients(),
+            getMealCategories(),
+            getMealItems()
         ]);
         setStatuses(s);
         setNavigators(n);
@@ -567,11 +575,13 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
         setEquipment(eData);
         setAllClients(allClientsData);
         setRegularClients(regularClientsData);
+        setMealCategories(mealCatData);
+        setMealItems(mealItemData);
     }
 
     async function loadData() {
         setLoadingOrderDetails(true);
-        const [c, s, n, v, m, b, appSettings, catData, eData, allClientsData, regularClientsData, upcomingOrderData, activeOrderData, historyData, orderHistoryData, billingHistoryData] = await Promise.all([
+        const [c, s, n, v, m, b, appSettings, catData, eData, allClientsData, regularClientsData, mealCatData, mealItemData, upcomingOrderData, activeOrderData, historyData, orderHistoryData, billingHistoryData] = await Promise.all([
             getClient(clientId),
             getStatuses(),
             getNavigators(),
@@ -583,6 +593,8 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
             getEquipment(),
             getClients(),
             getRegularClients(),
+            getMealCategories(),
+            getMealItems(),
             getUpcomingOrderForClient(clientId),
             getActiveOrderForClient(clientId),
             getClientHistory(clientId),
@@ -603,6 +615,8 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
         setEquipment(eData);
         setAllClients(allClientsData);
         setRegularClients(regularClientsData);
+        setMealCategories(mealCatData);
+        setMealItems(mealItemData);
         setActiveOrder(activeOrderData);
         setHistory(historyData || []);
         setOrderHistory(orderHistoryData || []);
@@ -1045,6 +1059,28 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                 }
             }
 
+            // Validate Meal Selections (Breakfast, Lunch, Dinner, etc.)
+            if (orderConfig.mealSelections) {
+                Object.entries(orderConfig.mealSelections).forEach(([mealType, config]: [string, any]) => {
+                    const category = mealCategories.find(c => c.mealType === mealType);
+                    if (category && (category.setValue !== undefined && category.setValue !== null)) {
+                        let totalValue = 0;
+                        if (config.items) {
+                            for (const [itemId, qty] of Object.entries(config.items)) {
+                                const item = mealItems.find(i => i.id === itemId);
+                                if (item) {
+                                    totalValue += (item.quotaValue * (qty as number));
+                                }
+                            }
+                        }
+                        // Use fuzzy matching for floating point safety if needed, though usually integers
+                        if (totalValue !== category.setValue) {
+                            messages.push(`${mealType} selection: Selected ${totalValue}, but required is ${category.setValue}.`);
+                        }
+                    }
+                });
+            }
+
             if (messages.length > 0) {
                 return { isValid: false, messages };
             }
@@ -1437,6 +1473,145 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
         setVendorSelectionsForDay(day, current);
     }
 
+    // --- MEAL SELECTION HANDLERS ---
+
+    function handleAddMeal(mealType: string) {
+        setOrderConfig((prev: any) => {
+            const newConfig = { ...prev };
+            if (!newConfig.mealSelections) newConfig.mealSelections = {};
+            if (!newConfig.mealSelections[mealType]) {
+                newConfig.mealSelections[mealType] = {
+                    vendorId: '', // User can select optional vendor
+                    items: {}
+                };
+            }
+            return newConfig;
+        });
+    }
+
+    function handleRemoveMeal(mealType: string) {
+        setOrderConfig((prev: any) => {
+            const newConfig = { ...prev };
+            if (newConfig.mealSelections) {
+                delete newConfig.mealSelections[mealType];
+                if (Object.keys(newConfig.mealSelections).length === 0) {
+                    delete newConfig.mealSelections;
+                }
+            }
+            return newConfig;
+        });
+    }
+
+    function handleMealVendorChange(mealType: string, vendorId: string) {
+        setOrderConfig((prev: any) => {
+            const newConfig = { ...prev };
+            if (newConfig.mealSelections && newConfig.mealSelections[mealType]) {
+                newConfig.mealSelections[mealType].vendorId = vendorId;
+            }
+            return newConfig;
+        });
+    }
+
+    function handleMealItemChange(mealType: string, itemId: string, qty: number) {
+        setOrderConfig((prev: any) => {
+            const newConfig = { ...prev };
+            if (newConfig.mealSelections && newConfig.mealSelections[mealType]) {
+                const updatedItems = { ...newConfig.mealSelections[mealType].items };
+                if (qty > 0) {
+                    updatedItems[itemId] = qty;
+                } else {
+                    delete updatedItems[itemId];
+                }
+                newConfig.mealSelections[mealType].items = updatedItems;
+            }
+            return newConfig;
+        });
+    }
+
+    const renderMealBlocks = () => {
+        if (!orderConfig?.mealSelections) return null;
+        return Object.entries(orderConfig.mealSelections).map(([mealType, config]: [string, any]) => {
+            const category = mealCategories.find(c => c.mealType === mealType);
+            let totalSelectedValue = 0;
+            if (config.items) {
+                for (const [itemId, qty] of Object.entries(config.items)) {
+                    const item = mealItems.find(i => i.id === itemId);
+                    if (item) {
+                        totalSelectedValue += (item.quotaValue * (qty as number));
+                    }
+                }
+            }
+
+            const requiredValue = category?.setValue;
+            const isInvalid = requiredValue !== undefined && requiredValue !== null && totalSelectedValue !== requiredValue;
+
+            return (
+                <div key={mealType} className={styles.vendorBlock} style={{
+                    borderLeft: '4px solid var(--color-primary)',
+                    border: isInvalid ? '2px solid #ef4444' : undefined,
+                    backgroundColor: isInvalid ? '#fef2f2' : undefined
+                }}>
+                    {/* Header */}
+                    <div className={styles.vendorHeader}>
+                        <div style={{ display: 'flex', flexDirection: 'column' }}>
+                            <span style={{ fontWeight: 600, color: isInvalid ? '#ef4444' : 'var(--color-primary)' }}>{mealType}</span>
+                            {requiredValue !== undefined && requiredValue !== null && (
+                                <span style={{ fontSize: '0.85em', color: isInvalid ? '#ef4444' : 'var(--text-secondary)' }}>
+                                    Selected: {totalSelectedValue} / {requiredValue}
+                                </span>
+                            )}
+                        </div>
+                        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                            <select
+                                className="input"
+                                value={config.vendorId || ''}
+                                onChange={(e) => handleMealVendorChange(mealType, e.target.value)}
+                                style={{ width: '200px' }}
+                            >
+                                <option value="">Select Vendor (Optional)...</option>
+                                {vendors.filter(v => v.serviceTypes.includes('Food') && v.isActive).map(v => (
+                                    <option key={v.id} value={v.id}>{v.name}</option>
+                                ))}
+                            </select>
+                            <button className={`${styles.iconBtn} ${styles.danger}`} onClick={() => handleRemoveMeal(mealType)}>
+                                <Trash2 size={16} />
+                            </button>
+                        </div>
+                    </div>
+                    {/* Items */}
+                    <div className={styles.menuItems}>
+                        {mealItems.filter(i => {
+                            const cat = mealCategories.find(c => c.id === i.categoryId);
+                            return cat?.mealType === mealType;
+                        }).map(item => {
+                            const qty = config.items?.[item.id] || 0;
+                            return (
+                                <div key={item.id} className={styles.menuItem}>
+                                    <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
+                                        <span>
+                                            {item.name}
+                                            <span style={{ color: 'var(--text-tertiary)', fontSize: '0.9em', marginLeft: '4px' }}>
+                                                (Value: {item.quotaValue})
+                                            </span>
+                                        </span>
+                                        <div className={styles.quantityControl} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                            <button onClick={() => handleMealItemChange(mealType, item.id, Math.max(0, qty - 1))} className="btn btn-secondary" style={{ padding: '2px 8px' }}>-</button>
+                                            <span style={{ width: '20px', textAlign: 'center' }}>{qty}</span>
+                                            <button onClick={() => handleMealItemChange(mealType, item.id, qty + 1)} className="btn btn-secondary" style={{ padding: '2px 8px' }}>+</button>
+                                        </div>
+                                    </label>
+                                </div>
+                            );
+                        })}
+                        {mealItems.filter(i => mealCategories.find(c => c.id === i.categoryId)?.mealType === mealType).length === 0 && (
+                            <span className={styles.hint}>No items found for {mealType}.</span>
+                        )}
+                    </div>
+                </div>
+            );
+        });
+    };
+
     // -- Form Filler Handlers --
     async function handleOpenScreeningForm() {
         setLoadingForm(true);
@@ -1550,22 +1725,22 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
 
                                 <div className={styles.formGroup}>
                                     <label className="label">Date of Birth</label>
-                                    <input 
-                                        type="date" 
-                                        className="input" 
-                                        value={formData.dob || ''} 
-                                        onChange={e => setFormData({ ...formData, dob: e.target.value || null })} 
+                                    <input
+                                        type="date"
+                                        className="input"
+                                        value={formData.dob || ''}
+                                        onChange={e => setFormData({ ...formData, dob: e.target.value || null })}
                                     />
                                 </div>
 
                                 <div className={styles.formGroup}>
                                     <label className="label">CIN#</label>
-                                    <input 
-                                        type="text" 
-                                        className="input" 
+                                    <input
+                                        type="text"
+                                        className="input"
                                         placeholder="CIN Number"
-                                        value={formData.cin || ''} 
-                                        onChange={e => setFormData({ ...formData, cin: e.target.value.trim() || null })} 
+                                        value={formData.cin || ''}
+                                        onChange={e => setFormData({ ...formData, cin: e.target.value.trim() || null })}
                                     />
                                 </div>
 
@@ -2070,6 +2245,7 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
 
                                                         return (
                                                             <div className={styles.vendorsList}>
+                                                                {renderMealBlocks()}
                                                                 {(currentSelections || []).map((selection: any, index: number) => {
                                                                     const vendor = selection.vendorId ? vendors.find(v => v.id === selection.vendorId) : null;
                                                                     const vendorHasMultipleDays = vendor && vendor.deliveryDays && vendor.deliveryDays.length > 1;
@@ -2377,9 +2553,25 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                                                                         </div>
                                                                     );
                                                                 })}
-                                                                <button className="btn btn-secondary" onClick={() => addVendorBlock(null)} style={{ marginTop: '0.5rem' }}>
-                                                                    <Plus size={16} /> Add Vendor
-                                                                </button>
+                                                                <div className={styles.vendorsList}>
+                                                                    {renderMealBlocks()}
+                                                                </div>
+                                                                <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem', flexWrap: 'wrap' }}>
+                                                                    <button className="btn btn-secondary" onClick={() => addVendorBlock(null)}>
+                                                                        <Plus size={16} /> Add Vendor
+                                                                    </button>
+                                                                    {/* Meal Buttons */}
+                                                                    {Array.from(new Set(mealCategories.map(c => c.mealType))).map(type => (
+                                                                        <button
+                                                                            key={type}
+                                                                            className="btn btn-secondary"
+                                                                            onClick={() => handleAddMeal(type)}
+                                                                            style={{ borderColor: 'var(--color-primary)', color: 'var(--color-primary)' }}
+                                                                        >
+                                                                            <Plus size={16} /> Add {type}
+                                                                        </button>
+                                                                    ))}
+                                                                </div>
                                                             </div>
                                                         );
                                                     }
@@ -2387,6 +2579,7 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                                                     const currentSelections = getVendorSelectionsForDay(null);
                                                     return (
                                                         <div className={styles.vendorsList}>
+                                                            {renderMealBlocks()}
                                                             {(currentSelections || []).map((selection: any, index: number) => {
                                                                 const vendor = selection.vendorId ? vendors.find(v => v.id === selection.vendorId) : null;
                                                                 const vendorHasMultipleDays = vendor && vendor.deliveryDays && vendor.deliveryDays.length > 1;
@@ -2701,9 +2894,22 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                                                                     </div>
                                                                 );
                                                             })}
-                                                            <button className="btn btn-secondary" onClick={() => addVendorBlock(null)} style={{ marginTop: '0.5rem' }}>
-                                                                <Plus size={16} /> Add Vendor
-                                                            </button>
+                                                            <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem', flexWrap: 'wrap' }}>
+                                                                <button className="btn btn-secondary" onClick={() => addVendorBlock(null)}>
+                                                                    <Plus size={16} /> Add Vendor
+                                                                </button>
+                                                                {/* Meal Buttons */}
+                                                                {Array.from(new Set(mealCategories.map(c => c.mealType))).map(type => (
+                                                                    <button
+                                                                        key={type}
+                                                                        className="btn btn-secondary"
+                                                                        onClick={() => handleAddMeal(type)}
+                                                                        style={{ borderColor: 'var(--color-primary)', color: 'var(--color-primary)' }}
+                                                                    >
+                                                                        <Plus size={16} /> Add {type}
+                                                                    </button>
+                                                                ))}
+                                                            </div>
                                                         </div>
                                                     );
                                                 })()}
@@ -3615,91 +3821,91 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
 
     // Helper to prepare cleaned active order (extracted to be reusable)
     function prepareActiveOrder() {
-            if (!orderConfig) return undefined;
+        if (!orderConfig) return undefined;
 
-            const cleanedOrderConfig = { ...orderConfig };
+        const cleanedOrderConfig = { ...orderConfig };
 
-            // CRITICAL: Always preserve caseId at the top level for both Food and Boxes
-            cleanedOrderConfig.caseId = orderConfig.caseId;
+        // CRITICAL: Always preserve caseId at the top level for both Food and Boxes
+        cleanedOrderConfig.caseId = orderConfig.caseId;
 
-            if (formData.serviceType === 'Food') {
-                // For Food service: Ensure vendorId and items are preserved in all vendor selections
-                if (cleanedOrderConfig.deliveryDayOrders) {
-                    // Multi-day format: Clean and preserve vendor selections for each day
-                    for (const day of Object.keys(cleanedOrderConfig.deliveryDayOrders)) {
-                        cleanedOrderConfig.deliveryDayOrders[day].vendorSelections = (cleanedOrderConfig.deliveryDayOrders[day].vendorSelections || [])
-                            .filter((s: any) => s.vendorId) // Only keep selections with a vendor
-                            .map((s: any) => ({
-                                vendorId: s.vendorId, // Preserve vendor ID
-                                items: s.items || {} // Preserve items
-                            }));
-                    }
-                } else if (cleanedOrderConfig.vendorSelections) {
-                    // Check if we have per-vendor delivery days (itemsByDay format)
-                    const hasPerVendorDeliveryDays = cleanedOrderConfig.vendorSelections.some((s: any) =>
-                        s.selectedDeliveryDays && s.selectedDeliveryDays.length > 0 && s.itemsByDay
-                    );
+        if (formData.serviceType === 'Food') {
+            // For Food service: Ensure vendorId and items are preserved in all vendor selections
+            if (cleanedOrderConfig.deliveryDayOrders) {
+                // Multi-day format: Clean and preserve vendor selections for each day
+                for (const day of Object.keys(cleanedOrderConfig.deliveryDayOrders)) {
+                    cleanedOrderConfig.deliveryDayOrders[day].vendorSelections = (cleanedOrderConfig.deliveryDayOrders[day].vendorSelections || [])
+                        .filter((s: any) => s.vendorId) // Only keep selections with a vendor
+                        .map((s: any) => ({
+                            vendorId: s.vendorId, // Preserve vendor ID
+                            items: s.items || {} // Preserve items
+                        }));
+                }
+            } else if (cleanedOrderConfig.vendorSelections) {
+                // Check if we have per-vendor delivery days (itemsByDay format)
+                const hasPerVendorDeliveryDays = cleanedOrderConfig.vendorSelections.some((s: any) =>
+                    s.selectedDeliveryDays && s.selectedDeliveryDays.length > 0 && s.itemsByDay
+                );
 
-                    if (hasPerVendorDeliveryDays) {
-                        // Convert per-vendor delivery days to deliveryDayOrders format
-                        const deliveryDayOrders: any = {};
-                        for (const selection of cleanedOrderConfig.vendorSelections) {
-                            if (!selection.vendorId || !selection.selectedDeliveryDays || !selection.itemsByDay) continue;
+                if (hasPerVendorDeliveryDays) {
+                    // Convert per-vendor delivery days to deliveryDayOrders format
+                    const deliveryDayOrders: any = {};
+                    for (const selection of cleanedOrderConfig.vendorSelections) {
+                        if (!selection.vendorId || !selection.selectedDeliveryDays || !selection.itemsByDay) continue;
 
-                            for (const day of selection.selectedDeliveryDays) {
-                                if (!deliveryDayOrders[day]) deliveryDayOrders[day] = { vendorSelections: [] };
-                                const dayItems = selection.itemsByDay[day] || {};
-                                const hasItems = Object.keys(dayItems).length > 0 && Object.values(dayItems).some((qty: any) => (Number(qty) || 0) > 0);
-                                if (hasItems) {
-                                    // Preserve vendorId and items for this day
-                                    deliveryDayOrders[day].vendorSelections.push({
-                                        vendorId: selection.vendorId,
-                                        items: dayItems
-                                    });
-                                }
+                        for (const day of selection.selectedDeliveryDays) {
+                            if (!deliveryDayOrders[day]) deliveryDayOrders[day] = { vendorSelections: [] };
+                            const dayItems = selection.itemsByDay[day] || {};
+                            const hasItems = Object.keys(dayItems).length > 0 && Object.values(dayItems).some((qty: any) => (Number(qty) || 0) > 0);
+                            if (hasItems) {
+                                // Preserve vendorId and items for this day
+                                deliveryDayOrders[day].vendorSelections.push({
+                                    vendorId: selection.vendorId,
+                                    items: dayItems
+                                });
                             }
                         }
-                        // Clean up days with no vendors
-                        const daysWithVendors = Object.keys(deliveryDayOrders).filter(day =>
-                            deliveryDayOrders[day].vendorSelections && deliveryDayOrders[day].vendorSelections.length > 0
-                        );
-                        if (daysWithVendors.length > 0) {
-                            const cleanedDeliveryDayOrders: any = {};
-                            for (const day of daysWithVendors) cleanedDeliveryDayOrders[day] = deliveryDayOrders[day];
-                            cleanedOrderConfig.deliveryDayOrders = cleanedDeliveryDayOrders;
-                            cleanedOrderConfig.vendorSelections = undefined;
-                        }
-                    } else {
-                        // Single-day format: Clean and preserve vendor selections
-                        cleanedOrderConfig.vendorSelections = (cleanedOrderConfig.vendorSelections || [])
-                            .filter((s: any) => s.vendorId) // Only keep selections with a vendor
-                            .map((s: any) => ({
-                                vendorId: s.vendorId, // Preserve vendor ID
-                                items: s.items || {} // Preserve items
-                            }));
                     }
+                    // Clean up days with no vendors
+                    const daysWithVendors = Object.keys(deliveryDayOrders).filter(day =>
+                        deliveryDayOrders[day].vendorSelections && deliveryDayOrders[day].vendorSelections.length > 0
+                    );
+                    if (daysWithVendors.length > 0) {
+                        const cleanedDeliveryDayOrders: any = {};
+                        for (const day of daysWithVendors) cleanedDeliveryDayOrders[day] = deliveryDayOrders[day];
+                        cleanedOrderConfig.deliveryDayOrders = cleanedDeliveryDayOrders;
+                        cleanedOrderConfig.vendorSelections = undefined;
+                    }
+                } else {
+                    // Single-day format: Clean and preserve vendor selections
+                    cleanedOrderConfig.vendorSelections = (cleanedOrderConfig.vendorSelections || [])
+                        .filter((s: any) => s.vendorId) // Only keep selections with a vendor
+                        .map((s: any) => ({
+                            vendorId: s.vendorId, // Preserve vendor ID
+                            items: s.items || {} // Preserve items
+                        }));
                 }
-            } else if (formData.serviceType === 'Boxes') {
-                // For Boxes: Explicitly preserve all critical fields
-                // Preserve vendorId even if empty string (will be handled in sync)
-                if (orderConfig.vendorId !== undefined) {
-                    cleanedOrderConfig.vendorId = orderConfig.vendorId;
-                }
-                cleanedOrderConfig.caseId = orderConfig.caseId; // Preserve case ID (also set above)
-                if (orderConfig.boxTypeId !== undefined) {
-                    cleanedOrderConfig.boxTypeId = orderConfig.boxTypeId;
-                }
-                cleanedOrderConfig.boxQuantity = orderConfig.boxQuantity || 1; // Preserve quantity
-                cleanedOrderConfig.items = orderConfig.items || {}; // Preserve items
-                cleanedOrderConfig.itemPrices = orderConfig.itemPrices || {}; // Preserve item prices
             }
+        } else if (formData.serviceType === 'Boxes') {
+            // For Boxes: Explicitly preserve all critical fields
+            // Preserve vendorId even if empty string (will be handled in sync)
+            if (orderConfig.vendorId !== undefined) {
+                cleanedOrderConfig.vendorId = orderConfig.vendorId;
+            }
+            cleanedOrderConfig.caseId = orderConfig.caseId; // Preserve case ID (also set above)
+            if (orderConfig.boxTypeId !== undefined) {
+                cleanedOrderConfig.boxTypeId = orderConfig.boxTypeId;
+            }
+            cleanedOrderConfig.boxQuantity = orderConfig.boxQuantity || 1; // Preserve quantity
+            cleanedOrderConfig.items = orderConfig.items || {}; // Preserve items
+            cleanedOrderConfig.itemPrices = orderConfig.itemPrices || {}; // Preserve item prices
+        }
 
-            return {
-                ...cleanedOrderConfig,
-                serviceType: formData.serviceType,
-                lastUpdated: new Date().toISOString(),
-                updatedBy: 'Admin'
-            };
+        return {
+            ...cleanedOrderConfig,
+            serviceType: formData.serviceType,
+            lastUpdated: new Date().toISOString(),
+            updatedBy: 'Admin'
+        };
     }
 
     async function executeSave(unitsAdded: number = 0): Promise<boolean> {
@@ -3957,13 +4163,13 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
             const wasNavigatorAddingUnits = currentUser?.role === 'navigator' && pendingStatusChange !== null;
             setShowUnitsModal(false);
             setPendingStatusChange(null);
-            
+
             // If navigator added units, always close the portal
             if (wasNavigatorAddingUnits && onClose) {
                 onClose();
                 return true;
             }
-            
+
             if (onClose) {
                 onClose();
             } else {

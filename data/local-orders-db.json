@@ -1555,7 +1555,7 @@
       "service_type": "Food",
       "case_id": "1234",
       "status": "scheduled",
-      "last_updated": "2026-01-07T12:52:04.543+00:00",
+      "last_updated": "2026-01-07T14:05:28.099+00:00",
       "updated_by": "Avraham ",
       "created_at": "2026-01-07T11:57:17.135665+00:00",
       "take_effect_date": "2026-01-11",
@@ -1573,22 +1573,22 @@
   "orderBoxSelections": [],
   "upcomingOrderVendorSelections": [
     {
-      "id": "d441a7b8-c23c-4a7f-b7b2-e8061ef84cf5",
+      "id": "b7c34604-e5fe-402e-85b6-74efcf8820c4",
       "upcoming_order_id": "87ca2f1b-e33e-44cc-a209-faa522158079",
       "vendor_id": "1e9e2218-fdff-434f-b279-93d9d7bf4bd2",
-      "created_at": "2026-01-07T12:52:07.305661+00:00"
+      "created_at": "2026-01-07T14:05:30.805867+00:00"
     }
   ],
   "upcomingOrderItems": [
     {
-      "id": "f8f87bf4-5ee5-44ae-8cfe-3eeb4049319d",
+      "id": "73accf2c-8ad7-47f0-93c7-7c3ed6b664f1",
       "upcoming_order_id": "87ca2f1b-e33e-44cc-a209-faa522158079",
-      "vendor_selection_id": "d441a7b8-c23c-4a7f-b7b2-e8061ef84cf5",
+      "vendor_selection_id": "b7c34604-e5fe-402e-85b6-74efcf8820c4",
       "menu_item_id": "fa59f4c7-3557-46be-ab98-0b569d16f69e",
       "quantity": 10,
       "unit_value": 16,
       "total_value": 160,
-      "created_at": "2026-01-07T12:52:07.474904+00:00"
+      "created_at": "2026-01-07T14:05:30.993152+00:00"
     }
   ],
   "upcomingOrderBoxSelections": [
@@ -2453,5 +2453,5 @@
       "items": {}
     }
   ],
-  "lastSynced": "2026-01-07T12:52:08.577Z"
+  "lastSynced": "2026-01-07T14:05:32.004Z"
 }

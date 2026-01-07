@@ -74,6 +74,14 @@ export interface OrderConfiguration {
   // Delivery Schedule Configuration
   deliveryDistribution?: { [dayOfWeek: string]: number }; // e.g. "Monday": 5
 
+  // Meal Selection (Breakfast, Lunch, Dinner - independent of generic vendor selections)
+  mealSelections?: {
+    [mealType: string]: {
+      vendorId?: string | null;
+      items: { [itemId: string]: number };
+    }
+  };
+
   // Display Helpers
   orderNumber?: number;
   proofOfDelivery?: string;
