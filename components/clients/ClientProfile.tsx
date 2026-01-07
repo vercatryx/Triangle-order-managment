@@ -852,8 +852,9 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
         // Include meal selections (Breakfast, Lunch, etc.)
         if (orderConfig.mealSelections) {
             for (const config of Object.values(orderConfig.mealSelections)) {
-                if (config.items) {
-                    for (const qty of Object.values(config.items)) {
+                const typedConfig = config as { vendorId?: string | null; items: { [itemId: string]: number } };
+                if (typedConfig.items) {
+                    for (const qty of Object.values(typedConfig.items)) {
                         total += (Number(qty) || 0);
                     }
                 }
@@ -900,8 +901,9 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
         // Include meal selections (Breakfast, Lunch, etc.)
         if (orderConfig.mealSelections) {
             for (const config of Object.values(orderConfig.mealSelections)) {
-                if (config.items) {
-                    for (const [itemId, qty] of Object.entries(config.items)) {
+                const typedConfig = config as { vendorId?: string | null; items: { [itemId: string]: number } };
+                if (typedConfig.items) {
+                    for (const [itemId, qty] of Object.entries(typedConfig.items)) {
                         const item = mealItems.find(i => i.id === itemId);
                         if (item) {
                             total += item.quotaValue * (qty as number);
@@ -1562,7 +1564,7 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                 if (day === null && selection.selectedDeliveryDays && selection.selectedDeliveryDays.length > 1) {
                     // Calculate sum of quantities on other days (excluding target day)
                     const otherDaysSum = selection.selectedDeliveryDays
-                        .filter(sd => sd !== targetDay)
+                        .filter((sd: string) => sd !== targetDay)
                         .reduce((sum: number, sd: string) =>
                             sum + Number((itemsByDay[sd] || {})[itemId] || 0), 0);
                     // Set target day quantity to achieve desired total
