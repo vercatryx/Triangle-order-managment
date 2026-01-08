@@ -14,6 +14,7 @@ interface Props {
     mealCategories: MealCategory[];
     mealItems: MealItem[];
     settings?: any; // AppSettings for take effect date
+    isClientPortal?: boolean;
 }
 
 export default function FoodServiceWidget({
@@ -24,7 +25,8 @@ export default function FoodServiceWidget({
     menuItems,
     mealCategories,
     mealItems,
-    settings
+    settings,
+    isClientPortal
 }: Props) {
 
     // -- LOGIC HELPERS --
@@ -156,7 +158,7 @@ export default function FoodServiceWidget({
             if (newConfig.mealSelections) {
                 delete newConfig.mealSelections[mealType];
                 if (Object.keys(newConfig.mealSelections).length === 0) {
-                    delete newConfig.mealSelections;
+                    newConfig.mealSelections = {}; // FIX: Keep empty object so save detects deletion
                 }
             }
             return newConfig;
@@ -194,7 +196,8 @@ export default function FoodServiceWidget({
     function handleAddVendorBlock() {
         setOrderConfig((prev: any) => {
             const newConfig = { ...prev };
-            if (!newConfig.vendorSelections) newConfig.vendorSelections = [];
+            // FIX: Deep copy the array to prevent double-push in Strict Mode
+            newConfig.vendorSelections = newConfig.vendorSelections ? [...newConfig.vendorSelections] : [];
             newConfig.vendorSelections.push({
                 vendorId: '',
                 items: {}
@@ -220,7 +223,13 @@ export default function FoodServiceWidget({
             const newConfig = { ...prev };
             if (newConfig.vendorSelections) {
                 const updated = [...newConfig.vendorSelections];
-                updated[index] = { ...updated[index], vendorId };
+                // Update vendorId AND clear items to prevent counting residual meals
+                updated[index] = {
+                    ...updated[index],
+                    vendorId,
+                    items: {},
+                    itemsByDay: {}
+                };
                 newConfig.vendorSelections = updated;
             }
             return newConfig;
@@ -359,7 +368,11 @@ export default function FoodServiceWidget({
                             >
                                 <option value="">Select Vendor...</option>
                                 {vendors
-                                    .filter(v => v.serviceTypes.includes('Food') && v.isActive)
+                                    .filter(v => {
+                                        if (!v.serviceTypes.includes('Food') || !v.isActive) return false;
+                                        // Feature: Filter out vendors already selected in OTHER blocks
+                                        return !selections.some((s: any, idx: number) => s.vendorId === v.id && idx !== index);
+                                    })
                                     .map(v => (
                                         <option key={v.id} value={v.id}>{v.name}</option>
                                     ))}
@@ -561,26 +574,39 @@ export default function FoodServiceWidget({
                     <div className={styles.vendorHeader}>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                             <span style={{ fontWeight: 600, color: 'var(--color-primary)' }}>{mealType}</span>
-                            <select
-                                className="input"
-                                style={{ padding: '4px 8px', fontSize: '0.9rem', maxWidth: '200px' }}
-                                value={config.vendorId || ''}
-                                onChange={(e) => {
-                                    const newSelections = { ...orderConfig.mealSelections };
-                                    newSelections[mealType] = {
-                                        ...newSelections[mealType],
-                                        vendorId: e.target.value || null
-                                    };
-                                    setOrderConfig({ ...orderConfig, mealSelections: newSelections });
-                                }}
-                            >
-                                <option value="">Select Vendor (Optional)</option>
-                                {vendors
-                                    .filter(v => v.serviceTypes.includes('Food') && v.isActive)
-                                    .map(v => (
-                                        <option key={v.id} value={v.id}>{v.name}</option>
-                                    ))}
-                            </select>
+                            {!isClientPortal && (
+                                <select
+                                    className="input"
+                                    style={{ padding: '4px 8px', fontSize: '0.9rem', maxWidth: '200px' }}
+                                    value={config.vendorId || ''}
+                                    onChange={(e) => {
+                                        const newSelections = { ...orderConfig.mealSelections };
+                                        newSelections[mealType] = {
+                                            ...newSelections[mealType],
+                                            vendorId: e.target.value || null
+                                        };
+                                        setOrderConfig({ ...orderConfig, mealSelections: newSelections });
+                                    }}
+                                >
+                                    <option value="">Select Vendor (Optional)</option>
+                                    {vendors
+                                        .filter(v => v.serviceTypes.includes('Food') && v.isActive)
+                                        .map(v => (
+                                            <option key={v.id} value={v.id}>{v.name}</option>
+                                        ))}
+                                </select>
+                            )}
+                            {isClientPortal && config.vendorId && (
+                                // Optionally show selected vendor name or nothing. User said "hide the select".
+                                // If a vendor IS selected (by admin), maybe we should show it as read-only text?
+                                // "Hide the select vendor so that only Admins can actually select the vendor"
+                                // Showing the name seems helpful context, but I will default to hiding the control.
+                                // If I hide it completely, they won't know whence it comes.
+                                // I'll show a small text label if a vendor IS selected.
+                                <span style={{ fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
+                                    {vendors.find(v => v.id === config.vendorId)?.name}
+                                </span>
+                            )}
                         </div>
                         <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
                             <button className={`${styles.iconBtn} ${styles.danger}`} onClick={() => handleRemoveMeal(mealType)}>
@@ -803,6 +829,11 @@ export default function FoodServiceWidget({
                     <button
                         className="btn btn-primary"
                         onClick={handleAddVendorBlock}
+                        disabled={orderConfig.vendorSelections?.some((s: any) => !s.vendorId)}
+                        style={{
+                            opacity: orderConfig.vendorSelections?.some((s: any) => !s.vendorId) ? 0.5 : 1,
+                            cursor: orderConfig.vendorSelections?.some((s: any) => !s.vendorId) ? 'not-allowed' : 'pointer'
+                        }}
                     >
                         <Plus size={16} /> Add Vendor
                     </button>

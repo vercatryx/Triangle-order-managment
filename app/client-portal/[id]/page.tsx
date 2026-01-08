@@ -1,4 +1,4 @@
-import { getPublicClient, getStatuses, getNavigators, getVendors, getMenuItems, getBoxTypes, getCategories, getUpcomingOrderForClient, getActiveOrderForClient, getOrderHistory, getMealCategories, getMealItems } from '@/lib/actions';
+import { getPublicClient, getStatuses, getNavigators, getVendors, getMenuItems, getBoxTypes, getCategories, getUpcomingOrderForClient, getActiveOrderForClient, getOrderHistory, getMealCategories, getMealItems, getClientFoodOrder, getClientMealOrder, getClientBoxOrder } from '@/lib/actions';
 import { ClientPortalInterface } from '@/components/clients/ClientPortalInterface';
 import { notFound } from 'next/navigation';
 import { logout } from '@/lib/auth-actions';
@@ -20,7 +20,10 @@ export default async function ClientPortalPage({ params }: { params: { id: strin
         activeOrder,
         previousOrders,
         mealCategories,
-        mealItems
+        mealItems,
+        foodOrder,
+        mealOrder,
+        boxOrder
     ] = await Promise.all([
         getPublicClient(id),
         getStatuses(),
@@ -33,7 +36,10 @@ export default async function ClientPortalPage({ params }: { params: { id: strin
         getActiveOrderForClient(id),
         getOrderHistory(id),
         getMealCategories(),
-        getMealItems()
+        getMealItems(),
+        getClientFoodOrder(id),
+        getClientMealOrder(id),
+        getClientBoxOrder(id)
     ]);
 
     if (!client) {
@@ -89,6 +95,9 @@ export default async function ClientPortalPage({ params }: { params: { id: strin
                 previousOrders={previousOrders || []}
                 mealCategories={mealCategories}
                 mealItems={mealItems}
+                foodOrder={foodOrder}
+                mealOrder={mealOrder}
+                boxOrder={boxOrder}
             />
         </div>
     );
