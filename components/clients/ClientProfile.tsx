@@ -2,8 +2,8 @@
 
 import { useState, useEffect, Fragment, useMemo, useRef, ReactNode } from 'react';
 import { useRouter, useParams } from 'next/navigation';
-import { ClientProfile, ClientStatus, Navigator, Vendor, MenuItem, BoxType, ServiceType, AppSettings, DeliveryRecord, ItemCategory, ClientFullDetails, BoxQuota, MealCategory, MealItem } from '@/lib/types';
-import { updateClient, addClient, deleteClient, updateDeliveryProof, recordClientChange, syncCurrentOrderToUpcoming, logNavigatorAction, getBoxQuotas, saveEquipmentOrder, getRegularClients, getDependentsByParentId, addDependent, checkClientNameExists, getClientFullDetails } from '@/lib/actions';
+import { ClientProfile, ClientStatus, Navigator, Vendor, MenuItem, BoxType, ServiceType, AppSettings, DeliveryRecord, ItemCategory, ClientFullDetails, BoxQuota, MealCategory, MealItem, ClientFoodOrder, ClientMealOrder, ClientBoxOrder } from '@/lib/types';
+import { updateClient, addClient, deleteClient, updateDeliveryProof, recordClientChange, syncCurrentOrderToUpcoming, logNavigatorAction, getBoxQuotas, saveEquipmentOrder, getRegularClients, getDependentsByParentId, addDependent, checkClientNameExists, getClientFullDetails, saveClientFoodOrder, saveClientMealOrder, saveClientBoxOrder } from '@/lib/actions';
 import { getSingleForm, getClientSubmissions } from '@/lib/form-actions';
 import { getClient, getStatuses, getNavigators, getVendors, getMenuItems, getBoxTypes, getSettings, getCategories, getEquipment, getClients, invalidateClientData, invalidateReferenceData, getActiveOrderForClient, getUpcomingOrderForClient, getOrderHistory, getClientHistory, getBillingHistory, invalidateOrderData, getMealCategories, getMealItems } from '@/lib/cached-data';
 import { areAnyDeliveriesLocked, getEarliestEffectiveDate, getLockedWeekDescription } from '@/lib/weekly-lock';
@@ -216,6 +216,17 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
     const [formData, setFormData] = useState<Partial<ClientProfile>>({});
     const [orderConfig, setOrderConfig] = useState<any>({}); // Current Order Request (from upcoming_orders)
     const [originalOrderConfig, setOriginalOrderConfig] = useState<any>({}); // Original Order Request for comparison
+
+    // --- INDEPENDENT ORDER CONFIGS ---
+    const [foodOrderConfig, setFoodOrderConfig] = useState<Partial<ClientFoodOrder> | null>(null);
+    const [originalFoodOrderConfig, setOriginalFoodOrderConfig] = useState<Partial<ClientFoodOrder> | null>(null);
+
+    const [mealOrderConfig, setMealOrderConfig] = useState<Partial<ClientMealOrder> | null>(null);
+    const [originalMealOrderConfig, setOriginalMealOrderConfig] = useState<Partial<ClientMealOrder> | null>(null);
+
+    const [boxOrderConfig, setBoxOrderConfig] = useState<Partial<ClientBoxOrder> | null>(null);
+    const [originalBoxOrderConfig, setOriginalBoxOrderConfig] = useState<Partial<ClientBoxOrder> | null>(null);
+
     const [activeOrder, setActiveOrder] = useState<any>(null); // Recent Orders (from orders table)
 
     const [saving, setSaving] = useState(false);
@@ -452,6 +463,68 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
     }
 
     function hydrateFromInitialData(data: ClientFullDetails) {
+        // 1. Run legacy logic first to handle basic hydration and backward compatibility
+        _hydrateFromInitialDataLegacy(data);
+
+        // 2. Apply Independent Order Overrides
+
+        // Food
+        if (data.foodOrder) {
+            setFoodOrderConfig(data.foodOrder);
+            setOriginalFoodOrderConfig(JSON.parse(JSON.stringify(data.foodOrder)));
+
+            // If current service type is Food, force this config (override legacy)
+            if (data.client.serviceType === 'Food') {
+                const conf: any = { ...data.foodOrder, serviceType: 'Food' };
+                if (!conf.caseId && data.client.activeOrder?.caseId) {
+                    conf.caseId = data.client.activeOrder.caseId;
+                }
+                setOrderConfig(conf);
+                setOriginalOrderConfig(JSON.parse(JSON.stringify(conf)));
+            }
+        } else {
+            setFoodOrderConfig(null);
+            setOriginalFoodOrderConfig(null);
+        }
+
+        // Meal
+        if (data.mealOrder) {
+            setMealOrderConfig(data.mealOrder);
+            setOriginalMealOrderConfig(JSON.parse(JSON.stringify(data.mealOrder)));
+
+            if (data.client.serviceType === 'Meal') {
+                const conf: any = { ...data.mealOrder, serviceType: 'Meal' };
+                if (!conf.caseId && data.client.activeOrder?.caseId) {
+                    conf.caseId = data.client.activeOrder.caseId;
+                }
+                setOrderConfig(conf);
+                setOriginalOrderConfig(JSON.parse(JSON.stringify(conf)));
+            }
+        } else {
+            setMealOrderConfig(null);
+            setOriginalMealOrderConfig(null);
+        }
+
+        // Boxes
+        if (data.boxOrder) {
+            setBoxOrderConfig(data.boxOrder);
+            setOriginalBoxOrderConfig(JSON.parse(JSON.stringify(data.boxOrder)));
+
+            if (data.client.serviceType === 'Boxes') {
+                const conf: any = { ...data.boxOrder, serviceType: 'Boxes' };
+                if (!conf.caseId && data.client.activeOrder?.caseId) {
+                    conf.caseId = data.client.activeOrder.caseId;
+                }
+                setOrderConfig(conf);
+                setOriginalOrderConfig(JSON.parse(JSON.stringify(conf)));
+            }
+        } else {
+            setBoxOrderConfig(null);
+            setOriginalBoxOrderConfig(null);
+        }
+    }
+
+    function _hydrateFromInitialDataLegacy(data: ClientFullDetails) {
         setClient(data.client);
         setFormData(data.client);
 
@@ -464,10 +537,7 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
 
         // Handle upcoming order logic (reused from loadData)
         const upcomingOrderData = data.upcomingOrder;
-        console.log('[ClientProfile] hydrateFromInitialData - Debugging Boxes Vendor', {
-            upcomingOrderData: JSON.stringify(upcomingOrderData, null, 2),
-            clientActiveOrder: JSON.stringify(data.client.activeOrder, null, 2)
-        });
+
         if (upcomingOrderData) {
             // Check if it's the multi-day format (object keyed by delivery day, not deliveryDayOrders)
             const isMultiDayFormat = upcomingOrderData && typeof upcomingOrderData === 'object' &&
@@ -593,6 +663,25 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
     }
 
     async function loadData() {
+        setLoadingOrderDetails(true);
+
+        // Load lookups and client data in parallel
+        await Promise.all([
+            loadLookups(),
+            (async () => {
+                const details = await getClientFullDetails(clientId);
+                if (details) {
+                    hydrateFromInitialData(details);
+                }
+                // Legacy loadData logic for dependents is covered by hydrateFromInitialData -> _hydrateFromInitialDataLegacy
+            })()
+        ]);
+
+        setLoading(false);
+        setLoadingOrderDetails(false);
+    }
+
+    async function loadDataLegacy() {
         setLoadingOrderDetails(true);
         const [c, s, n, v, m, b, appSettings, catData, eData, allClientsData, regularClientsData, mealCatData, mealItemData, upcomingOrderData, activeOrderData, historyData, orderHistoryData, billingHistoryData] = await Promise.all([
             getClient(clientId),
@@ -1281,7 +1370,30 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                 const cleanedOrderConfig = prepareActiveOrder();
                 if (cleanedOrderConfig) {
                     await updateClient(newClient.id, { activeOrder: cleanedOrderConfig });
-                    // Sync to upcoming orders
+
+                    // Sync to new independent tables
+                    const serviceType = newClient.serviceType;
+                    if (serviceType === 'Food' && cleanedOrderConfig.deliveryDayOrders) {
+                        await saveClientFoodOrder(newClient.id, {
+                            caseId: cleanedOrderConfig.caseId,
+                            deliveryDayOrders: cleanedOrderConfig.deliveryDayOrders
+                        });
+                    } else if (serviceType === 'Meal' && cleanedOrderConfig.mealSelections) {
+                        await saveClientMealOrder(newClient.id, {
+                            caseId: cleanedOrderConfig.caseId,
+                            mealSelections: cleanedOrderConfig.mealSelections
+                        });
+                    } else if (serviceType === 'Boxes') {
+                        await saveClientBoxOrder(newClient.id, {
+                            caseId: cleanedOrderConfig.caseId,
+                            boxTypeId: cleanedOrderConfig.boxTypeId,
+                            vendorId: cleanedOrderConfig.vendorId,
+                            quantity: cleanedOrderConfig.quantity,
+                            items: cleanedOrderConfig.items
+                        });
+                    }
+
+                    // Legacy sync for backward compatibility
                     await syncCurrentOrderToUpcoming(newClient.id, { ...newClient, activeOrder: cleanedOrderConfig }, true);
                 }
             }
@@ -3201,12 +3313,9 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
     }
 
     // Helper to prepare cleaned active order (extracted to be reusable)
-    function prepareActiveOrder() {
-        // console.log('[prepareActiveOrder] START', JSON.stringify({
-        //     hasOrderConfig: !!orderConfig,
-        //     mealSelectionsKeys: orderConfig?.mealSelections ? Object.keys(orderConfig.mealSelections) : []
-        // }, null, 2));
 
+    // Helper to prepare cleaned active order (extracted to be reusable)
+    function prepareActiveOrder() {
         if (!orderConfig) return undefined;
 
         const cleanedOrderConfig = { ...orderConfig };
@@ -3214,49 +3323,68 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
         // CRITICAL: Always preserve caseId at the top level for both Food and Boxes
         cleanedOrderConfig.caseId = orderConfig.caseId;
 
-        // NEW: Convert mealSelections (from new widget) to vendorSelections (legacy/backend format)
-        if (cleanedOrderConfig.mealSelections) {
-            const vendorMap = new Map<string, any>();
+        // NEW: Convert mealSelections and generic vendorSelections to unified vendorSelections
+        const vendorMap = new Map<string, any>();
 
-            // 1. Iterate through all meal types (Breakfast, Lunch, etc.)
-            Object.values(cleanedOrderConfig.mealSelections).forEach((selection: any) => {
-                if (selection.items) {
-                    // Check if explicit vendor is selected for this meal type
-                    const selectedVendorId = selection.vendorId;
-
-                    Object.entries(selection.items).forEach(([itemId, qty]) => {
-                        const numericQty = Number(qty);
-                        if (numericQty > 0) {
-                            // Determine vendor: explicit selection > item default
-                            let vendorId = selectedVendorId;
-                            if (!vendorId) {
-                                // Fallback to item's default vendor if available
-                                const item = mealItems.find(i => i.id === itemId);
-                                vendorId = item?.vendorId;
+        // 1. First, ingest explicit Generic/Lunch vendor selections
+        if (orderConfig.vendorSelections && Array.isArray(orderConfig.vendorSelections)) {
+            orderConfig.vendorSelections.forEach((vs: any) => {
+                if (vs.vendorId) {
+                    if (!vendorMap.has(vs.vendorId)) {
+                        vendorMap.set(vs.vendorId, {
+                            vendorId: vs.vendorId,
+                            items: {},
+                            selectedDeliveryDays: vs.selectedDeliveryDays || []
+                        });
+                    }
+                    const vendorEntry = vendorMap.get(vs.vendorId);
+                    // Merge items
+                    if (vs.items) {
+                        Object.entries(vs.items).forEach(([itemId, qty]) => {
+                            const numericQty = Number(qty);
+                            if (numericQty > 0) {
+                                vendorEntry.items[itemId] = (vendorEntry.items[itemId] || 0) + numericQty;
                             }
-
-                            if (vendorId) {
-                                if (!vendorMap.has(vendorId)) {
-                                    vendorMap.set(vendorId, {
-                                        vendorId: vendorId,
-                                        items: {},
-                                        selectedDeliveryDays: []
-                                    });
-                                }
-                                const vendorEntry = vendorMap.get(vendorId);
-                                const currentQty = vendorEntry.items[itemId] || 0;
-                                vendorEntry.items[itemId] = currentQty + numericQty;
-                            }
-                            // If NO vendorId found, the item remains in mealSelections but is NOT added to vendorSelections.
-                            // This creates a "Draft" state where items exist but aren't assigned to a vendor order yet.
-                        }
-                    });
+                        });
+                    }
                 }
             });
+        }
 
-            // 2. If we generated vendor selections from meals, use them.
-            //    This effectively syncs the new UI state to the required backend state.
-            if (vendorMap.size > 0) {
+        // 2. Meal Selections are now handled separately by the backend sync logic.
+        // We DO NOT merge them into vendorMap anymore to avoid duplicate orders.
+        // We just ensure they are cleaned and preserved in step 3 below.
+
+        if (vendorMap.size > 0) {
+            // CRITICAL FIX: Redistribute the fresh unified vendorSelections into deliveryDayOrders.
+            // This ensures day-specific logic (Regular Orders) is respected, and universal items (Meals) are applied to all days.
+
+            const newDeliveryDayOrders: any = {};
+            const clientDeliveryDays = (formData as any).delivery_days || client?.delivery_days || [];
+
+            vendorMap.forEach((selection: any) => {
+                const daysToApply = (selection.selectedDeliveryDays && selection.selectedDeliveryDays.length > 0)
+                    ? selection.selectedDeliveryDays // Use specific days if set (Regular Vendor)
+                    : clientDeliveryDays; // Use all client days if empty (Meals/Breakfast)
+
+                daysToApply.forEach((day: string) => {
+                    if (!newDeliveryDayOrders[day]) {
+                        newDeliveryDayOrders[day] = { vendorSelections: [] };
+                    }
+                    // Check if this vendor is already added to this day (merge if needed, though vendorMap is unique by vendorId)
+                    newDeliveryDayOrders[day].vendorSelections.push({
+                        vendorId: selection.vendorId,
+                        items: selection.items
+                    });
+                });
+            });
+
+            if (Object.keys(newDeliveryDayOrders).length > 0) {
+                cleanedOrderConfig.deliveryDayOrders = newDeliveryDayOrders;
+                // We don't send flat vendorSelections since we are sending day-specific orders
+                delete cleanedOrderConfig.vendorSelections;
+            } else {
+                // Fallback if no days found (unlikely), send flat selections
                 cleanedOrderConfig.vendorSelections = Array.from(vendorMap.values());
             }
         }
@@ -3267,10 +3395,10 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                 // Multi-day format: Clean and preserve vendor selections for each day
                 for (const day of Object.keys(cleanedOrderConfig.deliveryDayOrders)) {
                     cleanedOrderConfig.deliveryDayOrders[day].vendorSelections = (cleanedOrderConfig.deliveryDayOrders[day].vendorSelections || [])
-                        .filter((s: any) => s.vendorId) // Only keep selections with a vendor
+                        .filter((s: any) => s.vendorId)
                         .map((s: any) => ({
-                            vendorId: s.vendorId, // Preserve vendor ID
-                            items: s.items || {} // Preserve items
+                            vendorId: s.vendorId,
+                            items: s.items || {}
                         }));
                 }
             } else if (cleanedOrderConfig.vendorSelections) {
@@ -3290,7 +3418,6 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                             const dayItems = selection.itemsByDay[day] || {};
                             const hasItems = Object.keys(dayItems).length > 0 && Object.values(dayItems).some((qty: any) => (Number(qty) || 0) > 0);
                             if (hasItems) {
-                                // Preserve vendorId and items for this day
                                 deliveryDayOrders[day].vendorSelections.push({
                                     vendorId: selection.vendorId,
                                     items: dayItems
@@ -3311,54 +3438,44 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                 } else {
                     // Single-day format: Clean and preserve vendor selections
                     cleanedOrderConfig.vendorSelections = (cleanedOrderConfig.vendorSelections || [])
-                        .filter((s: any) => s.vendorId) // Only keep selections with a vendor
+                        .filter((s: any) => s.vendorId)
                         .map((s: any) => ({
-                            vendorId: s.vendorId, // Preserve vendor ID
-                            items: s.items || {} // Preserve items
+                            vendorId: s.vendorId,
+                            items: s.items || {}
                         }));
                 }
             }
 
             // CRITICAL: Preserve mealSelections (Breakfast, Lunch, Dinner, etc.)
-            // mealSelections is independent of vendor selections
             if (orderConfig.mealSelections && Object.keys(orderConfig.mealSelections).length > 0) {
                 const cleanedMealSelections: any = {};
                 for (const [mealType, selection] of Object.entries(orderConfig.mealSelections)) {
-                    // Only preserve meal types that have items selected
                     const items = (selection as any).items || {};
                     const hasItems = Object.keys(items).length > 0 && Object.values(items).some((qty: any) => (Number(qty) || 0) > 0);
                     if (hasItems) {
                         cleanedMealSelections[mealType] = {
-                            vendorId: (selection as any).vendorId || null, // Preserve vendor ID (can be empty/null)
-                            items: items // Preserve items
+                            vendorId: (selection as any).vendorId || null,
+                            items: items
                         };
                     }
                 }
-                // Only set mealSelections if there are meal types with items
                 if (Object.keys(cleanedMealSelections).length > 0) {
                     cleanedOrderConfig.mealSelections = cleanedMealSelections;
                 } else {
-                    // Remove empty mealSelections
                     delete cleanedOrderConfig.mealSelections;
                 }
             }
         } else if (formData.serviceType === 'Boxes') {
-            // For Boxes: Explicitly preserve all critical fields
-            // Preserve vendorId even if empty string (will be handled in sync)
             if (orderConfig.vendorId !== undefined) {
                 cleanedOrderConfig.vendorId = orderConfig.vendorId;
             }
-            cleanedOrderConfig.caseId = orderConfig.caseId; // Preserve case ID (also set above)
+            cleanedOrderConfig.caseId = orderConfig.caseId;
             if (orderConfig.boxTypeId !== undefined) {
                 cleanedOrderConfig.boxTypeId = orderConfig.boxTypeId;
             }
-            cleanedOrderConfig.boxQuantity = orderConfig.boxQuantity || 1; // Preserve quantity
-            cleanedOrderConfig.items = orderConfig.items || {}; // Preserve items
-            cleanedOrderConfig.itemPrices = orderConfig.itemPrices || {}; // Preserve item prices
-        }
-
-        if (cleanedOrderConfig.mealSelections) {
-            // console.log('[prepareActiveOrder] Cleaned Meal Selections:', JSON.stringify(cleanedOrderConfig.mealSelections, null, 2));
+            cleanedOrderConfig.boxQuantity = orderConfig.boxQuantity || 1;
+            cleanedOrderConfig.items = orderConfig.items || {};
+            cleanedOrderConfig.itemPrices = orderConfig.itemPrices || {};
         }
 
         return {
@@ -3503,8 +3620,32 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                 invalidateClientData();
                 setMessage('Client created successfully.');
 
-                // Sync to upcoming_orders if there's order data (same as edit path)
+                // Sync to new independent tables if there's order data
                 if (updatedClient.activeOrder && updatedClient.activeOrder.caseId) {
+                    const serviceType = updatedClient.serviceType;
+
+                    // Save to appropriate independent table based on service type
+                    if (serviceType === 'Food' && foodOrderConfig) {
+                        await saveClientFoodOrder(updatedClient.id, {
+                            caseId: updatedClient.activeOrder.caseId,
+                            deliveryDayOrders: foodOrderConfig.deliveryDayOrders || updatedClient.activeOrder.deliveryDayOrders
+                        });
+                    } else if (serviceType === 'Meal' && mealOrderConfig) {
+                        await saveClientMealOrder(updatedClient.id, {
+                            caseId: updatedClient.activeOrder.caseId,
+                            mealSelections: mealOrderConfig.mealSelections || updatedClient.activeOrder.mealSelections
+                        });
+                    } else if (serviceType === 'Boxes' && boxOrderConfig) {
+                        await saveClientBoxOrder(updatedClient.id, {
+                            caseId: updatedClient.activeOrder.caseId,
+                            boxTypeId: boxOrderConfig.boxTypeId || updatedClient.activeOrder.boxTypeId,
+                            vendorId: boxOrderConfig.vendorId || updatedClient.activeOrder.vendorId,
+                            quantity: boxOrderConfig.quantity || updatedClient.activeOrder.quantity,
+                            items: boxOrderConfig.items || updatedClient.activeOrder.items
+                        });
+                    }
+
+                    // Still call legacy sync for backward compatibility during migration
                     await syncCurrentOrderToUpcoming(updatedClient.id, updatedClient, true);
                 }
 

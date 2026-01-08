@@ -176,7 +176,120 @@ export default function FoodServiceWidget({
         });
     }
 
+    // --- VENDOR SELECTION HANDLERS (Generic/Lunch) ---
+
+    function handleAddVendorBlock() {
+        setOrderConfig((prev: any) => {
+            const newConfig = { ...prev };
+            if (!newConfig.vendorSelections) newConfig.vendorSelections = [];
+            newConfig.vendorSelections.push({
+                vendorId: '',
+                items: {}
+            });
+            return newConfig;
+        });
+    }
+
+    function handleRemoveVendorBlock(index: number) {
+        setOrderConfig((prev: any) => {
+            const newConfig = { ...prev };
+            if (newConfig.vendorSelections) {
+                const updated = [...newConfig.vendorSelections];
+                updated.splice(index, 1);
+                newConfig.vendorSelections = updated;
+            }
+            return newConfig;
+        });
+    }
+
+    function handleVendorSelectionChange(index: number, vendorId: string) {
+        setOrderConfig((prev: any) => {
+            const newConfig = { ...prev };
+            if (newConfig.vendorSelections) {
+                const updated = [...newConfig.vendorSelections];
+                updated[index] = { ...updated[index], vendorId };
+                newConfig.vendorSelections = updated;
+            }
+            return newConfig;
+        });
+    }
+
+    function handleVendorItemChange(blockIndex: number, itemId: string, qty: number) {
+        setOrderConfig((prev: any) => {
+            const newConfig = { ...prev };
+            if (newConfig.vendorSelections && newConfig.vendorSelections[blockIndex]) {
+                const updated = [...newConfig.vendorSelections];
+                const block = { ...updated[blockIndex] };
+                const items = { ...block.items };
+
+                if (qty > 0) {
+                    items[itemId] = qty;
+                } else {
+                    delete items[itemId];
+                }
+                block.items = items;
+                updated[blockIndex] = block;
+                newConfig.vendorSelections = updated;
+            }
+            return newConfig;
+        });
+    }
+
     // --- RENDER HELPERS ---
+
+    const renderVendorBlocks = () => {
+        const selections = orderConfig.vendorSelections || [];
+        // If empty, show nothing? Or rely on Add button.
+        // If selections is empty, we don't render any blocks.
+
+        return selections.map((selection: any, index: number) => {
+            const vendorId = selection.vendorId;
+            const vendorItems = vendorId ? getVendorMenuItems(vendorId) : [];
+
+            return (
+                <div key={index} className={styles.vendorBlock}>
+                    {/* Header */}
+                    <div className={styles.vendorHeader}>
+                        <select
+                            className="input"
+                            value={vendorId || ''}
+                            onChange={(e) => handleVendorSelectionChange(index, e.target.value)}
+                        >
+                            <option value="">Select Vendor...</option>
+                            {vendors
+                                .filter(v => v.serviceTypes.includes('Food') && v.isActive)
+                                .map(v => (
+                                    <option key={v.id} value={v.id}>{v.name}</option>
+                                ))}
+                        </select>
+                        <button className={`${styles.iconBtn} ${styles.danger}`} onClick={() => handleRemoveVendorBlock(index)}>
+                            <Trash2 size={16} />
+                        </button>
+                    </div>
+
+                    {/* Items */}
+                    {vendorId && (
+                        <div className={styles.menuItemsGrid}>
+                            {vendorItems.map(item => {
+                                const qty = selection.items?.[item.id] || 0;
+                                return (
+                                    <div key={item.id} className={styles.menuItemCard}>
+                                        <div className={styles.menuItemName}>{item.name}</div>
+                                        <div className={styles.quantityControl}>
+                                            <button onClick={() => handleVendorItemChange(index, item.id, Math.max(0, qty - 1))} className="btn btn-secondary">-</button>
+                                            <span>{qty}</span>
+                                            <button onClick={() => handleVendorItemChange(index, item.id, qty + 1)} className="btn btn-secondary">+</button>
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                            {vendorItems.length === 0 && <span className={styles.hint}>No items available for this vendor.</span>}
+                        </div>
+                    )}
+                </div>
+            );
+        });
+    };
 
     const renderMealBlocks = () => {
         if (!orderConfig?.mealSelections) return null;
@@ -375,6 +488,12 @@ export default function FoodServiceWidget({
                 </div>
                 {/* Meal Buttons - Moved to Top */}
                 <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem', flexWrap: 'wrap' }}>
+                    <button
+                        className="btn btn-primary"
+                        onClick={handleAddVendorBlock}
+                    >
+                        <Plus size={16} /> Add Vendor
+                    </button>
                     {Array.from(new Set(mealCategories.map(c => c.mealType)))
                         .filter(type => !orderConfig?.mealSelections?.[type])
                         .map(type => (
@@ -408,6 +527,13 @@ export default function FoodServiceWidget({
                     </div>
                 )}
             </div>
+
+            {/* Generic Vendor Blocks (Main/Lunch) */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', marginBottom: '1rem' }}>
+                {renderVendorBlocks()}
+            </div>
+
+
 
             {/* Meal blocks are now the primary UI */}
             {renderMealBlocks()}

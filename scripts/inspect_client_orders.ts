@@ -13,7 +13,7 @@ async function inspectClient() {
     const { data: clients, error: clientError } = await supabase
         .from('clients')
         .select('id, full_name')
-        .eq('id', 'CLIENT-234')
+        .eq('id', 'CLIENT-247')
         .limit(1);
 
     console.log("Recent clients:", clients);

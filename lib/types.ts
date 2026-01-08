@@ -101,6 +101,55 @@ export interface DeliveryRecord {
   createdAt: string;
 }
 
+// --- NEW INDEPENDENT ORDER STRUCTURES ---
+
+export interface ClientFoodOrder {
+  id: string;
+  clientId: string;
+  caseId?: string;
+  // Flexible structure for "Regular" vendor orders (Lunch)
+  deliveryDayOrders?: {
+    [day: string]: {
+      vendorSelections: {
+        vendorId: string;
+        items: { [itemId: string]: number };
+      }[];
+    };
+  };
+  created_at?: string;
+  updated_at?: string;
+  updated_by?: string;
+}
+
+export interface ClientMealOrder {
+  id: string;
+  clientId: string;
+  caseId?: string;
+  // Structure: { "Breakfast": { items: {...} }, "Dinner": { items: {...} } }
+  mealSelections?: {
+    [mealType: string]: {
+      vendorId?: string | null;
+      items: { [itemId: string]: number };
+    }
+  };
+  created_at?: string;
+  updated_at?: string;
+  updated_by?: string;
+}
+
+export interface ClientBoxOrder {
+  id: string;
+  clientId: string;
+  caseId?: string;
+  boxTypeId?: string;
+  vendorId?: string;
+  quantity?: number;
+  items?: { [itemId: string]: number }; // Custom items if allowed
+  created_at?: string;
+  updated_at?: string;
+  updated_by?: string;
+}
+
 // Configuration Entities
 export interface ClientStatus {
   id: string;

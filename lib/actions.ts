@@ -3,7 +3,7 @@
 import { getCurrentTime } from './time';
 import { revalidatePath } from 'next/cache';
 import { supabase } from './supabase';
-import { ClientStatus, Vendor, MenuItem, BoxType, AppSettings, Navigator, Nutritionist, ClientProfile, DeliveryRecord, ItemCategory, BoxQuota, ServiceType, Equipment } from './types';
+import { ClientStatus, Vendor, MenuItem, BoxType, AppSettings, Navigator, Nutritionist, ClientProfile, DeliveryRecord, ItemCategory, BoxQuota, ServiceType, Equipment, ClientFoodOrder, ClientMealOrder, ClientBoxOrder } from './types';
 import { randomUUID } from 'crypto';
 import { getSession } from './session';
 import { createClient } from '@supabase/supabase-js';
@@ -2367,7 +2367,8 @@ async function syncSingleOrderForDeliveryDay(
                     const insertResult = await supabaseClient.from('upcoming_order_items').insert({
                         upcoming_order_id: upcomingOrderId,
                         vendor_selection_id: vendorSelection.id,
-                        menu_item_id: itemId,
+                        menu_item_id: (item as any).itemType === 'menu' ? itemId : null,
+                        meal_item_id: (item as any).itemType === 'meal' ? itemId : null,
                         quantity: quantity,
                         unit_value: itemPrice,
                         total_value: itemTotal
@@ -3632,14 +3633,20 @@ export async function getClientFullDetails(clientId: string) {
             orderHistory,
             billingHistory,
             activeOrder,
-            upcomingOrder
+            upcomingOrder,
+            foodOrder,
+            mealOrder,
+            boxOrder
         ] = await Promise.all([
             getClient(clientId),
             getClientHistory(clientId),
             getOrderHistory(clientId),
             getBillingHistory(clientId),
             getActiveOrderForClient(clientId),
-            getUpcomingOrderForClient(clientId)
+            getUpcomingOrderForClient(clientId),
+            getClientFoodOrder(clientId),
+            getClientMealOrder(clientId),
+            getClientBoxOrder(clientId)
         ]);
 
         if (!client) return null;
@@ -3650,7 +3657,10 @@ export async function getClientFullDetails(clientId: string) {
             orderHistory,
             billingHistory,
             activeOrder,
-            upcomingOrder
+            upcomingOrder,
+            foodOrder,
+            mealOrder,
+            boxOrder
         };
     } catch (error) {
         console.error('Error fetching full client details:', error);
@@ -4938,5 +4948,195 @@ export async function getBatchClientDetails(clientIds: string[]) {
     } catch (error) {
         console.error('Error in getBatchClientDetails:', error);
         return {};
+    }
+}
+
+// --- INDEPENDENT ORDER ACTIONS ---
+
+export async function getClientFoodOrder(clientId: string): Promise<ClientFoodOrder | null> {
+    const { data, error } = await supabase
+        .from('client_food_orders')
+        .select('*')
+        .eq('client_id', clientId)
+        .maybeSingle();
+
+    if (error) {
+        // Suppress table missing error during migration phase? 
+        // Or confirm tables exist. For now log error.
+        console.error('Error fetching food order:', error);
+        return null;
+    }
+    if (!data) return null;
+
+    return {
+        id: data.id,
+        clientId: data.client_id,
+        caseId: data.case_id,
+        deliveryDayOrders: data.delivery_day_orders,
+        created_at: data.created_at,
+        updated_at: data.updated_at,
+        updated_by: data.updated_by
+    };
+}
+
+export async function saveClientFoodOrder(clientId: string, data: Partial<ClientFoodOrder>) {
+    const session = await getSession();
+    const updatedBy = session?.userId || null;
+    const existing = await getClientFoodOrder(clientId);
+
+    if (existing) {
+        const { data: updated, error } = await supabase
+            .from('client_food_orders')
+            .update({
+                case_id: data.caseId,
+                delivery_day_orders: data.deliveryDayOrders,
+                updated_at: new Date().toISOString(),
+                updated_by: updatedBy
+            })
+            .eq('id', existing.id)
+            .select()
+            .single();
+        handleError(error);
+        return updated;
+    } else {
+        const { data: created, error } = await supabase
+            .from('client_food_orders')
+            .insert({
+                client_id: clientId,
+                case_id: data.caseId,
+                delivery_day_orders: data.deliveryDayOrders,
+                updated_by: updatedBy
+            })
+            .select()
+            .single();
+        handleError(error);
+        return created;
+    }
+}
+
+export async function getClientMealOrder(clientId: string): Promise<ClientMealOrder | null> {
+    const { data, error } = await supabase
+        .from('client_meal_orders')
+        .select('*')
+        .eq('client_id', clientId)
+        .maybeSingle();
+
+    if (error) {
+        console.error('Error fetching meal order:', error);
+        return null;
+    }
+    if (!data) return null;
+
+    return {
+        id: data.id,
+        clientId: data.client_id,
+        caseId: data.case_id,
+        mealSelections: data.meal_selections,
+        created_at: data.created_at,
+        updated_at: data.updated_at,
+        updated_by: data.updated_by
+    };
+}
+
+export async function saveClientMealOrder(clientId: string, data: Partial<ClientMealOrder>) {
+    const session = await getSession();
+    const updatedBy = session?.userId || null;
+    const existing = await getClientMealOrder(clientId);
+
+    if (existing) {
+        const { data: updated, error } = await supabase
+            .from('client_meal_orders')
+            .update({
+                case_id: data.caseId,
+                meal_selections: data.mealSelections,
+                updated_at: new Date().toISOString(),
+                updated_by: updatedBy
+            })
+            .eq('id', existing.id)
+            .select()
+            .single();
+        handleError(error);
+        return updated;
+    } else {
+        const { data: created, error } = await supabase
+            .from('client_meal_orders')
+            .insert({
+                client_id: clientId,
+                case_id: data.caseId,
+                meal_selections: data.mealSelections,
+                updated_by: updatedBy
+            })
+            .select()
+            .single();
+        handleError(error);
+        return created;
+    }
+}
+
+export async function getClientBoxOrder(clientId: string): Promise<ClientBoxOrder | null> {
+    const { data, error } = await supabase
+        .from('client_box_orders')
+        .select('*')
+        .eq('client_id', clientId)
+        .maybeSingle();
+
+    if (error) {
+        console.error('Error fetching box order:', error);
+        return null;
+    }
+    if (!data) return null;
+
+    return {
+        id: data.id,
+        clientId: data.client_id,
+        caseId: data.case_id,
+        boxTypeId: data.box_type_id,
+        vendorId: data.vendor_id,
+        quantity: data.quantity,
+        items: data.items,
+        created_at: data.created_at,
+        updated_at: data.updated_at,
+        updated_by: data.updated_by
+    };
+}
+
+export async function saveClientBoxOrder(clientId: string, data: Partial<ClientBoxOrder>) {
+    const session = await getSession();
+    const updatedBy = session?.userId || null;
+    const existing = await getClientBoxOrder(clientId);
+
+    if (existing) {
+        const { data: updated, error } = await supabase
+            .from('client_box_orders')
+            .update({
+                case_id: data.caseId,
+                box_type_id: data.boxTypeId,
+                vendor_id: data.vendorId,
+                quantity: data.quantity,
+                items: data.items,
+                updated_at: new Date().toISOString(),
+                updated_by: updatedBy
+            })
+            .eq('id', existing.id)
+            .select()
+            .single();
+        handleError(error);
+        return updated;
+    } else {
+        const { data: created, error } = await supabase
+            .from('client_box_orders')
+            .insert({
+                client_id: clientId,
+                case_id: data.caseId,
+                box_type_id: data.boxTypeId,
+                vendor_id: data.vendorId,
+                quantity: data.quantity,
+                items: data.items,
+                updated_by: updatedBy
+            })
+            .select()
+            .single();
+        handleError(error);
+        return created;
     }
 }
