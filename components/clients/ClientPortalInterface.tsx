@@ -268,6 +268,39 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
     const serviceType = client.serviceType;
 
     // Auto-Save Logic - matching ClientProfile exactly
+    // Helper to calculate total value (points/price) across all days - Mirrors Admin Logic but adapted for Portal state
+    function getCurrentOrderTotalValueAllDays(): number {
+        if (!orderConfig?.vendorSelections) return 0;
+        let total = 0;
+        for (const selection of orderConfig.vendorSelections) {
+            if (!selection.vendorId) continue;
+
+            if (selection.itemsByDay && Object.keys(selection.itemsByDay).length > 0) {
+                // Multi-day
+                const activeDays = selection.selectedDeliveryDays || [];
+                for (const day of activeDays) {
+                    const dayItems = selection.itemsByDay[day] || {};
+                    for (const [itemId, qty] of Object.entries(dayItems)) {
+                        const item = menuItems.find(i => i.id === itemId);
+                        total += (item?.value || 0) * (Number(qty) || 0);
+                    }
+                }
+            } else if (selection.items) {
+                // Single/Flat Mode - Applied to ALL selected days (or clients days)
+                const daysCount = (selection.selectedDeliveryDays && selection.selectedDeliveryDays.length > 0)
+                    ? selection.selectedDeliveryDays.length
+                    : ((client as any).delivery_days?.length || 1);
+
+                for (const [itemId, qty] of Object.entries(selection.items)) {
+                    const item = menuItems.find(i => i.id === itemId);
+                    // Calculate per-item total (Value * Qty * Days)
+                    total += (item?.value || 0) * (Number(qty) || 0) * daysCount;
+                }
+            }
+        }
+        return total;
+    }
+
     // Manual Save Logic
     const handleSave = async () => {
         if (!client || !orderConfig) return;
@@ -279,36 +312,13 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
 
         // 1. Food Service Validation (Limits & Minimums)
         if (serviceType === 'Food' && orderConfig.vendorSelections) {
-            let totalMeals = 0;
-            const vendorCounts: { [key: string]: number } = {};
 
-            for (const selection of orderConfig.vendorSelections) {
-                if (!selection.vendorId) continue;
-                let count = 0;
-
-                // Logic mirrors FoodServiceWidget:
-                if (selection.itemsByDay && Object.keys(selection.itemsByDay).length > 0) {
-                    // Multi-day with explicit daily items
-                    for (const dayItems of Object.values(selection.itemsByDay) as any[]) {
-                        for (const qty of Object.values(dayItems)) count += Number(qty) || 0;
-                    }
-                } else if (selection.items) {
-                    // Single-day or Flat items applied to multiple days
-                    const itemCount = Object.values(selection.items).reduce((a: any, b: any) => a + (Number(b) || 0), 0) as number;
-                    const daysCount = (selection.selectedDeliveryDays && selection.selectedDeliveryDays.length > 0)
-                        ? selection.selectedDeliveryDays.length
-                        : ((client as any).delivery_days?.length || 1); // Fallback to client days or 1
-                    count = itemCount * daysCount;
-                }
-
-                totalMeals += count;
-                vendorCounts[selection.vendorId] = (vendorCounts[selection.vendorId] || 0) + count;
-            }
-
-            // Check Approved Limit
+            // Check Approved Limit (Value-based)
+            const totalValue = getCurrentOrderTotalValueAllDays();
             const limit = client.approvedMealsPerWeek || 0;
-            if (limit > 0 && totalMeals > limit) {
-                setValidationError(`You have selected ${totalMeals} meals, but your weekly limit is ${limit}. Please reduce your order.`);
+
+            if (limit > 0 && totalValue > limit) {
+                setValidationError(`Total value selected (${totalValue.toFixed(2)}) exceeds approved value per week (${limit}). Please reduce your order.`);
                 return;
             }
 
@@ -325,18 +335,28 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
                     const activeDays = selection.selectedDeliveryDays || [];
                     for (const day of activeDays) {
                         const dayItems = selection.itemsByDay[day] || {};
-                        const dayCount = Object.values(dayItems).reduce((a: any, b: any) => a + (Number(b) || 0), 0) as number;
 
-                        if (dayCount < minMeals) {
-                            setValidationError(`${vendor.name} requires a minimum of ${minMeals} meals for ${day}. You have selected ${dayCount}.`);
+                        let dayValue = 0;
+                        for (const [itemId, qty] of Object.entries(dayItems)) {
+                            const item = menuItems.find(i => i.id === itemId);
+                            dayValue += (item?.value || 0) * (Number(qty) || 0);
+                        }
+
+                        if (dayValue < minMeals) {
+                            setValidationError(`${vendor.name} requires a minimum value of ${minMeals} for ${day}. You have selected ${dayValue}.`);
                             return;
                         }
                     }
                 } else if (selection.items) {
                     // Single/Flat Mode: The items represent the "per delivery" definition
-                    const count = Object.values(selection.items).reduce((a: any, b: any) => a + (Number(b) || 0), 0) as number;
-                    if (count < minMeals) {
-                        setValidationError(`${vendor.name} requires a minimum of ${minMeals} meals per delivery. You have selected ${count}.`);
+                    let countValue = 0;
+                    for (const [itemId, qty] of Object.entries(selection.items)) {
+                        const item = menuItems.find(i => i.id === itemId);
+                        countValue += (item?.value || 0) * (Number(qty) || 0);
+                    }
+
+                    if (countValue < minMeals) {
+                        setValidationError(`${vendor.name} requires a minimum value of ${minMeals} per delivery. You have selected ${countValue}.`);
                         return;
                     }
                 }

@@ -223,12 +223,18 @@ export default function FoodServiceWidget({
             const newConfig = { ...prev };
             if (newConfig.vendorSelections) {
                 const updated = [...newConfig.vendorSelections];
-                // Update vendorId AND clear items to prevent counting residual meals
+
+                // Find vendor to check delivery days
+                const vendor = vendors.find(v => v.id === vendorId);
+                // Auto-select day if vendor only has one delivery day
+                const autoSelectDay = (vendor?.deliveryDays?.length === 1) ? vendor.deliveryDays[0] : null;
+
                 updated[index] = {
                     ...updated[index],
                     vendorId,
                     items: {},
-                    itemsByDay: {}
+                    itemsByDay: autoSelectDay ? { [autoSelectDay]: {} } : {},
+                    selectedDeliveryDays: autoSelectDay ? [autoSelectDay] : []
                 };
                 newConfig.vendorSelections = updated;
             }

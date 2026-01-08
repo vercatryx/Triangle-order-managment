@@ -39,7 +39,7 @@ const SERVICE_TYPES: ServiceType[] = ['Food', 'Boxes'];
 
 // Min/Max validation for approved meals per week
 const MIN_APPROVED_MEALS_PER_WEEK = 1;
-const MAX_APPROVED_MEALS_PER_WEEK = 100;
+const MAX_APPROVED_MEALS_PER_WEEK = 500;
 
 
 function UnitsModal({
@@ -231,7 +231,7 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
 
     const [saving, setSaving] = useState(false);
     const [message, setMessage] = useState<string | null>(null);
-    const [validationError, setValidationError] = useState<{ show: boolean, messages: string[] }>({ show: false, messages: [] });
+    const [validationError, setValidationError] = useState<string | null>(null);
 
     const [loading, setLoading] = useState(true);
     const [loadingOrderDetails, setLoadingOrderDetails] = useState(true);
@@ -1204,46 +1204,48 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
         if (formData.serviceType === 'Food') {
             const messages: string[] = [];
 
-            // Check total order value against approved meals per week
+            // Check total meals (Value - aligned with UI) vs Approved Limit
             const totalValue = getCurrentOrderTotalValueAllDays();
             const approvedMeals = formData.approvedMealsPerWeek || 0;
             if (approvedMeals > 0 && totalValue > approvedMeals) {
-                messages.push(`Total order value (${totalValue}) exceeds approved meals per week (${approvedMeals}).`);
+                setValidationError(`Total value selected (${totalValue.toFixed(2)}) exceeds approved value per week (${approvedMeals}).`);
+                return { isValid: false, messages: [`Total value selected (${totalValue.toFixed(2)}) exceeds approved value per week (${approvedMeals}).`] };
             }
 
-            // Check each vendor meets their minimum requirement (across all delivery days)
-            if (orderConfig.deliveryDayOrders) {
-                // Multi-day format
-                for (const day of Object.keys(orderConfig.deliveryDayOrders)) {
-                    const daySelections = orderConfig.deliveryDayOrders[day].vendorSelections || [];
-                    for (const selection of daySelections) {
-                        if (!selection.vendorId) continue;
-
-                        const vendor = vendors.find(v => v.id === selection.vendorId);
-                        if (!vendor) continue;
-
-                        const vendorMinimum = vendor.minimumMeals || 0;
-                        if (vendorMinimum > 0) {
-                            const vendorMealCount = getVendorMealCount(selection.vendorId, selection);
-                            if (vendorMealCount < vendorMinimum) {
-                                messages.push(`${vendor.name} (${day}): ${vendorMealCount} meals selected, but minimum is ${vendorMinimum}.`);
-                            }
-                        }
-                    }
-                }
-            } else if (orderConfig.vendorSelections) {
-                // Single day format
+            // Check Vendor Minimums (Daily Logic)
+            if (orderConfig.vendorSelections) {
                 for (const selection of orderConfig.vendorSelections) {
                     if (!selection.vendorId) continue;
-
                     const vendor = vendors.find(v => v.id === selection.vendorId);
                     if (!vendor) continue;
+                    const minMeals = vendor.minimumMeals || 0;
+                    if (minMeals === 0) continue;
 
-                    const vendorMinimum = vendor.minimumMeals || 0;
-                    if (vendorMinimum > 0) {
-                        const vendorMealCount = getVendorMealCount(selection.vendorId, selection);
-                        if (vendorMealCount < vendorMinimum) {
-                            messages.push(`${vendor.name}: ${vendorMealCount} meals selected, but minimum is ${vendorMinimum}.`);
+                    // Check each day independently
+                    if (selection.itemsByDay && Object.keys(selection.itemsByDay).length > 0) {
+                        const activeDays = selection.selectedDeliveryDays || [];
+                        for (const day of activeDays) {
+                            const dayItems = selection.itemsByDay[day] || {};
+                            let dayValue = 0;
+                            for (const [itemId, qty] of Object.entries(dayItems)) {
+                                const item = menuItems.find(i => i.id === itemId);
+                                dayValue += (item?.value || 0) * (Number(qty) || 0);
+                            }
+
+                            if (dayValue < minMeals) {
+                                messages.push(`${vendor.name} requires a minimum value of ${minMeals} for ${day}. You have selected ${dayValue}.`);
+                            }
+                        }
+                    } else if (selection.items) {
+                        // Single/Flat Mode
+                        let countValue = 0;
+                        for (const [itemId, qty] of Object.entries(selection.items)) {
+                            const item = menuItems.find(i => i.id === itemId);
+                            countValue += (item?.value || 0) * (Number(qty) || 0);
+                        }
+
+                        if (countValue < minMeals) {
+                            messages.push(`${vendor.name} requires a minimum value of ${minMeals} per delivery. You have selected ${countValue}.`);
                         }
                     }
                 }
@@ -1502,7 +1504,7 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
     }
 
     function handleDiscardChanges() {
-        setValidationError({ show: false, messages: [] });
+        setValidationError(null);
         // Discarding means we just exit without saving
         if (onClose) {
             onClose();
@@ -2041,6 +2043,66 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                     </div>
                 </header>
 
+                {validationError && (
+                    <div style={{
+                        position: 'fixed',
+                        top: 0,
+                        left: 0,
+                        right: 0,
+                        bottom: 0,
+                        backgroundColor: 'rgba(0,0,0,0.5)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        zIndex: 9999,
+                        backdropFilter: 'blur(4px)'
+                    }}>
+                        <div className="animate-in zoom-in-95 duration-200" style={{
+                            backgroundColor: 'white',
+                            padding: '24px',
+                            borderRadius: '12px',
+                            maxWidth: '400px',
+                            width: '90%',
+                            boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)',
+                            border: '1px solid #fee2e2'
+                        }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '16px' }}>
+                                <div style={{
+                                    backgroundColor: '#fee2e2',
+                                    padding: '10px',
+                                    borderRadius: '50%',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center'
+                                }}>
+                                    <AlertTriangle size={24} color="#dc2626" />
+                                </div>
+                                <h3 style={{ margin: 0, fontSize: '1.25rem', fontWeight: 600, color: '#1f2937' }}>Order Issue</h3>
+                            </div>
+
+                            <p style={{ color: '#4b5563', lineHeight: 1.5, marginBottom: '24px', fontSize: '1rem', whiteSpace: 'pre-line' }}>
+                                {validationError}
+                            </p>
+
+                            <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                                <button
+                                    onClick={() => setValidationError(null)}
+                                    className="btn btn-primary"
+                                    style={{
+                                        backgroundColor: '#dc2626',
+                                        border: 'none',
+                                        padding: '10px 20px',
+                                        fontWeight: 600,
+                                        width: '100%'
+                                    }}
+                                >
+                                    I Understand
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                )}
+
                 {isDependent ? (
                     // Simplified view for dependents
                     <div className={styles.grid}>
@@ -2181,6 +2243,21 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                                 </div>
 
                                 <div className={styles.formGroup}>
+                                    {(currentUser?.role === 'admin' || currentUser?.role === 'super_admin') && (
+                                        <>
+                                            <label className="label">Approved Meals Per Week</label>
+                                            <input
+                                                type="number"
+                                                className="input"
+                                                value={formData.approvedMealsPerWeek ?? ''}
+                                                onChange={e => setFormData({ ...formData, approvedMealsPerWeek: e.target.value ? parseInt(e.target.value) : null })}
+                                                min={MIN_APPROVED_MEALS_PER_WEEK}
+                                                max={MAX_APPROVED_MEALS_PER_WEEK}
+                                                placeholder="21"
+                                            />
+                                            <div style={{ height: '1rem' }} /> {/* Spacer */}
+                                        </>
+                                    )}
                                     <label className="label">Authorized Amount</label>
                                     <input
                                         type="number"
@@ -3240,41 +3317,7 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                     </div>
                 </div>
             )}
-            {validationError.show && (
-                <div className={styles.modalOverlay} style={{ zIndex: 200 }}>
-                    <div className={styles.modalContent} style={{ maxWidth: '400px', height: 'auto', padding: '24px' }} onClick={e => e.stopPropagation()}>
-                        <h2 style={{ fontSize: '1.25rem', fontWeight: 600, marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--color-danger)' }}>
-                            <AlertTriangle size={24} />
-                            Cannot Save
-                        </h2>
-                        <p style={{ marginBottom: '16px', color: 'var(--text-secondary)' }}>
-                            Please fix the following errors before saving:
-                        </p>
-                        <div style={{ background: 'var(--bg-surface-hover)', padding: '12px', borderRadius: '8px', marginBottom: '24px' }}>
-                            <ul style={{ listStyle: 'disc', paddingLeft: '20px', margin: 0 }}>
-                                {validationError.messages.map((msg, i) => (
-                                    <li key={i} style={{ marginBottom: '4px', color: 'var(--text-primary)' }}>{msg}</li>
-                                ))}
-                            </ul>
-                        </div>
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                            <button
-                                className="btn btn-primary"
-                                onClick={() => setValidationError({ show: false, messages: [] })}
-                            >
-                                Return to Editing
-                            </button>
-                            <button
-                                className="btn"
-                                style={{ background: 'none', border: '1px solid var(--border-color)', color: 'var(--text-secondary)' }}
-                                onClick={handleDiscardChanges}
-                            >
-                                Discard Changes & Exit
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            )}
+
             <UnitsModal
                 isOpen={showUnitsModal}
                 onClose={() => {
@@ -3317,18 +3360,12 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
         // If value is > 0, validate it's within bounds (0 is always allowed)
         if (approvedMeals > 0) {
             if (approvedMeals < MIN_APPROVED_MEALS_PER_WEEK) {
-                setValidationError({
-                    show: true,
-                    messages: [`Approved meals per week (${approvedMeals}) must be at least ${MIN_APPROVED_MEALS_PER_WEEK}.`]
-                });
+                setValidationError(`Approved meals per week (${approvedMeals}) must be at least ${MIN_APPROVED_MEALS_PER_WEEK}.`);
 
                 return false;
             }
             if (approvedMeals > MAX_APPROVED_MEALS_PER_WEEK) {
-                setValidationError({
-                    show: true,
-                    messages: [`Approved meals per week (${approvedMeals}) must be at most ${MAX_APPROVED_MEALS_PER_WEEK}.`]
-                });
+                setValidationError(`Approved meals per week (${approvedMeals}) must be at most ${MAX_APPROVED_MEALS_PER_WEEK}.`);
 
                 return false;
             }
@@ -3336,15 +3373,11 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
 
         // Validate Order Config before saving (if we have config)
         if (orderConfig && orderConfig.caseId) {
-            // TEMPORARY: Validation disabled for testing
-            // TODO: Re-enable validation after testing is complete
-            /*
             const validation = validateOrder();
             if (!validation.isValid) {
-                setValidationError({ show: true, messages: validation.messages });
+                setValidationError(validation.messages.join('\n'));
                 return false;
             }
-            */
         }
 
         // Check for Status Change by Navigator
