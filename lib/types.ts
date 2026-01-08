@@ -155,6 +155,7 @@ export interface MealItem {
   quotaValue: number;
   priceEach?: number;
   isActive: boolean;
+  vendorId?: string; // Optional as legacy items might not have it yet
 }
 
 export interface BoxQuota {
@@ -274,6 +275,18 @@ export interface DatabaseSchema {
   orderHistory: OrderHistoryLog[];
   billingHistory: BillingRecord[];
   settings: AppSettings;
+}
+
+export interface DraftUpcomingOrder {
+  clientId: string;
+  mealSelections: {
+    [mealType: string]: {
+      vendorId?: string | null;
+      items: { [itemId: string]: number };
+    }
+  };
+  lastUpdated: string;
+  isDraft: true;
 }
 
 export interface ClientFullDetails {

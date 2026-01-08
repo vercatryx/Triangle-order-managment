@@ -375,7 +375,8 @@ export async function getMealItems() {
         name: i.name,
         quotaValue: i.quota_value,
         priceEach: i.price_each ?? undefined,
-        isActive: i.is_active
+        isActive: i.is_active,
+        vendorId: i.vendor_id
     }));
 }
 
@@ -1035,6 +1036,11 @@ export async function getDependentsByParentId(parentClientId: string) {
 }
 
 export async function updateClient(id: string, data: Partial<ClientProfile>) {
+    console.log('[updateClient] Server Action Received:', id);
+    if (data.activeOrder) {
+        console.log('[updateClient] Payload activeOrder mealSelections:', JSON.stringify((data.activeOrder as any).mealSelections, null, 2));
+    }
+
     const payload: any = {};
     if (data.fullName) payload.full_name = data.fullName;
     if (data.email !== undefined) payload.email = data.email;
