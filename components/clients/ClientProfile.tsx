@@ -2250,7 +2250,7 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                                                 type="number"
                                                 className="input"
                                                 value={formData.approvedMealsPerWeek ?? ''}
-                                                onChange={e => setFormData({ ...formData, approvedMealsPerWeek: e.target.value ? parseInt(e.target.value) : null })}
+                                                onChange={e => setFormData({ ...formData, approvedMealsPerWeek: e.target.value ? parseInt(e.target.value) : undefined })}
                                                 min={MIN_APPROVED_MEALS_PER_WEEK}
                                                 max={MAX_APPROVED_MEALS_PER_WEEK}
                                                 placeholder="21"
