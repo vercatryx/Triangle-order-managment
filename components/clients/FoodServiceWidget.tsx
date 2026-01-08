@@ -13,6 +13,7 @@ interface Props {
     menuItems: MenuItem[];
     mealCategories: MealCategory[];
     mealItems: MealItem[];
+    settings?: any; // AppSettings for take effect date
 }
 
 export default function FoodServiceWidget({
@@ -22,7 +23,8 @@ export default function FoodServiceWidget({
     vendors,
     menuItems,
     mealCategories,
-    mealItems
+    mealItems,
+    settings
 }: Props) {
 
     // -- LOGIC HELPERS --
@@ -61,8 +63,8 @@ export default function FoodServiceWidget({
                 const dayItems = selection.itemsByDay[deliveryDay] || {};
                 total += Object.entries(dayItems).reduce((sum: number, [itemId, qty]) => {
                     const item = menuItems.find(i => i.id === itemId);
-                    // Use item.quotaValue for meal count, defaulting to 1
-                    const multiplier = item ? (item.quotaValue || 1) : 1;
+                    // Use item.value for meal count
+                    const multiplier = item ? (item.value || 0) : 0;
                     return sum + ((Number(qty) || 0) * multiplier);
                 }, 0);
             }
@@ -73,11 +75,22 @@ export default function FoodServiceWidget({
         let total = 0;
         for (const [itemId, qty] of Object.entries(selection.items)) {
             const item = menuItems.find(i => i.id === itemId);
-            // Use item.quotaValue for meal count, defaulting to 1
-            const multiplier = item ? (item.quotaValue || 1) : 1;
+            // Use item.value for meal count
+            const multiplier = item ? (item.value || 0) : 0;
             total += ((qty as number) || 0) * multiplier;
         }
         return total;
+    }
+
+    function getVendorMealCountForDay(vendorId: string, selection: any, day: string): number {
+        if (!selection || !selection.itemsByDay || !selection.itemsByDay[day]) return 0;
+
+        const dayItems = selection.itemsByDay[day] || {};
+        return Object.entries(dayItems).reduce((sum: number, [itemId, qty]) => {
+            const item = menuItems.find(i => i.id === itemId);
+            const multiplier = item ? (item.value || 0) : 0;
+            return sum + ((Number(qty) || 0) * multiplier);
+        }, 0);
     }
 
     function getTotalMealCountAllDays(): number {
@@ -97,8 +110,8 @@ export default function FoodServiceWidget({
                     const items = sel.items || {};
                     total += Object.entries(items).reduce((sum: number, [itemId, qty]) => {
                         const item = menuItems.find(i => i.id === itemId);
-                        // Use item.quotaValue for meal count, defaulting to 1
-                        const multiplier = item ? (item.quotaValue || 1) : 1;
+                        // Use item.value for meal count
+                        const multiplier = item ? (item.value || 0) : 0;
                         return sum + ((Number(qty) || 0) * multiplier);
                     }, 0);
                 }
@@ -111,7 +124,7 @@ export default function FoodServiceWidget({
                 if (config.items) {
                     for (const [itemId, qty] of Object.entries(config.items)) {
                         const item = mealItems.find(i => i.id === itemId);
-                        const multiplier = item ? (item.quotaValue || 1) : 1;
+                        const multiplier = item ? (item.value || 0) : 0;
                         total += (Number(qty) || 0) * multiplier;
                     }
                 }
@@ -214,20 +227,94 @@ export default function FoodServiceWidget({
         });
     }
 
-    function handleVendorItemChange(blockIndex: number, itemId: string, qty: number) {
+    function handleVendorItemChange(blockIndex: number, itemId: string, qty: number, day?: string) {
         setOrderConfig((prev: any) => {
             const newConfig = { ...prev };
             if (newConfig.vendorSelections && newConfig.vendorSelections[blockIndex]) {
                 const updated = [...newConfig.vendorSelections];
                 const block = { ...updated[blockIndex] };
-                const items = { ...block.items };
 
-                if (qty > 0) {
-                    items[itemId] = qty;
+                // Handle multi-day format (itemsByDay)
+                if (day && block.selectedDeliveryDays && block.selectedDeliveryDays.length > 0) {
+                    if (!block.itemsByDay) block.itemsByDay = {};
+                    if (!block.itemsByDay[day]) block.itemsByDay[day] = {};
+
+                    if (qty > 0) {
+                        block.itemsByDay[day][itemId] = qty;
+                    } else {
+                        delete block.itemsByDay[day][itemId];
+                    }
                 } else {
-                    delete items[itemId];
+                    // Handle single-day format (items)
+                    const items = { ...block.items };
+                    if (qty > 0) {
+                        items[itemId] = qty;
+                    } else {
+                        delete items[itemId];
+                    }
+                    block.items = items;
                 }
-                block.items = items;
+
+                updated[blockIndex] = block;
+                newConfig.vendorSelections = updated;
+            }
+            return newConfig;
+        });
+    }
+
+    function handleDeliveryDayToggle(blockIndex: number, day: string) {
+        console.log('Toggling delivery day:', day, 'for block:', blockIndex);
+        setOrderConfig((prev: any) => {
+            const newConfig = { ...prev };
+            if (newConfig.vendorSelections && newConfig.vendorSelections[blockIndex]) {
+                const updated = [...newConfig.vendorSelections];
+                const block = { ...updated[blockIndex] };
+
+                // Deep copy selectedDeliveryDays to avoid mutation
+                block.selectedDeliveryDays = block.selectedDeliveryDays ? [...block.selectedDeliveryDays] : [];
+
+                const dayIndex = block.selectedDeliveryDays.indexOf(day);
+                if (dayIndex > -1) {
+                    // Remove day
+                    block.selectedDeliveryDays.splice(dayIndex, 1);
+
+                    // Clean up itemsByDay for this day
+                    if (block.itemsByDay) {
+                        // Deep copy itemsByDay to avoid mutation
+                        block.itemsByDay = { ...block.itemsByDay };
+                        if (block.itemsByDay[day]) {
+                            delete block.itemsByDay[day];
+                        }
+                    }
+
+                    // If no days selected, revert to simple items structure
+                    if (block.selectedDeliveryDays.length === 0) {
+                        delete block.selectedDeliveryDays;
+                        delete block.itemsByDay;
+                        if (!block.items) block.items = {};
+                    }
+                } else {
+                    // Add day
+                    block.selectedDeliveryDays.push(day);
+                    block.selectedDeliveryDays.sort(); // Sort makes UI consistent
+
+                    // Initialize itemsByDay structure
+                    if (!block.itemsByDay) {
+                        block.itemsByDay = {};
+                    } else {
+                        block.itemsByDay = { ...block.itemsByDay };
+                    }
+
+                    if (!block.itemsByDay[day]) {
+                        block.itemsByDay[day] = {};
+                    }
+
+                    // Clear the single-day items structure when switching to multi-day
+                    if (block.items) {
+                        block.items = {};
+                    }
+                }
+
                 updated[blockIndex] = block;
                 newConfig.vendorSelections = updated;
             }
@@ -237,53 +324,221 @@ export default function FoodServiceWidget({
 
     // --- RENDER HELPERS ---
 
+    // State to track active tab for each vendor block
+    const [activeDays, setActiveDays] = React.useState<{ [key: number]: string }>({});
+
     const renderVendorBlocks = () => {
         const selections = orderConfig.vendorSelections || [];
-        // If empty, show nothing? Or rely on Add button.
-        // If selections is empty, we don't render any blocks.
 
         return selections.map((selection: any, index: number) => {
             const vendorId = selection.vendorId;
+            const vendor = vendors.find(v => v.id === vendorId);
             const vendorItems = vendorId ? getVendorMenuItems(vendorId) : [];
+
+            // Calculate vendor meal count
+            const vendorMealCount = getVendorMealCount(vendorId, selection);
+            const vendorMinimum = vendor?.minimumMeals || 0;
+            const meetsMinimum = vendorMinimum === 0 || vendorMealCount >= vendorMinimum;
+
+            // Get vendor's delivery days
+            const vendorDeliveryDays = vendor?.deliveryDays || [];
+            const hasMultipleDays = vendorDeliveryDays.length > 1;
+
+            // Check if multi-day mode is active for this vendor
+            const selectedDays = selection.selectedDeliveryDays || [];
 
             return (
                 <div key={index} className={styles.vendorBlock}>
                     {/* Header */}
                     <div className={styles.vendorHeader}>
-                        <select
-                            className="input"
-                            value={vendorId || ''}
-                            onChange={(e) => handleVendorSelectionChange(index, e.target.value)}
-                        >
-                            <option value="">Select Vendor...</option>
-                            {vendors
-                                .filter(v => v.serviceTypes.includes('Food') && v.isActive)
-                                .map(v => (
-                                    <option key={v.id} value={v.id}>{v.name}</option>
-                                ))}
-                        </select>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', flex: 1 }}>
+                            <select
+                                className="input"
+                                value={vendorId || ''}
+                                onChange={(e) => handleVendorSelectionChange(index, e.target.value)}
+                            >
+                                <option value="">Select Vendor...</option>
+                                {vendors
+                                    .filter(v => v.serviceTypes.includes('Food') && v.isActive)
+                                    .map(v => (
+                                        <option key={v.id} value={v.id}>{v.name}</option>
+                                    ))}
+                            </select>
+
+                            {/* Multi-Day Selection - Toggle Buttons */}
+                            {vendorId && hasMultipleDays && (
+                                <div style={{
+                                    display: 'flex',
+                                    flexDirection: 'column',
+                                    gap: '6px',
+                                    padding: '8px',
+                                    backgroundColor: 'var(--bg-surface-hover)',
+                                    borderRadius: '6px',
+                                    border: '1px solid var(--border-color)'
+                                }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                                        <Calendar size={14} />
+                                        <span style={{ fontWeight: 600 }}>Select Delivery Days:</span>
+                                    </div>
+                                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+                                        {vendorDeliveryDays.map(day => {
+                                            const isSelected = selectedDays.includes(day);
+                                            return (
+                                                <button
+                                                    key={day}
+                                                    type="button"
+                                                    onClick={() => {
+                                                        handleDeliveryDayToggle(index, day);
+                                                    }}
+                                                    style={{
+                                                        padding: '6px 14px',
+                                                        backgroundColor: isSelected ? 'var(--color-primary)' : 'var(--bg-surface)',
+                                                        color: isSelected ? 'white' : 'var(--text-primary)',
+                                                        borderRadius: '20px',
+                                                        cursor: 'pointer',
+                                                        fontSize: '0.85rem',
+                                                        fontWeight: isSelected ? 600 : 400,
+                                                        border: `2px solid ${isSelected ? 'var(--color-primary)' : 'var(--border-color)'}`,
+                                                        transition: 'all 0.2s ease',
+                                                        outline: 'none',
+                                                        display: 'flex',
+                                                        alignItems: 'center',
+                                                        gap: '6px'
+                                                    }}
+                                                >
+                                                    {day}
+                                                    {isSelected && <Check size={12} />}
+                                                </button>
+                                            );
+                                        })}
+                                    </div>
+                                </div>
+                            )}
+                        </div>
                         <button className={`${styles.iconBtn} ${styles.danger}`} onClick={() => handleRemoveVendorBlock(index)}>
                             <Trash2 size={16} />
                         </button>
                     </div>
 
-                    {/* Items */}
+                    {/* Items Display */}
                     {vendorId && (
-                        <div className={styles.menuItemsGrid}>
-                            {vendorItems.map(item => {
-                                const qty = selection.items?.[item.id] || 0;
-                                return (
-                                    <div key={item.id} className={styles.menuItemCard}>
-                                        <div className={styles.menuItemName}>{item.name}</div>
-                                        <div className={styles.quantityControl}>
-                                            <button onClick={() => handleVendorItemChange(index, item.id, Math.max(0, qty - 1))} className="btn btn-secondary">-</button>
-                                            <span>{qty}</span>
-                                            <button onClick={() => handleVendorItemChange(index, item.id, qty + 1)} className="btn btn-secondary">+</button>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                            {hasMultipleDays && selectedDays.length === 0 ? (
+                                <div className={styles.hint} style={{ textAlign: 'center', padding: '1rem', fontStyle: 'italic', color: 'var(--text-tertiary)' }}>
+                                    Please select at least one delivery day to view the menu.
+                                </div>
+                            ) : selectedDays.length > 0 ? (
+                                // Multi-day view - show STACKED menu blocks for each selected day
+                                selectedDays.map((day: string) => {
+                                    return (
+                                        <div key={day} className="animate-in fade-in slide-in-from-top-1 duration-200" style={{
+                                            border: '1px solid var(--border-color)',
+                                            borderRadius: '8px',
+                                            padding: '16px',
+                                            backgroundColor: 'var(--bg-surface)'
+                                        }}>
+                                            <div style={{
+                                                marginBottom: '12px',
+                                                paddingBottom: '8px',
+                                                borderBottom: '1px solid var(--border-color)',
+                                                display: 'flex',
+                                                justifyContent: 'space-between',
+                                                alignItems: 'center'
+                                            }}>
+                                                <span style={{ fontWeight: 600, color: 'var(--text-primary)', fontSize: '1rem' }}>
+                                                    {day} Menu
+                                                </span>
+                                                {vendorMinimum > 0 && (() => {
+                                                    const dayCount = getVendorMealCountForDay(vendorId, selection, day);
+                                                    const dayMet = dayCount >= vendorMinimum;
+                                                    return (
+                                                        <span style={{
+                                                            display: 'flex',
+                                                            alignItems: 'center',
+                                                            gap: '6px',
+                                                            padding: '4px 8px',
+                                                            borderRadius: '6px',
+                                                            backgroundColor: dayMet ? '#d1fae5' : '#fee2e2',
+                                                            color: dayMet ? '#065f46' : '#991b1b',
+                                                            fontSize: '0.85rem',
+                                                            fontWeight: 600
+                                                        }}>
+                                                            {dayMet ? <Check size={14} /> : <AlertTriangle size={14} />}
+                                                            {dayCount} / {vendorMinimum} meals
+                                                        </span>
+                                                    );
+                                                })()}
+                                            </div>
+
+                                            <div className={styles.menuItemsGrid} style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '10px' }}>
+                                                {vendorItems.map(item => {
+                                                    const dayItems = selection.itemsByDay?.[day] || {};
+                                                    const qty = dayItems[item.id] || 0;
+                                                    return (
+                                                        <div key={item.id} className={styles.menuItemCard} style={{ padding: '0.75rem', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-sm)', background: 'var(--bg-surface)' }}>
+                                                            <div className={styles.menuItemName} style={{ marginBottom: '8px', fontSize: '0.9rem', fontWeight: 500 }}>
+                                                                {item.name}
+                                                                <span style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)', marginLeft: '8px' }}>
+                                                                    (Value: {item.value || 0})
+                                                                </span>
+                                                            </div>
+                                                            <div className={styles.quantityControl} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                                                <button onClick={() => handleVendorItemChange(index, item.id, Math.max(0, qty - 1), day)} className="btn btn-secondary" style={{ padding: '2px 8px' }}>-</button>
+                                                                <span style={{ width: '20px', textAlign: 'center' }}>{qty}</span>
+                                                                <button onClick={() => handleVendorItemChange(index, item.id, qty + 1, day)} className="btn btn-secondary" style={{ padding: '2px 8px' }}>+</button>
+                                                            </div>
+                                                        </div>
+                                                    );
+                                                })}
+                                                {vendorItems.length === 0 && <span className={styles.hint}>No items available for this vendor.</span>}
+                                            </div>
                                         </div>
+                                    );
+                                })
+                            ) : (
+                                // Single-day / No-day view (fallback for vendors without multiple delivery days or no days selected)
+                                <>
+                                    {vendorMinimum > 0 && (
+                                        <div style={{
+                                            marginBottom: '1rem',
+                                            padding: '8px 12px',
+                                            borderRadius: '6px',
+                                            backgroundColor: meetsMinimum ? '#d1fae5' : '#fee2e2',
+                                            color: meetsMinimum ? '#065f46' : '#991b1b',
+                                            border: `1px solid ${meetsMinimum ? '#10b981' : '#ef4444'}`,
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            gap: '8px',
+                                            fontSize: '0.9rem',
+                                            fontWeight: 600
+                                        }}>
+                                            {meetsMinimum ? <Check size={16} /> : <AlertTriangle size={16} />}
+                                            <span>Minimum: {vendorMinimum} meals | Selected: {vendorMealCount} meals</span>
+                                        </div>
+                                    )}
+                                    <div className={styles.menuItemsGrid} style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '10px' }}>
+                                        {vendorItems.map(item => {
+                                            const qty = selection.items?.[item.id] || 0;
+                                            return (
+                                                <div key={item.id} className={styles.menuItemCard} style={{ padding: '0.75rem', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-sm)', background: 'var(--bg-surface)' }}>
+                                                    <div className={styles.menuItemName} style={{ marginBottom: '8px', fontSize: '0.9rem', fontWeight: 500 }}>
+                                                        {item.name}
+                                                        <span style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)', marginLeft: '8px' }}>
+                                                            (Value: {item.value || 0})
+                                                        </span>
+                                                    </div>
+                                                    <div className={styles.quantityControl} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                                        <button onClick={() => handleVendorItemChange(index, item.id, Math.max(0, qty - 1))} className="btn btn-secondary" style={{ padding: '2px 8px' }}>-</button>
+                                                        <span style={{ width: '20px', textAlign: 'center' }}>{qty}</span>
+                                                        <button onClick={() => handleVendorItemChange(index, item.id, qty + 1)} className="btn btn-secondary" style={{ padding: '2px 8px' }}>+</button>
+                                                    </div>
+                                                </div>
+                                            );
+                                        })}
+                                        {vendorItems.length === 0 && <span className={styles.hint}>No items available for this vendor.</span>}
                                     </div>
-                                );
-                            })}
-                            {vendorItems.length === 0 && <span className={styles.hint}>No items available for this vendor.</span>}
+                                </>
+                            )}
                         </div>
                     )}
                 </div>
@@ -349,7 +604,7 @@ export default function FoodServiceWidget({
                                 for (const [itemId, qty] of Object.entries(config.items)) {
                                     const item = catItems.find(i => i.id === itemId); // only check items in this cat
                                     if (item) {
-                                        categorySelectedValue += (item.quotaValue * (qty as number));
+                                        categorySelectedValue += ((item.value || 0) * (qty as number));
                                     }
                                 }
                             }
@@ -393,7 +648,7 @@ export default function FoodServiceWidget({
                                                     <div style={{ marginBottom: '8px', fontSize: '0.9rem', fontWeight: 500 }}>
                                                         {item.name}
                                                         <span style={{ color: 'var(--text-secondary)', fontSize: '0.8rem', marginLeft: '4px' }}>
-                                                            (Value: {item.quotaValue})
+                                                            (Value: {item.value || 0})
                                                         </span>
                                                     </div>
                                                     <div className={styles.quantityControl} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -464,8 +719,65 @@ export default function FoodServiceWidget({
 
     const totalMeals = getTotalMealCountAllDays();
 
+    // Calculate take effect date
+    const getTakeEffectDate = (): string | null => {
+        if (!settings) return null;
+        try {
+            const now = new Date();
+            const cutoffHour = settings.cutoffHour || 11;
+            const cutoffMinute = settings.cutoffMinute || 0;
+            const cutoffDay = settings.cutoffDay || 4; // Thursday = 4
+
+            // Calculate the next Sunday (start of the delivery week)
+            let nextSunday = new Date(now);
+            nextSunday.setDate(now.getDate() + ((7 - now.getDay()) % 7 || 7));
+            nextSunday.setHours(0, 0, 0, 0);
+
+            // Check if we've passed the cutoff for this week
+            const cutoffDate = new Date(nextSunday);
+            cutoffDate.setDate(cutoffDate.getDate() - (7 - cutoffDay));
+            cutoffDate.setHours(cutoffHour, cutoffMinute, 0, 0);
+
+            if (now >= cutoffDate) {
+                // Cutoff passed, move to next week
+                nextSunday.setDate(nextSunday.getDate() + 7);
+            }
+
+            return nextSunday.toLocaleDateString('en-US', {
+                weekday: 'long',
+                year: 'numeric',
+                month: 'long',
+                day: 'numeric'
+            });
+        } catch (error) {
+            return null;
+        }
+    };
+
+    const takeEffectDate = getTakeEffectDate();
+
     return (
         <div className={styles.vendorsList}>
+            {/* Take Effect Date */}
+            {takeEffectDate && (
+                <div style={{
+                    padding: '12px 16px',
+                    marginBottom: '16px',
+                    backgroundColor: 'var(--color-primary)',
+                    color: 'white',
+                    borderRadius: '8px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '10px',
+                    fontSize: '0.95rem',
+                    fontWeight: 600,
+                    boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+                }}>
+                    <Calendar size={18} />
+                    <span>Orders will take effect on: {takeEffectDate}</span>
+                </div>
+            )}
+
             {/* Budget Header */}
             <div className={styles.orderHeader} style={{ marginBottom: '16px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>

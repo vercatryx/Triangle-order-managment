@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { addClient, getVendors, getMealItems } from '@/lib/actions';
+import { getStatuses, getNavigators } from '@/lib/cached-data';
 import { randomUUID } from 'crypto';
 
 export async function GET() {
@@ -7,6 +8,10 @@ export async function GET() {
         // 1. Fetch dependencies
         const vendors = await getVendors();
         const mealItems = await getMealItems();
+        const statuses = await getStatuses();
+        const navigators = await getNavigators();
+        const defaultStatusId = statuses[0]?.id || '';
+        const defaultNavigatorId = navigators[0]?.id || '';
 
         if (vendors.length === 0 || mealItems.length === 0) {
             return NextResponse.json({ error: 'No vendors or meal items found' }, { status: 500 });
@@ -58,12 +63,12 @@ export async function GET() {
             screeningTookPlace: true,
             screeningSigned: true,
             notes: 'Generated via Debug API',
-            statusId: null, // Optional
+            statusId: defaultStatusId,
             authorizedAmount: 150,
-            endDate: null,
-            secondaryPhoneNumber: null,
-            navigatorId: null,
-            expirationDate: null
+            endDate: new Date().toISOString(), // Use current date as placeholder
+            secondaryPhoneNumber: undefined,
+            navigatorId: defaultNavigatorId,
+            expirationDate: undefined
         });
 
         return NextResponse.json({

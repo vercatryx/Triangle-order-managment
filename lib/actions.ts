@@ -373,6 +373,7 @@ export async function getMealItems() {
         id: i.id,
         categoryId: i.category_id,
         name: i.name,
+        value: i.quota_value, // Map quota_value to standardized 'value' property
         quotaValue: i.quota_value,
         priceEach: i.price_each ?? undefined,
         isActive: i.is_active,
@@ -4985,28 +4986,32 @@ export async function saveClientFoodOrder(clientId: string, data: Partial<Client
     const existing = await getClientFoodOrder(clientId);
 
     if (existing) {
+        const updatePayload: any = {
+            case_id: data.caseId,
+            delivery_day_orders: data.deliveryDayOrders,
+            updated_at: new Date().toISOString()
+        };
+        if (updatedBy) updatePayload.updated_by = updatedBy;
+
         const { data: updated, error } = await supabase
             .from('client_food_orders')
-            .update({
-                case_id: data.caseId,
-                delivery_day_orders: data.deliveryDayOrders,
-                updated_at: new Date().toISOString(),
-                updated_by: updatedBy
-            })
+            .update(updatePayload)
             .eq('id', existing.id)
             .select()
             .single();
         handleError(error);
         return updated;
     } else {
+        const insertPayload: any = {
+            client_id: clientId,
+            case_id: data.caseId,
+            delivery_day_orders: data.deliveryDayOrders
+        };
+        if (updatedBy) insertPayload.updated_by = updatedBy;
+
         const { data: created, error } = await supabase
             .from('client_food_orders')
-            .insert({
-                client_id: clientId,
-                case_id: data.caseId,
-                delivery_day_orders: data.deliveryDayOrders,
-                updated_by: updatedBy
-            })
+            .insert(insertPayload)
             .select()
             .single();
         handleError(error);
@@ -5044,28 +5049,32 @@ export async function saveClientMealOrder(clientId: string, data: Partial<Client
     const existing = await getClientMealOrder(clientId);
 
     if (existing) {
+        const updatePayload: any = {
+            case_id: data.caseId,
+            meal_selections: data.mealSelections,
+            updated_at: new Date().toISOString()
+        };
+        if (updatedBy) updatePayload.updated_by = updatedBy;
+
         const { data: updated, error } = await supabase
             .from('client_meal_orders')
-            .update({
-                case_id: data.caseId,
-                meal_selections: data.mealSelections,
-                updated_at: new Date().toISOString(),
-                updated_by: updatedBy
-            })
+            .update(updatePayload)
             .eq('id', existing.id)
             .select()
             .single();
         handleError(error);
         return updated;
     } else {
+        const insertPayload: any = {
+            client_id: clientId,
+            case_id: data.caseId,
+            meal_selections: data.mealSelections
+        };
+        if (updatedBy) insertPayload.updated_by = updatedBy;
+
         const { data: created, error } = await supabase
             .from('client_meal_orders')
-            .insert({
-                client_id: clientId,
-                case_id: data.caseId,
-                meal_selections: data.mealSelections,
-                updated_by: updatedBy
-            })
+            .insert(insertPayload)
             .select()
             .single();
         handleError(error);
@@ -5106,34 +5115,38 @@ export async function saveClientBoxOrder(clientId: string, data: Partial<ClientB
     const existing = await getClientBoxOrder(clientId);
 
     if (existing) {
+        const updatePayload: any = {
+            case_id: data.caseId,
+            box_type_id: data.boxTypeId,
+            vendor_id: data.vendorId,
+            quantity: data.quantity,
+            items: data.items,
+            updated_at: new Date().toISOString()
+        };
+        if (updatedBy) updatePayload.updated_by = updatedBy;
+
         const { data: updated, error } = await supabase
             .from('client_box_orders')
-            .update({
-                case_id: data.caseId,
-                box_type_id: data.boxTypeId,
-                vendor_id: data.vendorId,
-                quantity: data.quantity,
-                items: data.items,
-                updated_at: new Date().toISOString(),
-                updated_by: updatedBy
-            })
+            .update(updatePayload)
             .eq('id', existing.id)
             .select()
             .single();
         handleError(error);
         return updated;
     } else {
+        const insertPayload: any = {
+            client_id: clientId,
+            case_id: data.caseId,
+            box_type_id: data.boxTypeId,
+            vendor_id: data.vendorId,
+            quantity: data.quantity,
+            items: data.items
+        };
+        if (updatedBy) insertPayload.updated_by = updatedBy;
+
         const { data: created, error } = await supabase
             .from('client_box_orders')
-            .insert({
-                client_id: clientId,
-                case_id: data.caseId,
-                box_type_id: data.boxTypeId,
-                vendor_id: data.vendorId,
-                quantity: data.quantity,
-                items: data.items,
-                updated_by: updatedBy
-            })
+            .insert(insertPayload)
             .select()
             .single();
         handleError(error);

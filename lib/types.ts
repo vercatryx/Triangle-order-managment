@@ -201,6 +201,7 @@ export interface MealItem {
   id: string;
   categoryId: string;
   name: string;
+  value: number; // Standardized value (points)
   quotaValue: number;
   priceEach?: number;
   isActive: boolean;
@@ -345,5 +346,8 @@ export interface ClientFullDetails {
   billingHistory: BillingRecord[];
   activeOrder: any; // Using any to match existing usage in ClientProfile, but ideally typed
   upcomingOrder: any;
+  foodOrder?: ClientFoodOrder | null;
+  mealOrder?: ClientMealOrder | null;
+  boxOrder?: ClientBoxOrder | null;
 }
 
