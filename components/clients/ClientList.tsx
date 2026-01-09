@@ -15,6 +15,7 @@ import {
     getVendors,
     getBoxTypes,
     getMenuItems,
+    getMealItems,
     getClients,
     updateClient,
     getUpcomingOrderForClient as serverGetUpcomingOrderForClient,
@@ -39,6 +40,7 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
     const [boxTypes, setBoxTypes] = useState<BoxType[]>([]);
     const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
     const [allClientsForLookup, setAllClientsForLookup] = useState<ClientProfile[]>([]);
+    const [mealItems, setMealItems] = useState<MenuItem[]>([]);
     const [search, setSearch] = useState('');
     const [isLoading, setIsLoading] = useState(true);
     const [isRefreshing, setIsRefreshing] = useState(false);
@@ -161,12 +163,13 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
     async function loadInitialData() {
         setIsLoading(true);
         try {
-            const [sData, nData, vData, bData, mData, cRes, allClientsData] = await Promise.all([
+            const [sData, nData, vData, bData, mData, mealData, cRes, allClientsData] = await Promise.all([
                 getStatuses(),
                 getNavigators(),
                 getVendors(),
                 getBoxTypes(),
                 getMenuItems(),
+                getMealItems(),
                 getClientsPaginated(1, PAGE_SIZE, ''),
                 getClients() // Load all clients for parent client lookup
             ]);
@@ -176,6 +179,7 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
             setVendors(vData);
             setBoxTypes(bData);
             setMenuItems(mData);
+            setMealItems(mealData as any);
             setClients(cRes.clients);
             setTotalClients(cRes.total);
             setAllClientsForLookup(allClientsData);
@@ -194,12 +198,13 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
             invalidateClientData();
 
             // Fetch fresh data
-            const [sData, nData, vData, bData, mData, cRes] = await Promise.all([
+            const [sData, nData, vData, bData, mData, mealData, cRes] = await Promise.all([
                 getStatuses(),
                 getNavigators(),
                 getVendors(),
                 getBoxTypes(),
                 getMenuItems(),
+                getMealItems(),
                 getClientsPaginated(1, PAGE_SIZE, '')
             ]);
 
@@ -209,6 +214,7 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
             setVendors(vData);
             setBoxTypes(bData);
             setMenuItems(mData);
+            setMealItems(mealData as any);
             setClients(cRes.clients);
             setTotalClients(cRes.total);
             // Refresh all clients lookup when refreshing
@@ -323,7 +329,17 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
                 // 4. Check if food client has authorized amount < 1344 or is null/undefined
                 const foodLowOrNoAmount = c.serviceType === 'Food' && (c.authorizedAmount === null || c.authorizedAmount === undefined || c.authorizedAmount < 1344);
 
-                matchesView = boxesNeedsVendor || expirationInCurrentMonth || boxesLowOrNoAmount || foodLowOrNoAmount;
+                // 5. Check if meal orders exist but no vendor is assigned
+                let mealNeedsVendor = false;
+                const mealSelections = c.mealOrder?.mealSelections || c.activeOrder?.mealSelections;
+                if (mealSelections) {
+                    const mealTypes = Object.keys(mealSelections);
+                    if (mealTypes.length > 0) {
+                        mealNeedsVendor = mealTypes.some(type => !mealSelections[type].vendorId);
+                    }
+                }
+
+                matchesView = boxesNeedsVendor || expirationInCurrentMonth || boxesLowOrNoAmount || foodLowOrNoAmount || mealNeedsVendor;
             }
         }
         // 'billing' might just show all clients but with different columns?
@@ -500,7 +516,7 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
         try {
             const dobValue = dependentDob.trim() || null;
             const cinValue = dependentCin.trim() || null;
-            
+
             if (editingDependentId) {
                 // Update existing dependent
                 await updateClient(editingDependentId, {
@@ -636,13 +652,76 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
         return `${st}${content}`;
     }
 
+    function getMealOrderSummaryJSX(client: ClientProfile) {
+        // Fallback to activeOrder if mealOrder not present (legacy support / hybrid state)
+        const selections = client.mealOrder?.mealSelections || client.activeOrder?.mealSelections;
+
+        if (!selections) {
+            return (
+                <div style={{ marginTop: '8px', paddingTop: '8px', borderTop: '1px dashed var(--border-color)' }}>
+                    <strong style={{ fontWeight: 600 }}>Meal</strong> - <span style={{ color: 'var(--text-tertiary)', fontStyle: 'italic' }}>No meals selected</span>
+                </div>
+            );
+        }
+
+        const mealTypes = Object.keys(selections).sort();
+
+        // Check if there are any actual items selected
+        const hasItems = mealTypes.some(type => {
+            const items = selections[type]?.items || {};
+            return Object.values(items).some((qty: any) => Number(qty) > 0);
+        });
+
+        if (mealTypes.length === 0 || !hasItems) {
+            return (
+                <div style={{ marginTop: '8px', paddingTop: '8px', borderTop: '1px dashed var(--border-color)' }}>
+                    <strong style={{ fontWeight: 600 }}>Meal</strong> - <span style={{ color: 'var(--text-tertiary)', fontStyle: 'italic' }}>No meals selected</span>
+                </div>
+            );
+        }
+
+        return (
+            <div style={{ marginTop: '8px', paddingTop: '8px', borderTop: '1px dashed var(--border-color)' }}>
+                {mealTypes.map(type => {
+                    const data = selections[type];
+                    const items = data?.items || {};
+                    const itemEntries = Object.entries(items).filter(([_, qty]) => Number(qty) > 0);
+
+                    if (itemEntries.length === 0) return null;
+
+                    const vendorName = data.vendorId ? vendors.find(v => v.id === data.vendorId)?.name : 'Not Set';
+
+                    const itemDetails = itemEntries.map(([id, qty]) => {
+                        const item = menuItems.find(i => i.id === id) || mealItems.find(i => i.id === id);
+                        return item ? `${item.name} x${qty}` : `Item #${id.slice(0, 8)} x${qty}`;
+                    }).join(', ');
+
+                    return (
+                        <div key={type} style={{ display: 'flex', flexDirection: 'column', gap: '2px', marginBottom: '8px' }}>
+                            <div>
+                                <strong style={{ fontWeight: 600 }}>Meal</strong> - <span style={{ fontWeight: 500, color: 'var(--text-secondary)' }}>{type}:</span>
+                            </div>
+                            <div style={{ marginLeft: '0' }}>
+                                <span style={{ fontWeight: 500 }}>Vendor: {vendorName}</span>
+                                <div style={{ fontSize: '0.85em', color: 'var(--text-secondary)', marginLeft: '0' }}>
+                                    {itemDetails}
+                                </div>
+                            </div>
+                        </div>
+                    );
+                })}
+            </div>
+        );
+    }
+
     function getOrderSummary(client: ClientProfile) {
         if (!client.activeOrder) return '-';
         const st = client.serviceType;
         const conf = client.activeOrder;
 
         if (!showOrderDetails) {
-            let vendorSummary = 'Not Set';
+            let label = st;
+            const vendorSummaries: React.ReactNode[] = [];
 
             if (st === 'Food') {
                 const uniqueVendors = new Set<string>();
@@ -667,7 +746,27 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
                 }
 
                 if (uniqueVendors.size > 0) {
-                    vendorSummary = Array.from(uniqueVendors).join(', ');
+                    uniqueVendors.forEach(v => vendorSummaries.push(v));
+                }
+
+                // Check for Meal Orders
+                const mealSelections = client.mealOrder?.mealSelections || client.activeOrder?.mealSelections;
+                if (mealSelections) {
+                    const mealTypes = Object.keys(mealSelections);
+                    if (mealTypes.length > 0) {
+                        label = 'Food & Meal';
+                        mealTypes.forEach(type => {
+                            const selection = mealSelections[type];
+                            if (selection.vendorId) {
+                                const vName = vendors.find(ven => ven.id === selection.vendorId)?.name;
+                                if (vName && !Array.from(uniqueVendors).includes(vName)) {
+                                    vendorSummaries.push(vName);
+                                }
+                            } else {
+                                vendorSummaries.push(<span key={`missing-${type}`} style={{ color: 'red' }}>Not Set</span>);
+                            }
+                        });
+                    }
                 }
             } else if (st === 'Boxes') {
                 // Check vendorId from order config first, then fall back to boxType
@@ -712,15 +811,17 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
                     });
                 }
 
-                if (vendorName) vendorSummary = vendorName;
+                if (vendorName) vendorSummaries.push(vendorName);
             }
 
             return (
                 <div>
-                    <strong style={{ fontWeight: 600, color: 'var(--color-primary)' }}>{st}</strong>
-                    <span style={{ color: 'var(--text-primary)', marginLeft: '4px' }}>
-                        - {vendorSummary}
-                    </span>
+                    <div>
+                        <strong style={{ fontWeight: 600, color: 'var(--color-primary)' }}>{label}</strong>
+                        <span style={{ color: 'var(--text-primary)', marginLeft: '4px' }}>
+                            - {vendorSummaries.length > 0 ? vendorSummaries.reduce((prev, curr) => [prev, ', ', curr]) : 'Not Set'}
+                        </span>
+                    </div>
                 </div>
             );
         }
@@ -737,6 +838,7 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
                     return (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                             <div><strong style={{ fontWeight: 600 }}>Food</strong> - Vendor: Not Set</div>
+                            {getMealOrderSummaryJSX(client)}
                         </div>
                     );
                 }
@@ -776,6 +878,7 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
                     return (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                             <div><strong style={{ fontWeight: 600 }}>Food</strong> - Vendor: Not Set</div>
+                            {getMealOrderSummaryJSX(client)}
                         </div>
                     );
                 }
@@ -801,6 +904,7 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
                                 ))}
                             </div>
                         ))}
+                        {getMealOrderSummaryJSX(client)}
                     </div>
                 );
             } else {
@@ -811,6 +915,7 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
                     return (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                             <div><strong style={{ fontWeight: 600 }}>Food</strong> - Vendor: Not Set</div>
+                            {getMealOrderSummaryJSX(client)}
                         </div>
                     );
                 }
@@ -839,6 +944,7 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
                     return (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                             <div><strong style={{ fontWeight: 600 }}>Food</strong> - Vendor: Not Set</div>
+                            {getMealOrderSummaryJSX(client)}
                         </div>
                     );
                 }
@@ -848,7 +954,7 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
                         {vendorLines.map((line, idx) => (
                             <div key={idx}>
                                 {idx === 0 && <strong style={{ fontWeight: 600 }}>Food</strong>}
-                                {idx === 0 ? ' - ' : ''}
+                                {idx === 0 && ' - '}
                                 <span style={{ fontWeight: 500 }}>Vendor: {line.vendorName}</span>
                                 {line.itemDetails && (
                                     <div style={{ fontSize: '0.85em', color: 'var(--text-secondary)', marginLeft: '0' }}>
@@ -857,6 +963,7 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
                                 )}
                             </div>
                         ))}
+                        {getMealOrderSummaryJSX(client)}
                     </div>
                 );
             }
@@ -993,6 +1100,18 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
                 reasons.push('Food: No authorized amount');
             } else if (client.authorizedAmount < 1344) {
                 reasons.push(`Food: Auth amount $${client.authorizedAmount} < $1344`);
+            }
+        }
+
+        // 5. Check if meal orders exist but no vendor is assigned
+        const mealSelections = client.mealOrder?.mealSelections || client.activeOrder?.mealSelections;
+        if (mealSelections) {
+            const mealTypes = Object.keys(mealSelections);
+            if (mealTypes.length > 0) {
+                const missingVendorMeals = mealTypes.filter(type => !mealSelections[type].vendorId);
+                if (missingVendorMeals.length > 0) {
+                    reasons.push(`Meal: No vendor assigned (${missingVendorMeals.join(', ')})`);
+                }
             }
         }
 

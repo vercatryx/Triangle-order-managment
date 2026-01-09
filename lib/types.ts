@@ -36,6 +36,8 @@ export interface ClientProfile {
   // Order Configuration (Active Request)
   activeOrder?: OrderConfiguration;
 
+  mealOrder?: ClientMealOrder; // Start including linked meal orders for display
+
   createdAt: string;
   updatedAt: string;
 }

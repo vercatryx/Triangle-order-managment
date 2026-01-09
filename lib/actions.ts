@@ -833,6 +833,9 @@ function mapClientFromDB(c: any): ClientProfile {
         authorizedAmount: c.authorized_amount ?? null,
         expirationDate: c.expiration_date || null,
         activeOrder: c.active_order, // Metadata matches structure
+        mealOrder: c.client_meal_orders && Array.isArray(c.client_meal_orders) && c.client_meal_orders.length > 0
+            ? c.client_meal_orders[0] // Take the first one if array (should be one-to-one effectively)
+            : (c.client_meal_orders && !Array.isArray(c.client_meal_orders) ? c.client_meal_orders : undefined),
         createdAt: c.created_at,
         updatedAt: c.updated_at
     };
@@ -3578,7 +3581,7 @@ export async function getClientsPaginated(page: number, pageSize: number, query:
         // Fetch clients
         let queryBuilder = supabase
             .from('clients')
-            .select('*', { count: 'exact' })
+            .select('*, client_meal_orders(*)', { count: 'exact' })
             .in('id', clientIdsNeedingVendor);
 
         if (query) {
@@ -3603,7 +3606,7 @@ export async function getClientsPaginated(page: number, pageSize: number, query:
     // Default behavior - get all clients
     let queryBuilder = supabase
         .from('clients')
-        .select('*', { count: 'exact' });
+        .select('*, client_meal_orders(*)', { count: 'exact' });
 
     if (query) {
         queryBuilder = queryBuilder.ilike('full_name', `% ${query}% `);
