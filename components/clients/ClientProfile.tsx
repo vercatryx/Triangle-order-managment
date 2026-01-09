@@ -14,6 +14,7 @@ import {
     getAllDeliveryDatesForOrder,
     formatDeliveryDate
 } from '@/lib/order-dates';
+import { isMeetingMinimum, isExceedingMaximum, isMeetingExactTarget } from '@/lib/utils';
 import { Save, ArrowLeft, Truck, Package, AlertTriangle, Upload, Trash2, Plus, Check, ClipboardList, History, CreditCard, Calendar, ChevronDown, ChevronUp, ShoppingCart, Loader2, FileText, Square, CheckSquare, Wrench, Info, Construction } from 'lucide-react';
 import FormFiller from '@/components/forms/FormFiller';
 import { FormSchema } from '@/lib/form-types';
@@ -1015,37 +1016,43 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
 
     // Get total value across all delivery days (handles both formats)
     function getCurrentOrderTotalValueAllDays(): number {
-        // Check for per-vendor delivery days format
+        // Use getVendorSelectionsForDay(null) as the single source of truth.
+        // It consolidates deliveryDayOrders if they exist, or returns vendorSelections.
         const currentSelections = getVendorSelectionsForDay(null);
         let total = 0;
 
         for (const selection of currentSelections || []) {
-            if (selection.itemsByDay && selection.selectedDeliveryDays) {
-                // Per-vendor delivery days format
-                for (const day of selection.selectedDeliveryDays) {
+            if (!selection.vendorId) continue;
+
+            if (selection.itemsByDay && selection.selectedDeliveryDays && selection.selectedDeliveryDays.length > 0) {
+                // Multi-day / Per-vendor delivery days format
+                const activeDays = selection.selectedDeliveryDays;
+                for (const day of activeDays) {
                     const dayItems = selection.itemsByDay[day] || {};
                     for (const [itemId, qty] of Object.entries(dayItems)) {
                         const item = menuItems.find(i => i.id === itemId);
-                        const itemPrice = item ? item.value : 0;
-                        total += itemPrice * (qty as number);
+                        const itemPrice = item ? (item.value || 0) : 0;
+                        total += itemPrice * (Number(qty) || 0);
                     }
                 }
             } else if (selection.items) {
-                // Normal single-day format
+                // Normal single-day / Flat format
+                // Must multiply by number of days!
+                const daysCount = (selection.selectedDeliveryDays && selection.selectedDeliveryDays.length > 0)
+                    ? selection.selectedDeliveryDays.length
+                    : ((client as any).delivery_days?.length || 1);
+
                 for (const [itemId, qty] of Object.entries(selection.items)) {
                     const item = menuItems.find(i => i.id === itemId);
-                    const itemPrice = item ? item.value : 0;
-                    total += itemPrice * (qty as number);
+                    const itemPrice = item ? (item.value || 0) : 0;
+                    total += itemPrice * (Number(qty) || 0) * daysCount;
                 }
             }
         }
 
-        // Also check deliveryDayOrders format (for saved data)
-        if (orderConfig.deliveryDayOrders) {
-            for (const day of Object.keys(orderConfig.deliveryDayOrders)) {
-                total += getCurrentOrderTotalValue(day);
-            }
-        }
+        // Note: We DO NOT iterate orderConfig.deliveryDayOrders separately here because 
+        // getVendorSelectionsForDay(null) already includes them if they exist.
+        // (Iterating them again would cause double counting).
 
         // Include meal selections (Breakfast, Lunch, etc.)
         if (orderConfig.mealSelections) {
@@ -1055,7 +1062,7 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                     for (const [itemId, qty] of Object.entries(typedConfig.items)) {
                         const item = mealItems.find(i => i.id === itemId);
                         if (item) {
-                            total += item.quotaValue * (qty as number);
+                            total += item.quotaValue * (Number(qty) || 0);
                         }
                     }
                 }
@@ -1207,7 +1214,7 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
             // Check total meals (Value - aligned with UI) vs Approved Limit
             const totalValue = getCurrentOrderTotalValueAllDays();
             const approvedMeals = formData.approvedMealsPerWeek || 0;
-            if (approvedMeals > 0 && totalValue > approvedMeals) {
+            if (approvedMeals > 0 && isExceedingMaximum(totalValue, approvedMeals)) {
                 setValidationError(`Total value selected (${totalValue.toFixed(2)}) exceeds approved value per week (${approvedMeals}).`);
                 return { isValid: false, messages: [`Total value selected (${totalValue.toFixed(2)}) exceeds approved value per week (${approvedMeals}).`] };
             }
@@ -1232,7 +1239,7 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                                 dayValue += (item?.value || 0) * (Number(qty) || 0);
                             }
 
-                            if (dayValue < minMeals) {
+                            if (!isMeetingMinimum(dayValue, minMeals)) {
                                 messages.push(`${vendor.name} requires a minimum value of ${minMeals} for ${day}. You have selected ${dayValue}.`);
                             }
                         }
@@ -1244,7 +1251,7 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                             countValue += (item?.value || 0) * (Number(qty) || 0);
                         }
 
-                        if (countValue < minMeals) {
+                        if (!isMeetingMinimum(countValue, minMeals)) {
                             messages.push(`${vendor.name} requires a minimum value of ${minMeals} per delivery. You have selected ${countValue}.`);
                         }
                     }
@@ -1274,7 +1281,7 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                                 }
                             }
 
-                            if (catTotalValue !== subCat.setValue) {
+                            if (!isMeetingExactTarget(catTotalValue, subCat.setValue)) {
                                 messages.push(`${subCat.name}: Selected ${catTotalValue}, but required is ${subCat.setValue}.`);
                             }
                         }
@@ -1313,7 +1320,7 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                     const requiredQuotaValue = quota.targetValue * boxQuantity;
 
                     // Check if it matches exactly
-                    if (categoryQuotaValue !== requiredQuotaValue) {
+                    if (!isMeetingExactTarget(categoryQuotaValue, requiredQuotaValue)) {
                         const category = categories.find(c => c.id === quota.categoryId);
                         const categoryName = category?.name || 'Unknown Category';
                         messages.push(
@@ -1344,7 +1351,7 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                         }
 
                         // Check if it matches exactly the setValue
-                        if (categoryQuotaValue !== category.setValue) {
+                        if (!isMeetingExactTarget(categoryQuotaValue, category.setValue)) {
                             messages.push(
                                 `You must have a total of ${category.setValue} ${category.name} points, but you have ${categoryQuotaValue}. ` +
                                 `Please adjust items in this category to match exactly.`

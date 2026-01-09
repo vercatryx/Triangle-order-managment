@@ -1,9 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { supabase } from '@/lib/supabase';
+import { createClient } from '@supabase/supabase-js';
 import { getCurrentTime } from '@/lib/time';
-import { getMenuItems, getSettings, getVendors, getStatuses } from '@/lib/actions';
-// import { isDeliveryDateLocked, getLockedWeekDescription, getEarliestEffectiveDate } from '@/lib/weekly-lock';
+import { getMenuItems, getSettings, getVendors, getStatuses, getMealItems } from '@/lib/actions';
 import { getNextDeliveryDateForDay } from '@/lib/order-dates';
+
+// Initialize Supabase Admin Client to bypass RLS
+const supabase = createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!
+);
 
 /**
  * API Route: Simulate Delivery Cycle
@@ -22,644 +27,588 @@ import { getNextDeliveryDateForDay } from '@/lib/order-dates';
  */
 export async function POST(request: NextRequest) {
     try {
-        // 1. Fetch ALL scheduled Upcoming Orders (they are templates, no date filtering)
-        const { data: upcomingOrders, error: fetchError } = await supabase
-            .from('upcoming_orders')
-            .select('*')
-            .eq('status', 'scheduled')
-            .order('delivery_day', { ascending: true });
-
-        if (fetchError) {
-            throw new Error(`Failed to fetch upcoming orders: ${fetchError.message}`);
-        }
-
-        if (!upcomingOrders || upcomingOrders.length === 0) {
-            return NextResponse.json({
-                success: true,
-                message: 'No scheduled upcoming orders found.',
-                totalFound: 0,
-                processedCount: 0,
-                skippedCount: 0
-            });
-        }
-
+        console.log('[Simulate Delivery] Starting new simulation logic with split tables...');
+        const errors: string[] = [];
+        const skippedReasons: string[] = [];
+        const debugLogs: string[] = [];
         let processedCount = 0;
         let skippedCount = 0;
         let ineligibleCount = 0;
-        const errors: string[] = [];
-        const skippedReasons: string[] = [];
-        const debugLogs: string[] = []; // Collect logs to return in response
 
-        // Fetch menu items to get correct prices
+        // Fetch reference data
         const menuItems = await getMenuItems();
-        console.log(`[Simulate Delivery] Loaded ${menuItems.length} menu items for price lookup`);
-        debugLogs.push(`Loaded ${menuItems.length} menu items for price lookup`);
-
-        console.log(`[Simulate Delivery] Found ${upcomingOrders.length} upcoming orders to process`);
-        debugLogs.push(`Found ${upcomingOrders.length} upcoming orders to process`);
-
-        // Fetch statuses to check eligibility
+        const mealItems = await getMealItems();
         const statuses = await getStatuses();
+        const vendors = await getVendors();
         const statusMap = new Map(statuses.map(s => [s.id, s.deliveriesAllowed]));
-        debugLogs.push(`Loaded ${statuses.length} statuses`);
+        debugLogs.push(`Loaded ${menuItems.length} menu items, ${mealItems.length} meal items, ${statuses.length} statuses, ${vendors.length} vendors`);
 
-        // Fetch all clients to check their status and creation time
-        // WE MUST FETCH ALL CLIENTS to filter by status, as upcoming_orders doesn't have status info
+        // Fetch all clients to check status
         const { data: clients, error: clientsError } = await supabase
             .from('clients')
-            .select('id, status_id, created_at');
+            .select('id, status_id, created_at, service_type');
 
-        if (clientsError) {
-            console.error('Error fetching clients for status check:', clientsError);
-            // Proceeding but warning
-            errors.push(`Error fetching clients: ${clientsError.message}`);
+        if (clientsError) throw new Error(`Failed to fetch clients: ${clientsError.message}`);
+        const clientMap = new Map(clients.map(c => [c.id, c]));
+
+        // --- 1. Fetch Templates from New Tables ---
+
+        // A. Food Orders
+        const { data: foodOrders, error: foodError } = await supabase
+            .from('client_food_orders')
+            .select('*');
+        if (foodError) errors.push(`Error fetching food orders: ${foodError.message}`);
+
+        // B. Box Orders
+        const { data: boxOrders, error: boxError } = await supabase
+            .from('client_box_orders')
+            .select('*');
+        if (boxError) errors.push(`Error fetching box orders: ${boxError.message}`);
+
+        // C. Meal Orders
+        const { data: mealOrders, error: mealError } = await supabase
+            .from('client_meal_orders')
+            .select('*');
+        if (mealError) errors.push(`Error fetching meal orders: ${mealError.message}`);
+
+        console.log(`[Simulate Delivery] Found ${foodOrders?.length || 0} food templates, ${boxOrders?.length || 0} box templates, ${mealOrders?.length || 0} meal templates`);
+
+        // --- 2. Flatten Candidates ---
+        interface CandidateOrder {
+            clientId: string;
+            serviceType: 'Food' | 'Boxes' | 'Meal';
+            deliveryDay: string; // "Monday", etc.
+            sourceRef: any; // The original record or specific config
+            isBox?: boolean;
+            isFood?: boolean;
+            isMeal?: boolean;
+            vendorId?: string; // For Meal/Box where strictly defined
+            caseId?: string;
         }
 
-        const clientDataMap = new Map(clients?.map(c => [c.id, { status_id: c.status_id, created_at: c.created_at }]) || []);
-        debugLogs.push(`Loaded ${clients?.length || 0} clients for status/age verification`);
+        const candidates: CandidateOrder[] = [];
 
-        // Get the starting order number (ensures at least 6 digits, starting from 100000)
+        // Flatten Food Orders
+        if (foodOrders) {
+            for (const fo of foodOrders) {
+                const client = clientMap.get(fo.client_id);
+                // Only process if client exists and matches service type (sanity check)
+                if (!client) continue;
+
+                // Parse delivery_day_orders JSON
+                const dayOrders = typeof fo.delivery_day_orders === 'string'
+                    ? JSON.parse(fo.delivery_day_orders)
+                    : fo.delivery_day_orders;
+
+                if (dayOrders) {
+                    for (const day of Object.keys(dayOrders)) {
+                        if (!day || day === 'null') continue;
+
+                        candidates.push({
+                            clientId: fo.client_id,
+                            serviceType: 'Food',
+                            deliveryDay: day,
+                            sourceRef: dayOrders[day],
+                            isFood: true,
+                            caseId: fo.case_id
+                        });
+                    }
+                }
+            }
+        }
+
+        // Flatten Box Orders
+        if (boxOrders) {
+            for (const bo of boxOrders) {
+                const client = clientMap.get(bo.client_id);
+                if (!client) continue;
+
+                if (!bo.vendor_id) continue;
+
+                const vendor = vendors.find(v => v.id === bo.vendor_id);
+                if (!vendor) continue;
+
+                const vDays: string[] = (vendor as any).delivery_days || (vendor as any).deliveryDays || [];
+                if (vDays.length === 0) continue;
+
+                const weekDays = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+                const selectedDay = weekDays.find(day => vDays.includes(day));
+
+                if (!selectedDay) continue;
+
+                candidates.push({
+                    clientId: bo.client_id,
+                    serviceType: 'Boxes',
+                    deliveryDay: selectedDay,
+                    sourceRef: bo,
+                    isBox: true,
+                    vendorId: bo.vendor_id,
+                    caseId: bo.case_id
+                });
+            }
+        }
+
+        // Flatten Meal Orders
+        if (mealOrders) {
+            for (const mo of mealOrders) {
+                const client = clientMap.get(mo.client_id);
+                if (!client) continue;
+
+                const selections = typeof mo.meal_selections === 'string'
+                    ? JSON.parse(mo.meal_selections)
+                    : mo.meal_selections;
+
+                if (!selections) continue;
+
+                // Group by Day -> Vendor -> Items
+                // We want to verify duplicate items logic? 
+                // If Breakfast has Item A x 2, and Lunch has Item A x 1. Total x 3.
+                // We need to merge items if same vendor/day.
+
+                const dayGroups = new Map<string, Map<string, Record<string, number>>>(); // Day -> VendorId -> Items
+
+                for (const [mealType, config] of Object.entries(selections)) {
+                    const c = config as any;
+                    if (!c.vendorId) continue; // Logic: No Vendor = Skip
+
+                    const vendor = vendors.find(v => v.id === c.vendorId);
+                    if (!vendor) continue;
+
+                    // Logic: Vendor Exists = First day of week
+                    const vDays: string[] = (vendor as any).delivery_days || (vendor as any).deliveryDays || [];
+                    if (vDays.length === 0) continue;
+
+                    const weekDays = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+                    const selectedDay = weekDays.find(day => vDays.includes(day));
+
+                    if (!selectedDay) continue;
+
+                    if (!dayGroups.has(selectedDay)) {
+                        dayGroups.set(selectedDay, new Map());
+                    }
+                    const vendorMap = dayGroups.get(selectedDay)!;
+
+                    if (!vendorMap.has(c.vendorId)) {
+                        vendorMap.set(c.vendorId, {});
+                    }
+                    const existingItems = vendorMap.get(c.vendorId)!;
+
+                    // Merge items
+                    if (c.items) {
+                        for (const [itemId, qty] of Object.entries(c.items)) {
+                            const q = Number(qty) || 0;
+                            existingItems[itemId] = (existingItems[itemId] || 0) + q;
+                        }
+                    }
+                }
+
+                // Create candidates from groups
+                for (const [day, vendorMap] of dayGroups.entries()) {
+                    const combinedVendorSelections = [];
+                    for (const [vId, items] of vendorMap.entries()) {
+                        combinedVendorSelections.push({
+                            vendorId: vId,
+                            items: items
+                        });
+                    }
+
+                    if (combinedVendorSelections.length > 0) {
+                        candidates.push({
+                            clientId: mo.client_id,
+                            serviceType: 'Meal',
+                            deliveryDay: day,
+                            sourceRef: { vendorSelections: combinedVendorSelections },
+                            isMeal: true,
+                            caseId: mo.case_id
+                        });
+                    }
+                }
+            }
+        }
+
+        console.log(`[Simulate Delivery] Generated ${candidates.length} candidate orders for processing`);
+
+        // --- 3. Process Candidates ---
+
+        // Get max order number
         const { data: maxOrderData } = await supabase
             .from('orders')
             .select('order_number')
             .order('order_number', { ascending: false })
             .limit(1)
             .maybeSingle();
+        let nextOrderNumber = Math.max(100000, (maxOrderData?.order_number || 0) + 1);
 
-        const { data: maxUpcomingData } = await supabase
-            .from('upcoming_orders')
-            .select('order_number')
-            .order('order_number', { ascending: false })
-            .limit(1)
-            .maybeSingle();
+        const { getNextOccurrence } = await import('@/lib/order-dates');
+        const currentTime = await getCurrentTime();
 
-        const maxOrderNum = maxOrderData?.order_number || 0;
-        const maxUpcomingNum = maxUpcomingData?.order_number || 0;
-        const maxNum = Math.max(maxOrderNum, maxUpcomingNum);
+        const skippedReasonsMap: Record<string, number> = {};
 
-        // Start from max + 1, ensuring at least 6 digits (100000 = 6 digits minimum)
-        let nextOrderNumber = Math.max(100000, maxNum + 1);
+        function trackSkip(reason: string, details?: string) {
+            skippedCount++;
+            skippedReasonsMap[reason] = (skippedReasonsMap[reason] || 0) + 1;
+            if (details) skippedReasons.push(`${reason}: ${details}`);
+        }
 
-        for (const upOrder of upcomingOrders) {
-            console.log(`[Simulate Delivery] Processing upcoming order ${upOrder.id} (client: ${upOrder.client_id}, delivery_day: ${upOrder.delivery_day || 'null'})`);
+        for (const candidate of candidates) {
+            const client = clientMap.get(candidate.clientId);
 
-            // CHECK ELIGIBILITY
-            const clientData = clientDataMap.get(upOrder.client_id);
-            if (clientData) {
-                const isAllowed = statusMap.get(clientData.status_id);
-                if (isAllowed === false) { // Explicitly false, enabled defaults to true often but let's be strict
-                    const skipMsg = `Order ${upOrder.id}: Client ${upOrder.client_id} has status which disallows deliveries.`;
-                    console.log(`[Simulate Delivery] IGNORED (Ineligible Status): ${skipMsg}`);
-                    // skippedReasons.push(skipMsg); // User requested these not be considered skips
+            // Check Eligibility
+            if (client) {
+                const isAllowed = statusMap.get(client.status_id);
+                if (isAllowed === false) {
                     ineligibleCount++;
+                    trackSkip('Ineligible Status', `Client ${candidate.clientId} status ineligible`);
                     continue;
                 }
-            } else {
-                console.warn(`[Simulate Delivery] Warning: Client ${upOrder.client_id} not found in client list or has no status.`);
             }
 
-            // Fetch vendors for cutoff checks
-            const vendors = await getVendors();
-
-            // --------------------------------------------------------------------------------
-            // TIMING & CUTOFF LOGIC (Next Week Only + Strict Cutoff)
-            // --------------------------------------------------------------------------------
-
-            // 1. Determine "Next Week" Delivery Date
-            // --------------------------------------------------------------------------------
-            // TIMING & CUTOFF LOGIC (Just-In-Time / JIT)
-            // --------------------------------------------------------------------------------
-
-            // 1. Determine Immediate Next Delivery Date
-            // We look for the NEXT occurrence of the day, starting from today.
-            const { getNextOccurrence } = await import('@/lib/order-dates');
-            const currentTime = await getCurrentTime();
-
-            const nextDeliveryDate = getNextOccurrence(upOrder.delivery_day || '', currentTime);
-
+            // Calculate Delivery Date
+            const nextDeliveryDate = getNextOccurrence(candidate.deliveryDay, currentTime);
             if (!nextDeliveryDate) {
-                const errorMsg = `Cannot calculate delivery date for order ${upOrder.id}: delivery_day is "${upOrder.delivery_day || 'null'}"`;
-                console.warn(`[Simulate Delivery] SKIPPED: ${errorMsg}`);
-                errors.push(errorMsg);
-                skippedReasons.push(`Order ${upOrder.id}: Invalid delivery_day "${upOrder.delivery_day}"`);
-                skippedCount++;
+                trackSkip('Invalid Delivery Day', `Client ${candidate.clientId} has invalid day ${candidate.deliveryDay}`);
                 continue;
             }
 
-            const deliveryDateStr = nextDeliveryDate.toISOString().split('T')[0];
-            const deliveryDateLog = nextDeliveryDate.toDateString();
-
-            // 2. JIT Cutoff Check
-            // Rule: Create order ONLY if (DeliveryDate - Now) <= Max(VendorCutoffs)
-            // If we are "too early" (TimeRemaining > Cutoff), we SKIP.
-            // If we are "within window" (TimeRemaining <= Cutoff), we CREATE.
-
-            // Calculate 'Time Remaining' until the delivery date (using 00:00 of delivery day as target, or end of day?)
-            // User requirement: "Orders that are too early will be skipped."
-            // "Create order if (DeliveryDate - Now) <= VendorCutoff"
-            // Let's treat "DeliveryDate" as the start of the delivery day (00:00).
-            // So if Delivery is Friday 00:00, and Cutoff is 48h. We trigger at Wednesday 00:00.
-
             const timeRemainingMs = nextDeliveryDate.getTime() - currentTime.getTime();
             const timeRemainingHours = timeRemainingMs / (1000 * 60 * 60);
+            const deliveryDateStr = nextDeliveryDate.toISOString().split('T')[0];
 
+            // Determine Cutoff (Max of vendors involved)
             let maxCutoffHours = 0;
-            let hasValidVendor = false; // To ensure we don't proceed without any vendor info
+            let hasValidVendor = false;
 
-            // Determine max cutoff based on vendors
-            if (upOrder.service_type === 'Food') {
-                const { data: vendorSelections } = await supabase
-                    .from('upcoming_order_vendor_selections')
-                    .select('vendor_id')
-                    .eq('upcoming_order_id', upOrder.id);
+            if (candidate.isFood || candidate.isMeal) {
+                // Parse vendor selections from the day config
+                const dayConfig = candidate.sourceRef;
+                const vSelections = dayConfig.vendorSelections || [];
 
-                if (vendorSelections && vendorSelections.length > 0) {
-                    const uniqueVendorIds = Array.from(new Set(vendorSelections.map(vs => vs.vendor_id)));
-                    for (const vId of uniqueVendorIds) {
-                        const vendor = vendors.find(v => v.id === vId);
+                for (const sel of vSelections) {
+                    if (sel.vendorId) {
+                        const vendor = vendors.find(v => v.id === sel.vendorId);
                         if (vendor) {
                             hasValidVendor = true;
-                            // Track the MAXIMUM cutoff (earliest requirement wins? No, lenient one?)
-                            // Wait. User logic: "Create order if (Delivery - Now) <= VendorCutoff"
-                            // If Cutoff A = 48h (Trigger 2 days before).
-                            // If Cutoff B = 24h (Trigger 1 day before).
-                            // If we are 36h away.
-                            // 36 <= 48 (A) -> True.
-                            // 36 <= 24 (B) -> False.
-                            // If we create now, we satisfy A. B gets order early. This is OK.
-                            // We must use MAX logic to catch the earliest trigger.
-                            const cutoff = vendor.cutoffHours ?? 0;
-                            if (cutoff > maxCutoffHours) {
-                                maxCutoffHours = cutoff;
-                            }
+                            if ((vendor.cutoffHours || 0) > maxCutoffHours) maxCutoffHours = vendor.cutoffHours || 0;
                         }
                     }
                 }
-            } else if (upOrder.service_type === 'Boxes') {
-                const { data: boxSelections } = await supabase
-                    .from('upcoming_order_box_selections')
-                    .select('vendor_id')
-                    .eq('upcoming_order_id', upOrder.id);
-
-                if (!boxSelections || boxSelections.length === 0 || !boxSelections[0].vendor_id) {
-                    const skipMsg = `Order ${upOrder.id} (Boxes): No vendor assigned. Skipped.`;
-                    console.warn(`[Simulate Delivery] SKIPPED: ${skipMsg}`);
-                    skippedReasons.push(skipMsg);
-                    skippedCount++;
-                    continue;
-                }
-
-                const uniqueVendorIds = Array.from(new Set(boxSelections.map(bs => bs.vendor_id).filter(Boolean)));
-                for (const vId of uniqueVendorIds) {
-                    // @ts-ignore
-                    const vendor = vendors.find(v => v.id === vId);
+            } else if (candidate.isBox) {
+                const bo = candidate.sourceRef;
+                if (bo.vendor_id) {
+                    const vendor = vendors.find(v => v.id === bo.vendor_id);
                     if (vendor) {
                         hasValidVendor = true;
-                        const cutoff = vendor.cutoffHours ?? 0;
-                        if (cutoff > maxCutoffHours) {
-                            maxCutoffHours = cutoff;
-                        }
+                        if ((vendor.cutoffHours || 0) > maxCutoffHours) maxCutoffHours = vendor.cutoffHours || 0;
                     }
                 }
             }
 
             if (!hasValidVendor) {
-                const skipMsg = `Order ${upOrder.id}: No valid vendors found to determine cutoff. Skipped safety.`;
-                console.warn(`[Simulate Delivery] SKIPPED: ${skipMsg}`);
-                skippedReasons.push(skipMsg);
-                skippedCount++;
+                trackSkip('No Valid Vendor', `Client ${candidate.clientId} (${candidate.serviceType})`);
                 continue;
             }
 
             // Client Age Check
-            if (clientData && clientData.created_at) {
-                const clientCreatedAt = new Date(clientData.created_at);
-                const clientAgeMs = currentTime.getTime() - clientCreatedAt.getTime();
+            if (client && client.created_at) {
+                const clientAgeMs = currentTime.getTime() - new Date(client.created_at).getTime();
                 const clientAgeHours = clientAgeMs / (1000 * 60 * 60);
-
-                // "If the client was created within 48 hours... I mean within the cutoff time."
-                // So if Client Age < Max Cutoff Hours, SKIP.
-                // e.g. Cutoff 48h. Client created 10h ago. 10 < 48. SKIP.
                 if (clientAgeHours < maxCutoffHours) {
-                    const skipMsg = `Order ${upOrder.id}: Client created too recently (${clientAgeHours.toFixed(1)}h ago). Requires ${maxCutoffHours}h maturity (Client Cutoff Check).`;
-                    console.warn(`[Simulate Delivery] SKIPPED (Client Age): ${skipMsg}`);
-                    skippedReasons.push(skipMsg);
-                    skippedCount++;
+                    trackSkip('Client Account Too New', `Client ${candidate.clientId} created ${Math.floor(clientAgeHours)}h ago (Needs ${maxCutoffHours}h)`);
                     continue;
                 }
             }
 
-            // Check: Is it too early?
-            // If TimeRemaining > MaxCutoff, we generate NOTHING.
-            // Example: 96h remaining. MaxCutoff 48h. 96 > 48. Too early.
-
-            // Note: If timeRemaining is negative (Delivery is in past or today), we definitely proceed (it's <= cutoff).
-            // But if it's WAY in the past, maybe we should skip? 
-            // "Simulate" usually deals with future. But if we missed it?
-            // User didn't specify "Too Late" logic here, only "Too Early".
-            // Assuming "Too Late" is handled by the fact that `nextDeliveryDate` scans from Today.
-            // If `nextDeliveryDate` is Today (0h remaining). 0 <= 48. Create.
-
+            // JIT Check
             if (timeRemainingHours > maxCutoffHours) {
-                const skipMsg = `Order ${upOrder.id}: Too early. Delivery: ${deliveryDateLog} (${timeRemainingHours.toFixed(1)}h away). Max Cutoff: ${maxCutoffHours}h.`;
-                console.log(`[Simulate Delivery] SKIPPED (JIT): ${skipMsg}`);
-                // Not a warning, just "Waiting".
-                // skippedReasons.push(skipMsg); 
-                // Don't clutter skippedReasons with "Waiting" unless requested? 
-                // User said "Orders that are too early will be skipped."
-                // I'll log it but maybe not count as "Skipped" in the error report sense?
-                // Let's count it as valid skip.
-                skippedCount++;
+                // Too early
+                // console.log(`[JIT] Skipping ${candidate.clientId} for ${deliveryDateStr}. Too early.`);
+                trackSkip('Waiting for Cutoff', `Client ${candidate.clientId} delivery ${deliveryDateStr}`);
                 continue;
             }
 
-            console.log(`[Simulate Delivery] Order ${upOrder.id}: JIT Triggered! Delivery: ${deliveryDateLog} (${timeRemainingHours.toFixed(1)}h away) <= Cutoff: ${maxCutoffHours}h`);
+            // --- Create Order ---
 
+            // Food & Meal Order Creation (Unified Logic)
+            if (candidate.isFood || candidate.isMeal) {
+                const dayConfig = candidate.sourceRef;
+                const vSelections = dayConfig.vendorSelections || [];
 
-            // If we get here, the order is valid for Creation
-            const deliveryDate = nextDeliveryDate; // Set for downstream usage
+                for (const vs of vSelections) {
+                    if (!vs.vendorId) continue;
 
-            const logMsg = `[Simulate Delivery] Upcoming order ${upOrder.id} has total_value: ${upOrder.total_value}, total_items: ${upOrder.total_items}`;
-            console.log(logMsg);
-            debugLogs.push(logMsg);
+                    // CHECK DUPLICATES
+                    let exists = false;
 
-            // For Food orders, create a separate order for each vendor
-            // For Box orders, create one order (typically one vendor per box order)
-            if (upOrder.service_type === 'Food') {
-                const { data: vendorSelections } = await supabase
-                    .from('upcoming_order_vendor_selections')
-                    .select('*')
-                    .eq('upcoming_order_id', upOrder.id);
+                    if (candidate.isMeal) {
+                        // Weekly Limit for Meals
+                        const deliveryDate = new Date(deliveryDateStr);
+                        const dayOfWeek = deliveryDate.getUTCDay();
+                        const startOfWeek = new Date(deliveryDate);
+                        startOfWeek.setDate(deliveryDate.getDate() - dayOfWeek);
+                        const endOfWeek = new Date(deliveryDate);
+                        endOfWeek.setDate(deliveryDate.getDate() + (6 - dayOfWeek));
 
-                const logMsg3 = `[Simulate Delivery] Processing Food order - found ${vendorSelections?.length || 0} vendor selections`;
-                console.log(logMsg3);
-                debugLogs.push(logMsg3);
+                        const startOfWeekStr = startOfWeek.toISOString().split('T')[0];
+                        const endOfWeekStr = endOfWeek.toISOString().split('T')[0];
 
-                if (!vendorSelections || vendorSelections.length === 0) {
-                    const skipMsg = `Order ${upOrder.id}: No vendor selections found for Food order`;
-                    console.warn(`[Simulate Delivery] SKIPPED: ${skipMsg}`);
-                    skippedReasons.push(skipMsg);
-                    skippedCount++;
-                    continue;
-                }
+                        const { count } = await supabase
+                            .from('orders')
+                            .select('*', { count: 'exact', head: true })
+                            .eq('client_id', candidate.clientId)
+                            .gte('scheduled_delivery_date', startOfWeekStr)
+                            .lte('scheduled_delivery_date', endOfWeekStr)
+                            .eq('service_type', candidate.serviceType); // 'Meal'
 
-                // Create a separate order for each vendor
-                for (const vs of vendorSelections) {
-                    // Check for duplicates: Does an order with this client_id, delivery date, and vendor already exist?
-                    // First, get all orders for this client and delivery date
-                    const { data: existingOrders, error: ordersError } = await supabase
-                        .from('orders')
-                        .select('id')
-                        .eq('client_id', upOrder.client_id)
-                        .eq('scheduled_delivery_date', deliveryDateStr)
-                        .eq('service_type', 'Food');
+                        if (count && count > 0) {
+                            trackSkip('Weekly Limit Reached', `Client ${candidate.clientId} Meal already ordered for week ${startOfWeekStr}`);
+                            continue;
+                        }
+                    } else {
+                        // Daily/Vendor Check for Food
+                        const { data: existingOrders } = await supabase
+                            .from('orders')
+                            .select('id')
+                            .eq('client_id', candidate.clientId)
+                            .eq('scheduled_delivery_date', deliveryDateStr)
+                            .eq('service_type', candidate.serviceType); // Dynamic Service Type
 
-                    if (ordersError) {
-                        errors.push(`Error checking duplicates for order ${upOrder.id} vendor ${vs.vendor_id}: ${ordersError.message}`);
-                    }
-
-                    // If orders exist, check if any have a vendor selection for this vendor
-                    if (existingOrders && existingOrders.length > 0) {
-                        const orderIds = existingOrders.map(o => o.id);
-                        const { data: existingVendorSelections, error: vsError } = await supabase
-                            .from('order_vendor_selections')
-                            .select('order_id')
-                            .in('order_id', orderIds)
-                            .eq('vendor_id', vs.vendor_id)
-                            .limit(1);
-
-                        if (vsError) {
-                            errors.push(`Error checking vendor selections for order ${upOrder.id} vendor ${vs.vendor_id}: ${vsError.message}`);
+                        // Check if this specific vendor already exists in those orders
+                        if (existingOrders && existingOrders.length > 0) {
+                            const { data: exVs } = await supabase
+                                .from('order_vendor_selections')
+                                .select('id')
+                                .in('order_id', existingOrders.map(o => o.id))
+                                .eq('vendor_id', vs.vendorId)
+                                .maybeSingle();
+                            if (exVs) exists = true;
                         }
 
-                        if (existingVendorSelections && existingVendorSelections.length > 0) {
-                            const skipMsg = `Order ${upOrder.id}: Duplicate order already exists for client ${upOrder.client_id}, vendor ${vs.vendor_id} on ${deliveryDateStr}`;
-                            console.warn(`[Simulate Delivery] SKIPPED: ${skipMsg}`);
-                            skippedReasons.push(skipMsg);
-                            skippedCount++;
+                        if (exists) {
+                            trackSkip('Order Already Exists', `Client ${candidate.clientId} ${deliveryDateStr} Vendor ${vs.vendorId}`);
                             continue;
                         }
                     }
 
-                    const logMsg5 = `[Simulate Delivery] Creating separate order for vendor selection ${vs.id} (vendor: ${vs.vendor_id})`;
-                    console.log(logMsg5);
-                    debugLogs.push(logMsg5);
-
-                    // Get items for this vendor selection to calculate total
-                    const { data: items } = await supabase
-                        .from('upcoming_order_items')
-                        .select('*')
-                        .eq('vendor_selection_id', vs.id);
-
-                    // Calculate total for this vendor's items
+                    // Prepare Items & Calc Total
                     let vendorTotal = 0;
-                    let vendorItemCount = 0;
-                    if (items) {
-                        for (const item of items) {
-                            if (item.menu_item_id === null) continue; // Skip total items
-                            const menuItem = menuItems.find(mi => mi.id === item.menu_item_id);
-                            const correctPrice = menuItem?.priceEach ?? parseFloat(item.unit_value?.toString() || '0');
-                            vendorTotal += correctPrice * item.quantity;
-                            vendorItemCount += item.quantity;
+                    let totalItems = 0;
+                    const itemsToInsert: any[] = [];
+
+                    // vs.items is likely { itemId: qty }
+                    if (vs.items) {
+                        for (const [itemId, qty] of Object.entries(vs.items)) {
+                            const quantity = Number(qty);
+                            if (quantity > 0) {
+                                let menuItem: any = menuItems.find(mi => mi.id === itemId);
+                                if (!menuItem) {
+                                    menuItem = mealItems.find(mi => mi.id === itemId);
+                                }
+                                const price = menuItem?.priceEach ?? menuItem?.value ?? 0;
+                                const lineTotal = price * quantity;
+
+                                vendorTotal += lineTotal;
+                                totalItems += quantity;
+
+                                itemsToInsert.push({
+                                    menu_item_id: itemId,
+                                    quantity: quantity,
+                                    unit_value: price,
+                                    total_value: lineTotal
+                                });
+                            }
                         }
                     }
 
-                    // Create Order for this vendor
-                    const orderData: any = {
-                        client_id: upOrder.client_id,
-                        service_type: upOrder.service_type,
-                        case_id: upOrder.case_id || `CASE-${Date.now()}-${processedCount}-${vs.vendor_id.substring(0, 8)}`,
-                        status: 'scheduled',
-                        scheduled_delivery_date: deliveryDateStr,
-                        delivery_distribution: upOrder.delivery_distribution,
-                        total_value: vendorTotal, // Will be recalculated after items are copied
-                        total_items: vendorItemCount,
-                        notes: upOrder.notes,
-                        order_number: nextOrderNumber,
-                        created_at: (await getCurrentTime()).toISOString(),
-                        last_updated: (await getCurrentTime()).toISOString(),
-                        updated_by: upOrder.updated_by
-                    };
-
-                    const { data: newOrder, error: insertError } = await supabase
-                        .from('orders')
-                        .insert(orderData)
-                        .select()
-                        .single();
-
-                    if (insertError || !newOrder) {
-                        const errorMsg = `Failed to create order for client ${upOrder.client_id}, vendor ${vs.vendor_id}: ${insertError?.message}`;
-                        console.error(`[Simulate Delivery] ERROR: ${errorMsg}`);
-                        errors.push(errorMsg);
-                        skippedReasons.push(`Order ${upOrder.id}: Failed to create for vendor ${vs.vendor_id} - ${insertError?.message || 'Unknown error'}`);
-                        skippedCount++;
+                    if (itemsToInsert.length === 0) {
+                        trackSkip('Empty Order Config', `Client ${candidate.clientId} has 0 items`);
                         continue;
                     }
 
-                    console.log(`[Simulate Delivery] SUCCESS: Created order ${newOrder.id} (Order #${nextOrderNumber}) for client ${upOrder.client_id}, vendor ${vs.vendor_id} with delivery date ${deliveryDateStr}`);
-
-                    // Create vendor selection for this order
-                    const { data: newVs, error: vsError } = await supabase
-                        .from('order_vendor_selections')
+                    // Insert Order
+                    const { data: newOrder, error: orderErr } = await supabase
+                        .from('orders')
                         .insert({
-                            order_id: newOrder.id,
-                            vendor_id: vs.vendor_id
+                            client_id: candidate.clientId,
+                            service_type: candidate.serviceType,
+                            case_id: candidate.caseId || `CASE-${Date.now()}`, // fallback if missing (shouldn't be)
+                            status: 'scheduled',
+                            scheduled_delivery_date: deliveryDateStr,
+                            total_value: vendorTotal,
+                            total_items: totalItems,
+                            order_number: nextOrderNumber,
+                            created_at: currentTime.toISOString(),
+                            last_updated: currentTime.toISOString()
                         })
                         .select()
                         .single();
 
-                    if (vsError || !newVs) {
-                        const errorMsg = `[Simulate Delivery] Error creating vendor selection: ${vsError?.message || 'Unknown error'}`;
-                        console.error(errorMsg);
-                        debugLogs.push(errorMsg);
-                        errors.push(errorMsg);
+                    if (orderErr) {
+                        console.error(`[Create Error] Failed to insert order for ${candidate.clientId}:`, orderErr);
+                        errors.push(`Failed to create order for ${candidate.clientId}: ${orderErr.message}`);
+                        continue;
+                    }
+                    if (!newOrder) {
+                        console.error(`[Create Error] Order inserted but returned null?? RLS? Client: ${candidate.clientId}`);
+                        errors.push(`Failed to retrieve created order for ${candidate.clientId} - RLS?`);
                         continue;
                     }
 
-                    // Copy items for this vendor
-                    let calculatedTotalFromItems = 0;
-                    if (items) {
-                        for (const item of items) {
-                            // Skip total items (menu_item_id is null)
-                            if (item.menu_item_id === null) {
-                                const skipMsg = `[Simulate Delivery] Skipping total item with null menu_item_id: total_value=${item.total_value}`;
-                                console.log(skipMsg);
-                                debugLogs.push(skipMsg);
-                                continue;
-                            }
+                    // Insert Vendor Selection
+                    const { data: newVs, error: vsErr } = await supabase
+                        .from('order_vendor_selections')
+                        .insert({
+                            order_id: newOrder.id,
+                            vendor_id: vs.vendorId
+                        })
+                        .select()
+                        .single();
 
-                            // Find the menu item to get the correct price
-                            const menuItem = menuItems.find(mi => mi.id === item.menu_item_id);
-                            const correctPrice = menuItem?.priceEach ?? parseFloat(item.unit_value?.toString() || '0');
-
-                            const itemInfo = {
-                                menu_item_id: item.menu_item_id,
-                                menuItemName: menuItem?.name || 'Unknown',
-                                quantity: item.quantity,
-                                stored_unit_value: item.unit_value,
-                                correct_price: correctPrice,
-                                menuItemPriceEach: menuItem?.priceEach,
-                                menuItemValue: menuItem?.value,
-                                stored_total_value: item.total_value
-                            };
-                            const logMsg7 = `[Simulate Delivery] Copying item: ${JSON.stringify(itemInfo)}`;
-                            console.log(logMsg7);
-                            debugLogs.push(logMsg7);
-
-                            // Recalculate item total using correct price (priceEach) and quantity
-                            const itemTotal = correctPrice * item.quantity;
-                            calculatedTotalFromItems += itemTotal;
-
-                            const logMsg8 = `[Simulate Delivery] Calculated item total: ${correctPrice} * ${item.quantity} = ${itemTotal}`;
-                            console.log(logMsg8);
-                            debugLogs.push(logMsg8);
-
-                            const logMsg9 = `[Simulate Delivery] Running total from items: ${calculatedTotalFromItems}`;
-                            console.log(logMsg9);
-                            debugLogs.push(logMsg9);
-
-                            const newItem = {
-                                order_id: newOrder.id,
-                                vendor_selection_id: newVs.id,
-                                menu_item_id: item.menu_item_id,
-                                quantity: item.quantity,
-                                unit_value: correctPrice,
-                                total_value: itemTotal
-                            };
-
-                            const { error: itemError } = await supabase.from('order_items').insert(newItem);
-                            if (itemError) {
-                                const errorMsg2 = `[Simulate Delivery] Error inserting item: ${itemError.message}`;
-                                console.error(errorMsg2);
-                                debugLogs.push(errorMsg2);
-                                errors.push(errorMsg2);
-                            }
-                        }
+                    if (vsErr || !newVs) {
+                        // Rollback? or log error
+                        errors.push(`Failed VS for ${newOrder.id}`);
+                        continue;
                     }
 
-                    // Update order total_value if it doesn't match calculated total
-                    if (calculatedTotalFromItems > 0 && calculatedTotalFromItems !== vendorTotal) {
-                        const logMsg12 = `[Simulate Delivery] Mismatch detected! Updating order total_value from ${vendorTotal} to ${calculatedTotalFromItems}`;
-                        console.log(logMsg12);
-                        debugLogs.push(logMsg12);
+                    // Insert Items
+                    const itemsWithIds = itemsToInsert.map(i => ({
+                        // Ensure we only send expected columns. 
+                        // Check strictly what cols we have.
+                        menu_item_id: i.menu_item_id,
+                        quantity: i.quantity,
+                        unit_value: i.unit_value,
+                        total_value: i.total_value,
+                        vendor_selection_id: newVs.id,
+                        order_id: newOrder.id // Re-added: Required by schema
+                    }));
 
-                        const { error: updateError } = await supabase
-                            .from('orders')
-                            .update({ total_value: calculatedTotalFromItems })
-                            .eq('id', newOrder.id);
+                    // console.log(`[Debug] Inserting items for order ${newOrder.id}:`, JSON.stringify(itemsWithIds));
 
-                        if (updateError) {
-                            const errorMsg3 = `[Simulate Delivery] Error updating total_value: ${updateError.message}`;
-                            console.error(errorMsg3);
-                            debugLogs.push(errorMsg3);
-                            errors.push(errorMsg3);
-                        } else {
-                            const logMsg13 = `[Simulate Delivery] Successfully updated order total_value to ${calculatedTotalFromItems}`;
-                            console.log(logMsg13);
-                            debugLogs.push(logMsg13);
-                        }
+                    const { error: itemsErr } = await supabase.from('order_items').insert(itemsWithIds);
+                    if (itemsErr) {
+                        console.error(`[Create Error] Failed to insert items for Order ${newOrder.id} (VS ${newVs.id}):`, itemsErr);
+                        errors.push(`Failed items for Order ${newOrder.id}: ${itemsErr.message} (Code: ${itemsErr.code})`);
                     } else {
-                        const logMsg14 = `[Simulate Delivery] Total values match or calculated total is 0, no update needed`;
-                        console.log(logMsg14);
-                        debugLogs.push(logMsg14);
+                        // console.log(`[Success] Inserted ${itemsWithIds.length} items for Order ${newOrder.id}`);
                     }
 
-                    // Increment order number for next order
+                    console.log(`[Created] ${candidate.serviceType} Order #${nextOrderNumber} for ${candidate.clientId}`);
                     nextOrderNumber++;
                     processedCount++;
                 }
-            } else {
-                // For Box orders, use the original logic (one order per upcoming order)
-                // Check for duplicates: Does an order with this client_id and delivery date already exist?
-                const { count: duplicateCount, error: duplicateError } = await supabase
+
+            } else if (candidate.isBox) {
+                // Weekly Frequency Check for Boxes
+                // Logic: One box order per week per client.
+                const deliveryDate = new Date(deliveryDateStr);
+                const dayOfWeek = deliveryDate.getUTCDay(); // 0 (Sun) - 6 (Sat)
+                const startOfWeek = new Date(deliveryDate);
+                startOfWeek.setDate(deliveryDate.getDate() - dayOfWeek);
+                const endOfWeek = new Date(deliveryDate);
+                endOfWeek.setDate(deliveryDate.getDate() + (6 - dayOfWeek));
+
+                const startOfWeekStr = startOfWeek.toISOString().split('T')[0];
+                const endOfWeekStr = endOfWeek.toISOString().split('T')[0];
+
+                const { count } = await supabase
                     .from('orders')
                     .select('*', { count: 'exact', head: true })
-                    .eq('client_id', upOrder.client_id)
-                    .eq('scheduled_delivery_date', deliveryDateStr);
+                    .eq('client_id', candidate.clientId)
+                    .gte('scheduled_delivery_date', startOfWeekStr)
+                    .lte('scheduled_delivery_date', endOfWeekStr)
+                    .eq('service_type', 'Boxes');
 
-                if (duplicateError) {
-                    errors.push(`Error checking duplicates for order ${upOrder.id}: ${duplicateError.message}`);
-                }
-
-                if (duplicateCount && duplicateCount > 0) {
-                    const skipMsg = `Order ${upOrder.id}: Duplicate order already exists for client ${upOrder.client_id} on ${deliveryDateStr}`;
-                    console.warn(`[Simulate Delivery] SKIPPED: ${skipMsg}`);
-                    skippedReasons.push(skipMsg);
-                    skippedCount++;
+                if (count && count > 0) {
+                    trackSkip('Weekly Limit Reached', `Client ${candidate.clientId} Boxes already ordered for week ${startOfWeekStr}`);
                     continue;
                 }
 
-                // Create Order with calculated delivery date
-                const orderData: any = {
-                    client_id: upOrder.client_id,
-                    service_type: upOrder.service_type,
-                    case_id: upOrder.case_id || `CASE-${Date.now()}-${processedCount}`,
-                    status: 'scheduled',
-                    scheduled_delivery_date: deliveryDateStr,
-                    delivery_distribution: upOrder.delivery_distribution,
-                    total_value: upOrder.total_value,
-                    total_items: upOrder.total_items,
-                    notes: upOrder.notes,
-                    order_number: nextOrderNumber,
-                    created_at: (await getCurrentTime()).toISOString(),
-                    last_updated: (await getCurrentTime()).toISOString(),
-                    updated_by: upOrder.updated_by
-                };
+                const bo = candidate.sourceRef;
+                // Calculate Value: Assuming items key exists in box order { itemId: qty }
+                let boxTotal = 0;
+                const itemsToInsert: any[] = [];
+                // bo.items is { itemId: qty }
+                if (bo.items) {
+                    for (const [itemId, qty] of Object.entries(bo.items)) {
+                        const quantity = Number(qty);
+                        if (quantity > 0) {
+                            const menuItem = menuItems.find(mi => mi.id === itemId);
+                            const price = menuItem?.priceEach ?? menuItem?.value ?? 0;
+                            // For boxes, value logic might be quota based, but price is price.
+                            boxTotal += price * quantity;
+                        }
+                    }
+                }
+                // Mulitply by quantity of boxes?
+                const totalBoxValue = boxTotal * (bo.quantity || 1);
 
-                const logMsg2 = `[Simulate Delivery] Creating order with initial total_value: ${orderData.total_value}`;
-                console.log(logMsg2);
-                debugLogs.push(logMsg2);
-
-                const { data: newOrder, error: insertError } = await supabase
+                // Insert Order
+                const { data: newOrder, error: orderErr } = await supabase
                     .from('orders')
-                    .insert(orderData)
+                    .insert({
+                        client_id: candidate.clientId,
+                        service_type: 'Boxes',
+                        case_id: candidate.caseId || `CASE-${Date.now()}`,
+                        status: 'scheduled',
+                        scheduled_delivery_date: deliveryDateStr,
+                        total_value: totalBoxValue,
+                        total_items: bo.quantity || 1, // Store box count as items? or sum of contents? Usually box count
+                        order_number: nextOrderNumber,
+                        created_at: currentTime.toISOString(),
+                        last_updated: currentTime.toISOString()
+                    })
                     .select()
                     .single();
 
-                if (insertError || !newOrder) {
-                    const errorMsg = `Failed to create order for client ${upOrder.client_id}: ${insertError?.message}`;
-                    console.error(`[Simulate Delivery] ERROR: ${errorMsg}`);
-                    errors.push(errorMsg);
-                    skippedReasons.push(`Order ${upOrder.id}: Failed to create - ${insertError?.message || 'Unknown error'}`);
-                    skippedCount++;
+                if (orderErr) {
+                    console.error(`[Create Error] Failed to insert order for ${candidate.clientId}:`, orderErr);
+                    errors.push(`Failed to create order for ${candidate.clientId}: ${orderErr.message}`);
+                    continue;
+                }
+                if (!newOrder) {
+                    console.error(`[Create Error] Order inserted but returned null?? RLS? Client: ${candidate.clientId}`);
+                    errors.push(`Failed to retrieve created order for ${candidate.clientId} - RLS?`);
                     continue;
                 }
 
-                console.log(`[Simulate Delivery] SUCCESS: Created order ${newOrder.id} (Order #${nextOrderNumber}) for client ${upOrder.client_id} with delivery date ${deliveryDateStr}`);
-
-                // 2. Box Selections (Boxes)
-                const { data: boxSelections } = await supabase
-                    .from('upcoming_order_box_selections')
-                    .select('*')
-                    .eq('upcoming_order_id', upOrder.id);
-
-                if (boxSelections) {
-                    let calculatedTotalFromBoxes = 0;
-
-                    const newBoxSelections = boxSelections.map(bs => {
-                        // Calculate value based on contents
-                        let boxValue = 0;
-                        if (bs.items) {
-                            Object.entries(bs.items).forEach(([itemId, qty]) => {
-                                // Look up item in menuItems
-                                const menuItem = menuItems.find(mi => mi.id === itemId);
-                                if (menuItem) {
-                                    // Use stored price if available in itemPrices (not yet standard), or current price
-                                    // Since we don't have itemPrices on box selection usually, use current price
-                                    // Note: bs might have itemPrices if it was stored? The type definition says it might
-                                    // But usually it's just {itemId: qty}
-                                    const price = menuItem.priceEach || menuItem.value || 0;
-                                    boxValue += price * (qty as number);
-                                }
-                            });
-                        }
-
-                        // If no items or value 0, fallback to existing logic or maybe it's a fixed price box?
-                        // Assuming strictly per-item value for now based on request.
-                        // Only override if we calculated something (or if it was 0 and we want to enforce it)
-                        const finalValue = Math.max(boxValue, 0); // Ensure non-negative
-                        calculatedTotalFromBoxes += finalValue;
-
-                        return {
-                            order_id: newOrder.id,
-                            vendor_id: bs.vendor_id,
-                            quantity: bs.quantity,
-                            unit_value: finalValue, // Set calculated value
-                            total_value: finalValue, // Assuming quantity 1 usually? If quantity > 1, multiply?
-                            // Wait, bs.quantity is number of boxes.
-                            // If boxValue is per box:
-                            // total_value = boxValue * bs.quantity
-                            items: bs.items
-                        };
+                // Insert Box Selection
+                // We need to insert into order_box_selections
+                const { error: boxSelErr } = await supabase
+                    .from('order_box_selections')
+                    .insert({
+                        order_id: newOrder.id,
+                        vendor_id: bo.vendor_id,
+                        box_type_id: bo.box_type_id,
+                        quantity: bo.quantity,
+                        unit_value: boxTotal,
+                        total_value: totalBoxValue,
+                        items: bo.items
                     });
 
-                    // Correct the total value calculation for multiple boxes
-                    let finalBoxTotal = 0;
-                    newBoxSelections.forEach(nbs => {
-                        const lineTotal = nbs.unit_value * nbs.quantity; // unit * quantity
-                        nbs.total_value = lineTotal;
-                        finalBoxTotal += lineTotal;
-                    });
+                if (boxSelErr) errors.push(`Failed Box Sel for ${newOrder.id}`);
 
-
-                    await supabase.from('order_box_selections').insert(newBoxSelections);
-
-                    // Update order total if needed
-                    if (finalBoxTotal > 0 && finalBoxTotal !== upOrder.total_value) {
-                        const logMsgBox = `[Simulate Delivery] Box Order Mismatch! Updating total_value from ${upOrder.total_value} to ${finalBoxTotal}`;
-                        console.log(logMsgBox);
-                        debugLogs.push(logMsgBox);
-                        await supabase.from('orders').update({ total_value: finalBoxTotal }).eq('id', newOrder.id);
-                    }
-                }
-
-                // Increment order number for next order
+                console.log(`[Created] Box Order #${nextOrderNumber} for ${candidate.clientId}`);
                 nextOrderNumber++;
                 processedCount++;
             }
         }
 
-        console.log(`[Simulate Delivery] Complete: ${processedCount} created, ${skippedCount} skipped, ${errors.length} errors`);
-
-        const totalFound = upcomingOrders.length;
-        const message = totalFound === 0
-            ? 'No scheduled upcoming orders found.'
-            : `Simulation complete. Found ${totalFound} upcoming order(s). Created ${processedCount} order(s). Skipped ${skippedCount} order(s). (Ignored ${ineligibleCount} ineligible).`;
-
         return NextResponse.json({
             success: true,
-            message,
-            totalFound,
+            message: `Simulation complete. Processed ${processedCount} candidates. Created ${processedCount - skippedCount} orders. Skipped ${skippedCount}.`,
+            createdCount: processedCount - skippedCount,
+            totalFound: candidates.length,
             processedCount,
             skippedCount,
             ineligibleCount,
-            errors: errors.length > 0 ? errors : undefined,
-            skippedReasons: skippedReasons.length > 0 ? skippedReasons : undefined,
-            debugLogs: debugLogs.length > 0 ? debugLogs : undefined
+            errors: errors.length ? errors : undefined,
+            skippedReasons: skippedReasons.length ? skippedReasons : undefined,
+            skippedReasonCounts: skippedReasonsMap, // Grouped counts
+            debugLogs: debugLogs.length ? debugLogs : undefined
         });
 
-    } catch (error: any) {
-        return NextResponse.json({ success: false, message: error.message }, { status: 500 });
+    } catch (e: any) {
+        console.error('Simulate error:', e);
+        return NextResponse.json({ success: false, message: e.message }, { status: 500 });
     }
 }
 

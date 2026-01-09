@@ -29,6 +29,7 @@ function SimulationButton() {
         success: boolean;
         message: string;
         skippedReasons?: string[];
+        skippedReasonCounts?: Record<string, number>;
         errors?: string[];
         skippedCount?: number;
     } | null>(null);
@@ -152,6 +153,7 @@ function SimulationButton() {
                 success: data.success,
                 message: data.message || (data.success ? 'Simulation completed successfully.' : 'Simulation failed.'),
                 skippedReasons: data.skippedReasons,
+                skippedReasonCounts: data.skippedReasonCounts,
                 errors: data.errors,
                 skippedCount: data.skippedCount
             });
@@ -241,6 +243,27 @@ function SimulationButton() {
                         {simulationResult.success ? <Truck size={14} /> : <AlertCircle size={14} />}
                         {simulationResult.message}
                     </div>
+
+                    {/* Summary Counts */}
+                    {simulationResult.skippedReasonCounts && Object.keys(simulationResult.skippedReasonCounts).length > 0 && (
+                        <div style={{
+                            display: 'flex',
+                            flexDirection: 'column',
+                            gap: '0.25rem',
+                            padding: '0.5rem',
+                            backgroundColor: 'var(--bg-surface)',
+                            borderRadius: '0.25rem',
+                            border: '1px solid var(--border-color)'
+                        }}>
+                            <span style={{ fontWeight: 600, borderBottom: '1px solid var(--border-color)', paddingBottom: '0.25rem', marginBottom: '0.25rem' }}>Skipped Report</span>
+                            {Object.entries(simulationResult.skippedReasonCounts).map(([reason, count]) => (
+                                <div key={reason} style={{ display: 'flex', justifyContent: 'space-between' }}>
+                                    <span>{reason}</span>
+                                    <span style={{ fontWeight: 600 }}>{count as any}</span>
+                                </div>
+                            ))}
+                        </div>
+                    )}
 
                     {(simulationResult.skippedReasons && simulationResult.skippedReasons.length > 0) && (
                         <div style={{
@@ -553,27 +576,27 @@ export function Sidebar({
     // Fetch navigator logs and calculate units for today and this week
     const loadNavigatorUnits = useCallback(async () => {
         if (!userId) return;
-        
+
         setIsLoadingUnits(true);
         try {
             const logs = await getNavigatorLogs(userId);
-            
+
             // Get current time (using fake time if set)
             const now = currentTime;
             const today = new Date(now);
             today.setHours(0, 0, 0, 0);
-            
+
             // Calculate start of week (Sunday)
             const weekStart = new Date(today);
             const dayOfWeek = today.getDay(); // 0 = Sunday, 1 = Monday, etc.
             weekStart.setDate(today.getDate() - dayOfWeek);
             weekStart.setHours(0, 0, 0, 0);
-            
+
             // Calculate end of week (Saturday)
             const weekEnd = new Date(weekStart);
             weekEnd.setDate(weekStart.getDate() + 6);
             weekEnd.setHours(23, 59, 59, 999);
-            
+
             // Calculate today's units
             const todayTotal = logs
                 .filter(log => {
@@ -581,7 +604,7 @@ export function Sidebar({
                     return logDate >= today;
                 })
                 .reduce((sum, log) => sum + log.unitsAdded, 0);
-            
+
             // Calculate this week's units (Sunday-Saturday)
             const weekTotal = logs
                 .filter(log => {
@@ -589,7 +612,7 @@ export function Sidebar({
                     return logDate >= weekStart && logDate <= weekEnd;
                 })
                 .reduce((sum, log) => sum + log.unitsAdded, 0);
-            
+
             setTodayUnits(todayTotal);
             setWeekUnits(weekTotal);
         } catch (error) {

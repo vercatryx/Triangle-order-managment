@@ -4,6 +4,7 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { ClientProfile, ClientStatus, Navigator, Vendor, MenuItem, BoxType, ItemCategory, BoxQuota, MealCategory, MealItem } from '@/lib/types';
 import { syncCurrentOrderToUpcoming, getBoxQuotas, invalidateOrderData, updateClient, saveClientFoodOrder, saveClientMealOrder, saveClientBoxOrder } from '@/lib/actions';
+import { isMeetingMinimum, isExceedingMaximum, isMeetingExactTarget } from '@/lib/utils';
 import { Package, Truck, User, Loader2, Info, Plus, Calendar, AlertTriangle, Check, Trash2, Construction } from 'lucide-react';
 import styles from './ClientProfile.module.css';
 import FoodServiceWidget from './FoodServiceWidget';
@@ -268,103 +269,126 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
     const serviceType = client.serviceType;
 
     // Auto-Save Logic - matching ClientProfile exactly
-    // Helper to calculate total value (points/price) across all days - Mirrors Admin Logic but adapted for Portal state
-    function getCurrentOrderTotalValueAllDays(): number {
-        if (!orderConfig?.vendorSelections) return 0;
-        let total = 0;
-        for (const selection of orderConfig.vendorSelections) {
-            if (!selection.vendorId) continue;
+    // State-based Validation
+    const [validationStatus, setValidationStatus] = useState({
+        isValid: true,
+        totalValue: 0,
+        error: null as string | null
+    });
 
-            if (selection.itemsByDay && Object.keys(selection.itemsByDay).length > 0) {
-                // Multi-day
-                const activeDays = selection.selectedDeliveryDays || [];
-                for (const day of activeDays) {
-                    const dayItems = selection.itemsByDay[day] || {};
-                    for (const [itemId, qty] of Object.entries(dayItems)) {
-                        const item = menuItems.find(i => i.id === itemId);
-                        total += (item?.value || 0) * (Number(qty) || 0);
-                    }
-                }
-            } else if (selection.items) {
-                // Single/Flat Mode - Applied to ALL selected days (or clients days)
-                const daysCount = (selection.selectedDeliveryDays && selection.selectedDeliveryDays.length > 0)
-                    ? selection.selectedDeliveryDays.length
-                    : ((client as any).delivery_days?.length || 1);
+    // Real-time Validation Effect
+    useEffect(() => {
+        validateOrder();
+    }, [orderConfig, client.approvedMealsPerWeek, client.serviceType]);
 
-                for (const [itemId, qty] of Object.entries(selection.items)) {
-                    const item = menuItems.find(i => i.id === itemId);
-                    // Calculate per-item total (Value * Qty * Days)
-                    total += (item?.value || 0) * (Number(qty) || 0) * daysCount;
-                }
-            }
-        }
-        return total;
-    }
-
-    // Manual Save Logic
-    const handleSave = async () => {
+    function validateOrder() {
         if (!client || !orderConfig) return;
-
-        // For Food clients, caseId is required. For Boxes, it's optional
-        if (serviceType === 'Food' && !caseId) return;
-
-        // --- VALIDATION START ---
+        const serviceType = client.serviceType;
+        let isValid = true;
+        let error: string | null = null;
+        let totalValue = 0;
 
         // 1. Food Service Validation (Limits & Minimums)
         if (serviceType === 'Food' && orderConfig.vendorSelections) {
 
-            // Check Approved Limit (Value-based)
-            const totalValue = getCurrentOrderTotalValueAllDays();
-            const limit = client.approvedMealsPerWeek || 0;
-
-            if (limit > 0 && totalValue > limit) {
-                setValidationError(`Total value selected (${totalValue.toFixed(2)}) exceeds approved value per week (${limit}). Please reduce your order.`);
-                return;
-            }
-
-            // Check Vendor Minimums (Per Day / Per Delivery)
+            // Calculate Total Value
+            console.log('--- [VALIDATION TRACE START] ---');
             for (const selection of orderConfig.vendorSelections) {
                 if (!selection.vendorId) continue;
-                const vendor = vendors.find(v => v.id === selection.vendorId);
-                if (!vendor) continue;
-                const minMeals = vendor.minimumMeals || 0;
-                if (minMeals === 0) continue;
 
-                if (selection.itemsByDay && Object.keys(selection.itemsByDay).length > 0) {
-                    // Multi-day: Check each selected day independently
+                console.log(`Processing Vendor: ${selection.vendorId}`);
+
+                if (selection.itemsByDay && selection.selectedDeliveryDays && selection.selectedDeliveryDays.length > 0) {
+                    // Multi-day
                     const activeDays = selection.selectedDeliveryDays || [];
+                    console.log(`  > Mode: MULTI-DAY. Days: ${activeDays.join(', ')}`);
+
                     for (const day of activeDays) {
                         const dayItems = selection.itemsByDay[day] || {};
-
-                        let dayValue = 0;
+                        console.log(`    > Day: ${day}, Items:`, dayItems);
                         for (const [itemId, qty] of Object.entries(dayItems)) {
                             const item = menuItems.find(i => i.id === itemId);
-                            dayValue += (item?.value || 0) * (Number(qty) || 0);
-                        }
-
-                        if (dayValue < minMeals) {
-                            setValidationError(`${vendor.name} requires a minimum value of ${minMeals} for ${day}. You have selected ${dayValue}.`);
-                            return;
+                            const val = (item?.value || 0);
+                            const q = (Number(qty) || 0);
+                            const subtotal = val * q;
+                            totalValue += subtotal;
+                            console.log(`      + Item ${item?.name} (${itemId}): Val ${val} * Qty ${q} = ${subtotal}. (Running Total: ${totalValue})`);
                         }
                     }
                 } else if (selection.items) {
-                    // Single/Flat Mode: The items represent the "per delivery" definition
-                    let countValue = 0;
+                    // Single/Flat Mode
+                    const daysCount = (selection.selectedDeliveryDays && selection.selectedDeliveryDays.length > 0)
+                        ? selection.selectedDeliveryDays.length
+                        : ((client as any).delivery_days?.length || 1);
+
+                    console.log(`  > Mode: FLAT. Days Count: ${daysCount} (Source: ${selection.selectedDeliveryDays && selection.selectedDeliveryDays.length > 0 ? 'Selection' : 'Client Default'})`);
+                    console.log(`  > Selection Days:`, selection.selectedDeliveryDays);
+                    console.log(`  > Client Days:`, (client as any).delivery_days);
+
                     for (const [itemId, qty] of Object.entries(selection.items)) {
                         const item = menuItems.find(i => i.id === itemId);
-                        countValue += (item?.value || 0) * (Number(qty) || 0);
+                        // Using standardized calculation consistent with display requirements
+                        const val = (item?.value || 0);
+                        const q = (Number(qty) || 0);
+                        const subtotal = val * q * daysCount;
+                        totalValue += subtotal;
+                        console.log(`      + Item ${item?.name} (${itemId}): Val ${val} * Qty ${q} * Days ${daysCount} = ${subtotal}. (Running Total: ${totalValue})`);
                     }
+                }
+            }
+            console.log(`--- [VALIDATION TRACE END] Final Total: ${totalValue} ---`);
 
-                    if (countValue < minMeals) {
-                        setValidationError(`${vendor.name} requires a minimum value of ${minMeals} per delivery. You have selected ${countValue}.`);
-                        return;
+            // Check Approved Limit
+            const limit = client.approvedMealsPerWeek || 0;
+            if (limit > 0 && isExceedingMaximum(totalValue, limit)) {
+                error = `Total value selected (${totalValue.toFixed(2)}) exceeds approved value per week (${limit}). Please reduce your order.`;
+                isValid = false;
+            }
+
+            // Check Vendor Minimums (if generic limit check passed)
+            if (isValid) {
+                for (const selection of orderConfig.vendorSelections) {
+                    if (!selection.vendorId) continue;
+                    const vendor = vendors.find(v => v.id === selection.vendorId);
+                    if (!vendor) continue;
+                    const minMeals = vendor.minimumMeals || 0;
+                    if (minMeals === 0) continue;
+
+                    if (selection.itemsByDay && Object.keys(selection.itemsByDay).length > 0) {
+                        const activeDays = selection.selectedDeliveryDays || [];
+                        for (const day of activeDays) {
+                            const dayItems = selection.itemsByDay[day] || {};
+                            let dayValue = 0;
+                            for (const [itemId, qty] of Object.entries(dayItems)) {
+                                const item = menuItems.find(i => i.id === itemId);
+                                dayValue += (item?.value || 0) * (Number(qty) || 0);
+                            }
+
+                            if (!isMeetingMinimum(dayValue, minMeals)) {
+                                error = `${vendor.name} requires a minimum value of ${minMeals} for ${day}. You have selected ${dayValue}.`;
+                                isValid = false;
+                                break;
+                            }
+                        }
+                    } else if (selection.items) {
+                        let countValue = 0;
+                        for (const [itemId, qty] of Object.entries(selection.items)) {
+                            const item = menuItems.find(i => i.id === itemId);
+                            countValue += (item?.value || 0) * (Number(qty) || 0);
+                        }
+
+                        if (!isMeetingMinimum(countValue, minMeals)) {
+                            error = `${vendor.name} requires a minimum value of ${minMeals} per delivery. You have selected ${countValue}.`;
+                            isValid = false;
+                        }
                     }
+                    if (!isValid) break;
                 }
             }
         }
 
-        // 2. Meal Service Validation (Exact Category Values)
-        if (orderConfig.mealSelections) {
+        // 2. Meal Service Validation
+        if (isValid && orderConfig.mealSelections) {
             for (const [mealType, config] of Object.entries(orderConfig.mealSelections) as [string, any][]) {
                 const subCategories = mealCategories.filter(c => c.mealType === mealType);
                 for (const subCat of subCategories) {
@@ -379,15 +403,87 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
                                 }
                             }
                         }
-                        if (totalSelectedValue !== subCat.setValue) {
-                            setValidationError(`${subCat.name}: Selected ${totalSelectedValue}, but required is ${subCat.setValue}.`);
-                            return;
+                        if (!isMeetingExactTarget(totalSelectedValue, subCat.setValue)) {
+                            error = `${subCat.name}: Selected ${totalSelectedValue}, but required is ${subCat.setValue}.`;
+                            isValid = false;
+                            break;
+                        }
+                    }
+                }
+                if (!isValid) break;
+            }
+        }
+
+        setValidationStatus({ isValid, totalValue, error });
+        setValidationError(error);
+    }
+
+
+    // Manual Save Logic
+    const handleSave = async () => {
+        if (!client || !orderConfig) return;
+
+        // For Food clients, caseId is required. For Boxes, it's optional
+        if (serviceType === 'Food' && !caseId) return;
+
+        // Use Pre-calculated validation status
+        if (!validationStatus.isValid) {
+            // Error is already in state/display
+            alert(`Save Blocked: ${validationStatus.error} \n\nCheck the Console for calculation details.`);
+            console.error("SAVE BLOCKED. Validation Status:", validationStatus);
+            console.log("Order Config at blocked save:", orderConfig);
+
+            // RE-RUN LOGGING LOOP MANUALLY TO SHOW USER
+            console.log('--- [MANUAL SAVE VALIDATION TRACE START] ---');
+            let manualTotal = 0;
+            if (serviceType === 'Food' && orderConfig.vendorSelections) {
+                for (const selection of orderConfig.vendorSelections) {
+                    if (!selection.vendorId) continue;
+
+                    console.log(`Processing Vendor: ${selection.vendorId}`);
+
+                    if (selection.itemsByDay && selection.selectedDeliveryDays && selection.selectedDeliveryDays.length > 0) {
+                        // Multi-day
+                        const activeDays = selection.selectedDeliveryDays || [];
+                        console.log(`  > Mode: MULTI-DAY. Days: ${activeDays.join(', ')}`);
+
+                        for (const day of activeDays) {
+                            const dayItems = selection.itemsByDay[day] || {};
+                            console.log(`    > Day: ${day}, Items:`, dayItems);
+                            for (const [itemId, qty] of Object.entries(dayItems)) {
+                                const item = menuItems.find(i => i.id === itemId);
+                                const val = (item?.value || 0);
+                                const q = (Number(qty) || 0);
+                                const subtotal = val * q;
+                                manualTotal += subtotal;
+                                console.log(`      + Item ${item?.name} (${itemId}): Val ${val} * Qty ${q} = ${subtotal}. (Running Total: ${manualTotal})`);
+                            }
+                        }
+                    } else if (selection.items) {
+                        // Single/Flat Mode
+                        const daysCount = (selection.selectedDeliveryDays && selection.selectedDeliveryDays.length > 0)
+                            ? selection.selectedDeliveryDays.length
+                            : ((client as any).delivery_days?.length || 1);
+
+                        console.log(`  > Mode: FLAT. Days Count: ${daysCount} (Source: ${selection.selectedDeliveryDays && selection.selectedDeliveryDays.length > 0 ? 'Selection' : 'Client Default'})`);
+                        console.log(`  > Selection Days:`, selection.selectedDeliveryDays);
+                        console.log(`  > Client Days:`, (client as any).delivery_days);
+
+                        for (const [itemId, qty] of Object.entries(selection.items)) {
+                            const item = menuItems.find(i => i.id === itemId);
+                            const val = (item?.value || 0);
+                            const q = (Number(qty) || 0);
+                            const subtotal = val * q * daysCount;
+                            manualTotal += subtotal;
+                            console.log(`      + Item ${item?.name} (${itemId}): Val ${val} * Qty ${q} * Days ${daysCount} = ${subtotal}. (Running Total: ${manualTotal})`);
                         }
                     }
                 }
             }
+            console.log(`--- [MANUAL SAVE VALIDATION TRACE END] Final Total: ${manualTotal} ---`);
+
+            return;
         }
-        // --- VALIDATION END ---
 
         try {
             // Ensure structure is correct and convert per-vendor delivery days to deliveryDayOrders format
@@ -787,6 +883,7 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
                             mealCategories={mealCategories}
                             mealItems={mealItems}
                             isClientPortal={true}
+                            validationStatus={validationStatus}
                         />
                     )}
 

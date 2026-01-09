@@ -2,6 +2,7 @@
 
 import React from 'react';
 import { ClientProfile, Vendor, MenuItem, MealCategory, MealItem } from '@/lib/types';
+import { isMeetingMinimum, isMeetingExactTarget } from '@/lib/utils';
 import { Plus, Trash2, Calendar, Check, AlertTriangle } from 'lucide-react';
 import styles from './ClientProfile.module.css'; // Assuming we can reuse styles
 
@@ -15,6 +16,11 @@ interface Props {
     mealItems: MealItem[];
     settings?: any; // AppSettings for take effect date
     isClientPortal?: boolean;
+    validationStatus?: {
+        isValid: boolean;
+        totalValue: number;
+        error: string | null;
+    };
 }
 
 export default function FoodServiceWidget({
@@ -26,7 +32,8 @@ export default function FoodServiceWidget({
     mealCategories,
     mealItems,
     settings,
-    isClientPortal
+    isClientPortal,
+    validationStatus
 }: Props) {
 
     // -- LOGIC HELPERS --
@@ -58,7 +65,7 @@ export default function FoodServiceWidget({
 
     function getVendorMealCount(vendorId: string, selection: any): number {
         if (!selection) return 0;
-        // Handle per-vendor delivery days (itemsByDay)
+        // Multi-day logic
         if (selection.itemsByDay && selection.selectedDeliveryDays) {
             let total = 0;
             for (const deliveryDay of selection.selectedDeliveryDays) {
@@ -67,19 +74,28 @@ export default function FoodServiceWidget({
                     const item = menuItems.find(i => i.id === itemId);
                     // Use item.value for meal count
                     const multiplier = item ? (item.value || 0) : 0;
-                    return sum + ((Number(qty) || 0) * multiplier);
+                    const val = ((Number(qty) || 0) * multiplier);
+                    return sum + val;
                 }, 0);
             }
             return total;
         }
+
         // Normal items structure
         if (!selection.items) return 0;
         let total = 0;
+
+        // Calculate Days Count for Flat Mode multiplier (matching ClientPortalInterface validation)
+        const daysCount = (selection.selectedDeliveryDays && selection.selectedDeliveryDays.length > 0)
+            ? selection.selectedDeliveryDays.length
+            : ((client as any).delivery_days?.length || 1);
+
         for (const [itemId, qty] of Object.entries(selection.items)) {
             const item = menuItems.find(i => i.id === itemId);
             // Use item.value for meal count
             const multiplier = item ? (item.value || 0) : 0;
-            total += ((qty as number) || 0) * multiplier;
+            const val = ((qty as number) || 0) * multiplier * daysCount;
+            total += val;
         }
         return total;
     }
@@ -96,6 +112,11 @@ export default function FoodServiceWidget({
     }
 
     function getTotalMealCountAllDays(): number {
+        // PREFER PASSED VALIDATION STATUS if available
+        if (validationStatus) {
+            return validationStatus.totalValue;
+        }
+
         let total = 0;
 
         // If editing in 'vendorSelections' mode (transient state before save)
@@ -353,7 +374,7 @@ export default function FoodServiceWidget({
             // Calculate vendor meal count
             const vendorMealCount = getVendorMealCount(vendorId, selection);
             const vendorMinimum = vendor?.minimumMeals || 0;
-            const meetsMinimum = vendorMinimum === 0 || vendorMealCount >= vendorMinimum;
+            const meetsMinimum = vendorMinimum === 0 || isMeetingMinimum(vendorMealCount, vendorMinimum);
 
             // Get vendor's delivery days
             const vendorDeliveryDays = vendor?.deliveryDays || [];
@@ -469,7 +490,7 @@ export default function FoodServiceWidget({
                                                 </span>
                                                 {vendorMinimum > 0 && (() => {
                                                     const dayCount = getVendorMealCountForDay(vendorId, selection, day);
-                                                    const dayMet = dayCount >= vendorMinimum;
+                                                    const dayMet = isMeetingMinimum(dayCount, vendorMinimum);
                                                     return (
                                                         <span style={{
                                                             display: 'flex',
@@ -641,7 +662,7 @@ export default function FoodServiceWidget({
                                 }
                             }
                             const requiredValue = subCat.setValue;
-                            const isInvalid = requiredValue !== undefined && requiredValue !== null && categorySelectedValue !== requiredValue;
+                            const isInvalid = requiredValue !== undefined && requiredValue !== null && !isMeetingExactTarget(categorySelectedValue, requiredValue);
 
                             return (
                                 <div key={subCat.id} style={{

@@ -179,7 +179,7 @@
 
 .ordersList {
     width: 100%;
-    overflow-x: hidden;
+    overflow-x: auto;
 }
 
 .ordersHeader {
@@ -193,6 +193,8 @@
     width: 100%;
     gap: 1rem;
     box-sizing: border-box;
+    white-space: nowrap;
+    min-width: fit-content;
 }
 
 .orderRow {
@@ -205,7 +207,8 @@
     width: 100%;
     gap: 1rem;
     box-sizing: border-box;
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
+    min-width: fit-content;
 }
 
 .orderRow:last-child {

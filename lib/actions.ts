@@ -3751,7 +3751,7 @@ async function processVendorOrderDetails(order: any, vendorId: string, isUpcomin
         boxSelection: null
     };
 
-    if (order.service_type === 'Food') {
+    if (order.service_type === 'Food' || order.service_type === 'Meal') {
         const { data: vs } = await supabase
             .from(vendorSelectionsTable)
             .select('id')
@@ -4698,6 +4698,8 @@ export async function getOrdersPaginated(page: number, pageSize: number, filter?
         return { orders: [], total: 0 };
     }
 
+    // console.log(`[getOrdersPaginated] Fetched ${data?.length} orders from table 'orders'. Total count: ${count}`);
+
     return {
         orders: (data || []).map((o: any) => ({
             ...o,
@@ -4734,22 +4736,25 @@ export async function getOrderById(orderId: string) {
         .single();
 
     // Fetch reference data
-    const [menuItems, vendors, boxTypes, equipmentList, categories] = await Promise.all([
+    const [menuItems, vendors, boxTypes, equipmentList, categories, mealItems] = await Promise.all([
         getMenuItems(),
         getVendors(),
         getBoxTypes(),
         getEquipment(),
-        getCategories()
+        getCategories(),
+        getMealItems()
     ]);
 
     let orderDetails: any = undefined;
 
-    if (orderData.service_type === 'Food') {
+    if (orderData.service_type === 'Food' || orderData.service_type === 'Meal') {
         // Fetch vendor selections and items
         const { data: vendorSelections } = await supabase
             .from('order_vendor_selections')
             .select('*')
             .eq('order_id', orderId);
+
+        console.log(`[getOrderById] Order ${orderId} (${orderData.service_type}): Found ${vendorSelections?.length} vendor selections`);
 
         if (vendorSelections && vendorSelections.length > 0) {
             const vendorSelectionsWithItems = await Promise.all(
@@ -4759,9 +4764,22 @@ export async function getOrderById(orderId: string) {
                         .select('*')
                         .eq('vendor_selection_id', vs.id);
 
+                    console.log(`[getOrderById] VS ${vs.id}: Found ${items?.length} items in DB`);
+                    if (items && items.length > 0) {
+                        console.log(`[getOrderById] First item:`, items[0]);
+                    }
+
                     const vendor = vendors.find(v => v.id === vs.vendor_id);
                     const itemsWithDetails = (items || []).map((item: any) => {
-                        const menuItem = menuItems.find(mi => mi.id === item.menu_item_id);
+                        let menuItem: any = menuItems.find(mi => mi.id === item.menu_item_id);
+                        if (!menuItem) {
+                            menuItem = mealItems.find(mi => mi.id === item.menu_item_id);
+                        }
+
+                        if (!menuItem) {
+                            console.warn(`[getOrderById] Item not found in menu or meal items: ${item.menu_item_id}`);
+                        }
+
                         const itemPrice = menuItem?.priceEach ?? parseFloat(item.unit_value);
                         const quantity = item.quantity;
                         const itemTotal = itemPrice * quantity;

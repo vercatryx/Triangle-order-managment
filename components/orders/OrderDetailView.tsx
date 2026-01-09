@@ -50,9 +50,10 @@ export function OrderDetailView({ order }: OrderDetailViewProps) {
     };
 
     const renderOrderItems = () => {
+        console.log('[OrderDetailView] Rendering items for order:', order);
         if (!order.orderDetails) return null;
 
-        if (order.orderDetails.serviceType === 'Food' && order.orderDetails.vendorSelections) {
+        if ((order.orderDetails.serviceType === 'Food' || order.orderDetails.serviceType === 'Meal') && order.orderDetails.vendorSelections) {
             return (
                 <div className={styles.orderItemsSection}>
                     <div className={styles.sectionHeader}>

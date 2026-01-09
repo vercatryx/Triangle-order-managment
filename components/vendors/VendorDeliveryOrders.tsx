@@ -3,10 +3,11 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { Vendor, ClientProfile, MenuItem, BoxType, ItemCategory } from '@/lib/types';
-import { getVendors, getClients, getMenuItems, getBoxTypes, getCategories } from '@/lib/cached-data';
+import { getVendors, getClients, getMenuItems, getBoxTypes, getCategories, getMealItems } from '@/lib/cached-data';
 import { getOrdersByVendor, saveDeliveryProofUrlAndProcessOrder, updateOrderDeliveryProof, isOrderUnderVendor, orderHasDeliveryProof, resolveOrderId } from '@/lib/actions';
-import { ArrowLeft, Calendar, Package, Clock, ShoppingCart, Upload, ChevronDown, ChevronUp, Save, X, CheckCircle, AlertCircle, Download, XCircle, FileText } from 'lucide-react';
+import { ArrowLeft, Calendar, Package, Clock, ShoppingCart, Upload, ChevronDown, ChevronUp, Save, X, CheckCircle, AlertCircle, Download, XCircle, FileText, ChevronsDown, ChevronsUp } from 'lucide-react';
 import { generateLabelsPDF } from '@/lib/label-utils';
+import * as XLSX from 'xlsx';
 import styles from './VendorDetail.module.css';
 
 interface Props {
@@ -21,6 +22,7 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate, isVendorView }: P
     const [orders, setOrders] = useState<any[]>([]);
     const [clients, setClients] = useState<ClientProfile[]>([]);
     const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
+    const [mealItems, setMealItems] = useState<any[]>([]);
     const [boxTypes, setBoxTypes] = useState<BoxType[]>([]);
     const [categories, setCategories] = useState<ItemCategory[]>([]);
     const [isLoading, setIsLoading] = useState(true);
@@ -72,11 +74,12 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate, isVendorView }: P
     async function loadData() {
         setIsLoading(true);
         try {
-            const [vendorsData, ordersData, clientsData, menuItemsData, boxTypesData, categoriesData] = await Promise.all([
+            const [vendorsData, ordersData, clientsData, menuItemsData, mealItemsData, boxTypesData, categoriesData] = await Promise.all([
                 getVendors(),
                 getOrdersByVendor(vendorId),
                 getClients(),
                 getMenuItems(),
+                getMealItems(),
                 getBoxTypes(),
                 getCategories()
             ]);
@@ -97,12 +100,16 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate, isVendorView }: P
             });
 
             // Expand all orders by default so items are visible
-            const allOrderKeys = new Set(filteredOrders.map(order => `${order.orderType}-${order.id}`));
-            setExpandedOrders(allOrderKeys);
+            setExpandedOrders(new Set());
 
             setOrders(filteredOrders);
+            console.log(`[VendorDeliveryOrders] Loaded ${filteredOrders.length} orders for ${deliveryDate}`);
+            if (filteredOrders.length > 0) {
+                console.log('[VendorDeliveryOrders] First order:', filteredOrders[0]);
+            }
             setClients(clientsData);
             setMenuItems(menuItemsData);
+            setMealItems(mealItemsData);
             setBoxTypes(boxTypesData);
             setCategories(categoriesData);
 
@@ -175,6 +182,17 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate, isVendorView }: P
         setExpandedOrders(newExpanded);
     }
 
+    function toggleAllOrders() {
+        const allKeys = orders.map(order => `${order.orderType}-${order.id}`);
+        const allExpanded = allKeys.every(key => expandedOrders.has(key));
+
+        if (allExpanded) {
+            setExpandedOrders(new Set());
+        } else {
+            setExpandedOrders(new Set(allKeys));
+        }
+    }
+
     function escapeCSV(value: any): string {
         if (value === null || value === undefined) return '';
         const stringValue = String(value);
@@ -185,35 +203,32 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate, isVendorView }: P
         return stringValue;
     }
 
-    function formatOrderedItemsForCSV(order: any): string {
-        if (order.service_type === 'Food') {
+    function getParsedOrderItems(order: any): { name: string; quantity: number; category?: string }[] {
+        if (order.service_type === 'Food' || order.service_type === 'Meal') {
             const items = order.items || [];
-            if (items.length === 0) {
-                return 'No items';
-            }
+            if (items.length === 0) return [];
+
             return items.map((item: any) => {
-                const menuItem = menuItems.find(mi => mi.id === item.menu_item_id);
+                let menuItem: any = menuItems.find(mi => mi.id === item.menu_item_id);
+                if (!menuItem) {
+                    menuItem = mealItems.find(mi => mi.id === item.menu_item_id);
+                }
                 const itemName = menuItem?.name || item.menuItemName || 'Unknown Item';
                 const quantity = parseInt(item.quantity || 0);
-                return `${itemName} (Qty: ${quantity})`;
-            }).join('; ');
+                return { name: itemName, quantity, category: menuItem?.categoryId || undefined };
+            });
         } else if (order.service_type === 'Boxes') {
             const boxSelection = order.boxSelection;
-            if (!boxSelection) {
-                return 'No box selection';
-            }
+            if (!boxSelection) return [];
+
             const items = boxSelection.items || {};
             const itemEntries = Object.entries(items);
-
-            // Process items and filter out zero-quantity items, group by category
-            const itemsByCategory: { [categoryId: string]: string[] } = {};
-            const uncategorizedItems: string[] = [];
+            const result: { name: string; quantity: number; category?: string }[] = [];
 
             for (const [itemId, quantityOrObj] of itemEntries) {
                 const menuItem = menuItems.find(mi => mi.id === itemId);
                 const itemName = menuItem?.name || 'Unknown Item';
 
-                // Handle both formats: { itemId: quantity } or { itemId: { quantity: X, price: Y } }
                 let qty = 0;
                 if (typeof quantityOrObj === 'number') {
                     qty = quantityOrObj;
@@ -224,45 +239,14 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate, isVendorView }: P
                 }
 
                 if (qty > 0) {
-                    const itemString = `${itemName} (Qty: ${qty})`;
-                    const categoryId = menuItem?.categoryId || null;
-
-                    if (categoryId) {
-                        if (!itemsByCategory[categoryId]) {
-                            itemsByCategory[categoryId] = [];
-                        }
-                        itemsByCategory[categoryId].push(itemString);
-                    } else {
-                        uncategorizedItems.push(itemString);
-                    }
+                    result.push({
+                        name: itemName,
+                        quantity: qty,
+                        category: menuItem?.categoryId || undefined
+                    });
                 }
             }
-
-            const boxQuantity = boxSelection.quantity || 1;
-            const parts: string[] = [];
-
-            // Add items by category
-            const sortedCategoryIds = Object.keys(itemsByCategory).sort((a, b) => {
-                const catA = categories.find(c => c.id === a);
-                const catB = categories.find(c => c.id === b);
-                return (catA?.name || '').localeCompare(catB?.name || '');
-            });
-
-            for (const categoryId of sortedCategoryIds) {
-                const category = categories.find(c => c.id === categoryId);
-                const categoryName = category?.name || 'Unknown Category';
-                parts.push(`${categoryName}: ${itemsByCategory[categoryId].join(', ')}`);
-            }
-
-            if (uncategorizedItems.length > 0) {
-                parts.push(`Uncategorized: ${uncategorizedItems.join(', ')}`);
-            }
-
-            if (parts.length === 0) {
-                return '(No items)';
-            }
-
-            return parts.join('; ');
+            return result;
         } else if (order.service_type === 'Equipment') {
             // Equipment orders - details from equipmentSelection or notes
             let equipmentDetails = order.equipmentSelection;
@@ -280,21 +264,71 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate, isVendorView }: P
             }
 
             if (!equipmentDetails) {
-                return 'No equipment details';
+                return [{ name: 'No equipment details', quantity: 1 }];
             }
 
-            return equipmentDetails.equipmentName || 'Unknown Equipment';
+            return [{ name: equipmentDetails.equipmentName || 'Unknown Equipment', quantity: 1 }];
         }
-        return 'No items available';
+
+        return [];
     }
 
-    function exportOrdersToCSV() {
+    function formatOrderedItemsForCSV(order: any): string {
+        const parsedItems = getParsedOrderItems(order);
+        if (parsedItems.length === 0) {
+            if (order.service_type === 'Boxes' && order.boxSelection?.items && Object.keys(order.boxSelection.items).length === 0) return '(No items)';
+            if (order.service_type === 'Food' || order.service_type === 'Meal') return 'No items';
+            if (order.service_type === 'Equipment') return 'No items available'; // Fallback
+            return 'No items available';
+        }
+
+        if (order.service_type === 'Boxes') {
+            // Group by category for Boxes standard output string
+            const itemsByCategory: { [categoryId: string]: string[] } = {};
+            const uncategorizedItems: string[] = [];
+
+            parsedItems.forEach(item => {
+                const itemString = `${item.name} (Qty: ${item.quantity})`;
+                if (item.category) {
+                    if (!itemsByCategory[item.category]) itemsByCategory[item.category] = [];
+                    itemsByCategory[item.category].push(itemString);
+                } else {
+                    uncategorizedItems.push(itemString);
+                }
+            });
+
+            const parts: string[] = [];
+            // Add items by category
+            const sortedCategoryIds = Object.keys(itemsByCategory).sort((a, b) => {
+                const catA = categories.find(c => c.id === a);
+                const catB = categories.find(c => c.id === b);
+                return (catA?.name || '').localeCompare(catB?.name || '');
+            });
+
+            for (const categoryId of sortedCategoryIds) {
+                const category = categories.find(c => c.id === categoryId);
+                const categoryName = category?.name || 'Unknown Category';
+                parts.push(`${categoryName}: ${itemsByCategory[categoryId].join(', ')}`);
+            }
+
+            if (uncategorizedItems.length > 0) {
+                parts.push(`Uncategorized: ${uncategorizedItems.join(', ')}`);
+            }
+
+            return parts.join('; ');
+        }
+
+        // Default for Food, Meal, Equipment
+        return parsedItems.map(item => `${item.name} (Qty: ${item.quantity})`).join('; ');
+    }
+
+    function exportOrdersToExcel() {
         if (orders.length === 0) {
             alert('No orders to export');
             return;
         }
 
-        // Define CSV headers
+        /* --- Sheet 1: Orders Summary (Original CSV format) --- */
         const headers = [
             'Order Number',
             'Order ID',
@@ -308,8 +342,7 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate, isVendorView }: P
             'Delivery Proof URL'
         ];
 
-        // Convert orders to CSV rows
-        const rows = orders.map(order => [
+        const summaryData = orders.map(order => [
             order.orderNumber || '',
             order.id || '',
             order.client_id || '',
@@ -322,24 +355,48 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate, isVendorView }: P
             order.delivery_proof_url || ''
         ]);
 
-        // Combine headers and rows
-        const csvContent = [
-            headers.map(escapeCSV).join(','),
-            ...rows.map(row => row.map(escapeCSV).join(','))
-        ].join('\n');
+        const wsSummary = XLSX.utils.aoa_to_sheet([headers, ...summaryData]);
 
-        // Create blob and download
-        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-        const link = document.createElement('a');
-        const url = URL.createObjectURL(blob);
+        /* --- Sheet 2: Detailed Items per Client --- */
+        const detailsData: any[][] = [];
+
+        orders.forEach(order => {
+            const clientName = getClientName(order.client_id);
+            const items = getParsedOrderItems(order);
+
+            // Header for this order block
+            detailsData.push([clientName, order.client_id]);
+            detailsData.push(['Item Name', 'Quantity']);
+
+            // Items
+            if (items.length > 0) {
+                items.forEach(item => {
+                    detailsData.push([item.name, item.quantity]);
+                });
+            } else {
+                detailsData.push(['No items found', '']);
+            }
+
+            // Empty row for separation
+            detailsData.push([]);
+        });
+
+        const wsDetails = XLSX.utils.aoa_to_sheet(detailsData);
+
+        // Auto-width columns for readability
+        const wscols = [
+            { wch: 30 }, // Client Name / Item Name
+            { wch: 40 }, // ID / Quantity (wide for IDs)
+        ];
+        wsDetails['!cols'] = wscols;
+
+        /* --- Workbook Creation --- */
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, wsSummary, "Orders");
+        XLSX.utils.book_append_sheet(wb, wsDetails, "Order Items");
+
         const formattedDate = formatDate(deliveryDate).replace(/\s/g, '_');
-        link.setAttribute('href', url);
-        link.setAttribute('download', `${vendor?.name || 'vendor'}_orders_${formattedDate}.csv`);
-        link.style.visibility = 'hidden';
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        URL.revokeObjectURL(url);
+        XLSX.writeFile(wb, `${vendor?.name || 'vendor'}_orders_${formattedDate}.xlsx`);
     }
 
     async function exportLabelsPDF() {
@@ -689,8 +746,9 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate, isVendorView }: P
     }
 
     function renderOrderItems(order: any) {
-        if (order.service_type === 'Food') {
+        if (order.service_type === 'Food' || order.service_type === 'Meal') {
             const items = order.items || [];
+            console.log(`[VendorDeliveryOrders] Rendering Food/Meal items for order ${order.id}:`, items);
 
             if (!items || items.length === 0) {
                 return (
@@ -718,13 +776,16 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate, isVendorView }: P
             // Calculate total value
             let totalValue = 0;
             items.forEach((item: any) => {
-                const menuItem = menuItems.find(mi => mi.id === item.menu_item_id);
+                let menuItem: any = menuItems.find(mi => mi.id === item.menu_item_id);
+                if (!menuItem) {
+                    menuItem = mealItems.find(mi => mi.id === item.menu_item_id);
+                }
                 const quantity = parseInt(item.quantity || 0);
-                const unitValue = item.unit_value 
-                    ? parseFloat(item.unit_value) 
+                const unitValue = item.unit_value
+                    ? parseFloat(item.unit_value)
                     : (menuItem?.value ?? 0);
-                const itemTotal = item.total_value 
-                    ? parseFloat(item.total_value) 
+                const itemTotal = item.total_value
+                    ? parseFloat(item.total_value)
                     : (unitValue * quantity);
                 totalValue += itemTotal;
             });
@@ -736,31 +797,32 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate, isVendorView }: P
                             <tr>
                                 <th>Item</th>
                                 <th>Quantity</th>
-                                <th>Unit Value</th>
-                                <th>Total</th>
+
                             </tr>
                         </thead>
                         <tbody>
                             {items.map((item: any, index: number) => {
-                                const menuItem = menuItems.find(mi => mi.id === item.menu_item_id);
+                                let menuItem: any = menuItems.find(mi => mi.id === item.menu_item_id);
+                                if (!menuItem) {
+                                    menuItem = mealItems.find(mi => mi.id === item.menu_item_id);
+                                }
                                 const quantity = parseInt(item.quantity || 0);
                                 const itemKey = item.id || `${order.id}-item-${index}`;
-                                
+
                                 // Calculate unit value: prefer stored unit_value, then menuItem.value
-                                const unitValue = item.unit_value 
-                                    ? parseFloat(item.unit_value) 
+                                const unitValue = item.unit_value
+                                    ? parseFloat(item.unit_value)
                                     : (menuItem?.value ?? 0);
                                 // Calculate total: prefer stored total_value, otherwise calculate from unit value * quantity
-                                const totalValue = item.total_value 
-                                    ? parseFloat(item.total_value) 
+                                const totalValue = item.total_value
+                                    ? parseFloat(item.total_value)
                                     : (unitValue * quantity);
 
                                 return (
                                     <tr key={itemKey}>
                                         <td>{menuItem?.name || item.menuItemName || 'Unknown Item'}</td>
                                         <td>{quantity}</td>
-                                        <td>${unitValue.toFixed(2)}</td>
-                                        <td>${totalValue.toFixed(2)}</td>
+
                                     </tr>
                                 );
                             })}
@@ -768,7 +830,7 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate, isVendorView }: P
                     </table>
                     <div className={styles.orderSummary}>
                         <div><strong>Total Items:</strong> {totalItems}</div>
-                        <div><strong>Total Value:</strong> ${totalValue.toFixed(2)}</div>
+
                     </div>
                 </div>
             );
@@ -842,7 +904,7 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate, isVendorView }: P
 
                 if (qty > 0) {
                     const menuItem = menuItems.find(mi => mi.id === itemId);
-                    const categoryId = menuItem?.categoryId || null;
+                    const categoryId = menuItem?.categoryId || undefined;
                     const itemData = { itemId, menuItem, qty };
 
                     if (categoryId) {
@@ -1067,10 +1129,11 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate, isVendorView }: P
                     </h1>
                     {orders.length > 0 && (
                         <div style={{ display: 'flex', gap: '1rem' }}>
+
                             <button className="btn btn-secondary" onClick={exportLabelsPDF} style={{ padding: '0.75rem 1.5rem', fontSize: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                                 <FileText size={20} /> Download Labels
                             </button>
-                            <button className="btn btn-secondary" onClick={exportOrdersToCSV} style={{ padding: '0.75rem 1.5rem', fontSize: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                            <button className="btn btn-secondary" onClick={exportOrdersToExcel} style={{ padding: '0.75rem 1.5rem', fontSize: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                                 <Download size={20} /> Download Excel
                             </button>
                             <label className="btn btn-secondary" style={{ cursor: 'pointer', padding: '0.75rem 1.5rem', fontSize: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
@@ -1112,7 +1175,13 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate, isVendorView }: P
             ) : (
                 <div className={styles.ordersList}>
                     <div className={styles.ordersHeader}>
-                        <span style={{ width: '40px', flex: 'none' }}></span>
+                        <span style={{ width: '40px', flex: 'none', display: 'flex', justifyContent: 'center', cursor: 'pointer' }} onClick={toggleAllOrders} title={orders.every(order => expandedOrders.has(`${order.orderType}-${order.id}`)) ? "Collapse All" : "Expand All"}>
+                            {orders.length > 0 && orders.every(order => expandedOrders.has(`${order.orderType}-${order.id}`)) ? (
+                                <ChevronsUp size={16} />
+                            ) : (
+                                <ChevronsDown size={16} />
+                            )}
+                        </span>
                         <span style={{ minWidth: '80px', flex: 0.6 }}>Order #</span>
                         <span style={{ minWidth: '120px', flex: 0.8 }}>Type</span>
                         <span style={{ minWidth: '200px', flex: 2 }}>Client</span>
@@ -1195,20 +1264,22 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate, isVendorView }: P
                                     </span>
                                 </div>
                                 {/* Order Items - Always Visible */}
-                                <div className={styles.orderDetails} style={{
-                                    borderTop: '1px solid var(--border-color)',
-                                    backgroundColor: 'var(--bg-surface-hover)',
-                                    padding: 0,
-                                    display: 'block'
-                                }}>
-                                    <div className={styles.itemsSection} style={{ marginTop: 0, padding: 'var(--spacing-lg)' }}>
-                                        <div className={styles.orderDetailsHeader}>
-                                            <ShoppingCart size={16} />
-                                            <span>Order Items</span>
+                                {isExpanded && (
+                                    <div className={styles.orderDetails} style={{
+                                        borderTop: '1px solid var(--border-color)',
+                                        backgroundColor: 'var(--bg-surface-hover)',
+                                        padding: 0,
+                                        display: 'block'
+                                    }}>
+                                        <div className={styles.itemsSection} style={{ marginTop: 0, padding: 'var(--spacing-lg)' }}>
+                                            <div className={styles.orderDetailsHeader}>
+                                                <ShoppingCart size={16} />
+                                                <span>Order Items</span>
+                                            </div>
+                                            {renderOrderItems(order)}
                                         </div>
-                                        {renderOrderItems(order)}
                                     </div>
-                                </div>
+                                )}
                                 {/* Order Details - Expandable - Hidden for now */}
                                 {false && isExpanded && (
                                     <div className={styles.orderDetails}>
@@ -1597,8 +1668,7 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate, isVendorView }: P
                                     aria-label="Close"
                                 >
                                     <X size={20} />
-                                </button>
-                            )}
+                                </button>)}
                         </div>
 
                         <div className={styles.importModalContent}>
