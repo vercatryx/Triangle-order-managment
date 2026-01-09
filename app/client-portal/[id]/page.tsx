@@ -23,7 +23,7 @@ export default async function ClientPortalPage({ params }: { params: { id: strin
         mealItems,
         foodOrder,
         mealOrder,
-        boxOrder
+        boxOrders
     ] = await Promise.all([
         getPublicClient(id),
         getStatuses(),
@@ -97,7 +97,7 @@ export default async function ClientPortalPage({ params }: { params: { id: strin
                 mealItems={mealItems}
                 foodOrder={foodOrder}
                 mealOrder={mealOrder}
-                boxOrder={boxOrder}
+                boxOrders={boxOrders}
             />
         </div>
     );

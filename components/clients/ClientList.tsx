@@ -720,7 +720,7 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
         const conf = client.activeOrder;
 
         if (!showOrderDetails) {
-            let label = st;
+            let label: string = st;
             const vendorSummaries: React.ReactNode[] = [];
 
             if (st === 'Food') {

@@ -66,12 +66,15 @@ export interface OrderConfiguration {
   lastUpdated?: string;
   updatedBy?: string; // Admin ID or Name
 
-  // For Boxes (still typically single vendor per box type, but keeping flexible)
-  vendorId?: string; // Vendor ID for Boxes service
+  // For Boxes - NOW UPDATED using boxOrders array for multiple boxes
+  boxOrders?: ClientBoxOrder[];
+
+  // Legacy single box fields (kept for backward compatibility or easy migration if needed, but ideally we move to boxOrders)
+  vendorId?: string;
   boxTypeId?: string;
   boxQuantity?: number;
-  items?: { [itemId: string]: number }; // itemId -> quantity (for box contents)
-  itemPrices?: { [itemId: string]: number }; // itemId -> price (for box item pricing)
+  items?: { [itemId: string]: number };
+  itemPrices?: { [itemId: string]: number };
 
   // Delivery Schedule Configuration
   deliveryDistribution?: { [dayOfWeek: string]: number }; // e.g. "Monday": 5
@@ -350,6 +353,6 @@ export interface ClientFullDetails {
   upcomingOrder: any;
   foodOrder?: ClientFoodOrder | null;
   mealOrder?: ClientMealOrder | null;
-  boxOrder?: ClientBoxOrder | null;
+  boxOrders?: ClientBoxOrder[];
 }
 

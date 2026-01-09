@@ -3640,7 +3640,7 @@ export async function getClientFullDetails(clientId: string) {
             upcomingOrder,
             foodOrder,
             mealOrder,
-            boxOrder
+            boxOrders
         ] = await Promise.all([
             getClient(clientId),
             getClientHistory(clientId),
@@ -3664,7 +3664,7 @@ export async function getClientFullDetails(clientId: string) {
             upcomingOrder,
             foodOrder,
             mealOrder,
-            boxOrder
+            boxOrders
         };
     } catch (error) {
         console.error('Error fetching full client details:', error);
@@ -5174,101 +5174,87 @@ export async function saveClientMealOrder(clientId: string, data: Partial<Client
     }
 }
 
-export async function getClientBoxOrder(clientId: string): Promise<ClientBoxOrder | null> {
+export async function getClientBoxOrder(clientId: string): Promise<ClientBoxOrder[]> {
     const { data, error } = await supabase
         .from('client_box_orders')
         .select('*')
-        .eq('client_id', clientId)
-        .maybeSingle();
+        .eq('client_id', clientId);
 
     if (error) {
         console.error('Error fetching box order:', error);
-        return null;
+        return [];
     }
-    if (!data) return null;
+    if (!data) return [];
 
-    return {
-        id: data.id,
-        clientId: data.client_id,
-        caseId: data.case_id,
-        boxTypeId: data.box_type_id,
-        vendorId: data.vendor_id,
-        quantity: data.quantity,
-        items: data.items,
-        created_at: data.created_at,
-        updated_at: data.updated_at,
-        updated_by: data.updated_by
-    };
+    return data.map(d => ({
+        id: d.id,
+        clientId: d.client_id,
+        caseId: d.case_id,
+        boxTypeId: d.box_type_id,
+        vendorId: d.vendor_id,
+        quantity: d.quantity,
+        items: d.items,
+        created_at: d.created_at,
+        updated_at: d.updated_at,
+        updated_by: d.updated_by
+    }));
 }
 
-export async function saveClientBoxOrder(clientId: string, data: Partial<ClientBoxOrder>) {
+export async function saveClientBoxOrder(clientId: string, data: Partial<ClientBoxOrder>[]) {
     const session = await getSession();
     const updatedBy = session?.userId || null;
     // if (!session || !session.userId) throw new Error('Unauthorized');
     const supabaseAdmin = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
-    const existing = await getClientBoxOrder(clientId);
 
-    if (existing) {
-        const updatePayload: any = {
-            case_id: data.caseId,
-            box_type_id: data.boxTypeId,
-            vendor_id: data.vendorId,
-            quantity: data.quantity,
-            items: data.items,
-            updated_at: new Date().toISOString()
-        };
-        if (updatedBy) updatePayload.updated_by = updatedBy;
+    // Full replacement strategy: Delete all existing box orders for this client first
+    const { error: deleteError } = await supabaseAdmin
+        .from('client_box_orders')
+        .delete()
+        .eq('client_id', clientId);
 
-        let { data: updated, error } = await supabaseAdmin
-            .from('client_box_orders')
-            .update(updatePayload)
-            .eq('id', existing.id)
-            .select()
-            .single();
+    if (deleteError) {
+        handleError(deleteError);
+        throw deleteError;
+    }
 
-        if (error && error.code === '23503') {
-            delete updatePayload.updated_by;
-            const retry = await supabaseAdmin
-                .from('client_box_orders')
-                .update(updatePayload)
-                .eq('id', existing.id)
-                .select()
-                .single();
-            updated = retry.data;
-            error = retry.error;
-        }
-        handleError(error);
+    if (!data || data.length === 0) {
         revalidatePath(`/client-portal/${clientId}`);
         revalidatePath(`/clients/${clientId}`);
-        return updated;
-    } else {
-        const insertPayload: any = {
-            client_id: clientId,
-            case_id: data.caseId,
-            box_type_id: data.boxTypeId,
-            vendor_id: data.vendorId,
-            quantity: data.quantity,
-            items: data.items
-        };
-        if (updatedBy) insertPayload.updated_by = updatedBy;
-
-        let { data: created, error } = await supabaseAdmin
-            .from('client_box_orders')
-            .insert(insertPayload)
-            .select()
-            .single();
-
-        if (error && error.code === '23503') {
-            delete insertPayload.updated_by;
-            const retry = await supabaseAdmin
-                .from('client_box_orders')
-                .insert(insertPayload)
-                .select()
-                .single();
-            created = retry.data;
-            error = retry.error;
-        }
-        handleError(error);
-        return created;
+        return [];
     }
+
+    const insertPayload = data.map(order => {
+        const payload: any = {
+            client_id: clientId,
+            case_id: order.caseId,
+            box_type_id: order.boxTypeId,
+            vendor_id: order.vendorId,
+            quantity: order.quantity,
+            items: order.items
+        };
+        if (updatedBy) payload.updated_by = updatedBy;
+        return payload;
+    });
+
+    let { data: created, error } = await supabaseAdmin
+        .from('client_box_orders')
+        .insert(insertPayload)
+        .select();
+
+    if (error && error.code === '23503') {
+        const payloadWithoutUser = insertPayload.map(p => {
+            const { updated_by, ...rest } = p;
+            return rest;
+        });
+        const retry = await supabaseAdmin
+            .from('client_box_orders')
+            .insert(payloadWithoutUser)
+            .select();
+        created = retry.data;
+        error = retry.error;
+    }
+    handleError(error);
+    revalidatePath(`/client-portal/${clientId}`);
+    revalidatePath(`/clients/${clientId}`);
+    return created;
 }

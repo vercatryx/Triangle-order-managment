@@ -24,10 +24,10 @@ interface Props {
     mealItems: MealItem[];
     foodOrder?: any;
     mealOrder?: any;
-    boxOrder?: any;
+    boxOrders?: any[];
 }
 
-export function ClientPortalInterface({ client: initialClient, statuses, navigators, vendors, menuItems, boxTypes, categories, upcomingOrder, activeOrder, previousOrders, mealCategories, mealItems, foodOrder, mealOrder, boxOrder }: Props) {
+export function ClientPortalInterface({ client: initialClient, statuses, navigators, vendors, menuItems, boxTypes, categories, upcomingOrder, activeOrder, previousOrders, mealCategories, mealItems, foodOrder, mealOrder, boxOrders }: Props) {
     const router = useRouter();
     const [client, setClient] = useState<ClientProfile>(initialClient);
     const [activeBoxQuotas, setActiveBoxQuotas] = useState<BoxQuota[]>([]);
@@ -141,13 +141,14 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
             }
             source = 'mealOrder';
 
-        } else if (serviceType === 'Boxes' && boxOrder) {
-            console.log('[ClientPortal] Hydrating from boxOrder:', boxOrder);
-            configToSet = { ...boxOrder, serviceType: 'Boxes' };
-            if (!configToSet.caseId && client.activeOrder?.caseId) {
-                configToSet.caseId = client.activeOrder.caseId;
-            }
-            source = 'boxOrder';
+        } else if (serviceType === 'Boxes' && boxOrders && boxOrders.length > 0) {
+            console.log('[ClientPortal] Hydrating from boxOrders:', boxOrders);
+            configToSet = {
+                boxOrders,
+                serviceType: 'Boxes',
+                caseId: boxOrders[0].caseId || client.activeOrder?.caseId
+            };
+            source = 'boxOrders';
 
         } else {
             // Fallback to Legacy Logic
@@ -242,7 +243,7 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
         ) : null;
         lastUpcomingOrderIdRef.current = currentUpcomingOrderId;
 
-    }, [upcomingOrder, activeOrder, client, foodOrder, mealOrder, boxOrder]);
+    }, [upcomingOrder, activeOrder, client, foodOrder, mealOrder, boxOrders]);
 
     // Box Logic - Load quotas if boxTypeId is set (optional for box contents)
     useEffect(() => {
@@ -617,13 +618,10 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
             }
 
             if (serviceType === 'Boxes') {
-                await saveClientBoxOrder(client.id, {
-                    caseId: cleanedOrderConfig.caseId,
-                    boxTypeId: cleanedOrderConfig.boxTypeId,
-                    vendorId: cleanedOrderConfig.vendorId,
-                    quantity: cleanedOrderConfig.boxQuantity,
-                    items: cleanedOrderConfig.items
-                });
+                await saveClientBoxOrder(client.id, (cleanedOrderConfig.boxOrders || []).map((box: any) => ({
+                    ...box,
+                    caseId: cleanedOrderConfig.caseId
+                })));
             }
 
             // Sync to upcoming_orders table

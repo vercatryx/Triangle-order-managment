@@ -2092,6 +2092,25 @@
       "meal_type": "Lunch"
     },
     {
+      "id": "f0708109-50a4-457e-afdd-38259392f007",
+      "client_id": "CLIENT-263",
+      "service_type": "Boxes",
+      "case_id": "jkn",
+      "status": "scheduled",
+      "last_updated": "2026-01-09T16:08:57.031+00:00",
+      "updated_by": "Avraham ",
+      "created_at": "2026-01-09T15:46:24.797999+00:00",
+      "take_effect_date": null,
+      "total_value": 0,
+      "total_items": 1,
+      "notes": null,
+      "processed_order_id": null,
+      "processed_at": null,
+      "delivery_day": null,
+      "order_number": 100403,
+      "meal_type": "Lunch"
+    },
+    {
       "id": "9e1775cf-d9f9-4754-a79c-7ba74b27b854",
       "client_id": "CLIENT-255",
       "service_type": "Food",
@@ -4010,7 +4029,17 @@
       "unit_value": 0,
       "total_value": 0,
       "items": {}
+    },
+    {
+      "id": "745fc892-de3f-4b4f-8414-840b5c6d2e97",
+      "upcoming_order_id": "f0708109-50a4-457e-afdd-38259392f007",
+      "vendor_id": null,
+      "quantity": 1,
+      "created_at": "2026-01-09T16:09:02.828487+00:00",
+      "unit_value": 0,
+      "total_value": 0,
+      "items": {}
     }
   ],
-  "lastSynced": "2026-01-09T14:46:49.135Z"
+  "lastSynced": "2026-01-09T16:09:03.745Z"
 }
