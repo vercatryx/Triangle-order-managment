@@ -204,7 +204,7 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate, isVendorView }: P
     }
 
     function getParsedOrderItems(order: any): { name: string; quantity: number; category?: string }[] {
-        if (order.service_type === 'Food' || order.service_type === 'Meal') {
+        if (order.service_type === 'Food' || order.service_type === 'Meal' || order.service_type === 'Custom') {
             const items = order.items || [];
             if (items.length === 0) return [];
 
@@ -213,7 +213,7 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate, isVendorView }: P
                 if (!menuItem) {
                     menuItem = mealItems.find(mi => mi.id === item.menu_item_id);
                 }
-                const itemName = menuItem?.name || item.menuItemName || 'Unknown Item';
+                const itemName = item.custom_name || menuItem?.name || item.menuItemName || 'Unknown Item';
                 const quantity = parseInt(item.quantity || 0);
                 return { name: itemName, quantity, category: menuItem?.categoryId || undefined };
             });
@@ -277,7 +277,7 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate, isVendorView }: P
         const parsedItems = getParsedOrderItems(order);
         if (parsedItems.length === 0) {
             if (order.service_type === 'Boxes' && order.boxSelection?.items && Object.keys(order.boxSelection.items).length === 0) return '(No items)';
-            if (order.service_type === 'Food' || order.service_type === 'Meal') return 'No items';
+            if (order.service_type === 'Food' || order.service_type === 'Meal' || order.service_type === 'Custom') return 'No items';
             if (order.service_type === 'Equipment') return 'No items available'; // Fallback
             return 'No items available';
         }
@@ -746,7 +746,7 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate, isVendorView }: P
     }
 
     function renderOrderItems(order: any) {
-        if (order.service_type === 'Food' || order.service_type === 'Meal') {
+        if (order.service_type === 'Food' || order.service_type === 'Meal' || order.service_type === 'Custom') {
             const items = order.items || [];
             console.log(`[VendorDeliveryOrders] Rendering Food/Meal items for order ${order.id}:`, items);
 
@@ -809,18 +809,19 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate, isVendorView }: P
                                 const quantity = parseInt(item.quantity || 0);
                                 const itemKey = item.id || `${order.id}-item-${index}`;
 
-                                // Calculate unit value: prefer stored unit_value, then menuItem.value
-                                const unitValue = item.unit_value
-                                    ? parseFloat(item.unit_value)
-                                    : (menuItem?.value ?? 0);
-                                // Calculate total: prefer stored total_value, otherwise calculate from unit value * quantity
-                                const totalValue = item.total_value
-                                    ? parseFloat(item.total_value)
-                                    : (unitValue * quantity);
+                                // Calculate unit value: prefer custom_price, then stored unit_value, then menuItem.value
+                                const unitValue = item.custom_price
+                                    ? parseFloat(item.custom_price)
+                                    : (item.unit_value ? parseFloat(item.unit_value) : (menuItem?.value ?? 0));
+
+                                // Calculate total: prefer custom_price * qty, otherwise stored total_value or calculation
+                                const totalValue = item.custom_price
+                                    ? parseFloat(item.custom_price) * quantity
+                                    : (item.total_value ? parseFloat(item.total_value) : (unitValue * quantity));
 
                                 return (
                                     <tr key={itemKey}>
-                                        <td>{menuItem?.name || item.menuItemName || 'Unknown Item'}</td>
+                                        <td>{item.custom_name || menuItem?.name || item.menuItemName || 'Unknown Item'}</td>
                                         <td>{quantity}</td>
 
                                     </tr>

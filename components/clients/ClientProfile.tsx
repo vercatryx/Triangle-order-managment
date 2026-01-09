@@ -3,7 +3,7 @@
 import { useState, useEffect, Fragment, useMemo, useRef, ReactNode } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import { ClientProfile, ClientStatus, Navigator, Vendor, MenuItem, BoxType, ServiceType, AppSettings, DeliveryRecord, ItemCategory, ClientFullDetails, BoxQuota, MealCategory, MealItem, ClientFoodOrder, ClientMealOrder, ClientBoxOrder } from '@/lib/types';
-import { updateClient, addClient, deleteClient, updateDeliveryProof, recordClientChange, syncCurrentOrderToUpcoming, logNavigatorAction, getBoxQuotas, saveEquipmentOrder, getRegularClients, getDependentsByParentId, addDependent, checkClientNameExists, getClientFullDetails, saveClientFoodOrder, saveClientMealOrder, saveClientBoxOrder } from '@/lib/actions';
+import { updateClient, addClient, deleteClient, updateDeliveryProof, recordClientChange, syncCurrentOrderToUpcoming, logNavigatorAction, getBoxQuotas, saveEquipmentOrder, getRegularClients, getDependentsByParentId, addDependent, checkClientNameExists, getClientFullDetails, saveClientFoodOrder, saveClientMealOrder, saveClientBoxOrder, saveCustomOrder } from '@/lib/actions';
 import { getSingleForm, getClientSubmissions } from '@/lib/form-actions';
 import { getClient, getStatuses, getNavigators, getVendors, getMenuItems, getBoxTypes, getSettings, getCategories, getEquipment, getClients, invalidateClientData, invalidateReferenceData, getActiveOrderForClient, getUpcomingOrderForClient, getOrderHistory, getClientHistory, getBillingHistory, invalidateOrderData, getMealCategories, getMealItems } from '@/lib/cached-data';
 import { areAnyDeliveriesLocked, getEarliestEffectiveDate, getLockedWeekDescription } from '@/lib/weekly-lock';
@@ -194,6 +194,11 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
     const [equipmentOrder, setEquipmentOrder] = useState<{ vendorId: string; equipmentId: string } | null>(null);
     const [submittingEquipmentOrder, setSubmittingEquipmentOrder] = useState(false);
 
+    // Custom Order State
+    const [showCustomOrder, setShowCustomOrder] = useState(false);
+    const [customOrder, setCustomOrder] = useState<{ vendorId: string; itemDescription: string; price: string; deliveryDay: string } | null>(null);
+    const [submittingCustom, setSubmittingCustom] = useState(false);
+
     // Refresh vendors and equipment when equipment order section is opened to ensure we have latest data
     useEffect(() => {
         if (showEquipmentOrder) {
@@ -203,6 +208,13 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
             ]);
         }
     }, [showEquipmentOrder]);
+
+    // Refresh vendors for custom order
+    useEffect(() => {
+        if (showCustomOrder) {
+            getVendors().then(v => setVendors(v));
+        }
+    }, [showCustomOrder]);
     const [settings, setSettings] = useState<AppSettings | null>(null);
     const [history, setHistory] = useState<DeliveryRecord[]>([]);
     const [orderHistory, setOrderHistory] = useState<any[]>([]);
@@ -3097,6 +3109,145 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                                                             </button>
                                                         </div>
                                                     )}
+                                                </div>
+                                            )}
+                                        </div>
+
+                                        {/* Custom Order Section */}
+                                        <div style={{ marginTop: '1rem' }}>
+                                            <h4 style={{ fontSize: '0.9rem', marginBottom: '0.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                                <Plus size={14} /> Custom Order
+                                            </h4>
+                                            {!showCustomOrder ? (
+                                                <button
+                                                    className="btn btn-secondary"
+                                                    onClick={() => {
+                                                        setShowCustomOrder(true);
+                                                        setCustomOrder({ vendorId: '', itemDescription: '', price: '', deliveryDay: '' });
+                                                    }}
+                                                    style={{ width: '100%' }}
+                                                >
+                                                    Add Custom Order
+                                                </button>
+                                            ) : (
+                                                <div style={{
+                                                    padding: '1rem',
+                                                    backgroundColor: 'var(--bg-surface-hover)',
+                                                    borderRadius: 'var(--radius-md)',
+                                                    border: '1px solid var(--border-color)'
+                                                }}>
+                                                    <div className={styles.formGroup}>
+                                                        <label className="label">Item Description</label>
+                                                        <input
+                                                            type="text"
+                                                            className="input"
+                                                            value={customOrder?.itemDescription || ''}
+                                                            onChange={e => setCustomOrder(prev => ({ ...prev!, itemDescription: e.target.value }))}
+                                                            placeholder="Enter item description..."
+                                                        />
+                                                    </div>
+
+                                                    <div className={styles.formGroup}>
+                                                        <label className="label">Price ($)</label>
+                                                        <input
+                                                            type="number"
+                                                            className="input"
+                                                            min="0"
+                                                            step="0.01"
+                                                            value={customOrder?.price || ''}
+                                                            onChange={e => setCustomOrder(prev => ({ ...prev!, price: e.target.value }))}
+                                                            placeholder="0.00"
+                                                        />
+                                                    </div>
+
+                                                    <div className={styles.formGroup}>
+                                                        <label className="label">Vendor</label>
+                                                        <select
+                                                            className="input"
+                                                            value={customOrder?.vendorId || ''}
+                                                            onChange={e => setCustomOrder(prev => ({ ...prev!, vendorId: e.target.value }))}
+                                                        >
+                                                            <option value="">Select Vendor...</option>
+                                                            {vendors
+                                                                .filter(v => v.isActive)
+                                                                .map(v => (
+                                                                    <option key={v.id} value={v.id}>{v.name}</option>
+                                                                ))}
+                                                        </select>
+                                                    </div>
+
+                                                    <div className={styles.formGroup}>
+                                                        <label className="label">Shipping Day</label>
+                                                        <select
+                                                            className="input"
+                                                            value={customOrder?.deliveryDay || ''}
+                                                            onChange={e => setCustomOrder(prev => ({ ...prev!, deliveryDay: e.target.value }))}
+                                                            disabled={!customOrder?.vendorId}
+                                                        >
+                                                            <option value="">Select Day...</option>
+                                                            {customOrder?.vendorId && vendors.find(v => v.id === customOrder.vendorId)?.deliveryDays.map(day => (
+                                                                <option key={day} value={day}>{day}</option>
+                                                            ))}
+                                                        </select>
+                                                        {!customOrder?.vendorId && <span style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)' }}>Select a vendor first</span>}
+                                                    </div>
+
+                                                    <div style={{ marginTop: '1rem', display: 'flex', gap: '0.5rem' }}>
+                                                        <button
+                                                            className="btn btn-primary"
+                                                            disabled={submittingCustom}
+                                                            onClick={async () => {
+                                                                if (!customOrder?.itemDescription || !customOrder?.vendorId || !customOrder?.deliveryDay || !customOrder?.price) {
+                                                                    alert('Please fill in all fields (Item, Price, Vendor, Day)');
+                                                                    return;
+                                                                }
+
+                                                                try {
+                                                                    setSubmittingCustom(true);
+                                                                    await saveCustomOrder(
+                                                                        clientId,
+                                                                        customOrder.vendorId,
+                                                                        customOrder.itemDescription,
+                                                                        parseFloat(customOrder.price),
+                                                                        customOrder.deliveryDay,
+                                                                        orderConfig.caseId
+                                                                    );
+
+                                                                    setMessage('Custom Order created successfully!');
+                                                                    setTimeout(() => setMessage(null), 3000);
+                                                                    setCustomOrder(null);
+                                                                    setShowCustomOrder(false);
+
+                                                                    // Reload recent orders
+                                                                    setLoadingOrderDetails(true);
+                                                                    const [activeOrderData, orderHistoryData] = await Promise.all([
+                                                                        getActiveOrderForClient(clientId),
+                                                                        getOrderHistory(clientId)
+                                                                    ]);
+                                                                    setActiveOrder(activeOrderData);
+                                                                    setOrderHistory(orderHistoryData || []);
+                                                                    setLoadingOrderDetails(false);
+
+                                                                } catch (err: any) {
+                                                                    console.error(err);
+                                                                    alert('Failed to save custom order: ' + err.message);
+                                                                } finally {
+                                                                    setSubmittingCustom(false);
+                                                                }
+                                                            }}
+                                                        >
+                                                            {submittingCustom ? 'Saving...' : 'Submit Custom Order'}
+                                                        </button>
+                                                        <button
+                                                            className="btn btn-secondary"
+                                                            onClick={() => {
+                                                                setShowCustomOrder(false);
+                                                                setCustomOrder(null);
+                                                            }}
+                                                        >
+                                                            Cancel
+                                                        </button>
+                                                    </div>
                                                 </div>
                                             )}
                                         </div>

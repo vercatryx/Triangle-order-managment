@@ -53,12 +53,12 @@ export function OrderDetailView({ order }: OrderDetailViewProps) {
         console.log('[OrderDetailView] Rendering items for order:', order);
         if (!order.orderDetails) return null;
 
-        if ((order.orderDetails.serviceType === 'Food' || order.orderDetails.serviceType === 'Meal') && order.orderDetails.vendorSelections) {
+        if ((order.orderDetails.serviceType === 'Food' || order.orderDetails.serviceType === 'Meal' || order.orderDetails.serviceType === 'Custom') && order.orderDetails.vendorSelections) {
             return (
                 <div className={styles.orderItemsSection}>
                     <div className={styles.sectionHeader}>
                         <ShoppingCart size={20} />
-                        <h2>Order Items</h2>
+                        <h2>{order.orderDetails.serviceType === 'Custom' ? 'Custom Order Items' : 'Order Items'}</h2>
                     </div>
                     {order.orderDetails.vendorSelections.map((vs: any, idx: number) => (
                         <div key={idx} className={styles.vendorSection}>

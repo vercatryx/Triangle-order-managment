@@ -61,7 +61,14 @@ export async function sendOtp(email: string) {
                     <div style="font-size: 32px; font-weight: bold; letter-spacing: 5px; margin: 20px 0;">
                         ${code}
                     </div>
-                    <p>This code will expire in 10 minutes.</p>
+                    <p>Or click the link below to sign in automatically:</p>
+                    <div style="margin: 20px 0;">
+                        <a href="${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/login/verify?email=${encodeURIComponent(email)}&code=${code}" 
+                           style="background-color: #0070f3; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; display: inline-block;">
+                           Sign In Instantly
+                        </a>
+                    </div>
+                    <p>This code and link will expire in 10 minutes.</p>
                 </div>
             `
         });
@@ -294,7 +301,7 @@ export async function checkEmailIdentity(identifier: string) {
         .from('admins')
         .select('id')
         .eq('username', originalTrimmed);
-    
+
     if (admins && admins.length > 0) {
         matches.push(...admins.map(a => ({ type: 'admin' as const, id: a.id })));
     }
@@ -305,17 +312,17 @@ export async function checkEmailIdentity(identifier: string) {
         .from('vendors')
         .select('id, email, is_active')
         .not('email', 'is', null);
-    
+
     if (vendorsData && vendorsData.length > 0) {
         // Normalize both input and database emails (remove all spaces, lowercase)
-        const exactMatches = vendorsData.filter(v => 
+        const exactMatches = vendorsData.filter(v =>
             v.email && normalizeEmail(v.email) === normalizedInput
         );
         if (exactMatches.length > 0) {
-            matches.push(...exactMatches.map(v => ({ 
-                type: 'vendor' as const, 
-                id: v.id, 
-                isActive: v.is_active 
+            matches.push(...exactMatches.map(v => ({
+                type: 'vendor' as const,
+                id: v.id,
+                isActive: v.is_active
             })));
         }
     }
@@ -325,15 +332,15 @@ export async function checkEmailIdentity(identifier: string) {
         .from('navigators')
         .select('id, email')
         .not('email', 'is', null);
-    
+
     if (navigatorsData && navigatorsData.length > 0) {
-        const exactMatches = navigatorsData.filter(n => 
+        const exactMatches = navigatorsData.filter(n =>
             n.email && normalizeEmail(n.email) === normalizedInput
         );
         if (exactMatches.length > 0) {
-            matches.push(...exactMatches.map(n => ({ 
-                type: 'navigator' as const, 
-                id: n.id 
+            matches.push(...exactMatches.map(n => ({
+                type: 'navigator' as const,
+                id: n.id
             })));
         }
     }
@@ -343,15 +350,15 @@ export async function checkEmailIdentity(identifier: string) {
         .from('clients')
         .select('id, email')
         .not('email', 'is', null);
-    
+
     if (clientsData && clientsData.length > 0) {
-        const exactMatches = clientsData.filter(c => 
+        const exactMatches = clientsData.filter(c =>
             c.email && normalizeEmail(c.email) === normalizedInput
         );
         if (exactMatches.length > 0) {
-            matches.push(...exactMatches.map(c => ({ 
-                type: 'client' as const, 
-                id: c.id 
+            matches.push(...exactMatches.map(c => ({
+                type: 'client' as const,
+                id: c.id
             })));
         }
     }
@@ -366,11 +373,11 @@ export async function checkEmailIdentity(identifier: string) {
         const adminMatch = matches.find(m => m.type === 'admin');
         if (adminMatch) {
             // Prefer admin account when multiple accounts exist
-            return { 
-                exists: true, 
-                type: 'admin', 
+            return {
+                exists: true,
+                type: 'admin',
                 id: adminMatch.id,
-                enablePasswordless: false 
+                enablePasswordless: false
             };
         }
         // If no admin but multiple accounts, return error
@@ -379,34 +386,34 @@ export async function checkEmailIdentity(identifier: string) {
 
     // Single match found
     const match = matches[0];
-    
+
     if (match.type === 'admin') {
-        return { 
-            exists: true, 
-            type: 'admin', 
+        return {
+            exists: true,
+            type: 'admin',
             id: match.id,
-            enablePasswordless: false 
+            enablePasswordless: false
         };
     } else if (match.type === 'vendor') {
-        return { 
-            exists: true, 
-            type: 'vendor', 
+        return {
+            exists: true,
+            type: 'vendor',
             id: match.id,
-            enablePasswordless: false 
+            enablePasswordless: false
         };
     } else if (match.type === 'navigator') {
-        return { 
-            exists: true, 
-            type: 'navigator', 
+        return {
+            exists: true,
+            type: 'navigator',
             id: match.id,
-            enablePasswordless: false 
+            enablePasswordless: false
         };
     } else if (match.type === 'client') {
-        return { 
-            exists: true, 
-            type: 'client', 
-            id: match.id, 
-            enablePasswordless 
+        return {
+            exists: true,
+            type: 'client',
+            id: match.id,
+            enablePasswordless
         };
     }
 

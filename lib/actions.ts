@@ -579,6 +579,110 @@ export async function saveEquipmentOrder(clientId: string, vendorId: string, equ
     return { success: true, orderId: newOrder.id };
 }
 
+export async function saveCustomOrder(clientId: string, vendorId: string, itemDescription: string, price: number, deliveryDay: string, caseId?: string) {
+    // Get current user
+    const session = await getSession();
+    const currentUserName = session?.name || 'Admin';
+
+    // Calculate scheduled delivery date based on selected day string (e.g., "Monday")
+    // Use logic similar to equipment order but specific to the requested day
+    const dayNameToNumber: { [key: string]: number } = {
+        'Sunday': 0, 'Monday': 1, 'Tuesday': 2, 'Wednesday': 3,
+        'Thursday': 4, 'Friday': 5, 'Saturday': 6
+    };
+    const targetDayNum = dayNameToNumber[deliveryDay];
+
+    // Find next occurrence of this day
+    const today = await getCurrentTime();
+    today.setHours(0, 0, 0, 0);
+
+    let scheduledDeliveryDate: Date | null = null;
+
+    if (targetDayNum !== undefined) {
+        for (let i = 1; i <= 14; i++) {
+            const checkDate = new Date(today);
+            checkDate.setDate(today.getDate() + i);
+            if (checkDate.getDay() === targetDayNum) {
+                scheduledDeliveryDate = checkDate;
+                break;
+            }
+        }
+    }
+
+    // Create order record
+    const orderData: any = {
+        client_id: clientId,
+        service_type: 'Custom',
+        case_id: caseId || null,
+        status: 'pending',
+        last_updated: (await getCurrentTime()).toISOString(),
+        updated_by: currentUserName,
+        scheduled_delivery_date: scheduledDeliveryDate ? scheduledDeliveryDate.toISOString().split('T')[0] : null,
+        total_value: price,
+        total_items: 1,
+        notes: `Custom Order: ${itemDescription}`
+    };
+
+    const { data: newOrder, error: orderError } = await supabase
+        .from('orders')
+        .insert([orderData])
+        .select()
+        .single();
+
+    if (orderError) throw new Error(orderError.message);
+
+    // Initial Order Number fix
+    if (newOrder && (!newOrder.order_number || newOrder.order_number < 100000)) {
+        const { data: maxOrder } = await supabase
+            .from('orders')
+            .select('order_number')
+            .order('order_number', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+        const nextNumber = Math.max((maxOrder?.order_number || 99999) + 1, 100000);
+        await supabase.from('orders').update({ order_number: nextNumber }).eq('id', newOrder.id);
+        newOrder.order_number = nextNumber;
+    }
+
+    // 1. Create Vendor Selection FIRST to get the ID
+    const { data: vendorSelection, error: vsError } = await supabase
+        .from('order_vendor_selections')
+        .insert({
+            order_id: newOrder.id,
+            vendor_id: vendorId
+        })
+        .select()
+        .single();
+
+    if (vsError || !vendorSelection) {
+        throw new Error('Failed to create vendor selection: ' + (vsError?.message || 'Unknown error'));
+    }
+
+    // 2. Insert into order_items linked to BOTH order and vendor selection
+    // Requires schema update to support custom_name, custom_price and null menu_item_id
+    const { error: itemError } = await supabase
+        .from('order_items')
+        .insert({
+            order_id: newOrder.id,
+            vendor_selection_id: vendorSelection.id, // LINKED HERE
+            // menu_item_id left null
+            custom_name: itemDescription,
+            custom_price: price,
+            quantity: 1,
+            unit_value: 0,
+            total_value: 0
+        });
+
+    if (itemError) {
+        console.error('Error inserting custom order item:', itemError);
+        // Might fail if constraint exists/schema not updated.
+    }
+
+    revalidatePath(`/clients/${clientId}`);
+    // revalidatePath('/vendor'); // If used there
+    return { success: true, orderId: newOrder.id };
+}
+
 // --- BOX QUOTA ACTIONS ---
 
 export async function getBoxQuotas(boxTypeId: string) {
@@ -3761,7 +3865,7 @@ async function processVendorOrderDetails(order: any, vendorId: string, isUpcomin
         boxSelection: null
     };
 
-    if (order.service_type === 'Food' || order.service_type === 'Meal') {
+    if (order.service_type === 'Food' || order.service_type === 'Meal' || order.service_type === 'Custom') {
         const { data: vs } = await supabase
             .from(vendorSelectionsTable)
             .select('id')
@@ -4790,13 +4894,22 @@ export async function getOrderById(orderId: string) {
                             console.warn(`[getOrderById] Item not found in menu or meal items: ${item.menu_item_id}`);
                         }
 
-                        const itemPrice = menuItem?.priceEach ?? parseFloat(item.unit_value);
+
+                        console.log('[getOrderById] Processing Item:', {
+                            id: item.id,
+                            menuItemId: item.menu_item_id,
+                            customName: item.custom_name,
+                            customPrice: item.custom_price,
+                            unitValue: item.unit_value
+                        });
+
+                        const itemPrice = item.custom_price ? parseFloat(item.custom_price) : (menuItem?.priceEach ?? parseFloat(item.unit_value));
                         const quantity = item.quantity;
                         const itemTotal = itemPrice * quantity;
                         return {
                             id: item.id,
                             menuItemId: item.menu_item_id,
-                            menuItemName: menuItem?.name || 'Unknown Item',
+                            menuItemName: item.custom_name || menuItem?.name || 'Unknown Item',
                             quantity: quantity,
                             unitValue: itemPrice,
                             totalValue: itemTotal
@@ -4816,6 +4929,48 @@ export async function getOrderById(orderId: string) {
                 vendorSelections: vendorSelectionsWithItems,
                 totalItems: orderData.total_items,
                 totalValue: parseFloat(orderData.total_value || 0)
+            };
+        }
+    } else if (orderData.service_type === 'Custom') {
+        // Handle Custom orders - fetch vendor selections and items
+        const { data: vendorSelections } = await supabase
+            .from('order_vendor_selections')
+            .select('*')
+            .eq('order_id', orderId);
+
+        if (vendorSelections && vendorSelections.length > 0) {
+            const vendorSelectionsWithItems = await Promise.all(
+                vendorSelections.map(async (vs: any) => {
+                    const { data: items } = await supabase
+                        .from('order_items')
+                        .select('*')
+                        .eq('vendor_selection_id', vs.id);
+
+                    const vendor = vendors.find(v => v.id === vs.vendor_id);
+
+                    const itemsWithDetails = (items || []).map((item: any) => ({
+                        id: item.id,
+                        menuItemId: null,
+                        menuItemName: item.custom_name || 'Custom Item',
+                        quantity: item.quantity,
+                        unitValue: parseFloat(item.custom_price || 0),
+                        totalValue: parseFloat(item.custom_price || 0) * item.quantity
+                    }));
+
+                    return {
+                        vendorId: vs.vendor_id,
+                        vendorName: vendor?.name || 'Unknown Vendor',
+                        items: itemsWithDetails
+                    };
+                })
+            );
+
+            orderDetails = {
+                serviceType: 'Custom',
+                vendorSelections: vendorSelectionsWithItems,
+                totalItems: orderData.total_items,
+                totalValue: parseFloat(orderData.total_value || 0),
+                notes: orderData.notes
             };
         }
     } else if (orderData.service_type === 'Boxes') {
