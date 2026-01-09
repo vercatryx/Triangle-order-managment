@@ -517,7 +517,7 @@ export async function sendSubmissionToNutritionist(
         // Get nutritionist
         const nutritionists = await getNutritionists();
         const nutritionist = nutritionists.find(n => n.id === nutritionistId);
-        
+
         if (!nutritionist) {
             return { success: false, error: 'Nutritionist not found' };
         }
@@ -538,7 +538,7 @@ export async function sendSubmissionToNutritionist(
         // Get form schema to format the submission nicely
         const formResult = await getSingleForm();
         let submissionHtml = '<h2>New Form Submission</h2>';
-        
+
         if (clientInfo) {
             submissionHtml += clientInfo;
         }
@@ -552,16 +552,16 @@ export async function sendSubmissionToNutritionist(
             formResult.data.questions.forEach((question, index) => {
                 const answer = submissionData[question.id];
                 const conditionalAnswer = submissionData[`${question.id}_conditional`];
-                
+
                 if (answer) {
                     submissionHtml += `<li style="margin-bottom: 15px; padding: 10px; background-color: #f5f5f5; border-radius: 5px;">`;
                     submissionHtml += `<strong>${index + 1}. ${question.text}</strong><br>`;
                     submissionHtml += `<span>${answer}</span>`;
-                    
+
                     if (conditionalAnswer) {
                         submissionHtml += `<br><em style="margin-top: 5px; display: block;">Additional details: ${conditionalAnswer}</em>`;
                     }
-                    
+
                     submissionHtml += `</li>`;
                 }
             });
@@ -580,8 +580,9 @@ export async function sendSubmissionToNutritionist(
 
         // Add approval/denial link if token is provided
         if (token) {
-            // Get base URL from environment variable or use a default
-            let baseUrl = process.env.NEXT_PUBLIC_APP_URL;
+            // Priority: APP_URL -> SITE_URL -> NEXT_PUBLIC_APP_URL -> NEXT_PUBLIC_VERCEL_URL
+            let baseUrl = process.env.APP_URL || process.env.SITE_URL || process.env.NEXT_PUBLIC_APP_URL;
+
             if (!baseUrl && process.env.NEXT_PUBLIC_VERCEL_URL) {
                 baseUrl = `https://${process.env.NEXT_PUBLIC_VERCEL_URL}`;
             }
@@ -589,7 +590,7 @@ export async function sendSubmissionToNutritionist(
                 baseUrl = 'http://localhost:3000';
             }
             const approvalUrl = `${baseUrl}/verify-order/${token}`;
-            
+
             submissionHtml += '<hr style="margin: 20px 0;">';
             submissionHtml += '<div style="text-align: center; padding: 20px; background-color: #f0f9ff; border-radius: 8px; margin-top: 30px;">';
             submissionHtml += '<h3 style="margin-top: 0; color: #1e40af;">Review & Approve Submission</h3>';

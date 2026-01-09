@@ -2836,7 +2836,7 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                                                                                     }
                                                                                 }
 
-                                                                                const meetsQuota = requiredQuotaValue !== null ? categoryQuotaValue === requiredQuotaValue : true;
+                                                                                const meetsQuota = requiredQuotaValue !== null ? isMeetingExactTarget(categoryQuotaValue, requiredQuotaValue) : true;
 
                                                                                 return (
                                                                                     <div key={category.id} style={{ marginBottom: '1rem', background: 'var(--bg-surface-hover)', padding: '0.75rem', borderRadius: '6px', border: requiredQuotaValue !== null && !meetsQuota ? '2px solid var(--color-danger)' : '1px solid var(--border-color)' }}>
@@ -2885,7 +2885,7 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                                                                                                     <div key={item.id} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', background: 'var(--bg-app)', padding: '4px 8px', borderRadius: '4px', border: '1px solid var(--border-color)' }}>
                                                                                                         <span style={{ fontSize: '0.8rem' }}>
                                                                                                             {item.name}
-                                                                                                            {(item.quotaValue || 1) > 1 && (
+                                                                                                            {(item.quotaValue || 1) !== 1 && (
                                                                                                                 <span style={{ color: 'var(--text-tertiary)', marginLeft: '4px' }}>
                                                                                                                     (counts as {item.quotaValue || 1} meals)
                                                                                                                 </span>
@@ -2929,7 +2929,7 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                                                                                                     <div key={item.id} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', background: 'var(--bg-app)', padding: '4px 8px', borderRadius: '4px', border: '1px solid var(--border-color)' }}>
                                                                                                         <span style={{ fontSize: '0.8rem' }}>
                                                                                                             {item.name}
-                                                                                                            {(item.quotaValue || 1) > 1 && (
+                                                                                                            {(item.quotaValue || 1) !== 1 && (
                                                                                                                 <span style={{ color: 'var(--text-tertiary)', marginLeft: '4px' }}>
                                                                                                                     (counts as {item.quotaValue || 1} meals)
                                                                                                                 </span>
@@ -3721,7 +3721,7 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
             }
 
             // CRITICAL: Preserve mealSelections (Breakfast, Lunch, Dinner, etc.)
-            if (orderConfig.mealSelections && Object.keys(orderConfig.mealSelections).length > 0) {
+            if (orderConfig.mealSelections) {
                 const cleanedMealSelections: any = {};
                 for (const [mealType, selection] of Object.entries(orderConfig.mealSelections)) {
                     const items = (selection as any).items || {};

@@ -327,14 +327,15 @@ export async function addMealCategory(mealType: string, name: string, setValue?:
     if (setValue !== undefined) {
         payload.set_value = setValue;
     }
-    const { data, error } = await supabase.from('breakfast_categories').insert([payload]).select().single();
+    const supabaseAdmin = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
+    const { data: res, error } = await supabaseAdmin.from('breakfast_categories').insert([payload]).select().single();
     handleError(error);
     revalidatePath('/admin');
     return {
-        id: data.id,
-        name: data.name,
-        mealType: data.meal_type,
-        setValue: data.set_value ?? undefined
+        id: res.id,
+        name: res.name,
+        mealType: res.meal_type,
+        setValue: res.set_value ?? undefined
     };
 }
 
@@ -343,21 +344,24 @@ export async function updateMealCategory(id: string, name: string, setValue?: nu
     if (setValue !== undefined) {
         payload.set_value = setValue;
     }
-    const { error } = await supabase.from('breakfast_categories').update(payload).eq('id', id);
+    const supabaseAdmin = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
+    const { error } = await supabaseAdmin.from('breakfast_categories').update(payload).eq('id', id);
     handleError(error);
     revalidatePath('/admin');
 }
 
 export async function deleteMealCategory(id: string) {
-    const { error } = await supabase.from('breakfast_categories').delete().eq('id', id);
+    const supabaseAdmin = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
+    const { error } = await supabaseAdmin.from('breakfast_categories').delete().eq('id', id);
     handleError(error);
     revalidatePath('/admin');
 }
 
 export async function deleteMealType(mealType: string) {
+    const supabaseAdmin = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
     // Delete all categories for this meal type. 
     // Items will cascade delete because of FK 'ON DELETE CASCADE' on breakfast_items.category_id
-    const { error } = await supabase
+    const { error } = await supabaseAdmin
         .from('breakfast_categories')
         .delete()
         .eq('meal_type', mealType);
@@ -392,7 +396,8 @@ export async function addMealItem(data: { categoryId: string, name: string, quot
         payload.price_each = data.priceEach;
     }
 
-    const { data: res, error } = await supabase.from('breakfast_items').insert([payload]).select().single();
+    const supabaseAdmin = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
+    const { data: res, error } = await supabaseAdmin.from('breakfast_items').insert([payload]).select().single();
     handleError(error);
     revalidatePath('/admin');
     return { ...data, id: res.id };
@@ -405,13 +410,15 @@ export async function updateMealItem(id: string, data: Partial<{ name: string, q
     if (data.priceEach !== undefined) payload.price_each = data.priceEach;
     if (data.isActive !== undefined) payload.is_active = data.isActive;
 
-    const { error } = await supabase.from('breakfast_items').update(payload).eq('id', id);
+    const supabaseAdmin = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
+    const { error } = await supabaseAdmin.from('breakfast_items').update(payload).eq('id', id);
     handleError(error);
     revalidatePath('/admin');
 }
 
 export async function deleteMealItem(id: string) {
-    const { error } = await supabase.from('breakfast_items').delete().eq('id', id);
+    const supabaseAdmin = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
+    const { error } = await supabaseAdmin.from('breakfast_items').delete().eq('id', id);
     handleError(error);
     revalidatePath('/admin');
 }

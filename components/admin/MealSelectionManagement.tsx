@@ -10,7 +10,7 @@ export function MealSelectionManagement() {
     const [categories, setCategories] = useState<MealCategory[]>([]);
     const [items, setItems] = useState<MealItem[]>([]);
     const [activeMealType, setActiveMealType] = useState<string>('Breakfast');
-    const [mealTypes, setMealTypes] = useState<string[]>(['Breakfast', 'Lunch', 'Dinner']);
+    const [mealTypes, setMealTypes] = useState<string[]>([]);
 
     // Category Creation
     const [isAddingCategory, setIsAddingCategory] = useState(false);
@@ -43,10 +43,21 @@ export function MealSelectionManagement() {
         setCategories(cData);
         setItems(iData);
 
-        // Extract unique meal types from data + defaults
+        // Extract unique meal types from data
         const existingTypes = Array.from(new Set(cData.map(c => c.mealType)));
-        const allTypes = Array.from(new Set([...mealTypes, ...existingTypes]));
+
+        // If nothing exists, default to standards for a better Empty State experience
+        const defaultTypes = ['Breakfast', 'Lunch', 'Dinner'];
+        const allTypes = existingTypes.length > 0
+            ? existingTypes.sort((a, b) => defaultTypes.indexOf(a) - defaultTypes.indexOf(b))
+            : defaultTypes;
+
         setMealTypes(allTypes);
+
+        // Ensure active tab is valid
+        if (!allTypes.includes(activeMealType) && allTypes.length > 0) {
+            setActiveMealType(allTypes[0]);
+        }
     }
 
     // --- MEAL TYPE MANAGEMENT ---

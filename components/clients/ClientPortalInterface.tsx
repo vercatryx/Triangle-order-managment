@@ -2,8 +2,10 @@
 
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useRouter } from 'next/navigation';
-import { ClientProfile, ClientStatus, Navigator, Vendor, MenuItem, BoxType, ItemCategory, BoxQuota, MealCategory, MealItem } from '@/lib/types';
+import { ClientProfile, ClientStatus, Navigator, Vendor, MenuItem, BoxType, ItemCategory, BoxQuota, MealCategory, MealItem, AppSettings } from '@/lib/types';
 import { syncCurrentOrderToUpcoming, getBoxQuotas, invalidateOrderData, updateClient, saveClientFoodOrder, saveClientMealOrder, saveClientBoxOrder } from '@/lib/actions';
+import { getSettings } from '@/lib/cached-data';
+import { getNextDeliveryDate as getNextDeliveryDateUtil, getTakeEffectDate, formatDeliveryDate } from '@/lib/order-dates';
 import { isMeetingMinimum, isExceedingMaximum, isMeetingExactTarget } from '@/lib/utils';
 import { Package, Truck, User, Loader2, Info, Plus, Calendar, AlertTriangle, Check, Trash2, Construction } from 'lucide-react';
 import styles from './ClientProfile.module.css';
@@ -59,6 +61,11 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
     const [message, setMessage] = useState<string | null>('');
     const [profileMessage, setProfileMessage] = useState<string | null>('');
     const [validationError, setValidationError] = useState<string | null>(null);
+
+    const [settings, setSettings] = useState<AppSettings | null>(null);
+    useEffect(() => {
+        getSettings().then(setSettings);
+    }, []);
 
     // Sync profile data when initialClient changes
     useEffect(() => {
@@ -245,19 +252,36 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
 
     }, [upcomingOrder, activeOrder, client, foodOrder, mealOrder, boxOrders]);
 
-    // Box Logic - Load quotas if boxTypeId is set (optional for box contents)
+    // Box Logic - Load quotas for all active box types to support multiple boxes with different types
     useEffect(() => {
-        if (client.serviceType === 'Boxes' && orderConfig.boxTypeId) {
-            getBoxQuotas(orderConfig.boxTypeId).then(quotas => {
-                setActiveBoxQuotas(quotas);
-            }).catch(err => {
-                console.error('Error loading box quotas:', err);
-                setActiveBoxQuotas([]);
-            });
-        } else {
-            setActiveBoxQuotas([]);
+        async function loadQuotas() {
+            if (client.serviceType !== 'Boxes' || boxTypes.length === 0) {
+                // Optimization: only load if needed (though existing cached data makes it cheap)
+                // But wait, if we switch tabs, we might want quotas ready? 
+                // ClientProfile loads them on mount if boxTypes exist.
+                // Let's stick to loading if serviceType is Boxes or just load them if boxTypes are present to be safe/ready.
+                // Actually ClientProfile: if (boxTypes.length > 0) loadQuotas();
+                // Here, let's load if boxTypes exist, regardless of current tab, so it's ready if they switch.
+            }
+
+            if (boxTypes.length === 0) return;
+
+            const allQuotas: BoxQuota[] = [];
+            for (const bt of boxTypes) {
+                if (bt.isActive) {
+                    try {
+                        const quotas = await getBoxQuotas(bt.id);
+                        allQuotas.push(...quotas);
+                    } catch (e) {
+                        console.error(`Error loading quotas for box type ${bt.id}`, e);
+                    }
+                }
+            }
+            setActiveBoxQuotas(allQuotas);
         }
-    }, [orderConfig.boxTypeId, client.serviceType]);
+
+        loadQuotas();
+    }, [boxTypes, client.serviceType]);
 
     // Extract dependencies for auto-save
     const caseId = useMemo(() => orderConfig?.caseId ?? null, [orderConfig?.caseId]);
@@ -701,6 +725,7 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
     // -- LOGIC HELPERS --
 
     function handleBoxItemChange(itemId: string, qty: number) {
+        // Legacy/Fallback for flat items if needed, but we are moving to multi-box
         const currentItems = { ...(orderConfig.items || {}) };
         if (qty > 0) {
             currentItems[itemId] = qty;
@@ -708,6 +733,86 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
             delete currentItems[itemId];
         }
         setOrderConfig({ ...orderConfig, items: currentItems });
+    }
+
+    // --- Box Order Helpers (Multi-Box Support) ---
+
+    function getNextDeliveryDateForVendor(vendorId: string): string | null {
+        const deliveryDate = getNextDeliveryDateUtil(vendorId, vendors);
+        if (!deliveryDate) return null;
+        return formatDeliveryDate(deliveryDate);
+    }
+
+    function handleAddBox() {
+        const currentBoxes = orderConfig.boxOrders || [];
+        const limit = client.authorizedAmount;
+        if (limit && currentBoxes.length >= limit) return;
+
+        const firstActiveBoxType = boxTypes.find(bt => bt.isActive);
+        setOrderConfig({
+            ...orderConfig,
+            boxOrders: [
+                ...currentBoxes,
+                {
+                    boxTypeId: firstActiveBoxType?.id || '',
+                    vendorId: firstActiveBoxType?.vendorId || '',
+                    quantity: 1,
+                    items: {}
+                }
+            ]
+        });
+    }
+
+    function handleRemoveBox(index: number) {
+        const currentBoxes = [...(orderConfig.boxOrders || [])];
+        if (currentBoxes.length <= 1) {
+            // Keep at least one box (reset to default)
+            const firstActiveBoxType = boxTypes.find(bt => bt.isActive);
+            setOrderConfig({
+                ...orderConfig,
+                boxOrders: [{
+                    boxTypeId: firstActiveBoxType?.id || '',
+                    vendorId: firstActiveBoxType?.vendorId || '',
+                    quantity: 1,
+                    items: {}
+                }]
+            });
+            return;
+        }
+        currentBoxes.splice(index, 1);
+        setOrderConfig({ ...orderConfig, boxOrders: currentBoxes });
+    }
+
+    function handleBoxUpdate(index: number, field: string, value: any) {
+        const currentBoxes = [...(orderConfig.boxOrders || [])];
+        if (!currentBoxes[index]) return;
+
+        currentBoxes[index] = { ...currentBoxes[index], [field]: value };
+
+        // Logic to sync vendor/boxType dependencies
+        if (field === 'vendorId') {
+            const validBoxType = boxTypes.find(bt => bt.isActive && bt.vendorId === value);
+            if (validBoxType) {
+                currentBoxes[index].boxTypeId = validBoxType.id;
+            }
+        }
+
+        setOrderConfig({ ...orderConfig, boxOrders: currentBoxes });
+    }
+
+    function handleBoxItemUpdate(boxIndex: number, itemId: string, quantity: number) {
+        const currentBoxes = [...(orderConfig.boxOrders || [])];
+        if (!currentBoxes[boxIndex]) return;
+
+        const currentItems = { ...(currentBoxes[boxIndex].items || {}) };
+        if (quantity > 0) {
+            currentItems[itemId] = quantity;
+        } else {
+            delete currentItems[itemId];
+        }
+
+        currentBoxes[boxIndex] = { ...currentBoxes[boxIndex], items: currentItems };
+        setOrderConfig({ ...orderConfig, boxOrders: currentBoxes });
     }
 
 
@@ -796,7 +901,7 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
                             <div className="input" style={{ background: 'var(--bg-app)', opacity: 0.8 }}>
                                 {client.serviceType === 'Food'
                                     ? `${client.approvedMealsPerWeek || 0} meals / week`
-                                    : 'Standard Box Allocation'
+                                    : `Auth amount of boxes: ${client.authorizedAmount || 'Standard Box Allocation'}`
                                 }
                             </div>
                         </div>
@@ -887,223 +992,268 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
 
                     {client.serviceType === 'Boxes' && (
                         <div>
-                            {/* Box Content Selection - Show all categories with box items */}
-                            {/* Box items are menu items where vendorId is null/empty */}
                             {(() => {
-                                // Check if there are any box items (items without vendorId)
-                                const hasBoxItems = menuItems.some(i =>
-                                    (i.vendorId === null || i.vendorId === '') &&
-                                    i.isActive
-                                );
-
-                                if (!hasBoxItems) {
-                                    return (
-                                        <div style={{ marginTop: '1rem', padding: '1rem', background: 'rgba(239, 68, 68, 0.1)', borderRadius: '6px', border: '1px solid var(--color-danger)' }}>
-                                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem', color: 'var(--color-danger)', fontWeight: 600 }}>
-                                                <AlertTriangle size={16} />
-                                                No box items found
-                                            </div>
-                                            <div style={{ fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
-                                                There are no box items (menu items without a vendor) configured. Please contact support.
-                                            </div>
-                                        </div>
-                                    );
-                                }
+                                const currentBoxes = orderConfig.boxOrders || [];
+                                // Fallback if no boxes exist yet (should have been hydrated)
+                                if (currentBoxes.length === 0) return null;
 
                                 return (
-                                    <div style={{ marginTop: '1rem', borderTop: '1px solid var(--border-color)', paddingTop: '1rem' }}>
-                                        <h4 style={{ fontSize: '0.9rem', marginBottom: '0.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                                            <Package size={14} /> Box Contents
-                                        </h4>
+                                    <div>
+                                        {currentBoxes.map((box: any, index: number) => (
+                                            <div key={index} style={{ marginBottom: '2rem', padding: '1rem', border: '1px solid var(--border-color)', borderRadius: '8px' }}>
+                                                <div style={{
+                                                    display: 'flex',
+                                                    justifyContent: 'space-between',
+                                                    alignItems: 'center',
+                                                    marginBottom: '1rem',
+                                                    borderBottom: '1px solid var(--border-color)',
+                                                    paddingBottom: '0.5rem'
+                                                }}>
+                                                    <h4 style={{ margin: 0, fontSize: '1rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                                        <Package size={16} /> Box #{index + 1}
+                                                    </h4>
+                                                    {currentBoxes.length > 1 && (
+                                                        <button
+                                                            type="button"
+                                                            className="btn btn-ghost btn-sm"
+                                                            onClick={() => handleRemoveBox(index)}
+                                                            style={{ color: 'var(--color-danger)', fontSize: '0.8rem', padding: '4px 8px' }}
+                                                        >
+                                                            <Trash2 size={14} style={{ marginRight: '4px' }} /> Remove
+                                                        </button>
+                                                    )}
+                                                </div>
 
-                                        {/* Show all categories with box items */}
-                                        {categories.map(category => {
-                                            // Filter items for this category - box items are universal (vendorId is null/empty)
-                                            const availableItems = menuItems.filter(i =>
-                                                (i.vendorId === null || i.vendorId === '') &&
-                                                i.isActive &&
-                                                i.categoryId === category.id
-                                            );
 
-                                            if (availableItems.length === 0) return null;
 
-                                            const selectedItems = orderConfig.items || {};
-
-                                            // Calculate total quota value for this category
-                                            let categoryQuotaValue = 0;
-                                            Object.entries(selectedItems).forEach(([itemId, qty]) => {
-                                                const item = menuItems.find(i => i.id === itemId);
-                                                if (item && item.categoryId === category.id) {
-                                                    const itemQuotaValue = item.quotaValue || 1;
-                                                    categoryQuotaValue += (qty as number) * itemQuotaValue;
-                                                }
-                                            });
-
-                                            // Find quota requirement for this category (from box quotas - optional)
-                                            const quota = orderConfig.boxTypeId ? activeBoxQuotas.find(q => q.categoryId === category.id) : null;
-                                            const boxQuantity = orderConfig.boxQuantity || 1;
-                                            const requiredQuotaValueFromBox = quota ? quota.targetValue * boxQuantity : null;
-
-                                            // Check if category has a setValue requirement
-                                            const requiredQuotaValueFromCategory = category.setValue !== undefined && category.setValue !== null ? category.setValue : null;
-
-                                            // Use setValue if present, otherwise use box quota requirement
-                                            const requiredQuotaValue = requiredQuotaValueFromCategory !== null ? requiredQuotaValueFromCategory : requiredQuotaValueFromBox;
-
-                                            const meetsQuota = requiredQuotaValue !== null ? categoryQuotaValue === requiredQuotaValue : true;
-
-                                            return (
-                                                <div key={category.id} style={{ marginBottom: '1rem', background: 'var(--bg-surface-hover)', padding: '0.75rem', borderRadius: '6px', border: requiredQuotaValue !== null && !meetsQuota ? '2px solid var(--color-danger)' : '1px solid var(--border-color)' }}>
-                                                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem', fontSize: '0.85rem' }}>
-                                                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                                                            <span style={{ fontWeight: 600 }}>{category.name}</span>
-                                                            {requiredQuotaValueFromCategory !== null && (
-                                                                <span style={{
-                                                                    fontSize: '0.7rem',
-                                                                    color: 'var(--color-primary)',
-                                                                    background: 'var(--bg-app)',
-                                                                    padding: '2px 6px',
-                                                                    borderRadius: '4px',
-                                                                    fontWeight: 500
-                                                                }}>
-                                                                    Set Value: {requiredQuotaValueFromCategory}
-                                                                </span>
-                                                            )}
-                                                        </div>
-                                                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                                                            {requiredQuotaValue !== null && (
-                                                                <span style={{
-                                                                    color: meetsQuota ? 'var(--color-success)' : 'var(--color-danger)',
-                                                                    fontSize: '0.8rem',
-                                                                    fontWeight: 500
-                                                                }}>
-                                                                    Quota: {categoryQuotaValue} / {requiredQuotaValue}
-                                                                </span>
-                                                            )}
-                                                            {categoryQuotaValue > 0 && requiredQuotaValue === null && (
-                                                                <span style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>
-                                                                    Total: {categoryQuotaValue}
-                                                                </span>
-                                                            )}
-                                                        </div>
-                                                    </div>
-                                                    {requiredQuotaValue !== null && !meetsQuota && (
+                                                {/* Take Effect Date */}
+                                                {box.vendorId && settings && (() => {
+                                                    const nextDate = getNextDeliveryDateForVendor(box.vendorId);
+                                                    if (nextDate) {
+                                                        const takeEffect = getTakeEffectDate(settings, new Date(nextDate));
+                                                        return (
+                                                            <div style={{
+                                                                marginTop: 'var(--spacing-md)',
+                                                                padding: '0.75rem',
+                                                                backgroundColor: 'var(--bg-surface-hover)',
+                                                                borderRadius: 'var(--radius-sm)',
+                                                                border: '1px solid var(--border-color)',
+                                                                fontSize: '0.85rem',
+                                                                color: 'var(--text-secondary)',
+                                                                textAlign: 'center'
+                                                            }}>
+                                                                <strong style={{ color: 'var(--text-primary)' }}>Take Effect Date:</strong> {takeEffect?.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', timeZone: 'UTC' })} (always a Sunday)
+                                                            </div>
+                                                        );
+                                                    }
+                                                    return (
                                                         <div style={{
-                                                            marginBottom: '0.5rem',
-                                                            padding: '0.5rem',
+                                                            marginTop: 'var(--spacing-md)',
+                                                            padding: '0.75rem',
                                                             backgroundColor: 'rgba(239, 68, 68, 0.1)',
-                                                            borderRadius: '4px',
-                                                            fontSize: '0.75rem',
+                                                            borderRadius: 'var(--radius-sm)',
+                                                            border: '1px solid var(--color-danger)',
+                                                            fontSize: '0.85rem',
                                                             color: 'var(--color-danger)',
                                                             display: 'flex',
                                                             alignItems: 'center',
-                                                            gap: '0.25rem'
+                                                            gap: '0.5rem',
+                                                            textAlign: 'center',
+                                                            justifyContent: 'center'
                                                         }}>
-                                                            <AlertTriangle size={12} />
-                                                            <span>You must have a total of {requiredQuotaValue} {category.name} points</span>
+                                                            <AlertTriangle size={16} />
+                                                            <span><strong>Warning:</strong> Check vendor delivery days.</span>
                                                         </div>
+                                                    );
+                                                })()}
+
+                                                {/* Box Content Selection */}
+                                                <div style={{ marginTop: '1rem', borderTop: '1px solid var(--border-color)', paddingTop: '1rem' }}>
+                                                    {box.vendorId && !getNextDeliveryDateForVendor(box.vendorId) ? (
+                                                        <div style={{
+                                                            padding: '1.5rem',
+                                                            backgroundColor: 'var(--bg-surface-active)',
+                                                            borderRadius: 'var(--radius-md)',
+                                                            border: '1px dashed var(--color-danger)',
+                                                            color: 'var(--text-secondary)',
+                                                            textAlign: 'center',
+                                                            display: 'flex',
+                                                            flexDirection: 'column',
+                                                            alignItems: 'center',
+                                                            gap: '0.5rem',
+                                                            opacity: 0.7
+                                                        }}>
+                                                            <AlertTriangle size={24} color="var(--color-danger)" />
+                                                            <span style={{ color: 'var(--color-danger)', fontWeight: 600 }}>Action Required</span>
+                                                            <span style={{ fontSize: '0.9rem' }}>
+                                                                Vendor has no upcoming delivery dates.
+                                                            </span>
+                                                        </div>
+                                                    ) : (
+                                                        <>
+                                                            {/* Categories Loop */}
+                                                            {categories.map(category => {
+                                                                const availableItems = menuItems.filter(i =>
+                                                                    (i.vendorId === null || i.vendorId === '') &&
+                                                                    i.isActive &&
+                                                                    i.categoryId === category.id
+                                                                );
+
+                                                                if (availableItems.length === 0) return null;
+
+                                                                const selectedItems = box.items || {};
+
+                                                                // Calculate quota for THIS box/category
+                                                                let categoryQuotaValue = 0;
+                                                                Object.entries(selectedItems).forEach(([itemId, qty]) => {
+                                                                    const item = menuItems.find(i => i.id === itemId);
+                                                                    if (item && item.categoryId === category.id) {
+                                                                        const itemQuotaValue = item.quotaValue || 1;
+                                                                        categoryQuotaValue += (qty as number) * itemQuotaValue;
+                                                                    }
+                                                                });
+
+                                                                // Quota checks
+                                                                let requiredQuotaValue: number | null = null;
+                                                                if (category.setValue !== undefined && category.setValue !== null) {
+                                                                    requiredQuotaValue = category.setValue;
+                                                                } else if (box.boxTypeId) {
+                                                                    // Here we use activeBoxQuotas state if available, OR we can fetch it?
+                                                                    // ClientPortalInterface has activeBoxQuotas state but it was driven by orderConfig.boxTypeId (singular).
+                                                                    // Ideally we should use the quotas for THIS box's type.
+                                                                    // We might not have them loaded if multiple boxes have different types.
+                                                                    // Use activeBoxQuotas fallback or just ignore generic quotas for now to be safe/simple,
+                                                                    // OR try to find it from activeBoxQuotas if it matches.
+                                                                    // Realistically, for Client Portal, we might assume one box type usually used, or we need to refactor quota loading.
+                                                                    // ClientProfile fetches ALL quotas or fetches on change.
+                                                                    // For now, let's use category.setValue which is most important, and maybe activeBoxQuotas if boxTypeId matches orderConfig.boxTypeId (legacy).
+                                                                    // Replicating ClientProfile logic:
+                                                                    const quota = activeBoxQuotas.find(q => q.boxTypeId === box.boxTypeId && q.categoryId === category.id);
+                                                                    if (quota) {
+                                                                        requiredQuotaValue = quota.targetValue;
+                                                                    }
+                                                                }
+
+                                                                const meetsQuota = requiredQuotaValue !== null ? isMeetingExactTarget(categoryQuotaValue, requiredQuotaValue) : true;
+
+                                                                return (
+                                                                    <div key={category.id} style={{ marginBottom: '1rem', background: 'var(--bg-surface-hover)', padding: '0.75rem', borderRadius: '6px', border: requiredQuotaValue !== null && !meetsQuota ? '2px solid var(--color-danger)' : '1px solid var(--border-color)' }}>
+                                                                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem', fontSize: '0.85rem' }}>
+                                                                            <span style={{ fontWeight: 600 }}>{category.name}</span>
+                                                                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                                                                {requiredQuotaValue !== null && (
+                                                                                    <span style={{
+                                                                                        color: meetsQuota ? 'var(--color-success)' : 'var(--color-danger)',
+                                                                                        fontSize: '0.8rem',
+                                                                                        fontWeight: 500
+                                                                                    }}>
+                                                                                        Quota: {categoryQuotaValue} / {requiredQuotaValue}
+                                                                                    </span>
+                                                                                )}
+                                                                                {categoryQuotaValue > 0 && requiredQuotaValue === null && (
+                                                                                    <span style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>
+                                                                                        Total: {categoryQuotaValue}
+                                                                                    </span>
+                                                                                )}
+                                                                            </div>
+                                                                        </div>
+                                                                        {requiredQuotaValue !== null && !meetsQuota && (
+                                                                            <div style={{
+                                                                                marginBottom: '0.5rem',
+                                                                                padding: '0.5rem',
+                                                                                backgroundColor: 'rgba(239, 68, 68, 0.1)',
+                                                                                borderRadius: '4px',
+                                                                                fontSize: '0.75rem',
+                                                                                color: 'var(--color-danger)',
+                                                                                display: 'flex',
+                                                                                alignItems: 'center',
+                                                                                gap: '0.25rem'
+                                                                            }}>
+                                                                                <AlertTriangle size={12} />
+                                                                                <span>You must have a total of {requiredQuotaValue} {category.name} points</span>
+                                                                            </div>
+                                                                        )}
+
+                                                                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
+                                                                            {availableItems.map(item => {
+                                                                                const qty = Number(selectedItems[item.id] || 0);
+                                                                                return (
+                                                                                    <div key={item.id} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', background: 'var(--bg-app)', padding: '4px 8px', borderRadius: '4px', border: '1px solid var(--border-color)' }}>
+                                                                                        <span style={{ fontSize: '0.8rem' }}>
+                                                                                            {item.name}
+                                                                                            {(item.quotaValue || 1) !== 1 && (
+                                                                                                <span style={{ color: 'var(--text-tertiary)', marginLeft: '4px' }}>
+                                                                                                    (counts as {item.quotaValue || 1} meals)
+                                                                                                </span>
+                                                                                            )}
+                                                                                        </span>
+                                                                                        <div className={styles.quantityControl} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                                                                            <button onClick={() => handleBoxItemUpdate(index, item.id, Math.max(0, qty - 1))} className="btn btn-secondary" style={{ padding: '2px 8px' }}>-</button>
+                                                                                            <span style={{ width: '20px', textAlign: 'center' }}>{qty}</span>
+                                                                                            <button onClick={() => handleBoxItemUpdate(index, item.id, qty + 1)} className="btn btn-secondary" style={{ padding: '2px 8px' }}>+</button>
+                                                                                        </div>
+                                                                                    </div>
+                                                                                );
+                                                                            })}
+                                                                        </div>
+                                                                    </div>
+                                                                );
+                                                            })}
+
+                                                            {/* Uncategorized */}
+                                                            {(() => {
+                                                                const uncategorizedItems = menuItems.filter(i =>
+                                                                    (i.vendorId === null || i.vendorId === '') &&
+                                                                    i.isActive &&
+                                                                    (!i.categoryId || i.categoryId === '')
+                                                                );
+                                                                if (uncategorizedItems.length === 0) return null;
+                                                                const selectedItems = box.items || {};
+                                                                return (
+                                                                    <div style={{ marginBottom: '1rem', background: 'var(--bg-surface-hover)', padding: '0.75rem', borderRadius: '6px' }}>
+                                                                        <div style={{ marginBottom: '0.5rem', fontSize: '0.85rem', fontWeight: 600 }}>Uncategorized</div>
+                                                                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
+                                                                            {uncategorizedItems.map(item => {
+                                                                                const qty = Number(selectedItems[item.id] || 0);
+                                                                                return (
+                                                                                    <div key={item.id} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', background: 'var(--bg-app)', padding: '4px 8px', borderRadius: '4px', border: '1px solid var(--border-color)' }}>
+                                                                                        <span style={{ fontSize: '0.8rem' }}>
+                                                                                            {item.name}
+                                                                                            {(item.quotaValue || 1) !== 1 && (
+                                                                                                <span style={{ color: 'var(--text-tertiary)', marginLeft: '4px' }}>
+                                                                                                    (counts as {item.quotaValue || 1} meals)
+                                                                                                </span>
+                                                                                            )}
+                                                                                        </span>
+                                                                                        <div className={styles.quantityControl} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                                                                            <button onClick={() => handleBoxItemUpdate(index, item.id, Math.max(0, qty - 1))} className="btn btn-secondary" style={{ padding: '2px 8px' }}>-</button>
+                                                                                            <span style={{ width: '20px', textAlign: 'center' }}>{qty}</span>
+                                                                                            <button onClick={() => handleBoxItemUpdate(index, item.id, qty + 1)} className="btn btn-secondary" style={{ padding: '2px 8px' }}>+</button>
+                                                                                        </div>
+                                                                                    </div>
+                                                                                );
+                                                                            })}
+                                                                        </div>
+                                                                    </div>
+                                                                );
+                                                            })()}
+                                                        </>
                                                     )}
-
-                                                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
-                                                        {availableItems.map(item => {
-                                                            const qty = Number(selectedItems[item.id] || 0);
-                                                            const itemVal = item.quotaValue || 1;
-                                                            // Check if adding this item would exceed the limit
-                                                            // If requiredQuotaValue is null, there is no limit.
-                                                            const canAdd = requiredQuotaValue === null || (categoryQuotaValue + itemVal <= requiredQuotaValue);
-
-                                                            return (
-                                                                <div key={item.id} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', background: 'var(--bg-app)', padding: '4px 8px', borderRadius: '4px', border: '1px solid var(--border-color)' }}>
-                                                                    <span style={{ fontSize: '0.8rem' }}>
-                                                                        {item.name}
-                                                                        {(item.quotaValue || 1) > 1 && (
-                                                                            <span style={{ color: 'var(--text-tertiary)', marginLeft: '4px' }}>
-                                                                                (counts as {item.quotaValue || 1} meals)
-                                                                            </span>
-                                                                        )}
-                                                                    </span>
-                                                                    <div className={styles.quantityControl} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                                                        <button onClick={() => handleBoxItemChange(item.id, Math.max(0, qty - 1))} className="btn btn-secondary" style={{ padding: '2px 8px' }}>-</button>
-                                                                        <span style={{ width: '20px', textAlign: 'center' }}>{qty}</span>
-                                                                        <button
-                                                                            onClick={() => {
-                                                                                if (!canAdd) {
-                                                                                    alert("Adding this item would exceed the category limit");
-                                                                                    return;
-                                                                                }
-                                                                                handleBoxItemChange(item.id, qty + 1);
-                                                                            }}
-                                                                            className="btn btn-secondary"
-                                                                            style={{
-                                                                                padding: '2px 8px',
-                                                                                opacity: canAdd ? 1 : 0.5,
-                                                                                cursor: canAdd ? 'pointer' : 'not-allowed'
-                                                                            }}
-                                                                            title={!canAdd ? "Adding this item would exceed the category limit" : "Add item"}
-                                                                        >+</button>
-                                                                    </div>
-                                                                </div>
-                                                            );
-                                                        })}
-                                                    </div>
                                                 </div>
-                                            );
-                                        })}
+                                            </div>
+                                        ))}
 
-                                        {/* Show uncategorized items if any */}
-                                        {(() => {
-                                            const uncategorizedItems = menuItems.filter(i =>
-                                                (i.vendorId === null || i.vendorId === '') &&
-                                                i.isActive &&
-                                                (!i.categoryId || i.categoryId === '')
-                                            );
-
-                                            if (uncategorizedItems.length === 0) return null;
-
-                                            const selectedItems = orderConfig.items || {};
-
-                                            return (
-                                                <div style={{ marginTop: '1rem', marginBottom: '1rem', background: 'var(--bg-surface-hover)', padding: '0.75rem', borderRadius: '6px', border: '1px solid var(--border-color)' }}>
-                                                    <div style={{ marginBottom: '0.5rem', fontSize: '0.85rem', fontWeight: 600 }}>Other Items</div>
-                                                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
-                                                        {uncategorizedItems.map(item => {
-                                                            const qty = Number(selectedItems[item.id] || 0);
-                                                            return (
-                                                                <div key={item.id} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', background: 'var(--bg-app)', padding: '4px 8px', borderRadius: '4px', border: '1px solid var(--border-color)' }}>
-                                                                    <span style={{ fontSize: '0.8rem' }}>
-                                                                        {item.name}
-                                                                        {(item.quotaValue || 1) > 1 && (
-                                                                            <span style={{ color: 'var(--text-tertiary)', marginLeft: '4px' }}>
-                                                                                (counts as {item.quotaValue || 1} meals)
-                                                                            </span>
-                                                                        )}
-                                                                    </span>
-                                                                    <div className={styles.quantityControl} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                                                        <button onClick={() => handleBoxItemChange(item.id, Math.max(0, qty - 1))} className="btn btn-secondary" style={{ padding: '2px 8px' }}>-</button>
-                                                                        <span style={{ width: '20px', textAlign: 'center' }}>{qty}</span>
-                                                                        <button onClick={() => handleBoxItemChange(item.id, qty + 1)} className="btn btn-secondary" style={{ padding: '2px 8px' }}>+</button>
-                                                                    </div>
-                                                                </div>
-                                                            );
-                                                        })}
-                                                    </div>
-                                                </div>
-                                            );
-                                        })()}
-
-                                        {/* Show message if no categories have items */}
-                                        {categories.every(category => {
-                                            const hasItems = menuItems.some(i =>
-                                                (i.vendorId === null || i.vendorId === '') &&
-                                                i.isActive &&
-                                                i.categoryId === category.id
-                                            );
-                                            return !hasItems;
-                                        }) && (
-                                                <div style={{ padding: '1rem', textAlign: 'center', color: 'var(--text-secondary)' }}>
-                                                    No box items available. Please contact support.
-                                                </div>
-                                            )}
+                                        {/* Add Box Button */}
+                                        {(!client.authorizedAmount || currentBoxes.length < client.authorizedAmount) && (
+                                            <button
+                                                type="button"
+                                                className="btn btn-outline"
+                                                style={{ width: '100%', borderStyle: 'dashed', padding: '1rem', display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '0.5rem' }}
+                                                onClick={handleAddBox}
+                                            >
+                                                <Plus size={16} /> Add Another Box
+                                            </button>
+                                        )}
                                     </div>
                                 );
                             })()}
