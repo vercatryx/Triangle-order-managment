@@ -5,7 +5,8 @@ import { ClientProfile, Vendor, MenuItem, MealCategory, MealItem } from '@/lib/t
 import { isMeetingMinimum, isMeetingExactTarget } from '@/lib/utils';
 import { Plus, Trash2, Calendar, Check, AlertTriangle, MessageSquare } from 'lucide-react';
 import TextareaAutosize from 'react-textarea-autosize';
-import styles from './ClientProfile.module.css'; // Assuming we can reuse styles
+import styles from './ClientProfile.module.css';
+import MenuItemCard from './MenuItemCard';
 
 interface Props {
     orderConfig: any;
@@ -42,7 +43,12 @@ export default function FoodServiceWidget({
     function getVendorMenuItems(vendorId: string) {
         return menuItems
             .filter(i => i.vendorId === vendorId && i.isActive)
-            .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }));
+            .sort((a, b) => {
+                const sortOrderA = a.sortOrder ?? 0;
+                const sortOrderB = b.sortOrder ?? 0;
+                if (sortOrderA !== sortOrderB) return sortOrderA - sortOrderB;
+                return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' });
+            });
     }
 
     function getVendorSelectionsForDay(day: string | null): any[] {
@@ -551,37 +557,14 @@ export default function FoodServiceWidget({
                                                     const note = dayNotes[item.id] || '';
 
                                                     return (
-                                                        <div key={item.id} className={styles.menuItemCard} style={{ padding: '0.75rem', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-sm)', background: 'var(--bg-surface)' }}>
-                                                            <div className={styles.menuItemName} style={{ marginBottom: '8px', fontSize: '0.9rem', fontWeight: 500 }}>
-                                                                {item.name}
-                                                                <span style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)', marginLeft: '8px' }}>
-                                                                    (Value: {item.value || 0})
-                                                                </span>
-                                                            </div>
-                                                            <div className={styles.quantityControl} style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
-                                                                <button onClick={() => handleVendorItemChange(index, item.id, Math.max(0, qty - 1), day)} className="btn btn-secondary" style={{ padding: '2px 8px' }}>-</button>
-                                                                <span style={{ width: '20px', textAlign: 'center' }}>{qty}</span>
-                                                                <button onClick={() => handleVendorItemChange(index, item.id, qty + 1, day)} className="btn btn-secondary" style={{ padding: '2px 8px' }}>+</button>
-                                                            </div>
-                                                            {qty > 0 && (
-                                                                <div style={{ marginTop: '8px' }}>
-                                                                    <TextareaAutosize
-                                                                        minRows={1}
-                                                                        placeholder="Add note..."
-                                                                        value={note}
-                                                                        onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => handleVendorItemChange(index, item.id, qty, day, e.target.value)}
-                                                                        style={{
-                                                                            width: '100%',
-                                                                            fontSize: '0.8rem',
-                                                                            padding: '4px',
-                                                                            borderRadius: '4px',
-                                                                            border: '1px solid var(--border-color)',
-                                                                            resize: 'none'
-                                                                        }}
-                                                                    />
-                                                                </div>
-                                                            )}
-                                                        </div>
+                                                        <MenuItemCard
+                                                            key={item.id}
+                                                            item={item}
+                                                            quantity={qty}
+                                                            note={note}
+                                                            onQuantityChange={(newQty) => handleVendorItemChange(index, item.id, newQty, day)}
+                                                            onNoteChange={(newNote) => handleVendorItemChange(index, item.id, qty, day, newNote)}
+                                                        />
                                                     );
                                                 })}
                                                 {vendorItems.length === 0 && <span className={styles.hint}>No items available for this vendor.</span>}
@@ -610,42 +593,19 @@ export default function FoodServiceWidget({
                                             <span>Minimum: {vendorMinimum} meals | Selected: {vendorMealCount} meals</span>
                                         </div>
                                     )}
-                                    <div className={styles.menuItemsGrid} style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '10px' }}>
+                                    <div className={styles.menuItemsGrid} style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '16px' }}>
                                         {vendorItems.map(item => {
                                             const qty = selection.items?.[item.id] || 0;
                                             const note = selection.itemNotes?.[item.id] || '';
                                             return (
-                                                <div key={item.id} className={styles.menuItemCard} style={{ padding: '0.75rem', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-sm)', background: 'var(--bg-surface)' }}>
-                                                    <div className={styles.menuItemName} style={{ marginBottom: '8px', fontSize: '0.9rem', fontWeight: 500 }}>
-                                                        {item.name}
-                                                        <span style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)', marginLeft: '8px' }}>
-                                                            (Value: {item.value || 0})
-                                                        </span>
-                                                    </div>
-                                                    <div className={styles.quantityControl} style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
-                                                        <button onClick={() => handleVendorItemChange(index, item.id, Math.max(0, qty - 1))} className="btn btn-secondary" style={{ padding: '2px 8px' }}>-</button>
-                                                        <span style={{ width: '20px', textAlign: 'center' }}>{qty}</span>
-                                                        <button onClick={() => handleVendorItemChange(index, item.id, qty + 1)} className="btn btn-secondary" style={{ padding: '2px 8px' }}>+</button>
-                                                    </div>
-                                                    {qty > 0 && (
-                                                        <div style={{ marginTop: '8px' }}>
-                                                            <TextareaAutosize
-                                                                minRows={1}
-                                                                placeholder="Add note..."
-                                                                value={note}
-                                                                onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => handleVendorItemChange(index, item.id, qty, undefined, e.target.value)}
-                                                                style={{
-                                                                    width: '100%',
-                                                                    fontSize: '0.8rem',
-                                                                    padding: '4px',
-                                                                    borderRadius: '4px',
-                                                                    border: '1px solid var(--border-color)',
-                                                                    resize: 'none'
-                                                                }}
-                                                            />
-                                                        </div>
-                                                    )}
-                                                </div>
+                                                <MenuItemCard
+                                                    key={item.id}
+                                                    item={item}
+                                                    quantity={qty}
+                                                    note={note}
+                                                    onQuantityChange={(newQty) => handleVendorItemChange(index, item.id, newQty)}
+                                                    onNoteChange={(newNote) => handleVendorItemChange(index, item.id, qty, undefined, newNote)}
+                                                />
                                             );
                                         })}
                                         {vendorItems.length === 0 && <span className={styles.hint}>No items available for this vendor.</span>}
@@ -664,7 +624,9 @@ export default function FoodServiceWidget({
         return Object.entries(orderConfig.mealSelections).map(([mealType, config]: [string, any]) => {
 
             // Get categories for this meal type
-            const subCategories = mealCategories.filter(c => c.mealType === mealType);
+            const subCategories = mealCategories
+                .filter(c => c.mealType === mealType)
+                .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
 
             return (
                 <div key={mealType} className={styles.vendorBlock} style={{
@@ -720,7 +682,12 @@ export default function FoodServiceWidget({
                         {subCategories.map(subCat => {
                             const catItems = mealItems
                                 .filter(i => i.categoryId === subCat.id)
-                                .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }));
+                                .sort((a, b) => {
+                                    const sortOrderA = a.sortOrder ?? 0;
+                                    const sortOrderB = b.sortOrder ?? 0;
+                                    if (sortOrderA !== sortOrderB) return sortOrderA - sortOrderB;
+                                    return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' });
+                                });
 
                             if (catItems.length === 0) return null;
 
@@ -766,41 +733,19 @@ export default function FoodServiceWidget({
                                             </span>
                                         )}
                                     </div>
-                                    <div className={styles.menuItemsGrid} style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '10px' }}>
+                                    <div className={styles.menuItemsGrid} style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '16px' }}>
                                         {catItems.map(item => {
                                             const qty = config.items?.[item.id] || 0;
                                             return (
-                                                <div key={item.id} className={styles.menuItemCard} style={{ padding: '0.75rem', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-sm)', background: 'var(--bg-surface)' }}>
-                                                    <div style={{ marginBottom: '8px', fontSize: '0.9rem', fontWeight: 500 }}>
-                                                        {item.name}
-                                                        <span style={{ color: 'var(--text-secondary)', fontSize: '0.8rem', marginLeft: '4px' }}>
-                                                            (Value: {item.value || 0})
-                                                        </span>
-                                                    </div>
-                                                    <div className={styles.quantityControl} style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
-                                                        <button onClick={() => handleMealItemChange(mealType, item.id, Math.max(0, qty - 1))} className="btn btn-secondary" style={{ padding: '2px 8px' }}>-</button>
-                                                        <span style={{ width: '20px', textAlign: 'center' }}>{qty}</span>
-                                                        <button onClick={() => handleMealItemChange(mealType, item.id, qty + 1)} className="btn btn-secondary" style={{ padding: '2px 8px' }}>+</button>
-                                                    </div>
-                                                    {qty > 0 && (
-                                                        <div style={{ marginTop: '8px' }}>
-                                                            <TextareaAutosize
-                                                                minRows={1}
-                                                                placeholder="Add note..."
-                                                                value={config.itemNotes?.[item.id] || ''}
-                                                                onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => handleMealItemChange(mealType, item.id, qty, e.target.value)}
-                                                                style={{
-                                                                    width: '100%',
-                                                                    fontSize: '0.8rem',
-                                                                    padding: '4px',
-                                                                    borderRadius: '4px',
-                                                                    border: '1px solid var(--border-color)',
-                                                                    resize: 'none'
-                                                                }}
-                                                            />
-                                                        </div>
-                                                    )}
-                                                </div>
+                                                <MenuItemCard
+                                                    key={item.id}
+                                                    item={item}
+                                                    quantity={qty}
+                                                    note={config.itemNotes?.[item.id] || ''}
+                                                    onQuantityChange={(newQty) => handleMealItemChange(mealType, item.id, newQty)}
+                                                    onNoteChange={(newNote) => handleMealItemChange(mealType, item.id, qty, newNote)}
+                                                    contextLabel={mealType}
+                                                />
                                             );
                                         })}
                                     </div>
@@ -908,92 +853,6 @@ export default function FoodServiceWidget({
 
     return (
         <div className={styles.vendorsList}>
-            {/* Take Effect Date */}
-            {takeEffectDate && (
-                <div style={{
-                    padding: '12px 16px',
-                    marginBottom: '16px',
-                    backgroundColor: 'var(--color-primary)',
-                    color: 'white',
-                    borderRadius: '8px',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '10px',
-                    fontSize: '0.95rem',
-                    fontWeight: 600,
-                    boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
-                }}>
-                    <Calendar size={18} />
-                    <span>Orders will take effect on: {takeEffectDate}</span>
-                </div>
-            )}
-
-            {/* Budget Header */}
-            <div className={styles.orderHeader} style={{ marginBottom: '16px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <h4>Your Selections</h4>
-                    <div style={{ display: 'flex', gap: '0.5rem', flexDirection: 'column', alignItems: 'flex-end' }}>
-                        <div className={styles.budget} style={{
-                            color: getTotalMealCountAllDays() > (client.approvedMealsPerWeek || 0) ? 'white' : 'inherit',
-                            backgroundColor: getTotalMealCountAllDays() > (client.approvedMealsPerWeek || 0) ? 'var(--color-danger)' : 'var(--bg-surface-hover)',
-                            padding: '8px 12px',
-                            borderRadius: '6px',
-                            fontSize: '1rem',
-                            fontWeight: 700,
-                            border: getTotalMealCountAllDays() > (client.approvedMealsPerWeek || 0) ? '2px solid #991b1b' : 'none',
-                            boxShadow: getTotalMealCountAllDays() > (client.approvedMealsPerWeek || 0) ? '0 2px 5px rgba(220, 38, 38, 0.3)' : 'none'
-                        }}>
-                            Meals: {getTotalMealCountAllDays()} / {client.approvedMealsPerWeek || 0}
-                            {getTotalMealCountAllDays() > (client.approvedMealsPerWeek || 0) && <span style={{ marginLeft: '8px' }}>(OVER LIMIT)</span>}
-                        </div>
-                    </div>
-                </div>
-                {/* Meal Buttons - Moved to Top */}
-                <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem', flexWrap: 'wrap' }}>
-                    <button
-                        className="btn btn-primary"
-                        onClick={handleAddVendorBlock}
-                        disabled={orderConfig.vendorSelections?.some((s: any) => !s.vendorId)}
-                        style={{
-                            opacity: orderConfig.vendorSelections?.some((s: any) => !s.vendorId) ? 0.5 : 1,
-                            cursor: orderConfig.vendorSelections?.some((s: any) => !s.vendorId) ? 'not-allowed' : 'pointer'
-                        }}
-                    >
-                        <Plus size={16} /> Add Vendor
-                    </button>
-                    {Array.from(new Set(mealCategories.map(c => c.mealType)))
-                        .filter(type => !orderConfig?.mealSelections?.[type])
-                        .map(type => (
-                            <button
-                                key={type}
-                                className="btn btn-secondary"
-                                onClick={() => handleAddMeal(type)}
-                                style={{ borderColor: 'var(--color-primary)', color: 'var(--color-primary)' }}
-                            >
-                                <Plus size={16} /> Add {type}
-                            </button>
-                        ))}
-                </div>
-
-                {getTotalMealCountAllDays() > (client.approvedMealsPerWeek || 0) && (
-                    <div style={{
-                        padding: '12px',
-                        backgroundColor: '#fee2e2',
-                        border: '1px solid #ef4444',
-                        borderRadius: '6px',
-                        color: '#b91c1c',
-                        fontWeight: 600,
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '8px',
-                        marginTop: '8px',
-                        width: '100%'
-                    }}>
-                        <AlertTriangle size={24} />
-                        <span>You have exceeded your meal allowance of {client.approvedMealsPerWeek || 0} meals. Please remove some items.</span>
-                    </div>
-                )}
-            </div>
 
             {/* Generic Vendor Blocks (Main/Lunch) */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', marginBottom: '1rem' }}>

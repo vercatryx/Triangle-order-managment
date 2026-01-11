@@ -10,6 +10,11 @@ import { isMeetingMinimum, isExceedingMaximum, isMeetingExactTarget } from '@/li
 import { Package, Truck, User, Loader2, Info, Plus, Calendar, AlertTriangle, Check, Trash2, Construction } from 'lucide-react';
 import styles from './ClientProfile.module.css';
 import FoodServiceWidget from './FoodServiceWidget';
+import ClientPortalSidebar from './ClientPortalSidebar';
+import ClientPortalHeader from './ClientPortalHeader';
+import ClientPortalOrderSummary from './ClientPortalOrderSummary';
+import MenuItemCard from './MenuItemCard';
+import stylesClientPortal from './ClientPortal.module.css';
 
 interface Props {
     client: ClientProfile;
@@ -458,9 +463,45 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
                 if (!isValid) break;
             }
         }
+        // 3. Box Service Validation
+        if (isValid && serviceType === 'Boxes' && orderConfig.boxOrders) {
+            orderConfig.boxOrders.forEach((box: any, boxIdx: number) => {
+                if (!isValid) return;
+
+                categories.forEach(category => {
+                    if (!isValid) return;
+
+                    const selectedItems = box.items || {};
+                    let categoryQuotaValue = 0;
+
+                    Object.entries(selectedItems).forEach(([itemId, qty]) => {
+                        const item = menuItems.find(i => i.id === itemId);
+                        if (item && item.categoryId === category.id) {
+                            const itemQuotaValue = item.quotaValue || 1;
+                            categoryQuotaValue += (qty as number) * itemQuotaValue;
+                        }
+                    });
+
+                    let requiredQuotaValue: number | null = null;
+                    if (category.setValue !== undefined && category.setValue !== null) {
+                        requiredQuotaValue = category.setValue;
+                    } else if (box.boxTypeId) {
+                        const quota = activeBoxQuotas.find(q => q.boxTypeId === box.boxTypeId && q.categoryId === category.id);
+                        if (quota) {
+                            requiredQuotaValue = quota.targetValue;
+                        }
+                    }
+
+                    if (requiredQuotaValue !== null && !isMeetingExactTarget(categoryQuotaValue, requiredQuotaValue)) {
+                        error = `Box #${boxIdx + 1} - ${category.name}: Selected ${categoryQuotaValue} pts, but required is ${requiredQuotaValue} pts.`;
+                        isValid = false;
+                    }
+                });
+            });
+        }
 
         setValidationStatus({ isValid, totalValue, error });
-        setValidationError(error);
+        // Removed setValidationError(error) to prevent automatic modal appearance during editing
     }
 
 
@@ -473,8 +514,10 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
 
         // Use Pre-calculated validation status
         if (!validationStatus.isValid) {
-            // Error is already in state/display
-            alert(`Save Blocked: ${validationStatus.error} \n\nCheck the Console for calculation details.`);
+            // Trigger the detailed modal when user attempts to save an invalid order
+            setValidationError(validationStatus.error);
+
+            // Log details for debugging
             console.error("SAVE BLOCKED. Validation Status:", validationStatus);
             console.log("Order Config at blocked save:", orderConfig);
 
@@ -841,113 +884,107 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
 
     const configChanged = JSON.stringify(orderConfig) !== JSON.stringify(originalOrderConfig);
 
+    // Calculate total meal count for header
+    const totalMealCount = useMemo(() => {
+        let total = 0;
+        if (orderConfig.serviceType === 'Food') {
+            // Vendors
+            if (orderConfig.vendorSelections) {
+                orderConfig.vendorSelections.forEach((sel: any) => {
+                    if (sel.itemsByDay && sel.selectedDeliveryDays) {
+                        sel.selectedDeliveryDays.forEach((day: string) => {
+                            const items = sel.itemsByDay[day] || {};
+                            Object.entries(items).forEach(([id, qty]) => {
+                                const item = menuItems.find(i => i.id === id);
+                                total += (Number(qty) || 0) * (item?.value || 0);
+                            });
+                        });
+                    } else if (sel.items) {
+                        const multiplier = (sel.selectedDeliveryDays?.length || (client as any).delivery_days?.length || 1);
+                        Object.entries(sel.items).forEach(([id, qty]) => {
+                            const item = menuItems.find(i => i.id === id);
+                            total += (Number(qty) || 0) * (item?.value || 0) * multiplier;
+                        });
+                    }
+                });
+            }
+            // Meals
+            if (orderConfig.mealSelections) {
+                Object.values(orderConfig.mealSelections).forEach((conf: any) => {
+                    if (conf.items) {
+                        Object.entries(conf.items).forEach(([id, qty]) => {
+                            const item = mealItems.find(i => i.id === id);
+                            total += (Number(qty) || 0) * (item?.value || 0);
+                        });
+                    }
+                });
+            }
+        }
+        return total;
+    }, [orderConfig, menuItems, mealItems, client]);
+
+
+    // Handlers needed for Header
+    const handleAddVendorBlock = () => {
+        setOrderConfig((prev: any) => {
+            const newConfig = { ...prev };
+            newConfig.vendorSelections = newConfig.vendorSelections ? [...newConfig.vendorSelections] : [];
+            newConfig.vendorSelections.push({
+                vendorId: '',
+                items: {}
+            });
+            return newConfig;
+        });
+    };
+
+    const handleAddMeal = (mealType: string) => {
+        setOrderConfig((prev: any) => {
+            const newConfig = { ...prev };
+            if (!newConfig.mealSelections) newConfig.mealSelections = {};
+            if (!newConfig.mealSelections[mealType]) {
+                newConfig.mealSelections[mealType] = {
+                    vendorId: '',
+                    items: {}
+                };
+            }
+            return newConfig;
+        });
+    };
+
+    // Calculate take effect date
+    const takingEffectDate = useMemo(() => {
+        if (!settings) return null;
+        const date = getTakeEffectDate(settings);
+        return date ? formatDeliveryDate(date) : null;
+    }, [settings]);
+
     return (
-        <div className={styles.container}>
-            <div className={styles.wideGrid}>
-                {/* Access Profile - Read Only */}
-                <div className={styles.card}>
-                    <div className={styles.sectionTitle} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                            <User size={20} />
-                            Profile Information
-                        </div>
-                    </div>
-                    <div>
-                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '16px', marginBottom: '16px' }}>
-                            <div>
-                                <label className="label">Full Name</label>
-                                <input
-                                    type="text"
-                                    className="input"
-                                    value={profileData.fullName}
-                                    disabled
-                                    readOnly
-                                    style={{ background: 'var(--bg-app)', opacity: 0.8, cursor: 'not-allowed' }}
-                                />
-                            </div>
-                            <div>
-                                <label className="label">Email Address</label>
-                                <input
-                                    type="email"
-                                    className="input"
-                                    value={profileData.email}
-                                    disabled
-                                    readOnly
-                                    style={{ background: 'var(--bg-app)', opacity: 0.8, cursor: 'not-allowed' }}
-                                />
-                            </div>
-                            <div>
-                                <label className="label">Phone Number</label>
-                                <input
-                                    type="tel"
-                                    className="input"
-                                    value={profileData.phoneNumber}
-                                    disabled
-                                    readOnly
-                                    style={{ background: 'var(--bg-app)', opacity: 0.8, cursor: 'not-allowed' }}
-                                />
-                            </div>
-                        </div>
-                        <div className={styles.formGridSplit}>
-                            <div>
-                                <label className="label">Secondary Phone Number</label>
-                                <input
-                                    type="tel"
-                                    className="input"
-                                    value={profileData.secondaryPhoneNumber}
-                                    disabled
-                                    readOnly
-                                    style={{ background: 'var(--bg-app)', opacity: 0.8, cursor: 'not-allowed' }}
-                                />
-                            </div>
-                            <div>
-                                <label className="label">Delivery Address</label>
-                                <textarea
-                                    className="input"
-                                    rows={1}
-                                    value={profileData.address}
-                                    disabled
-                                    readOnly
-                                    style={{ resize: 'vertical', minHeight: '42px', background: 'var(--bg-app)', opacity: 0.8, cursor: 'not-allowed' }}
-                                />
-                            </div>
-                        </div>
-                    </div>
+        <div className={stylesClientPortal.portalContainer}>
+            {/* Left Sidebar */}
+            <ClientPortalSidebar client={client} />
 
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '16px' }}>
-                        <div>
-                            <label className="label">Service Type</label>
-                            <div className="input" style={{ background: 'var(--bg-app)', opacity: 0.8 }}>{client.serviceType}</div>
-                        </div>
-                        <div>
-                            <label className="label">Approved Amount</label>
-                            <div className="input" style={{ background: 'var(--bg-app)', opacity: 0.8 }}>
-                                {client.serviceType === 'Food'
-                                    ? `${client.approvedMealsPerWeek || 0} meals / week`
-                                    : `Auth amount of boxes: ${client.authorizedAmount || 'Standard Box Allocation'}`
-                                }
-                            </div>
-                        </div>
-                    </div>
-                </div>
+            {/* Main Content Area */}
+            <div className={stylesClientPortal.mainColumn}>
 
+                {/* Sticky Header */}
+                <ClientPortalHeader
+                    client={client}
+                    totalMealCount={totalMealCount}
+                    approvedLimit={client.approvedMealsPerWeek}
+                    validationError={validationStatus.error}
+                    takingEffectDate={takingEffectDate}
+                    onAddVendor={handleAddVendorBlock}
+                    onAddMeal={handleAddMeal}
+                    mealCategories={mealCategories}
+                    orderConfig={orderConfig}
+                />
 
-
-
-                {/* Current Order Request - Editable */}
-                <div className={styles.card} style={{ marginTop: '6rem' }}>
-                    <div className={styles.sectionTitle} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                            <span>Current Order Request</span>
-                            {saving && <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '4px' }}><Loader2 className="animate-spin" size={14} /> Saving...</span>}
-                            {message && !saving && <span style={{ fontSize: '0.8rem', color: 'var(--color-success)' }}>{message}</span>}
-                        </div>
-                    </div>
+                {/* Scrollable Content */}
+                <div className={stylesClientPortal.scrollableContent}>
 
                     <div className={styles.alert} style={{ marginBottom: '1rem' }}>
                         <Info size={16} />
                         <div>
-                            <div>Update your order preferences below.</div>
                             {(() => {
                                 if (client.serviceType === 'Boxes') {
                                     return (
@@ -975,10 +1012,7 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
                                     uniqueVendorIds.forEach(vId => {
                                         const v = vendors.find(vend => vend.id === vId);
                                         if (v) {
-                                            const cutoff = v.cutoffHours || 0; // Default to 0 if not set, or maybe don't show? 
-                                            // User said "write by each vendor that changes must be made by however many hours".
-                                            // If cutoff is 0, arguably "Changes take effect immediately" or just show 0 hours?
-                                            // Let's show it if it exists or even if 0 to be explicit.
+                                            const cutoff = v.cutoffHours || 0;
                                             messages.push(`Orders for ${v.name} must be placed ${cutoff} hours before delivery.`);
                                         }
                                     });
@@ -1017,7 +1051,6 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
                         <div>
                             {(() => {
                                 const currentBoxes = orderConfig.boxOrders || [];
-                                // Fallback if no boxes exist yet (should have been hydrated)
                                 if (currentBoxes.length === 0) return null;
 
                                 return (
@@ -1047,9 +1080,7 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
                                                     )}
                                                 </div>
 
-
-
-                                                {/* Take Effect Date */}
+                                                {/* Take Effect Date & Warning Logic */}
                                                 {box.vendorId && settings && (() => {
                                                     const nextDate = getNextDeliveryDateForVendor(box.vendorId);
                                                     if (nextDate) {
@@ -1090,7 +1121,8 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
                                                     );
                                                 })()}
 
-                                                {/* Box Content Selection */}
+
+                                                {/* Box Content Selection Reuse */}
                                                 <div style={{ marginTop: '1rem', borderTop: '1px solid var(--border-color)', paddingTop: '1rem' }}>
                                                     {box.vendorId && !getNextDeliveryDateForVendor(box.vendorId) ? (
                                                         <div style={{
@@ -1114,16 +1146,13 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
                                                         </div>
                                                     ) : (
                                                         <>
-                                                            {/* Categories Loop */}
                                                             {categories.map(category => {
                                                                 const availableItems = menuItems.filter(i =>
                                                                     (i.vendorId === null || i.vendorId === '') &&
                                                                     i.isActive &&
                                                                     i.categoryId === category.id
                                                                 );
-
                                                                 if (availableItems.length === 0) return null;
-
                                                                 const selectedItems = box.items || {};
 
                                                                 // Calculate quota for THIS box/category
@@ -1136,27 +1165,15 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
                                                                     }
                                                                 });
 
-                                                                // Quota checks
                                                                 let requiredQuotaValue: number | null = null;
                                                                 if (category.setValue !== undefined && category.setValue !== null) {
                                                                     requiredQuotaValue = category.setValue;
                                                                 } else if (box.boxTypeId) {
-                                                                    // Here we use activeBoxQuotas state if available, OR we can fetch it?
-                                                                    // ClientPortalInterface has activeBoxQuotas state but it was driven by orderConfig.boxTypeId (singular).
-                                                                    // Ideally we should use the quotas for THIS box's type.
-                                                                    // We might not have them loaded if multiple boxes have different types.
-                                                                    // Use activeBoxQuotas fallback or just ignore generic quotas for now to be safe/simple,
-                                                                    // OR try to find it from activeBoxQuotas if it matches.
-                                                                    // Realistically, for Client Portal, we might assume one box type usually used, or we need to refactor quota loading.
-                                                                    // ClientProfile fetches ALL quotas or fetches on change.
-                                                                    // For now, let's use category.setValue which is most important, and maybe activeBoxQuotas if boxTypeId matches orderConfig.boxTypeId (legacy).
-                                                                    // Replicating ClientProfile logic:
                                                                     const quota = activeBoxQuotas.find(q => q.boxTypeId === box.boxTypeId && q.categoryId === category.id);
                                                                     if (quota) {
                                                                         requiredQuotaValue = quota.targetValue;
                                                                     }
                                                                 }
-
                                                                 const meetsQuota = requiredQuotaValue !== null ? isMeetingExactTarget(categoryQuotaValue, requiredQuotaValue) : true;
 
                                                                 return (
@@ -1180,93 +1197,27 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
                                                                                 )}
                                                                             </div>
                                                                         </div>
-                                                                        {requiredQuotaValue !== null && !meetsQuota && (
-                                                                            <div style={{
-                                                                                marginBottom: '0.5rem',
-                                                                                padding: '0.5rem',
-                                                                                backgroundColor: 'rgba(239, 68, 68, 0.1)',
-                                                                                borderRadius: '4px',
-                                                                                fontSize: '0.75rem',
-                                                                                color: 'var(--color-danger)',
-                                                                                display: 'flex',
-                                                                                alignItems: 'center',
-                                                                                gap: '0.25rem'
-                                                                            }}>
-                                                                                <AlertTriangle size={12} />
-                                                                                <span>You must have a total of {requiredQuotaValue} {category.name} points</span>
-                                                                            </div>
-                                                                        )}
 
-                                                                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
-                                                                            {availableItems.map(item => {
-                                                                                const qty = Number(selectedItems[item.id] || 0);
-                                                                                return (
-                                                                                    <div key={item.id} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', background: 'var(--bg-app)', padding: '4px 8px', borderRadius: '4px', border: '1px solid var(--border-color)' }}>
-                                                                                        <span style={{ fontSize: '0.8rem' }}>
-                                                                                            {item.name}
-                                                                                            {(item.quotaValue || 1) !== 1 && (
-                                                                                                <span style={{ color: 'var(--text-tertiary)', marginLeft: '4px' }}>
-                                                                                                    (counts as {item.quotaValue || 1} meals)
-                                                                                                </span>
-                                                                                            )}
-                                                                                        </span>
-                                                                                        <div className={styles.quantityControl} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                                                                            <button onClick={() => handleBoxItemUpdate(index, item.id, Math.max(0, qty - 1))} className="btn btn-secondary" style={{ padding: '2px 8px' }}>-</button>
-                                                                                            <span style={{ width: '20px', textAlign: 'center' }}>{qty}</span>
-                                                                                            <button onClick={() => handleBoxItemUpdate(index, item.id, qty + 1)} className="btn btn-secondary" style={{ padding: '2px 8px' }}>+</button>
-                                                                                        </div>
-                                                                                    </div>
-                                                                                );
-                                                                            })}
+                                                                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '16px' }}>
+                                                                            {availableItems.map(item => (
+                                                                                <MenuItemCard
+                                                                                    key={item.id}
+                                                                                    item={item}
+                                                                                    quantity={selectedItems[item.id] || 0}
+                                                                                    onQuantityChange={(qty) => handleBoxItemUpdate(index, item.id, qty)}
+                                                                                    onNoteChange={() => { }}
+                                                                                />
+                                                                            ))}
                                                                         </div>
                                                                     </div>
                                                                 );
                                                             })}
-
-                                                            {/* Uncategorized */}
-                                                            {(() => {
-                                                                const uncategorizedItems = menuItems.filter(i =>
-                                                                    (i.vendorId === null || i.vendorId === '') &&
-                                                                    i.isActive &&
-                                                                    (!i.categoryId || i.categoryId === '')
-                                                                );
-                                                                if (uncategorizedItems.length === 0) return null;
-                                                                const selectedItems = box.items || {};
-                                                                return (
-                                                                    <div style={{ marginBottom: '1rem', background: 'var(--bg-surface-hover)', padding: '0.75rem', borderRadius: '6px' }}>
-                                                                        <div style={{ marginBottom: '0.5rem', fontSize: '0.85rem', fontWeight: 600 }}>Uncategorized</div>
-                                                                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
-                                                                            {uncategorizedItems.map(item => {
-                                                                                const qty = Number(selectedItems[item.id] || 0);
-                                                                                return (
-                                                                                    <div key={item.id} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', background: 'var(--bg-app)', padding: '4px 8px', borderRadius: '4px', border: '1px solid var(--border-color)' }}>
-                                                                                        <span style={{ fontSize: '0.8rem' }}>
-                                                                                            {item.name}
-                                                                                            {(item.quotaValue || 1) !== 1 && (
-                                                                                                <span style={{ color: 'var(--text-tertiary)', marginLeft: '4px' }}>
-                                                                                                    (counts as {item.quotaValue || 1} meals)
-                                                                                                </span>
-                                                                                            )}
-                                                                                        </span>
-                                                                                        <div className={styles.quantityControl} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                                                                            <button onClick={() => handleBoxItemUpdate(index, item.id, Math.max(0, qty - 1))} className="btn btn-secondary" style={{ padding: '2px 8px' }}>-</button>
-                                                                                            <span style={{ width: '20px', textAlign: 'center' }}>{qty}</span>
-                                                                                            <button onClick={() => handleBoxItemUpdate(index, item.id, qty + 1)} className="btn btn-secondary" style={{ padding: '2px 8px' }}>+</button>
-                                                                                        </div>
-                                                                                    </div>
-                                                                                );
-                                                                            })}
-                                                                        </div>
-                                                                    </div>
-                                                                );
-                                                            })()}
                                                         </>
                                                     )}
                                                 </div>
                                             </div>
                                         ))}
 
-                                        {/* Add Box Button */}
                                         {(!client.authorizedAmount || currentBoxes.length < client.authorizedAmount) && (
                                             <button
                                                 type="button"
@@ -1283,261 +1234,76 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
                         </div>
                     )}
 
-                    {/* Spacer to prevent content from being hidden behind fixed save bar */}
-                    {(configChanged || saving) && (
-                        <div style={{ height: 'clamp(140px, 20vh, 200px)' }} />
-                    )}
+                    <div style={{ height: '100px' }} />
                 </div>
             </div>
 
-            {/* Fixed Floating Save Section at Bottom of Viewport */}
+            {/* Right Sidebar - Summary */}
+            <ClientPortalOrderSummary
+                orderConfig={orderConfig}
+                vendors={vendors}
+                menuItems={menuItems}
+                mealCategories={mealCategories}
+                mealItems={mealItems}
+            />
+
             {(configChanged || saving) && (
                 <>
                     <style>{`
                         @media (max-width: 768px) {
-                            .save-bar-container {
-                                padding: 0.75rem 1rem !important;
-                            }
-                            .save-bar-content {
-                                flex-direction: column !important;
-                                gap: 0.75rem !important;
-                            }
-                            .save-bar-warning {
-                                flex-direction: row !important;
-                                gap: 0.5rem !important;
-                                min-width: unset !important;
-                            }
-                            .save-bar-icon {
-                                width: 20px !important;
-                                height: 20px !important;
-                            }
-                            .save-bar-title {
-                                font-size: 0.9rem !important;
-                                margin-bottom: 0.125rem !important;
-                            }
-                            .save-bar-message {
-                                font-size: 0.8rem !important;
-                            }
-                            .save-bar-buttons {
-                                width: 100% !important;
-                                flex-direction: column !important;
-                                gap: 0.75rem !important;
-                            }
-                            .save-bar-button {
-                                width: 100% !important;
-                                font-size: 1rem !important;
-                                padding: 12px 20px !important;
-                                min-width: unset !important;
-                            }
-                            .save-bar-button-primary {
-                                font-size: 1.1rem !important;
-                                padding: 14px 24px !important;
-                            }
-                        }
-                        @media (min-width: 769px) {
-                            .save-bar-container {
-                                padding: 1.5rem 2rem;
-                            }
-                            .save-bar-content {
-                                gap: 1.5rem;
-                            }
-                            .save-bar-warning {
-                                gap: 12px;
-                            }
-                            .save-bar-title {
-                                font-size: 1.25rem;
-                            }
-                            .save-bar-message {
-                                font-size: 0.95rem;
-                            }
-                            .save-bar-button {
-                                font-size: 1.1rem;
-                                padding: 14px 28px;
-                            }
-                            .save-bar-button-primary {
-                                font-size: 1.25rem;
-                                padding: 16px 40px;
-                            }
+                            .save-bar-container { padding: 0.75rem 1rem !important; }
+                            .save-bar-content { flex-direction: column !important; gap: 0.75rem !important; }
                         }
                     `}</style>
                     <div className="save-bar-container" style={{
-                        position: 'fixed',
-                        bottom: 0,
-                        left: 0,
-                        right: 0,
+                        position: 'fixed', bottom: 0, left: 0, right: 0,
                         backgroundColor: saving ? '#d1fae5' : '#fef3c7',
                         borderTop: saving ? '4px solid #10b981' : '4px solid #f59e0b',
                         boxShadow: saving ? '0 -10px 30px -5px rgba(16, 185, 129, 0.4)' : '0 -10px 30px -5px rgba(245, 158, 11, 0.4)',
-                        zIndex: 1000,
-                        backdropFilter: 'blur(10px)'
+                        zIndex: 1000, backdropFilter: 'blur(10px)',
+                        display: 'flex', flexDirection: 'column'
                     }}>
-                        <div className="save-bar-content" style={{
-                            maxWidth: '1200px',
-                            margin: '0 auto',
-                            display: 'flex',
-                            alignItems: 'center',
-                            flexWrap: 'wrap'
-                        }}>
-                            <div className="save-bar-warning" style={{
-                                display: 'flex',
-                                alignItems: 'center',
-                                flex: 1
-                            }}>
-                                {saving ? (
-                                    <>
-                                        <Loader2 className="save-bar-icon animate-spin" size={24} style={{ color: '#059669', flexShrink: 0 }} />
-                                        <div style={{ flex: 1 }}>
-                                            <div className="save-bar-title" style={{
-                                                fontWeight: 700,
-                                                color: '#059669',
-                                                marginBottom: '0.25rem'
-                                            }}>
-                                                💾 SAVING CHANGES...
-                                            </div>
-                                            <div className="save-bar-message" style={{
-                                                color: '#047857',
-                                                fontWeight: 600
-                                            }}>
-                                                Please wait while your changes are being saved to the database
-                                            </div>
-                                        </div>
-                                    </>
-                                ) : (
-                                    <>
-                                        <AlertTriangle className="save-bar-icon" size={24} style={{ color: '#92400e', flexShrink: 0 }} />
-                                        <div style={{ flex: 1 }}>
-                                            <div className="save-bar-title" style={{
-                                                fontWeight: 700,
-                                                color: '#92400e',
-                                                marginBottom: '0.25rem'
-                                            }}>
-                                                ⚠️ UNSAVED CHANGES
-                                            </div>
-                                            <div className="save-bar-message" style={{
-                                                color: '#78350f',
-                                                fontWeight: 600
-                                            }}>
-                                                Your changes will NOT be saved unless you click "Save Changes"
-                                            </div>
-                                        </div>
-                                    </>
-                                )}
+                        <div className="save-bar-content" style={{ maxWidth: '1200px', width: '100%', margin: '0 auto', display: 'flex', alignItems: 'center', padding: '12px 24px' }}>
+                            <div style={{ flex: 1, fontWeight: 600, color: saving ? '#065f46' : '#92400e' }}>
+                                {saving ? 'SAVING CHANGES...' : 'UNSAVED CHANGES'}
                             </div>
-                            <div className="save-bar-buttons" style={{ display: 'flex', flexWrap: 'wrap' }}>
-                                <button
-                                    onClick={handleDiscard}
-                                    disabled={saving}
-                                    className="btn btn-secondary save-bar-button"
-                                    style={{
-                                        fontWeight: 600,
-                                        border: '2px solid var(--border-color)',
-                                        opacity: saving ? 0.5 : 1,
-                                        cursor: saving ? 'not-allowed' : 'pointer'
-                                    }}
-                                >
-                                    Discard
-                                </button>
-                                <button
-                                    onClick={handleSave}
-                                    disabled={saving}
-                                    className="btn btn-primary save-bar-button save-bar-button-primary"
-                                    style={{
-                                        fontWeight: 700,
-                                        boxShadow: saving ? '0 4px 8px -2px rgba(0, 0, 0, 0.2)' : '0 8px 16px -4px rgba(0, 0, 0, 0.3)',
-                                        backgroundColor: saving ? '#10b981' : '#f59e0b',
-                                        border: saving ? '2px solid #059669' : '2px solid #d97706',
-                                        color: '#1f2937',
-                                        transform: saving ? 'scale(1)' : 'scale(1.05)',
-                                        transition: 'all 0.2s',
-                                        opacity: saving ? 0.9 : 1,
-                                        cursor: saving ? 'wait' : 'pointer',
-                                        display: 'flex',
-                                        alignItems: 'center',
-                                        gap: '8px',
-                                        justifyContent: 'center'
-                                    }}
-                                    onMouseEnter={(e) => {
-                                        if (!saving) {
-                                            e.currentTarget.style.transform = 'scale(1.08)';
-                                            e.currentTarget.style.boxShadow = '0 12px 24px -4px rgba(0, 0, 0, 0.4)';
-                                        }
-                                    }}
-                                    onMouseLeave={(e) => {
-                                        if (!saving) {
-                                            e.currentTarget.style.transform = 'scale(1.05)';
-                                            e.currentTarget.style.boxShadow = '0 8px 16px -4px rgba(0, 0, 0, 0.3)';
-                                        }
-                                    }}
-                                >
-                                    {saving ? (
-                                        <>
-                                            <Loader2 className="animate-spin" size={20} />
-                                            SAVING...
-                                        </>
-                                    ) : (
-                                        'SAVE CHANGES'
-                                    )}
-                                </button>
+                            <div style={{ display: 'flex', gap: '12px' }}>
+                                <button onClick={handleDiscard} className="btn btn-secondary" disabled={saving} style={{ padding: '8px 16px', borderRadius: '6px' }}>Discard</button>
+                                <button onClick={handleSave} className="btn btn-primary" disabled={saving} style={{ padding: '8px 16px', borderRadius: '6px', background: 'var(--color-primary)', color: 'white', border: 'none' }}>{saving ? 'Saving...' : 'Save Changes'}</button>
                             </div>
                         </div>
+
+                        {/* Inline Error Banner */}
+                        {!validationStatus.isValid && validationStatus.error && (
+                            <div style={{
+                                backgroundColor: '#fee2e2',
+                                color: '#991b1b',
+                                padding: '8px 24px',
+                                fontSize: '0.85rem',
+                                fontWeight: 500,
+                                borderTop: '1px solid #fecaca',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '8px'
+                            }}>
+                                <AlertTriangle size={14} />
+                                <span>{validationStatus.error}</span>
+                            </div>
+                        )}
                     </div>
                 </>
             )}
+
             {validationError && (
                 <div style={{
-                    position: 'fixed',
-                    top: 0,
-                    left: 0,
-                    right: 0,
-                    bottom: 0,
-                    backgroundColor: 'rgba(0,0,0,0.5)',
-                    zIndex: 2000,
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    backdropFilter: 'blur(4px)'
+                    position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+                    backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 2000,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center'
                 }}>
-                    <div className="animate-in zoom-in-95 duration-200" style={{
-                        backgroundColor: 'white',
-                        padding: '24px',
-                        borderRadius: '12px',
-                        maxWidth: '400px',
-                        width: '90%',
-                        boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)',
-                        border: '1px solid #fee2e2'
-                    }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '16px' }}>
-                            <div style={{
-                                backgroundColor: '#fee2e2',
-                                padding: '10px',
-                                borderRadius: '50%',
-                                display: 'flex',
-                                alignItems: 'center',
-                                justifyContent: 'center'
-                            }}>
-                                <AlertTriangle size={24} color="#dc2626" />
-                            </div>
-                            <h3 style={{ margin: 0, fontSize: '1.25rem', fontWeight: 600, color: '#1f2937' }}>Order Issue</h3>
-                        </div>
-
-                        <p style={{ color: '#4b5563', lineHeight: 1.5, marginBottom: '24px', fontSize: '1rem' }}>
-                            {validationError}
-                        </p>
-
-                        <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-                            <button
-                                onClick={() => setValidationError(null)}
-                                className="btn btn-primary"
-                                style={{
-                                    backgroundColor: '#dc2626',
-                                    border: 'none',
-                                    padding: '10px 20px',
-                                    fontWeight: 600
-                                }}
-                            >
-                                I Understand
-                            </button>
-                        </div>
+                    <div style={{ background: 'white', padding: '24px', borderRadius: '8px', maxWidth: '400px' }}>
+                        <h3>Order Issue</h3>
+                        <p>{validationError}</p>
+                        <button onClick={() => setValidationError(null)} className="btn btn-primary">I Understand</button>
                     </div>
                 </div>
             )}
