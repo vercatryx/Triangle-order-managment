@@ -2,8 +2,8 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { Vendor, ClientProfile, MenuItem, BoxType } from '@/lib/types';
-import { getVendors, getClients, getMenuItems, getBoxTypes } from '@/lib/cached-data';
+import { Vendor, ClientProfile, MenuItem, BoxType, ItemCategory } from '@/lib/types';
+import { getVendors, getClients, getMenuItems, getBoxTypes, getCategories, getMealItems } from '@/lib/cached-data';
 import { getOrdersByVendor, isOrderUnderVendor, updateOrderDeliveryProof, orderHasDeliveryProof, resolveOrderId } from '@/lib/actions';
 import { ArrowLeft, Truck, Calendar, Package, CheckCircle, XCircle, Clock, User, DollarSign, ShoppingCart, Download, ChevronDown, ChevronUp, FileText, Upload, X, AlertCircle, LogOut } from 'lucide-react';
 import { generateLabelsPDF } from '@/lib/label-utils';
@@ -23,7 +23,9 @@ export function VendorDetail({ vendorId, isVendorView, vendor: initialVendor }: 
     const [orders, setOrders] = useState<any[]>([]);
     const [clients, setClients] = useState<ClientProfile[]>([]);
     const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
+    const [mealItems, setMealItems] = useState<any[]>([]);
     const [boxTypes, setBoxTypes] = useState<BoxType[]>([]);
+    const [categories, setCategories] = useState<ItemCategory[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const [expandedOrders, setExpandedOrders] = useState<Set<string>>(new Set());
 
@@ -57,34 +59,28 @@ export function VendorDetail({ vendorId, isVendorView, vendor: initialVendor }: 
     async function loadData() {
         setIsLoading(true);
         try {
-            const promises: Promise<any>[] = [
+            const [ordersData, clientsData, menuItemsData, boxTypesData, categoriesData, mealItemsData] = await Promise.all([
                 getOrdersByVendor(vendorId),
                 getClients(),
                 getMenuItems(),
-                getBoxTypes()
-            ];
+                getBoxTypes(),
+                getCategories(),
+                getMealItems()
+            ]);
 
-            let vendorsResultIndex = -1;
-            if (!initialVendor) {
-                promises.push(getVendors());
-                vendorsResultIndex = 4;
+            let foundVendor = initialVendor || null;
+            if (!foundVendor) {
+                const vendors = await getVendors();
+                foundVendor = vendors.find(v => v.id === vendorId) || null;
             }
 
-            const results = await Promise.all(promises);
-            const ordersData = results[0];
-            const clientsData = results[1];
-            const menuItemsData = results[2];
-            const boxTypesData = results[3];
-
-            if (!initialVendor && vendorsResultIndex !== -1 && results[vendorsResultIndex]) {
-                const vendorsData = results[vendorsResultIndex];
-                const foundVendor = vendorsData.find((v: Vendor) => v.id === vendorId);
-                setVendor(foundVendor || null);
-            }
+            setVendor(foundVendor);
             setOrders(ordersData);
             setClients(clientsData);
             setMenuItems(menuItemsData);
             setBoxTypes(boxTypesData);
+            setCategories(categoriesData);
+            setMealItems(mealItemsData);
         } catch (error) {
             console.error('Error loading vendor data:', error);
         } finally {
@@ -338,63 +334,57 @@ export function VendorDetail({ vendorId, isVendorView, vendor: initialVendor }: 
 
 
 
-    function formatOrderedItemsForCSV(order: any): string {
-        if (order.service_type === 'Food') {
-            // Food orders - items from order_items or upcoming_order_items
+    function getCategoryName(categoryId: string | null | undefined) {
+        if (!categoryId) return 'Uncategorized';
+        const category = categories.find(c => c.id === categoryId);
+        return category?.name || 'Uncategorized';
+    }
+
+    function getParsedOrderItems(order: any): { name: string; quantity: number; category?: string; notes?: string }[] {
+        if (order.service_type === 'Food' || order.service_type === 'Meal' || order.service_type === 'Custom') {
             const items = order.items || [];
-            if (items.length === 0) {
-                return 'No items';
-            }
+            if (items.length === 0) return [];
+
             return items.map((item: any) => {
-                const menuItem = menuItems.find(mi => mi.id === item.menu_item_id);
-                const itemName = menuItem?.name || item.menuItemName || 'Unknown Item';
+                let menuItem: any = menuItems.find(mi => mi.id === item.menu_item_id);
+                if (!menuItem) {
+                    menuItem = mealItems.find(mi => mi.id === item.menu_item_id);
+                }
+                const itemName = item.custom_name || menuItem?.name || item.menuItemName || 'Unknown Item';
                 const quantity = parseInt(item.quantity || 0);
-                return `${itemName} (Qty: ${quantity})`;
-            }).join('; ');
+                const notes = item.notes || undefined;
+                return { name: itemName, quantity, category: menuItem?.categoryId || undefined, notes };
+            });
         } else if (order.service_type === 'Boxes') {
-            // Box orders - items from box_selections.items JSONB
             const boxSelection = order.boxSelection;
-            if (!boxSelection) {
-                return 'No box selection';
-            }
+            if (!boxSelection) return [];
+
             const items = boxSelection.items || {};
             const itemEntries = Object.entries(items);
+            const result: { name: string; quantity: number; category?: string; notes?: string }[] = [];
 
-            // Filter out entries with zero quantity and handle both formats
-            const validItemEntries = itemEntries.filter(([itemId, quantityOrObj]: [string, any]) => {
-                let qty = 0;
-                if (typeof quantityOrObj === 'number') {
-                    qty = quantityOrObj;
-                } else if (quantityOrObj && typeof quantityOrObj === 'object' && 'quantity' in quantityOrObj) {
-                    qty = typeof quantityOrObj.quantity === 'number' ? quantityOrObj.quantity : parseInt(quantityOrObj.quantity) || 0;
-                } else {
-                    qty = parseInt(quantityOrObj) || 0;
-                }
-                return qty > 0;
-            });
-
-            if (validItemEntries.length === 0) {
-                const boxTypeName = getBoxTypeName(boxSelection.box_type_id);
-                return `Box Type: ${boxTypeName} (Quantity: ${boxSelection.quantity || 1})`;
-            }
-            const boxTypeName = getBoxTypeName(boxSelection.box_type_id);
-            const itemStrings = validItemEntries.map(([itemId, quantityOrObj]: [string, any]) => {
+            for (const [itemId, quantityOrObj] of itemEntries) {
                 const menuItem = menuItems.find(mi => mi.id === itemId);
                 const itemName = menuItem?.name || 'Unknown Item';
 
-                // Handle both formats: { itemId: quantity } or { itemId: { quantity: X, price: Y } }
                 let qty = 0;
                 if (typeof quantityOrObj === 'number') {
                     qty = quantityOrObj;
                 } else if (quantityOrObj && typeof quantityOrObj === 'object' && 'quantity' in quantityOrObj) {
-                    qty = typeof quantityOrObj.quantity === 'number' ? quantityOrObj.quantity : parseInt(quantityOrObj.quantity) || 0;
+                    qty = typeof quantityOrObj.quantity === 'number' ? quantityOrObj.quantity : parseInt(String(quantityOrObj.quantity)) || 0;
                 } else {
-                    qty = parseInt(quantityOrObj) || 0;
+                    qty = parseInt(String(quantityOrObj)) || 0;
                 }
 
-                return `${itemName} (Qty: ${qty})`;
-            });
-            return `Box Type: ${boxTypeName} (Box Qty: ${boxSelection.quantity || 1}); Items: ${itemStrings.join('; ')}`;
+                if (qty > 0) {
+                    result.push({
+                        name: itemName,
+                        quantity: qty,
+                        category: menuItem?.categoryId || undefined
+                    });
+                }
+            }
+            return result;
         } else if (order.service_type === 'Equipment') {
             // Equipment orders - details from equipmentSelection or notes
             let equipmentDetails = order.equipmentSelection;
@@ -412,12 +402,65 @@ export function VendorDetail({ vendorId, isVendorView, vendor: initialVendor }: 
             }
 
             if (!equipmentDetails) {
-                return 'No equipment details';
+                return [{ name: 'No equipment details', quantity: 1 }];
             }
 
-            return `${equipmentDetails.equipmentName || 'Unknown Equipment'} - $${(equipmentDetails.price || 0).toFixed(2)}`;
+            return [{ name: equipmentDetails.equipmentName || 'Unknown Equipment', quantity: 1 }];
         }
-        return 'No items available';
+
+        return [];
+    }
+
+    function formatOrderedItemsForCSV(order: any): string {
+        const parsedItems = getParsedOrderItems(order);
+        if (parsedItems.length === 0) {
+            if (order.service_type === 'Boxes' && order.boxSelection?.items && Object.keys(order.boxSelection.items).length === 0) return '(No items)';
+            return 'No items';
+        }
+
+        if (order.service_type === 'Boxes') {
+            // Group by category for Boxes standard output string
+            const itemsByCategory: { [categoryId: string]: string[] } = {};
+            const uncategorizedItems: string[] = [];
+
+            parsedItems.forEach(item => {
+                const itemString = `${item.name} (Qty: ${item.quantity})`;
+                if (item.category) {
+                    if (!itemsByCategory[item.category]) itemsByCategory[item.category] = [];
+                    itemsByCategory[item.category].push(itemString);
+                } else {
+                    uncategorizedItems.push(itemString);
+                }
+            });
+
+            const parts: string[] = [];
+            // Add items by category
+            const sortedCategoryIds = Object.keys(itemsByCategory).sort((a, b) => {
+                const catA = categories.find(c => c.id === a);
+                const catB = categories.find(c => c.id === b);
+                return (catA?.name || '').localeCompare(catB?.name || '');
+            });
+
+            for (const categoryId of sortedCategoryIds) {
+                const category = categories.find(c => c.id === categoryId);
+                const categoryName = category?.name || 'Unknown Category';
+                parts.push(`${categoryName}: ${itemsByCategory[categoryId].join(', ')}`);
+            }
+
+            if (uncategorizedItems.length > 0) {
+                parts.push(`Uncategorized: ${uncategorizedItems.join(', ')}`);
+            }
+
+            return parts.join('; ');
+        }
+
+        return parsedItems.map(item => {
+            let itemStr = `${item.name} (Qty: ${item.quantity})`;
+            if (item.notes) {
+                itemStr += ` (Note: ${item.notes})`;
+            }
+            return itemStr;
+        }).join('; ');
     }
 
     function exportOrdersToExcel() {
@@ -454,25 +497,83 @@ export function VendorDetail({ vendorId, isVendorView, vendor: initialVendor }: 
         ]);
 
         const wsSummary = XLSX.utils.aoa_to_sheet([headers, ...summaryData]);
+        wsSummary['!cols'] = [{ wch: 15 }, { wch: 30 }, { wch: 30 }, { wch: 20 }, { wch: 30 }, { wch: 15 }, { wch: 15 }, { wch: 10 }, { wch: 50 }, { wch: 30 }];
 
-        // Auto-width columns
-        const wscols = [
-            { wch: 15 }, // Order Number
-            { wch: 30 }, // Order ID
-            { wch: 30 }, // Client ID
-            { wch: 20 }, // Client Name
-            { wch: 30 }, // Address
-            { wch: 15 }, // Phone
-            { wch: 15 }, // Date
-            { wch: 10 }, // Total Items
-            { wch: 50 }, // Items
-            { wch: 30 }  // Proof URL
-        ];
-        wsSummary['!cols'] = wscols;
+        /* --- Sheet 2: Detailed Items per Client --- */
+        const detailsData: any[][] = [];
+
+        orders.forEach(order => {
+            const clientName = getClientName(order.client_id);
+            const items = getParsedOrderItems(order);
+
+            // Header for this order block
+            detailsData.push([`Client: ${clientName}`, `Order ID: ${order.orderNumber || order.id}`]);
+            detailsData.push(['Item Name', 'Quantity', 'Notes/Category']);
+
+            // Items
+            if (items.length > 0) {
+                items.forEach(item => {
+                    const extraInfo = [];
+                    if (item.category) extraInfo.push(getCategoryName(item.category));
+                    if (item.notes) extraInfo.push(`Note: ${item.notes}`);
+
+                    detailsData.push([item.name, item.quantity, extraInfo.join(' | ')]);
+                });
+            } else {
+                detailsData.push(['No items found', '', '']);
+            }
+
+            // Empty row for separation
+            detailsData.push([]);
+        });
+
+        const wsDetails = XLSX.utils.aoa_to_sheet(detailsData);
+        wsDetails['!cols'] = [{ wch: 30 }, { wch: 10 }, { wch: 40 }];
+
+        /* --- Sheet 3: Cooking List (Aggregated) --- */
+        const aggregation: Record<string, { name: string; quantity: number; notes: string }> = {};
+
+        orders.forEach(order => {
+            const items = getParsedOrderItems(order);
+            items.forEach(item => {
+                const noteKey = item.notes ? item.notes.trim().toLowerCase() : '';
+                const key = `${item.name}||${noteKey}`;
+
+                if (!aggregation[key]) {
+                    aggregation[key] = {
+                        name: item.name,
+                        quantity: 0,
+                        notes: item.notes || ''
+                    };
+                }
+
+                aggregation[key].quantity += item.quantity;
+            });
+        });
+
+        const cookingListData = Object.values(aggregation)
+            .sort((a, b) => {
+                const nameCompare = a.name.localeCompare(b.name);
+                if (nameCompare !== 0) return nameCompare;
+                return (a.notes || '').localeCompare(b.notes || '');
+            })
+            .map(item => [
+                item.name,
+                item.quantity,
+                item.notes
+            ]);
+
+        const wsCookingList = XLSX.utils.aoa_to_sheet([
+            ['Item Name', 'Total Quantity', 'Notes'],
+            ...cookingListData
+        ]);
+        wsCookingList['!cols'] = [{ wch: 30 }, { wch: 15 }, { wch: 40 }];
 
         /* --- Workbook Creation --- */
         const wb = XLSX.utils.book_new();
-        XLSX.utils.book_append_sheet(wb, wsSummary, "Orders");
+        XLSX.utils.book_append_sheet(wb, wsSummary, "Orders Summary");
+        XLSX.utils.book_append_sheet(wb, wsDetails, "Client Breakdown");
+        XLSX.utils.book_append_sheet(wb, wsCookingList, "Cooking List");
 
         XLSX.writeFile(wb, `${vendor?.name || 'vendor'}_orders_${new Date().toISOString().split('T')[0]}.xlsx`);
     }
@@ -511,25 +612,83 @@ export function VendorDetail({ vendorId, isVendorView, vendor: initialVendor }: 
         ]);
 
         const wsSummary = XLSX.utils.aoa_to_sheet([headers, ...summaryData]);
+        wsSummary['!cols'] = [{ wch: 15 }, { wch: 30 }, { wch: 30 }, { wch: 20 }, { wch: 30 }, { wch: 15 }, { wch: 15 }, { wch: 10 }, { wch: 50 }, { wch: 30 }];
 
-        // Auto-width columns
-        const wscols = [
-            { wch: 15 }, // Order Number
-            { wch: 30 }, // Order ID
-            { wch: 30 }, // Client ID
-            { wch: 20 }, // Client Name
-            { wch: 30 }, // Address
-            { wch: 15 }, // Phone
-            { wch: 15 }, // Date
-            { wch: 10 }, // Total Items
-            { wch: 50 }, // Items
-            { wch: 30 }  // Proof URL
-        ];
-        wsSummary['!cols'] = wscols;
+        /* --- Sheet 2: Detailed Items per Client --- */
+        const detailsData: any[][] = [];
+
+        dateOrders.forEach(order => {
+            const clientName = getClientName(order.client_id);
+            const items = getParsedOrderItems(order);
+
+            // Header for this order block
+            detailsData.push([`Client: ${clientName}`, `Order ID: ${order.orderNumber || order.id}`]);
+            detailsData.push(['Item Name', 'Quantity', 'Notes/Category']);
+
+            // Items
+            if (items.length > 0) {
+                items.forEach(item => {
+                    const extraInfo = [];
+                    if (item.category) extraInfo.push(getCategoryName(item.category));
+                    if (item.notes) extraInfo.push(`Note: ${item.notes}`);
+
+                    detailsData.push([item.name, item.quantity, extraInfo.join(' | ')]);
+                });
+            } else {
+                detailsData.push(['No items found', '', '']);
+            }
+
+            // Empty row for separation
+            detailsData.push([]);
+        });
+
+        const wsDetails = XLSX.utils.aoa_to_sheet(detailsData);
+        wsDetails['!cols'] = [{ wch: 30 }, { wch: 10 }, { wch: 40 }];
+
+        /* --- Sheet 3: Cooking List (Aggregated) --- */
+        const aggregation: Record<string, { name: string; quantity: number; notes: string }> = {};
+
+        dateOrders.forEach(order => {
+            const items = getParsedOrderItems(order);
+            items.forEach(item => {
+                const noteKey = item.notes ? item.notes.trim().toLowerCase() : '';
+                const key = `${item.name}||${noteKey}`;
+
+                if (!aggregation[key]) {
+                    aggregation[key] = {
+                        name: item.name,
+                        quantity: 0,
+                        notes: item.notes || ''
+                    };
+                }
+
+                aggregation[key].quantity += item.quantity;
+            });
+        });
+
+        const cookingListData = Object.values(aggregation)
+            .sort((a, b) => {
+                const nameCompare = a.name.localeCompare(b.name);
+                if (nameCompare !== 0) return nameCompare;
+                return (a.notes || '').localeCompare(b.notes || '');
+            })
+            .map(item => [
+                item.name,
+                item.quantity,
+                item.notes
+            ]);
+
+        const wsCookingList = XLSX.utils.aoa_to_sheet([
+            ['Item Name', 'Total Quantity', 'Notes'],
+            ...cookingListData
+        ]);
+        wsCookingList['!cols'] = [{ wch: 30 }, { wch: 15 }, { wch: 40 }];
 
         /* --- Workbook Creation --- */
         const wb = XLSX.utils.book_new();
-        XLSX.utils.book_append_sheet(wb, wsSummary, "Orders");
+        XLSX.utils.book_append_sheet(wb, wsSummary, "Orders Summary");
+        XLSX.utils.book_append_sheet(wb, wsDetails, "Client Breakdown");
+        XLSX.utils.book_append_sheet(wb, wsCookingList, "Cooking List");
 
         const formattedDate = dateKey === 'no-date'
             ? 'no_delivery_date'

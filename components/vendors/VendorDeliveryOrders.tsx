@@ -365,16 +365,20 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate, isVendorView }: P
             const items = getParsedOrderItems(order);
 
             // Header for this order block
-            detailsData.push([clientName, order.client_id]);
-            detailsData.push(['Item Name', 'Quantity']);
+            detailsData.push([`Client: ${clientName}`, `Order ID: ${order.orderNumber || order.id}`]);
+            detailsData.push(['Item Name', 'Quantity', 'Notes/Category']);
 
             // Items
             if (items.length > 0) {
                 items.forEach(item => {
-                    detailsData.push([item.name, item.quantity]);
+                    const extraInfo = [];
+                    if (item.category) extraInfo.push(getCategoryName(item.category));
+                    if (item.notes) extraInfo.push(`Note: ${item.notes}`);
+
+                    detailsData.push([item.name, item.quantity, extraInfo.join(' | ')]);
                 });
             } else {
-                detailsData.push(['No items found', '']);
+                detailsData.push(['No items found', '', '']);
             }
 
             // Empty row for separation
@@ -382,18 +386,60 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate, isVendorView }: P
         });
 
         const wsDetails = XLSX.utils.aoa_to_sheet(detailsData);
-
         // Auto-width columns for readability
-        const wscols = [
-            { wch: 30 }, // Client Name / Item Name
-            { wch: 40 }, // ID / Quantity (wide for IDs)
+        wsDetails['!cols'] = [{ wch: 30 }, { wch: 10 }, { wch: 40 }];
+
+        /* --- Sheet 3: Cooking List (Aggregated Totals) --- */
+        const aggregation: Record<string, { name: string; quantity: number; notes: string }> = {};
+
+        // Parse all items from all orders
+        orders.forEach(order => {
+            const items = getParsedOrderItems(order);
+            items.forEach(item => {
+                // Key is Name + Note to ensure distinct entries for modified items
+                const noteKey = item.notes ? item.notes.trim().toLowerCase() : '';
+                const key = `${item.name}||${noteKey}`;
+
+                if (!aggregation[key]) {
+                    aggregation[key] = {
+                        name: item.name,
+                        quantity: 0,
+                        notes: item.notes || ''
+                    };
+                }
+
+                aggregation[key].quantity += item.quantity;
+            });
+        });
+
+        // Convert to array and sort
+        const cookingListData = Object.values(aggregation)
+            .sort((a, b) => {
+                // Sort by name, then by notes
+                const nameCompare = a.name.localeCompare(b.name);
+                if (nameCompare !== 0) return nameCompare;
+                return (a.notes || '').localeCompare(b.notes || '');
+            })
+            .map(item => [
+                item.name,
+                item.quantity,
+                item.notes
+            ]);
+
+        // Add headers
+        const cookingListFinal = [
+            ['Item Name', 'Total Quantity', 'Notes'],
+            ...cookingListData
         ];
-        wsDetails['!cols'] = wscols;
+
+        const wsCookingList = XLSX.utils.aoa_to_sheet(cookingListFinal);
+        wsCookingList['!cols'] = [{ wch: 30 }, { wch: 15 }, { wch: 40 }];
 
         /* --- Workbook Creation --- */
         const wb = XLSX.utils.book_new();
-        XLSX.utils.book_append_sheet(wb, wsSummary, "Orders");
-        XLSX.utils.book_append_sheet(wb, wsDetails, "Order Items");
+        XLSX.utils.book_append_sheet(wb, wsSummary, "Orders Summary");
+        XLSX.utils.book_append_sheet(wb, wsDetails, "Client Breakdown");
+        XLSX.utils.book_append_sheet(wb, wsCookingList, "Cooking List");
 
         const formattedDate = formatDate(deliveryDate).replace(/\s/g, '_');
         XLSX.writeFile(wb, `${vendor?.name || 'vendor'}_orders_${formattedDate}.xlsx`);
