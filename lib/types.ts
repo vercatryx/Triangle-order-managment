@@ -181,6 +181,7 @@ export interface ItemCategory {
   id: string;
   name: string;
   setValue?: number | null; // Required quota value for this category (enforces exact amount)
+  sortOrder?: number;
 }
 
 export interface MenuItem {
@@ -193,6 +194,8 @@ export interface MenuItem {
   categoryId?: string | null;
   quotaValue?: number; // How much this item counts towards a quota (default 1)
   minimumOrder?: number; // Minimum order quantity required for this product (default 0, meaning no minimum)
+  imageUrl?: string | null;
+  sortOrder?: number;
 }
 
 export interface MealCategory {
@@ -200,6 +203,7 @@ export interface MealCategory {
   name: string;
   mealType: string; // 'Breakfast', 'Lunch', 'Dinner', etc.
   setValue?: number | null;
+  sortOrder?: number;
 }
 
 export interface MealItem {
@@ -211,6 +215,8 @@ export interface MealItem {
   priceEach?: number;
   isActive: boolean;
   vendorId?: string; // Optional as legacy items might not have it yet
+  imageUrl?: string | null;
+  sortOrder?: number;
 }
 
 export interface BoxQuota {
@@ -218,6 +224,14 @@ export interface BoxQuota {
   boxTypeId: string;
   categoryId: string;
   targetValue: number;
+}
+
+export interface BoxCategory {
+  id: string;
+  name: string;
+  maxAllowed?: number;
+  sortOrder?: number;
+  mealType?: string; // helper
 }
 
 export interface BoxType {

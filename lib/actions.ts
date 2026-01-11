@@ -4,6 +4,7 @@ import { getCurrentTime } from './time';
 import { revalidatePath } from 'next/cache';
 import { supabase } from './supabase';
 import { ClientStatus, Vendor, MenuItem, BoxType, AppSettings, Navigator, Nutritionist, ClientProfile, DeliveryRecord, ItemCategory, BoxQuota, ServiceType, Equipment, ClientFoodOrder, ClientMealOrder, ClientBoxOrder } from './types';
+import { uploadFile, deleteFile } from './storage';
 import { randomUUID } from 'crypto';
 import { getSession } from './session';
 import { createClient } from '@supabase/supabase-js';
@@ -179,10 +180,44 @@ export async function deleteVendor(id: string) {
     revalidatePath('/admin');
 }
 
+// --- FILE UPLOAD ACTION ---
+
+export async function uploadMenuItemImage(formData: FormData) {
+    const file = formData.get('file') as File;
+    if (!file) {
+        throw new Error('No file provided');
+    }
+
+    const buffer = Buffer.from(await file.arrayBuffer());
+    const timestamp = Date.now();
+    const extension = file.name.split('.').pop();
+    // Use a clean filename
+    const key = `menu-item-${timestamp}-${randomUUID()}.${extension}`;
+
+    // Upload to R2
+    // We reuse the uploadFile from storage.ts which uses process.env.R2_BUCKET_NAME by default
+    // Ensure R2_BUCKET_NAME is set in environment or fallbacks
+    const result = await uploadFile(key, buffer, file.type);
+
+    if (!result.success) {
+        throw new Error('Failed to upload image');
+    }
+
+    // Construct public URL
+    // Priority: Env Var -> Hardcoded fallback (matches delivery action)
+    const publicUrlBase = process.env.R2_PUBLIC_URL_BASE || 'https://pub-820fa32211a14c0b8bdc7c41106bfa02.r2.dev';
+    const publicUrl = `${publicUrlBase}/${key}`;
+
+    return { success: true, url: publicUrl };
+}
+
 // --- MENU ACTIONS ---
 
 export async function getMenuItems() {
-    const { data, error } = await supabase.from('menu_items').select('*');
+    const { data, error } = await supabase.from('menu_items')
+        .select('*')
+        .order('sort_order', { ascending: true })
+        .order('name', { ascending: true });
     if (error) return [];
     return data.map((i: any) => ({
         id: i.id,
@@ -193,7 +228,9 @@ export async function getMenuItems() {
         isActive: i.is_active,
         categoryId: i.category_id,
         quotaValue: i.quota_value,
-        minimumOrder: i.minimum_order ?? 0
+        minimumOrder: i.minimum_order ?? 0,
+        imageUrl: i.image_url || null,
+        sortOrder: i.sort_order ?? 0
     }));
 }
 
@@ -206,7 +243,9 @@ export async function addMenuItem(data: Omit<MenuItem, 'id'>) {
         category_id: data.categoryId || null,
         quota_value: data.quotaValue,
         minimum_order: data.minimumOrder ?? 0,
-        price_each: data.priceEach // Mandatory
+        price_each: data.priceEach, // Mandatory
+        image_url: data.imageUrl || null,
+        sort_order: data.sortOrder ?? 0
     };
 
     if (!data.priceEach || data.priceEach <= 0) {
@@ -230,8 +269,26 @@ export async function updateMenuItem(id: string, data: Partial<MenuItem>) {
     if (data.categoryId !== undefined) payload.category_id = data.categoryId || null;
     if (data.quotaValue !== undefined) payload.quota_value = data.quotaValue;
     if (data.minimumOrder !== undefined) payload.minimum_order = data.minimumOrder;
+    if (data.imageUrl !== undefined) payload.image_url = data.imageUrl;
+    if (data.sortOrder !== undefined) payload.sort_order = data.sortOrder;
 
     if (data.vendorId !== undefined) payload.vendor_id = data.vendorId || null;
+
+    // R2 Cleanup: If image is being updated/removed, delete the old one
+    if (data.imageUrl !== undefined) {
+        const { data: existing } = await supabase.from('menu_items').select('image_url').eq('id', id).single();
+        const oldUrl = existing?.image_url;
+
+        // If there was an old URL and it's different from the new one (or new one is null)
+        if (oldUrl && oldUrl !== data.imageUrl) {
+            try {
+                const key = oldUrl.split('/').pop();
+                if (key) await deleteFile(key);
+            } catch (e) {
+                console.error("Failed to delete stale image:", e);
+            }
+        }
+    }
 
     const { error } = await supabase.from('menu_items').update(payload).eq('id', id);
     handleError(error);
@@ -239,6 +296,9 @@ export async function updateMenuItem(id: string, data: Partial<MenuItem>) {
 }
 
 export async function deleteMenuItem(id: string) {
+    // R2 Cleanup: Get image url before deleting
+    const { data: item } = await supabase.from('menu_items').select('image_url').eq('id', id).single();
+
     const { error } = await supabase.from('menu_items').delete().eq('id', id);
 
     if (error) {
@@ -258,6 +318,15 @@ export async function deleteMenuItem(id: string) {
         }
         handleError(error);
     }
+    if (item?.image_url) {
+        try {
+            const key = item.image_url.split('/').pop();
+            if (key) await deleteFile(key);
+        } catch (e) {
+            console.error("Failed to delete image for deleted item:", e);
+        }
+    }
+
     revalidatePath('/admin');
     return { success: true };
 }
@@ -265,12 +334,13 @@ export async function deleteMenuItem(id: string) {
 // --- ITEM CATEGORY ACTIONS ---
 
 export async function getCategories() {
-    const { data, error } = await supabase.from('item_categories').select('*').order('name');
+    const { data, error } = await supabase.from('item_categories').select('*').order('sort_order', { ascending: true }).order('name');
     if (error) return [];
     return data.map((c: any) => ({
         id: c.id,
         name: c.name,
-        setValue: c.set_value ?? undefined
+        setValue: c.set_value ?? undefined,
+        sortOrder: c.sort_order ?? 0
     }));
 }
 
@@ -291,6 +361,16 @@ export async function deleteCategory(id: string) {
     revalidatePath('/admin');
 }
 
+export async function updateCategoryOrder(updates: { id: string; sortOrder: number }[]) {
+    const supabaseAdmin = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
+    const promises = updates.map(({ id, sortOrder }) =>
+        supabaseAdmin.from('item_categories').update({ sort_order: sortOrder }).eq('id', id)
+    );
+    await Promise.all(promises);
+    revalidatePath('/admin');
+    return { success: true };
+}
+
 export async function updateCategory(id: string, name: string, setValue?: number | null) {
     const payload: any = { name };
     if (setValue !== undefined) {
@@ -309,7 +389,7 @@ export async function updateCategory(id: string, name: string, setValue?: number
 // Uses 'breakfast_categories' and 'breakfast_items' tables but is generic via 'meal_type'
 
 export async function getMealCategories() {
-    const { data, error } = await supabase.from('breakfast_categories').select('*').order('name');
+    const { data, error } = await supabase.from('breakfast_categories').select('*').order('sort_order', { ascending: true }).order('name');
     if (error) return [];
     return data.map((c: any) => ({
         id: c.id,
@@ -371,7 +451,10 @@ export async function deleteMealType(mealType: string) {
 }
 
 export async function getMealItems() {
-    const { data, error } = await supabase.from('breakfast_items').select('*');
+    const { data, error } = await supabase.from('breakfast_items')
+        .select('*')
+        .order('sort_order', { ascending: true })
+        .order('name', { ascending: true });
     if (error) return [];
     return data.map((i: any) => ({
         id: i.id,
@@ -381,16 +464,20 @@ export async function getMealItems() {
         quotaValue: i.quota_value,
         priceEach: i.price_each ?? undefined,
         isActive: i.is_active,
-        vendorId: i.vendor_id
+        vendorId: i.vendor_id,
+        imageUrl: i.image_url || null,
+        sortOrder: i.sort_order ?? 0
     }));
 }
 
-export async function addMealItem(data: { categoryId: string, name: string, quotaValue: number, priceEach?: number, isActive: boolean }) {
+export async function addMealItem(data: { categoryId: string, name: string, quotaValue: number, priceEach?: number, isActive: boolean, imageUrl?: string | null, sortOrder?: number }) {
     const payload: any = {
         category_id: data.categoryId,
         name: data.name,
         quota_value: data.quotaValue,
-        is_active: data.isActive
+        is_active: data.isActive,
+        image_url: data.imageUrl || null,
+        sort_order: data.sortOrder ?? 0
     };
     if (data.priceEach !== undefined) {
         payload.price_each = data.priceEach;
@@ -403,12 +490,30 @@ export async function addMealItem(data: { categoryId: string, name: string, quot
     return { ...data, id: res.id };
 }
 
-export async function updateMealItem(id: string, data: Partial<{ name: string, quotaValue: number, priceEach?: number, isActive: boolean }>) {
+export async function updateMealItem(id: string, data: Partial<{ name: string, quotaValue: number, priceEach?: number, isActive: boolean, imageUrl?: string | null, sortOrder?: number }>) {
     const payload: any = {};
     if (data.name) payload.name = data.name;
     if (data.quotaValue !== undefined) payload.quota_value = data.quotaValue;
     if (data.priceEach !== undefined) payload.price_each = data.priceEach;
     if (data.isActive !== undefined) payload.is_active = data.isActive;
+    if (data.imageUrl !== undefined) payload.image_url = data.imageUrl;
+    if (data.sortOrder !== undefined) payload.sort_order = data.sortOrder;
+
+    // R2 Cleanup: If image is being updated/removed, delete the old one
+    if (data.imageUrl !== undefined) {
+        const supabaseAdmin = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
+        const { data: existing } = await supabaseAdmin.from('breakfast_items').select('image_url').eq('id', id).single();
+        const oldUrl = existing?.image_url;
+
+        if (oldUrl && oldUrl !== data.imageUrl) {
+            try {
+                const key = oldUrl.split('/').pop();
+                if (key) await deleteFile(key);
+            } catch (e) {
+                console.error("Failed to delete stale meal image:", e);
+            }
+        }
+    }
 
     const supabaseAdmin = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
     const { error } = await supabaseAdmin.from('breakfast_items').update(payload).eq('id', id);
@@ -418,7 +523,16 @@ export async function updateMealItem(id: string, data: Partial<{ name: string, q
 
 export async function deleteMealItem(id: string) {
     const supabaseAdmin = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
+    const { data: item } = await supabaseAdmin.from('breakfast_items').select('image_url').eq('id', id).single();
     const { error } = await supabaseAdmin.from('breakfast_items').delete().eq('id', id);
+    if (!error && item?.image_url) {
+        try {
+            const key = item.image_url.split('/').pop();
+            if (key) await deleteFile(key);
+        } catch (e) {
+            console.error("Failed to delete meal image:", e);
+        }
+    }
     handleError(error);
     revalidatePath('/admin');
 }
@@ -5419,4 +5533,36 @@ export async function saveClientBoxOrder(clientId: string, data: Partial<ClientB
     revalidatePath(`/client-portal/${clientId}`);
     revalidatePath(`/clients/${clientId}`);
     return created;
+}
+
+export async function updateMenuItemOrder(updates: { id: string; sortOrder: number }[]) {
+    // Perform updates in parallel
+    const supabaseAdmin = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
+    const promises = updates.map(({ id, sortOrder }) =>
+        supabaseAdmin.from('menu_items').update({ sort_order: sortOrder }).eq('id', id)
+    );
+
+    await Promise.all(promises);
+    revalidatePath('/admin');
+    return { success: true };
+}
+
+export async function updateMealItemOrder(updates: { id: string; sortOrder: number }[]) {
+    const supabaseAdmin = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
+    const promises = updates.map(({ id, sortOrder }) =>
+        supabaseAdmin.from('breakfast_items').update({ sort_order: sortOrder }).eq('id', id)
+    );
+    await Promise.all(promises);
+    revalidatePath('/admin');
+    return { success: true };
+}
+
+export async function updateMealCategoryOrder(updates: { id: string; sortOrder: number }[]) {
+    const supabaseAdmin = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
+    const promises = updates.map(({ id, sortOrder }) =>
+        supabaseAdmin.from('breakfast_categories').update({ sort_order: sortOrder }).eq('id', id)
+    );
+    await Promise.all(promises);
+    revalidatePath('/admin');
+    return { success: true };
 }
