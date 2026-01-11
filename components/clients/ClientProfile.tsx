@@ -4,7 +4,7 @@ import { useState, useEffect, Fragment, useMemo, useRef, ReactNode } from 'react
 import { useRouter, useParams } from 'next/navigation';
 import Link from 'next/link';
 import { ClientProfile, ClientStatus, Navigator, Vendor, MenuItem, BoxType, ServiceType, AppSettings, DeliveryRecord, ItemCategory, ClientFullDetails, BoxQuota, MealCategory, MealItem, ClientFoodOrder, ClientMealOrder, ClientBoxOrder } from '@/lib/types';
-import { updateClient, addClient, deleteClient, updateDeliveryProof, recordClientChange, syncCurrentOrderToUpcoming, logNavigatorAction, getBoxQuotas, saveEquipmentOrder, getRegularClients, getDependentsByParentId, addDependent, checkClientNameExists, getClientFullDetails, saveClientFoodOrder, saveClientMealOrder, saveClientBoxOrder, saveCustomOrder } from '@/lib/actions';
+import { updateClient, addClient, deleteClient, updateDeliveryProof, recordClientChange, syncCurrentOrderToUpcoming, logNavigatorAction, getBoxQuotas, saveEquipmentOrder, getRegularClients, getDependentsByParentId, addDependent, checkClientNameExists, getClientFullDetails, saveClientFoodOrder, saveClientMealOrder, saveClientBoxOrder, saveClientCustomOrder } from '@/lib/actions';
 import { getSingleForm, getClientSubmissions } from '@/lib/form-actions';
 import { getClient, getStatuses, getNavigators, getVendors, getMenuItems, getBoxTypes, getSettings, getCategories, getEquipment, getClients, invalidateClientData, invalidateReferenceData, getActiveOrderForClient, getUpcomingOrderForClient, getOrderHistory, getClientHistory, getBillingHistory, invalidateOrderData, getMealCategories, getMealItems, getRecentOrdersForClient } from '@/lib/cached-data';
 import { areAnyDeliveriesLocked, getEarliestEffectiveDate, getLockedWeekDescription } from '@/lib/weekly-lock';
@@ -38,7 +38,7 @@ interface Props {
     currentUser?: { role: string; id: string } | null;
 }
 
-const SERVICE_TYPES: ServiceType[] = ['Food', 'Boxes'];
+const SERVICE_TYPES: ServiceType[] = ['Food', 'Boxes', 'Custom'];
 
 // Min/Max validation for approved meals per week
 const MIN_APPROVED_MEALS_PER_WEEK = 1;
@@ -196,27 +196,7 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
     const [equipmentOrder, setEquipmentOrder] = useState<{ vendorId: string; equipmentId: string } | null>(null);
     const [submittingEquipmentOrder, setSubmittingEquipmentOrder] = useState(false);
 
-    // Custom Order State
-    const [showCustomOrder, setShowCustomOrder] = useState(false);
-    const [customOrder, setCustomOrder] = useState<{ vendorId: string; itemDescription: string; price: string; deliveryDay: string } | null>(null);
-    const [submittingCustom, setSubmittingCustom] = useState(false);
 
-    // Refresh vendors and equipment when equipment order section is opened to ensure we have latest data
-    useEffect(() => {
-        if (showEquipmentOrder) {
-            Promise.all([
-                getVendors().then(v => setVendors(v)),
-                getEquipment().then(e => setEquipment(e))
-            ]);
-        }
-    }, [showEquipmentOrder]);
-
-    // Refresh vendors for custom order
-    useEffect(() => {
-        if (showCustomOrder) {
-            getVendors().then(v => setVendors(v));
-        }
-    }, [showCustomOrder]);
     const [settings, setSettings] = useState<AppSettings | null>(null);
     const [history, setHistory] = useState<DeliveryRecord[]>([]);
     const [orderHistory, setOrderHistory] = useState<any[]>([]);
@@ -1415,6 +1395,16 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
             return { isValid: true, messages: [] };
         }
 
+        if (formData.serviceType === 'Custom') {
+            const messages: string[] = [];
+            if (!orderConfig.custom_name || !orderConfig.custom_name.trim()) messages.push('Item Description is required.');
+            if (!orderConfig.custom_price || Number(orderConfig.custom_price) <= 0) messages.push('Price must be greater than 0.');
+            if (!orderConfig.vendorId) messages.push('Vendor is required.');
+            if (!orderConfig.deliveryDay) messages.push('Delivery Day is required.');
+
+            if (messages.length > 0) return { isValid: false, messages };
+        }
+
         return { isValid: true, messages: [] };
     }
 
@@ -1477,6 +1467,20 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                     // Sync to new independent tables
                     // Sync to new independent tables
                     const serviceType = newClient.serviceType;
+
+                    if (serviceType === 'Custom') {
+                        if (cleanedOrderConfig.custom_name && cleanedOrderConfig.custom_price && cleanedOrderConfig.vendorId && cleanedOrderConfig.deliveryDay) {
+                            await saveClientCustomOrder(
+                                newClient.id,
+                                cleanedOrderConfig.vendorId,
+                                cleanedOrderConfig.custom_name,
+                                Number(cleanedOrderConfig.custom_price),
+                                cleanedOrderConfig.deliveryDay,
+                                cleanedOrderConfig.caseId
+                            );
+                        }
+                    }
+
                     if (serviceType === 'Food') {
                         // ALWAYS save food orders if service type is Food, even if empty (to handle deletions/clearing)
                         await saveClientFoodOrder(newClient.id, {
@@ -2162,6 +2166,8 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
     );
     const selectedParentClient = formData.parentClientId ? regularClients.find(c => c.id === formData.parentClientId) : null;
 
+
+
     function getContent() {
         return (
             <div className={`${styles.container} ${onClose ? styles.inModal : ''}`}>
@@ -2800,6 +2806,77 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                                             </div>
                                         )}
 
+                                        {/* Custom Service Configuration */}
+                                        {formData.serviceType === 'Custom' && (
+                                            <div className={styles.section} style={{ marginTop: '24px' }}>
+                                                <h3 className={styles.sectionTitle}>Custom Order Configuration</h3>
+                                                <div className={styles.card} style={{ backgroundColor: '#f9fafb' }}>
+                                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                                        <div className="col-span-2">
+                                                            <label className={styles.label}>Item Description <span className="text-red-500">*</span></label>
+                                                            <textarea
+                                                                className="input"
+                                                                placeholder="e.g. Weekly Catering Platter"
+                                                                value={orderConfig.custom_name || ''}
+                                                                rows={1}
+                                                                style={{ resize: 'none', overflow: 'hidden', minHeight: '3rem' }}
+                                                                onInput={(e) => {
+                                                                    const target = e.target as HTMLTextAreaElement;
+                                                                    target.style.height = 'auto';
+                                                                    target.style.height = target.scrollHeight + 'px';
+                                                                }}
+                                                                onChange={e => {
+                                                                    setOrderConfig({ ...orderConfig, custom_name: e.target.value });
+                                                                    // Also trigger resize on change for safe measure
+                                                                    e.target.style.height = 'auto';
+                                                                    e.target.style.height = e.target.scrollHeight + 'px';
+                                                                }}
+                                                            />
+                                                        </div>
+                                                        <div>
+                                                            <label className={styles.label}>Price per Order <span className="text-red-500">*</span></label>
+                                                            <div className="relative">
+                                                                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500">$</span>
+                                                                <input
+                                                                    type="number"
+                                                                    className="input pl-8"
+                                                                    placeholder="0.00"
+                                                                    value={orderConfig.custom_price || ''}
+                                                                    onChange={e => setOrderConfig({ ...orderConfig, custom_price: e.target.value })}
+                                                                />
+                                                            </div>
+                                                        </div>
+                                                        <div>
+                                                            <label className={styles.label}>Vendor <span className="text-red-500">*</span></label>
+                                                            <select
+                                                                className="input"
+                                                                value={orderConfig.vendorId || ''}
+                                                                onChange={e => setOrderConfig({ ...orderConfig, vendorId: e.target.value })}
+                                                            >
+                                                                <option value="">Select Vendor</option>
+                                                                {vendors.filter(v => v.isActive).map(v => (
+                                                                    <option key={v.id} value={v.id}>{v.name}</option>
+                                                                ))}
+                                                            </select>
+                                                        </div>
+                                                        <div>
+                                                            <label className={styles.label}>Delivery Day <span className="text-red-500">*</span></label>
+                                                            <select
+                                                                className="input"
+                                                                value={orderConfig.deliveryDay || ''}
+                                                                onChange={e => setOrderConfig({ ...orderConfig, deliveryDay: e.target.value })}
+                                                            >
+                                                                <option value="">Select Day</option>
+                                                                {['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'].map(day => (
+                                                                    <option key={day} value={day}>{day}</option>
+                                                                ))}
+                                                            </select>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        )}
+
 
                                         {
                                             formData.serviceType === 'Boxes' && (() => {
@@ -3325,145 +3402,7 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                                             )}
                                         </div>
 
-                                        {/* Custom Order Section */}
-                                        <div style={{ marginTop: '1rem' }}>
-                                            <h4 style={{ fontSize: '0.9rem', marginBottom: '0.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                                                <Plus size={14} /> Custom Order
-                                            </h4>
-                                            {!showCustomOrder ? (
-                                                <button
-                                                    className="btn btn-secondary"
-                                                    onClick={() => {
-                                                        setShowCustomOrder(true);
-                                                        setCustomOrder({ vendorId: '', itemDescription: '', price: '', deliveryDay: '' });
-                                                    }}
-                                                    style={{ width: '100%' }}
-                                                >
-                                                    Add Custom Order
-                                                </button>
-                                            ) : (
-                                                <div style={{
-                                                    padding: '1rem',
-                                                    backgroundColor: 'var(--bg-surface-hover)',
-                                                    borderRadius: 'var(--radius-md)',
-                                                    border: '1px solid var(--border-color)'
-                                                }}>
-                                                    <div className={styles.formGroup}>
-                                                        <label className="label">Item Description</label>
-                                                        <textarea
-                                                            className="input"
-                                                            value={customOrder?.itemDescription || ''}
-                                                            onChange={e => setCustomOrder(prev => ({ ...prev!, itemDescription: e.target.value }))}
-                                                            placeholder="Enter item description..."
-                                                            rows={4}
-                                                            style={{ resize: 'vertical', minHeight: '100px' }}
-                                                        />
-                                                    </div>
 
-                                                    <div className={styles.formGroup}>
-                                                        <label className="label">Price ($)</label>
-                                                        <input
-                                                            type="number"
-                                                            className="input"
-                                                            min="0"
-                                                            step="0.01"
-                                                            value={customOrder?.price || ''}
-                                                            onChange={e => setCustomOrder(prev => ({ ...prev!, price: e.target.value }))}
-                                                            placeholder="0.00"
-                                                        />
-                                                    </div>
-
-                                                    <div className={styles.formGroup}>
-                                                        <label className="label">Vendor</label>
-                                                        <select
-                                                            className="input"
-                                                            value={customOrder?.vendorId || ''}
-                                                            onChange={e => setCustomOrder(prev => ({ ...prev!, vendorId: e.target.value }))}
-                                                        >
-                                                            <option value="">Select Vendor...</option>
-                                                            {vendors
-                                                                .filter(v => v.isActive)
-                                                                .map(v => (
-                                                                    <option key={v.id} value={v.id}>{v.name}</option>
-                                                                ))}
-                                                        </select>
-                                                    </div>
-
-                                                    <div className={styles.formGroup}>
-                                                        <label className="label">Shipping Day</label>
-                                                        <select
-                                                            className="input"
-                                                            value={customOrder?.deliveryDay || ''}
-                                                            onChange={e => setCustomOrder(prev => ({ ...prev!, deliveryDay: e.target.value }))}
-                                                            disabled={!customOrder?.vendorId}
-                                                        >
-                                                            <option value="">Select Day...</option>
-                                                            {customOrder?.vendorId && vendors.find(v => v.id === customOrder.vendorId)?.deliveryDays.map(day => (
-                                                                <option key={day} value={day}>{day}</option>
-                                                            ))}
-                                                        </select>
-                                                        {!customOrder?.vendorId && <span style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)' }}>Select a vendor first</span>}
-                                                    </div>
-
-                                                    <div style={{ marginTop: '1rem', display: 'flex', gap: '0.5rem' }}>
-                                                        <button
-                                                            className="btn btn-primary"
-                                                            disabled={submittingCustom}
-                                                            onClick={async () => {
-                                                                if (!customOrder?.itemDescription || !customOrder?.vendorId || !customOrder?.deliveryDay || !customOrder?.price) {
-                                                                    alert('Please fill in all fields (Item, Price, Vendor, Day)');
-                                                                    return;
-                                                                }
-
-                                                                try {
-                                                                    setSubmittingCustom(true);
-                                                                    await saveCustomOrder(
-                                                                        clientId,
-                                                                        customOrder.vendorId,
-                                                                        customOrder.itemDescription,
-                                                                        parseFloat(customOrder.price),
-                                                                        customOrder.deliveryDay,
-                                                                        orderConfig.caseId
-                                                                    );
-
-                                                                    setMessage('Custom Order created successfully!');
-                                                                    setTimeout(() => setMessage(null), 3000);
-                                                                    setCustomOrder(null);
-                                                                    setShowCustomOrder(false);
-
-                                                                    // Reload recent orders
-                                                                    setLoadingOrderDetails(true);
-                                                                    const [activeOrderData, orderHistoryData] = await Promise.all([
-                                                                        getActiveOrderForClient(clientId),
-                                                                        getOrderHistory(clientId)
-                                                                    ]);
-                                                                    setActiveOrder(activeOrderData);
-                                                                    setOrderHistory(orderHistoryData || []);
-                                                                    setLoadingOrderDetails(false);
-
-                                                                } catch (err: any) {
-                                                                    console.error(err);
-                                                                    alert('Failed to save custom order: ' + err.message);
-                                                                } finally {
-                                                                    setSubmittingCustom(false);
-                                                                }
-                                                            }}
-                                                        >
-                                                            {submittingCustom ? 'Saving...' : 'Submit Custom Order'}
-                                                        </button>
-                                                        <button
-                                                            className="btn btn-secondary"
-                                                            onClick={() => {
-                                                                setShowCustomOrder(false);
-                                                                setCustomOrder(null);
-                                                            }}
-                                                        >
-                                                            Cancel
-                                                        </button>
-                                                    </div>
-                                                </div>
-                                            )}
-                                        </div>
                                     </>
                                 )}
                             </section>
@@ -4292,6 +4231,19 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                 if (updatedClient.activeOrder && updatedClient.activeOrder.caseId) {
                     const serviceType = updatedClient.serviceType;
 
+                    if (serviceType === 'Custom') {
+                        if (updatedClient.activeOrder.custom_name && updatedClient.activeOrder.custom_price && updatedClient.activeOrder.vendorId && updatedClient.activeOrder.deliveryDay) {
+                            await saveClientCustomOrder(
+                                updatedClient.id,
+                                updatedClient.activeOrder.vendorId,
+                                updatedClient.activeOrder.custom_name,
+                                Number(updatedClient.activeOrder.custom_price),
+                                updatedClient.activeOrder.deliveryDay,
+                                updatedClient.activeOrder.caseId
+                            );
+                        }
+                    }
+
                     // Save to appropriate independent table based on service type
                     if (serviceType === 'Food' && foodOrderConfig) {
                         await saveClientFoodOrder(updatedClient.id, {
@@ -4421,6 +4373,19 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
             // Sync to new independent tables if there's order data OR if we need to clear data
             if (updateData.activeOrder && updateData.activeOrder.caseId) {
                 const serviceType = formData.serviceType;
+
+                if (serviceType === 'Custom') {
+                    if (updateData.activeOrder.custom_name && updateData.activeOrder.custom_price && updateData.activeOrder.vendorId && updateData.activeOrder.deliveryDay) {
+                        await saveClientCustomOrder(
+                            clientId,
+                            updateData.activeOrder.vendorId,
+                            updateData.activeOrder.custom_name,
+                            Number(updateData.activeOrder.custom_price),
+                            updateData.activeOrder.deliveryDay,
+                            updateData.activeOrder.caseId
+                        );
+                    }
+                }
 
                 // Save to appropriate independent tables based on what data exists
                 // NOTE: A Food service client can have BOTH deliveryDayOrders AND mealSelections (e.g., Breakfast)

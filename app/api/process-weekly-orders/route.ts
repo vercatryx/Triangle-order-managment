@@ -592,8 +592,57 @@ export async function GET(request: NextRequest) {
                             orderSummary.vendorDetails.push({
                                 vendorId: bs.vendor_id || null,
                                 vendorName: vendor?.name || 'Unknown Vendor',
-                                quantity: bs.quantity
+                                quantity: bs.quantity,
+                                boxTypeId: bs.box_type_id
                             });
+                        }
+                    }
+                } else if (order.service_type === 'Custom') {
+                    // Fetch vendor selections for Custom orders
+                    const vendorSelectionsTable = isFromUpcomingOrders ? 'upcoming_order_vendor_selections' : 'order_vendor_selections';
+                    const orderIdField = isFromUpcomingOrders ? 'upcoming_order_id' : 'order_id';
+                    const itemsTable = isFromUpcomingOrders ? 'upcoming_order_items' : 'order_items';
+                    const vendorSelectionIdField = isFromUpcomingOrders ? 'vendor_selection_id' : 'vendor_selection_id';
+
+                    const { data: vendorSelections } = await supabase
+                        .from(vendorSelectionsTable)
+                        .select('*')
+                        .eq(orderIdField, order.id);
+
+                    if (vendorSelections) {
+                        for (const vs of vendorSelections) {
+                            const vendor = vendors.find(v => v.id === vs.vendor_id);
+
+                            const vendorSummary: any = {
+                                vendorId: vs.vendor_id,
+                                vendorName: vendor?.name || 'Unknown Vendor',
+                                items: []
+                            };
+
+                            // Fetch items
+                            const { data: items } = await supabase
+                                .from(itemsTable)
+                                .select('*')
+                                .eq(vendorSelectionIdField, vs.id);
+
+                            if (items) {
+                                for (const item of items) {
+                                    vendorSummary.items.push({
+                                        itemId: null,
+                                        itemName: item.custom_name || 'Custom Item',
+                                        customName: item.custom_name,
+                                        customPrice: item.custom_price,
+                                        quantity: item.quantity,
+                                        unitValue: 0,
+                                        totalValue: 0
+                                    });
+                                }
+                            }
+
+                            vendorSummary.totalValue = parseFloat(order.total_value?.toString() || '0');
+                            vendorSummary.totalQuantity = 1;
+
+                            orderSummary.vendorDetails.push(vendorSummary);
                         }
                     }
                 }
@@ -783,6 +832,66 @@ export async function GET(request: NextRequest) {
                                             copyErrors.push(`Failed to copy box selection ${bs.id}: ${bsError.message}`);
                                         } else {
                                             boxSelectionsCopied++;
+                                        }
+                                    }
+                                }
+                            }
+
+                            // Copy Custom Order Items (for Custom service type)
+                            // We reuse order_items table but populated with custom_name/custom_price. 
+                            if (order.service_type === 'Custom') {
+                                const { data: vendorSelections, error: vsFetchError } = await supabase
+                                    .from('upcoming_order_vendor_selections')
+                                    .select('*')
+                                    .eq('upcoming_order_id', order.id);
+
+                                if (vsFetchError) {
+                                    copyErrors.push(`Failed to fetch Custom vendor selections: ${vsFetchError.message}`);
+                                } else if (vendorSelections && vendorSelections.length > 0) {
+                                    for (const vs of vendorSelections) {
+                                        const { data: newVs, error: vsError } = await supabase
+                                            .from('order_vendor_selections') // Reusing this table for Custom orders too
+                                            .insert({
+                                                order_id: newOrder.id,
+                                                vendor_id: vs.vendor_id
+                                            })
+                                            .select()
+                                            .single();
+
+                                        if (vsError || !newVs) {
+                                            copyErrors.push(`Failed to copy Custom vendor selection: ${vsError?.message}`);
+                                            continue;
+                                        }
+
+                                        vendorSelectionsCopied++;
+
+                                        // Copy items (should be just one custom item usually)
+                                        const { data: items, error: itemsFetchError } = await supabase
+                                            .from('upcoming_order_items')
+                                            .select('*')
+                                            .eq('vendor_selection_id', vs.id);
+
+                                        if (itemsFetchError) {
+                                            copyErrors.push(`Failed to fetch Custom items: ${itemsFetchError.message}`);
+                                        } else if (items) {
+                                            for (const item of items) {
+                                                const { error: itemError } = await supabase.from('order_items').insert({
+                                                    order_id: newOrder.id,
+                                                    vendor_selection_id: newVs.id,
+                                                    menu_item_id: null,
+                                                    quantity: item.quantity,
+                                                    unit_value: 0,
+                                                    total_value: 0,
+                                                    custom_name: item.custom_name,
+                                                    custom_price: item.custom_price
+                                                });
+
+                                                if (itemError) {
+                                                    copyErrors.push(`Failed to copy Custom item: ${itemError.message}`);
+                                                } else {
+                                                    itemsCopied++;
+                                                }
+                                            }
                                         }
                                     }
                                 }
@@ -1030,6 +1139,75 @@ export async function GET(request: NextRequest) {
 
                             if (bsError) {
                                 errors.push(`Failed to create box selection for upcoming order ${newUpcomingOrder.id}: ${bsError.message}`);
+                            }
+                        }
+                    } else if (order.service_type === 'Custom') {
+                        // Re-create upcoming order for Custom Type
+
+                        let vendorId: string | null = null;
+                        if (orderSummary.vendorDetails.length > 0) {
+                            vendorId = orderSummary.vendorDetails[0].vendorId;
+                        }
+
+                        if (vendorId) {
+                            const takeEffectDate = calculateTakeEffectDate(vendorId, vendors);
+
+                            let deliveryDay = (order as any).delivery_day;
+                            if (!deliveryDay) {
+                                const vendor = vendors.find(v => v.id === vendorId);
+                                if (vendor && vendor.deliveryDays.length > 0) deliveryDay = vendor.deliveryDays[0];
+                            }
+
+                            const uniqueCaseId = generateUniqueCaseId();
+
+                            const upcomingOrderData: any = {
+                                client_id: order.client_id,
+                                service_type: 'Custom',
+                                case_id: uniqueCaseId,
+                                status: 'scheduled',
+                                last_updated: (await getCurrentTime()).toISOString(),
+                                updated_by: order.updated_by || 'System',
+                                take_effect_date: takeEffectDate ? takeEffectDate.toISOString().split('T')[0] : null,
+                                total_value: order.total_value,
+                                total_items: 1,
+                                notes: order.notes,
+                                delivery_day: deliveryDay
+                            };
+
+                            const { data: newUpcomingOrder, error: upcomingOrderError } = await supabase
+                                .from('upcoming_orders')
+                                .insert(upcomingOrderData)
+                                .select()
+                                .single();
+
+                            if (upcomingOrderError || !newUpcomingOrder) {
+                                errors.push(`Failed to recreate upcoming Custom order: ${upcomingOrderError?.message}`);
+                            } else {
+                                const { data: newVs, error: vsError } = await supabase
+                                    .from('upcoming_order_vendor_selections')
+                                    .insert({
+                                        upcoming_order_id: newUpcomingOrder.id,
+                                        vendor_id: vendorId
+                                    })
+                                    .select()
+                                    .single();
+
+                                if (!vsError && newVs) {
+                                    // Try to get item details from orderSummary
+                                    const item = orderSummary.vendorDetails[0]?.items[0];
+                                    if (item) {
+                                        await supabase.from('upcoming_order_items').insert({
+                                            upcoming_order_id: newUpcomingOrder.id,
+                                            vendor_selection_id: newVs.id,
+                                            menu_item_id: null,
+                                            quantity: 1,
+                                            unit_value: 0,
+                                            total_value: 0,
+                                            custom_name: item.customName || item.itemName,
+                                            custom_price: item.customPrice || order.total_value
+                                        });
+                                    }
+                                }
                             }
                         }
                     }

@@ -1,7 +1,7 @@
 
 export type OrderStatus = 'pending' | 'confirmed' | 'completed' | 'waiting_for_proof' | 'billing_pending' | 'cancelled';
 
-export type ServiceType = 'Food' | 'Boxes' | 'Equipment' | 'Meal';
+export type ServiceType = 'Food' | 'Boxes' | 'Equipment' | 'Meal' | 'Custom';
 
 export interface ClientProfile {
   id: string;
@@ -93,6 +93,11 @@ export interface OrderConfiguration {
   // Display Helpers
   orderNumber?: number;
   proofOfDelivery?: string;
+
+  // Custom Order Fields
+  custom_name?: string;
+  custom_price?: string | number;
+  deliveryDay?: string;
 }
 
 export interface DeliveryRecord {

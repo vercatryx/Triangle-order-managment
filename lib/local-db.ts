@@ -685,6 +685,18 @@ export async function getUpcomingOrderForClientLocal(clientId: string) {
                         }
                     }
                 }
+            } else if (data.service_type === 'Custom') {
+                const vendorSelections = db.upcomingOrderVendorSelections.filter(vs => vs.upcoming_order_id === data.id);
+                if (vendorSelections.length > 0) {
+                    const vs = vendorSelections[0];
+                    currentConfig.vendorId = vs.vendor_id;
+
+                    const items = db.upcomingOrderItems.filter(item => item.vendor_selection_id === vs.id);
+                    if (items.length > 0) {
+                        currentConfig.custom_name = items[0].custom_name;
+                        currentConfig.custom_price = items[0].custom_price;
+                    }
+                }
             } else if (data.service_type === 'Meal') {
                 // Handle 'Meal' service type (Breakfast, Dinner)
                 const vendorSelections = db.upcomingOrderVendorSelections.filter(vs => vs.upcoming_order_id === data.id);

@@ -5734,3 +5734,102 @@ export async function updateMealCategoryOrder(updates: { id: string; sortOrder: 
     revalidatePath('/admin');
     return { success: true };
 }
+export async function saveClientCustomOrder(clientId: string, vendorId: string, itemDescription: string, price: number, deliveryDay: string, caseId?: string) {
+    const session = await getSession();
+    const currentUserName = session?.name || 'Admin';
+
+    // 1. Check or Create Upcoming Order
+    let { data: upcomingOrder, error: upcomingError } = await supabase
+        .from('upcoming_orders')
+        .select('*')
+        .eq('client_id', clientId)
+        .neq('status', 'processed')
+        .maybeSingle();
+
+    if (upcomingError) throw new Error(upcomingError.message);
+
+    if (upcomingOrder) {
+        // Update existing
+        const { error: updateError } = await supabase
+            .from('upcoming_orders')
+            .update({
+                service_type: 'Custom', // Switch to Custom
+                case_id: caseId || null,
+                notes: `Custom Order: ${itemDescription}`,
+                total_value: price,
+                total_items: 1,
+                updated_by: currentUserName,
+                last_updated: (await getCurrentTime()).toISOString(),
+                delivery_day: deliveryDay // Save the delivery day on the order itself for simple custom orders
+            })
+            .eq('id', upcomingOrder.id);
+        if (updateError) throw new Error(updateError.message);
+    } else {
+        // Create new
+        const { data: newUpcoming, error: createError } = await supabase
+            .from('upcoming_orders')
+            .insert({
+                client_id: clientId,
+                service_type: 'Custom',
+                case_id: caseId || null,
+                status: 'pending',
+                notes: `Custom Order: ${itemDescription}`,
+                total_value: price,
+                total_items: 1,
+                updated_by: currentUserName,
+                last_updated: (await getCurrentTime()).toISOString(),
+                delivery_day: deliveryDay
+            })
+            .select()
+            .single();
+        if (createError) throw new Error(createError.message);
+        upcomingOrder = newUpcoming;
+    }
+
+    // 2. Clear existing items/selections for this upcoming order (since we're overwriting with a single custom order)
+    // Delete items first to avoid FK issues
+    await supabase.from('upcoming_order_items').delete().eq('upcoming_order_id', upcomingOrder.id);
+    await supabase.from('upcoming_order_vendor_selections').delete().eq('upcoming_order_id', upcomingOrder.id);
+    // Also clear box selections if any existed
+    await supabase.from('upcoming_order_box_selections').delete().eq('upcoming_order_id', upcomingOrder.id);
+
+
+    // 3. Create Vendor Selection
+    const { data: vendorSelection, error: vsError } = await supabase
+        .from('upcoming_order_vendor_selections')
+        .insert({
+            upcoming_order_id: upcomingOrder.id,
+            vendor_id: vendorId
+        })
+        .select()
+        .single();
+
+    if (vsError || !vendorSelection) throw new Error(vsError?.message || 'Failed to create vendor selection');
+
+    // 4. Create Item
+    // We use the new columns: custom_name, custom_price. menu_item_id is null.
+    const { error: itemError } = await supabase
+        .from('upcoming_order_items')
+        .insert({
+            upcoming_order_id: upcomingOrder.id,
+            vendor_selection_id: vendorSelection.id,
+            menu_item_id: null,
+            quantity: 1,
+            unit_value: 0, // Not really relevant for custom price, or could be price
+            total_value: 0, // Standard fields might be ignored or used for reporting, but custom_price is the source of truth for value here?
+            // Wait, logic usually sums total_value. Let's set total_value to 0 and rely on custom_price? 
+            // Or better, set unit_value/total_value to 0 and rely on the order total_value we set above.
+            // Actually, let's look at `saveCustomOrder` (one-off).
+            // It sets custom_price and custom_name. 
+            custom_name: itemDescription,
+            custom_price: price
+        });
+
+    if (itemError) throw new Error(itemError.message);
+
+    // Update client service type to Custom
+    await supabase.from('clients').update({ service_type: 'Custom' }).eq('id', clientId);
+
+    revalidatePath(`/clients/${clientId}`);
+    return { success: true };
+}
