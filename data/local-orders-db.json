@@ -1142,6 +1142,25 @@
       "meal_type": "Lunch"
     },
     {
+      "id": "fef058a8-4be5-4fe4-95e4-c2c1d6d63104",
+      "client_id": "CLIENT-263",
+      "service_type": "Boxes",
+      "case_id": "jkn",
+      "status": "scheduled",
+      "last_updated": "2026-01-11T03:43:11.217+00:00",
+      "updated_by": "Client",
+      "created_at": "2026-01-11T03:43:13.668621+00:00",
+      "take_effect_date": null,
+      "total_value": 0,
+      "total_items": 1,
+      "notes": null,
+      "processed_order_id": null,
+      "processed_at": null,
+      "delivery_day": null,
+      "order_number": 100459,
+      "meal_type": "Lunch"
+    },
+    {
       "id": "ccd93db3-c016-46db-bb6d-bf1c91aa537a",
       "client_id": "CLIENT-158",
       "service_type": "Boxes",
@@ -2450,25 +2469,6 @@
       "processed_at": null,
       "delivery_day": null,
       "order_number": 100399,
-      "meal_type": "Lunch"
-    },
-    {
-      "id": "1c8f8bd9-2972-4158-8fae-d69e3cd593df",
-      "client_id": "CLIENT-263",
-      "service_type": "Boxes",
-      "case_id": "jkn",
-      "status": "scheduled",
-      "last_updated": "2026-01-11T03:36:26.06+00:00",
-      "updated_by": "Client",
-      "created_at": "2026-01-11T03:36:29.705045+00:00",
-      "take_effect_date": null,
-      "total_value": 0,
-      "total_items": 1,
-      "notes": null,
-      "processed_order_id": null,
-      "processed_at": null,
-      "delivery_day": null,
-      "order_number": 100458,
       "meal_type": "Lunch"
     },
     {
@@ -4247,5 +4247,5 @@
       "items": {}
     }
   ],
-  "lastSynced": "2026-01-11T03:40:57.055Z"
+  "lastSynced": "2026-01-11T03:43:14.932Z"
 }

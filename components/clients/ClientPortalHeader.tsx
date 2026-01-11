@@ -46,22 +46,24 @@ export default function ClientPortalHeader({
             {/* Top Row: Meta Info & Warnings */}
             <div className={styles.headerTopRow}>
                 <div className={styles.headerMeta}>
-                    {/* Meal Count */}
-                    <div className={styles.headerCount}>
-                        <span style={{ fontSize: '0.75rem', textTransform: 'uppercase', color: 'var(--text-tertiary)', fontWeight: 600 }}>
-                            Current Order
-                        </span>
-                        <div style={{ fontSize: '1.5rem', fontWeight: 700, color: countColor, lineHeight: 1 }}>
-                            {totalMealCount}
-                            {approvedLimit && <span style={{ fontSize: '1rem', color: 'var(--text-tertiary)', fontWeight: 500 }}> / {approvedLimit}</span>}
+                    {/* Meal Count - Only show for Food Service */}
+                    {client.serviceType === 'Food' && (
+                        <div className={styles.headerCount}>
+                            <span style={{ fontSize: '0.75rem', textTransform: 'uppercase', color: 'var(--text-tertiary)', fontWeight: 600 }}>
+                                Current Order
+                            </span>
+                            <div style={{ fontSize: '1.5rem', fontWeight: 700, color: countColor, lineHeight: 1 }}>
+                                {totalMealCount}
+                                {approvedLimit && <span style={{ fontSize: '1rem', color: 'var(--text-tertiary)', fontWeight: 500 }}> / {approvedLimit}</span>}
+                            </div>
                         </div>
-                    </div>
+                    )}
 
                     {/* Effect Date */}
                     {takingEffectDate && (
                         <div className={styles.headerEffectDate}>
                             <span style={{ fontSize: '0.75rem', textTransform: 'uppercase', color: 'var(--text-tertiary)', fontWeight: 600 }}>
-                                Starts From
+                                Changes take effect from
                             </span>
                             <div style={{ fontSize: '1.1rem', fontWeight: 600, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '6px' }}>
                                 <Calendar size={16} />
