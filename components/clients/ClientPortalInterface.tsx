@@ -123,6 +123,9 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
                         const vendor = vendorMap.get(selection.vendorId)!;
                         vendor.selectedDeliveryDays.push(day);
                         vendor.itemsByDay[day] = selection.items || {};
+                        // Ensure itemNotes are populated
+                        if (!vendor.itemNotesByDay) vendor.itemNotesByDay = {};
+                        vendor.itemNotesByDay[day] = selection.itemNotes || {};
                     }
                 }
                 foodOrderForUI.vendorSelections = Array.from(vendorMap.values());
@@ -361,7 +364,24 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
                     }
                 }
             }
-            console.log(`--- [VALIDATION TRACE END] Final Total: ${totalValue} ---`);
+            console.log(`--- [VALIDATION TRACE END] Food/Vendor Selection Total: ${totalValue} ---`);
+
+            // 1.5. Add Meal Selections to Total Value (Critical Fix for Total Count)
+            if (orderConfig.mealSelections) {
+                console.log('--- [VALIDATION TRACE] Adding Meal Selections ---');
+                for (const [mealType, config] of Object.entries(orderConfig.mealSelections) as [string, any][]) {
+                    if (config.items) {
+                        for (const [itemId, qty] of Object.entries(config.items)) {
+                            const item = mealItems.find(i => i.id === itemId);
+                            const val = (item?.value || 0);
+                            const q = (Number(qty) || 0);
+                            const subtotal = val * q;
+                            totalValue += subtotal;
+                            console.log(`      + Meal Item ${item?.name} (${itemId}) [${mealType}]: Val ${val} * Qty ${q} = ${subtotal}. (Running Total: ${totalValue})`);
+                        }
+                    }
+                }
+            }
 
             // Check Approved Limit
             const limit = client.approvedMealsPerWeek || 0;
@@ -558,7 +578,10 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
                                 console.log('DEBUG: Adding items to deliveryDayOrders');
                                 deliveryDayOrders[day].vendorSelections.push({
                                     vendorId: selection.vendorId,
-                                    items: dayItems
+                                    items: dayItems,
+                                    itemNotes: (selection.itemNotesByDay && selection.itemNotesByDay[day])
+                                        ? selection.itemNotesByDay[day]
+                                        : (selection.itemNotes || {})
                                 });
                             } else {
                                 console.log('DEBUG: Skipping day (no items)');
