@@ -18,6 +18,7 @@ import { isMeetingMinimum, isExceedingMaximum, isMeetingExactTarget } from '@/li
 import { Save, ArrowLeft, Truck, Package, AlertTriangle, Upload, Trash2, Plus, Check, ClipboardList, History, CreditCard, Calendar, ChevronDown, ChevronUp, ShoppingCart, Loader2, FileText, Square, CheckSquare, Wrench, Info, Construction } from 'lucide-react';
 import FormFiller from '@/components/forms/FormFiller';
 import { FormSchema } from '@/lib/form-types';
+import TextareaAutosize from 'react-textarea-autosize';
 import SubmissionsList from './SubmissionsList';
 import styles from './ClientProfile.module.css';
 import FoodServiceWidget from './FoodServiceWidget';
@@ -501,13 +502,20 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                                 vendorId: selection.vendorId,
                                 items: {},
                                 selectedDeliveryDays: [],
-                                itemsByDay: {}
+                                itemsByDay: {},
+                                itemNotesByDay: {}
                             });
                         }
 
                         const vendor = vendorMap.get(selection.vendorId)!;
-                        vendor.selectedDeliveryDays.push(day);
+                        if (!vendor.selectedDeliveryDays.includes(day)) {
+                            vendor.selectedDeliveryDays.push(day);
+                        }
                         vendor.itemsByDay[day] = selection.items || {};
+
+                        // Populate item notes
+                        if (!vendor.itemNotesByDay) vendor.itemNotesByDay = {};
+                        vendor.itemNotesByDay[day] = selection.itemNotes || {};
                     }
                 }
 
@@ -1654,17 +1662,28 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
         setOrderConfig({ ...orderConfig, boxOrders: currentBoxes });
     }
 
-    function handleBoxItemUpdate(boxIndex: number, itemId: string, quantity: number) {
+    function handleBoxItemUpdate(boxIndex: number, itemId: string, quantity: number, note?: string) {
         const currentBoxes = [...(orderConfig.boxOrders || [])];
         if (!currentBoxes[boxIndex]) return;
 
         const currentItems = { ...(currentBoxes[boxIndex].items || {}) };
+        const currentNotes = { ...(currentBoxes[boxIndex].itemNotes || {}) };
+
         if (quantity > 0) {
             currentItems[itemId] = quantity;
+            if (note !== undefined) {
+                if (note) {
+                    currentNotes[itemId] = note;
+                } else {
+                    delete currentNotes[itemId];
+                }
+            }
         } else {
             delete currentItems[itemId];
+            delete currentNotes[itemId];
         }
         currentBoxes[boxIndex].items = currentItems;
+        currentBoxes[boxIndex].itemNotes = currentNotes;
         setOrderConfig({ ...orderConfig, boxOrders: currentBoxes });
     }
 
@@ -1719,7 +1738,8 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                     vendorMap.set(vId, {
                         vendorId: sel.vendorId,
                         selectedDeliveryDays: [],
-                        itemsByDay: {}
+                        itemsByDay: {},
+                        itemNotesByDay: {}
                     });
                 }
 
@@ -1728,6 +1748,10 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                     vendorSel.selectedDeliveryDays.push(d);
                 }
                 vendorSel.itemsByDay[d] = sel.items || {};
+
+                // Populate notes
+                if (!vendorSel.itemNotesByDay) vendorSel.itemNotesByDay = {};
+                vendorSel.itemNotesByDay[d] = sel.itemNotes || {};
             }
         }
 
@@ -2890,24 +2914,74 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                                                                                             </div>
                                                                                         )}
 
-                                                                                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
+                                                                                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '1rem' }}>
                                                                                             {availableItems.map(item => {
                                                                                                 const qty = Number(selectedItems[item.id] || 0);
+                                                                                                const note = box.itemNotes?.[item.id] || '';
+                                                                                                const isSelected = qty > 0;
+
                                                                                                 return (
-                                                                                                    <div key={item.id} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', background: 'var(--bg-app)', padding: '4px 8px', borderRadius: '4px', border: '1px solid var(--border-color)' }}>
-                                                                                                        <span style={{ fontSize: '0.8rem' }}>
-                                                                                                            {item.name}
-                                                                                                            {(item.quotaValue || 1) !== 1 && (
-                                                                                                                <span style={{ color: 'var(--text-tertiary)', marginLeft: '4px' }}>
-                                                                                                                    (counts as {item.quotaValue || 1} meals)
-                                                                                                                </span>
-                                                                                                            )}
-                                                                                                        </span>
-                                                                                                        <div className={styles.quantityControl} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                                                                                            <button onClick={() => handleBoxItemUpdate(index, item.id, Math.max(0, qty - 1))} className="btn btn-secondary" style={{ padding: '2px 8px' }}>-</button>
-                                                                                                            <span style={{ width: '20px', textAlign: 'center' }}>{qty}</span>
-                                                                                                            <button onClick={() => handleBoxItemUpdate(index, item.id, qty + 1)} className="btn btn-secondary" style={{ padding: '2px 8px' }}>+</button>
+                                                                                                    <div key={item.id} style={{
+                                                                                                        border: isSelected ? '1px solid var(--color-primary)' : '1px solid var(--border-color)',
+                                                                                                        backgroundColor: isSelected ? 'rgba(var(--color-primary-rgb), 0.05)' : 'var(--bg-app)',
+                                                                                                        borderRadius: '8px',
+                                                                                                        padding: '12px',
+                                                                                                        display: 'flex',
+                                                                                                        flexDirection: 'column',
+                                                                                                        gap: '10px',
+                                                                                                        transition: 'all 0.2s ease',
+                                                                                                        boxShadow: isSelected ? '0 2px 4px rgba(0,0,0,0.05)' : 'none'
+                                                                                                    }}>
+                                                                                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '10px' }}>
+                                                                                                            <div style={{ flex: 1 }}>
+                                                                                                                <div style={{ fontWeight: 600, fontSize: '0.9rem', color: isSelected ? 'var(--color-primary)' : 'var(--text-primary)' }}>
+                                                                                                                    {item.name}
+                                                                                                                </div>
+                                                                                                                {(item.quotaValue || 1) !== 1 && (
+                                                                                                                    <div style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)', marginTop: '2px' }}>
+                                                                                                                        Counts as {item.quotaValue} meals
+                                                                                                                    </div>
+                                                                                                                )}
+                                                                                                            </div>
+                                                                                                            <div className={styles.quantityControl} style={{ display: 'flex', alignItems: 'center', gap: '8px', backgroundColor: 'var(--bg-surface)', padding: '2px', borderRadius: '6px', border: '1px solid var(--border-color)' }}>
+                                                                                                                <button
+                                                                                                                    onClick={() => handleBoxItemUpdate(index, item.id, Math.max(0, qty - 1), note)}
+                                                                                                                    className="btn btn-ghost btn-sm"
+                                                                                                                    style={{ width: '24px', height: '24px', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                                                                                                                    disabled={qty === 0}
+                                                                                                                >
+                                                                                                                    -
+                                                                                                                </button>
+                                                                                                                <span style={{ width: '24px', textAlign: 'center', fontWeight: 600, fontSize: '0.9rem' }}>{qty}</span>
+                                                                                                                <button
+                                                                                                                    onClick={() => handleBoxItemUpdate(index, item.id, qty + 1, note)}
+                                                                                                                    className="btn btn-ghost btn-sm"
+                                                                                                                    style={{ width: '24px', height: '24px', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                                                                                                                >
+                                                                                                                    +
+                                                                                                                </button>
+                                                                                                            </div>
                                                                                                         </div>
+
+                                                                                                        {isSelected && (
+                                                                                                            <div style={{ marginTop: '0px' }}>
+                                                                                                                <TextareaAutosize
+                                                                                                                    minRows={1}
+                                                                                                                    placeholder="Add notes for this item..."
+                                                                                                                    value={note}
+                                                                                                                    onChange={(e) => handleBoxItemUpdate(index, item.id, qty, e.target.value)}
+                                                                                                                    style={{
+                                                                                                                        width: '100%',
+                                                                                                                        fontSize: '0.85rem',
+                                                                                                                        padding: '6px 8px',
+                                                                                                                        borderRadius: '6px',
+                                                                                                                        border: '1px solid rgba(0,0,0,0.1)',
+                                                                                                                        backgroundColor: 'rgba(255,255,255,0.5)',
+                                                                                                                        resize: 'none'
+                                                                                                                    }}
+                                                                                                                />
+                                                                                                            </div>
+                                                                                                        )}
                                                                                                     </div>
                                                                                                 );
                                                                                             })}
@@ -2934,24 +3008,74 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                                                                                             <span style={{ fontWeight: 600 }}>Uncategorized</span>
                                                                                         </div>
 
-                                                                                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
+                                                                                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '1rem' }}>
                                                                                             {uncategorizedItems.map(item => {
                                                                                                 const qty = Number(selectedItems[item.id] || 0);
+                                                                                                const note = box.itemNotes?.[item.id] || '';
+                                                                                                const isSelected = qty > 0;
+
                                                                                                 return (
-                                                                                                    <div key={item.id} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', background: 'var(--bg-app)', padding: '4px 8px', borderRadius: '4px', border: '1px solid var(--border-color)' }}>
-                                                                                                        <span style={{ fontSize: '0.8rem' }}>
-                                                                                                            {item.name}
-                                                                                                            {(item.quotaValue || 1) !== 1 && (
-                                                                                                                <span style={{ color: 'var(--text-tertiary)', marginLeft: '4px' }}>
-                                                                                                                    (counts as {item.quotaValue || 1} meals)
-                                                                                                                </span>
-                                                                                                            )}
-                                                                                                        </span>
-                                                                                                        <div className={styles.quantityControl} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                                                                                            <button onClick={() => handleBoxItemUpdate(index, item.id, Math.max(0, qty - 1))} className="btn btn-secondary" style={{ padding: '2px 8px' }}>-</button>
-                                                                                                            <span style={{ width: '20px', textAlign: 'center' }}>{qty}</span>
-                                                                                                            <button onClick={() => handleBoxItemUpdate(index, item.id, qty + 1)} className="btn btn-secondary" style={{ padding: '2px 8px' }}>+</button>
+                                                                                                    <div key={item.id} style={{
+                                                                                                        border: isSelected ? '1px solid var(--color-primary)' : '1px solid var(--border-color)',
+                                                                                                        backgroundColor: isSelected ? 'rgba(var(--color-primary-rgb), 0.05)' : 'var(--bg-app)',
+                                                                                                        borderRadius: '8px',
+                                                                                                        padding: '12px',
+                                                                                                        display: 'flex',
+                                                                                                        flexDirection: 'column',
+                                                                                                        gap: '10px',
+                                                                                                        transition: 'all 0.2s ease',
+                                                                                                        boxShadow: isSelected ? '0 2px 4px rgba(0,0,0,0.05)' : 'none'
+                                                                                                    }}>
+                                                                                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '10px' }}>
+                                                                                                            <div style={{ flex: 1 }}>
+                                                                                                                <div style={{ fontWeight: 600, fontSize: '0.9rem', color: isSelected ? 'var(--color-primary)' : 'var(--text-primary)' }}>
+                                                                                                                    {item.name}
+                                                                                                                </div>
+                                                                                                                {(item.quotaValue || 1) !== 1 && (
+                                                                                                                    <div style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)', marginTop: '2px' }}>
+                                                                                                                        Counts as {item.quotaValue} meals
+                                                                                                                    </div>
+                                                                                                                )}
+                                                                                                            </div>
+                                                                                                            <div className={styles.quantityControl} style={{ display: 'flex', alignItems: 'center', gap: '8px', backgroundColor: 'var(--bg-surface)', padding: '2px', borderRadius: '6px', border: '1px solid var(--border-color)' }}>
+                                                                                                                <button
+                                                                                                                    onClick={() => handleBoxItemUpdate(index, item.id, Math.max(0, qty - 1), note)}
+                                                                                                                    className="btn btn-ghost btn-sm"
+                                                                                                                    style={{ width: '24px', height: '24px', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                                                                                                                    disabled={qty === 0}
+                                                                                                                >
+                                                                                                                    -
+                                                                                                                </button>
+                                                                                                                <span style={{ width: '24px', textAlign: 'center', fontWeight: 600, fontSize: '0.9rem' }}>{qty}</span>
+                                                                                                                <button
+                                                                                                                    onClick={() => handleBoxItemUpdate(index, item.id, qty + 1, note)}
+                                                                                                                    className="btn btn-ghost btn-sm"
+                                                                                                                    style={{ width: '24px', height: '24px', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                                                                                                                >
+                                                                                                                    +
+                                                                                                                </button>
+                                                                                                            </div>
                                                                                                         </div>
+
+                                                                                                        {isSelected && (
+                                                                                                            <div style={{ marginTop: '0px' }}>
+                                                                                                                <TextareaAutosize
+                                                                                                                    minRows={1}
+                                                                                                                    placeholder="Add notes for this item..."
+                                                                                                                    value={note}
+                                                                                                                    onChange={(e) => handleBoxItemUpdate(index, item.id, qty, e.target.value)}
+                                                                                                                    style={{
+                                                                                                                        width: '100%',
+                                                                                                                        fontSize: '0.85rem',
+                                                                                                                        padding: '6px 8px',
+                                                                                                                        borderRadius: '6px',
+                                                                                                                        border: '1px solid rgba(0,0,0,0.1)',
+                                                                                                                        backgroundColor: 'rgba(255,255,255,0.5)',
+                                                                                                                        resize: 'none'
+                                                                                                                    }}
+                                                                                                                />
+                                                                                                            </div>
+                                                                                                        )}
                                                                                                     </div>
                                                                                                 );
                                                                                             })}
@@ -3788,7 +3912,7 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
 
         if (formData.serviceType === 'Food') {
             // PRIORITY 1: Check if we have per-vendor delivery days (itemsByDay format) - this is the new format
-            console.log('[prepareActiveOrder] cleanedOrderConfig.vendorSelections:', cleanedOrderConfig.vendorSelections);
+
 
             // NEW LOGIC: If we have ANY vendorSelections array (even empty), we assume it's the source of truth
             // and we should regenerate deliveryDayOrders from it. This handles the case where all vendors are deleted.
@@ -3801,35 +3925,34 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                 )
             );
 
-            console.log('[prepareActiveOrder] hasVendorSelectionsArray:', hasVendorSelectionsArray);
-            console.log('[prepareActiveOrder] hasPerVendorDeliveryDays (computed):', hasPerVendorDeliveryDays);
-            console.log('[prepareActiveOrder] cleanedOrderConfig.deliveryDayOrders exists:', !!cleanedOrderConfig.deliveryDayOrders);
+
 
             if (hasPerVendorDeliveryDays) {
-                console.log('[prepareActiveOrder] TAKING PATH: hasPerVendorDeliveryDays');
+
                 // Convert per-vendor delivery days to deliveryDayOrders format
                 const deliveryDayOrders: any = {};
                 for (const selection of cleanedOrderConfig.vendorSelections) {
                     if (!selection.vendorId || !selection.selectedDeliveryDays || !selection.itemsByDay) continue;
 
-                    console.log('[prepareActiveOrder] Processing vendor:', selection.vendorId, 'itemsByDay:', selection.itemsByDay);
+
 
                     for (const day of selection.selectedDeliveryDays) {
                         if (!deliveryDayOrders[day]) deliveryDayOrders[day] = { vendorSelections: [] };
                         const dayItems = selection.itemsByDay[day] || {};
 
-                        console.log('[prepareActiveOrder] Day:', day, 'dayItems:', dayItems, 'keys:', Object.keys(dayItems));
+
 
                         const hasItems = Object.keys(dayItems).length > 0 && Object.values(dayItems).some((qty: any) => (Number(qty) || 0) > 0);
                         if (hasItems) {
                             const vendorSelection = {
                                 vendorId: selection.vendorId,
-                                items: dayItems
+                                items: dayItems,
+                                itemNotes: selection.itemNotesByDay?.[day] || {}
                             };
-                            console.log('[prepareActiveOrder] Pushing to deliveryDayOrders:', vendorSelection);
+
                             deliveryDayOrders[day].vendorSelections.push(vendorSelection);
                         } else {
-                            console.log('[prepareActiveOrder] SKIPPING - no items for', day);
+
                         }
                     }
                 }
@@ -3851,7 +3974,7 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                 cleanedOrderConfig.vendorSelections = undefined;
             } else if (cleanedOrderConfig.deliveryDayOrders) {
                 // PRIORITY 2: Existing multi-day format (deliveryDayOrders) - clean and preserve
-                console.log('[prepareActiveOrder] TAKING PATH: existing deliveryDayOrders');
+
                 for (const day of Object.keys(cleanedOrderConfig.deliveryDayOrders)) {
                     cleanedOrderConfig.deliveryDayOrders[day].vendorSelections = (cleanedOrderConfig.deliveryDayOrders[day].vendorSelections || [])
                         .filter((s: any) => s.vendorId)
@@ -3862,12 +3985,13 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                 }
             } else if (cleanedOrderConfig.vendorSelections) {
                 // PRIORITY 3: Single-day format - clean and preserve vendor selections
-                console.log('[prepareActiveOrder] TAKING PATH: single-day vendorSelections');
+
                 cleanedOrderConfig.vendorSelections = (cleanedOrderConfig.vendorSelections || [])
                     .filter((s: any) => s.vendorId)
                     .map((s: any) => ({
                         vendorId: s.vendorId,
-                        items: s.items || {}
+                        items: s.items || {},
+                        itemNotes: s.itemNotes || {}
                     }));
             }
 
@@ -3880,7 +4004,8 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                     if (hasItems) {
                         cleanedMealSelections[mealType] = {
                             vendorId: (selection as any).vendorId || null,
-                            items: items
+                            items: items,
+                            itemNotes: (selection as any).itemNotes || {}
                         };
                     }
                 }
@@ -3901,6 +4026,32 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
             cleanedOrderConfig.boxQuantity = orderConfig.boxQuantity || 1;
             cleanedOrderConfig.items = orderConfig.items || {};
             cleanedOrderConfig.itemPrices = orderConfig.itemPrices || {};
+
+            // Helper to clean box items and notes
+            if (orderConfig.boxOrders && Array.isArray(orderConfig.boxOrders)) {
+                cleanedOrderConfig.boxOrders = orderConfig.boxOrders.map((box: any) => {
+                    const cleanedItems: any = {};
+                    const cleanedNotes: any = {};
+
+                    if (box.items) {
+                        Object.entries(box.items).forEach(([itemId, qty]) => {
+                            if (Number(qty) > 0) {
+                                cleanedItems[itemId] = Number(qty);
+                                if (box.itemNotes && box.itemNotes[itemId]) {
+                                    cleanedNotes[itemId] = box.itemNotes[itemId];
+                                }
+                            }
+                        });
+                    }
+
+                    return {
+                        ...box,
+                        items: cleanedItems,
+                        itemNotes: cleanedNotes
+                    };
+                });
+            }
+            console.log('[prepareActiveOrder] Box Orders prepared:', JSON.stringify(cleanedOrderConfig.boxOrders, null, 2));
         }
 
         return {
@@ -3909,6 +4060,7 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
             lastUpdated: new Date().toISOString(),
             updatedBy: 'Admin'
         };
+
     }
 
     async function executeSave(unitsAdded: number = 0): Promise<boolean> {
@@ -3917,7 +4069,6 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
         setMessage(null);
 
         try {
-            // Handle new client creation
             if (isNewClient) {
                 // STRATEGY: Create client first WITHOUT order details, then update it with order details
                 // This avoids issues with saving order data during creation and uses the proven edit path
@@ -4154,23 +4305,13 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
             // Sync Current Order Request
             const hasOrderConfigChanges = JSON.stringify(orderConfig) !== JSON.stringify(originalOrderConfig);
             if (hasOrderConfigChanges || hasOrderChanges) {
-                // DEBUG: Log the orderConfig before processing
-                console.log('[executeSave] orderConfig before prepareActiveOrder:', JSON.stringify({
-                    vendorSelections: orderConfig.vendorSelections,
-                    deliveryDayOrders: orderConfig.deliveryDayOrders,
-                    mealSelections: orderConfig.mealSelections
-                }, null, 2));
+
 
                 // Add activeOrder to updateData so updateClient handles the full save + sync efficiently
                 // efficiently with only ONE revalidation
                 updateData.activeOrder = prepareActiveOrder();
 
-                // DEBUG: Log the result after processing
-                console.log('[executeSave] activeOrder after prepareActiveOrder:', JSON.stringify({
-                    vendorSelections: updateData.activeOrder?.vendorSelections,
-                    deliveryDayOrders: updateData.activeOrder?.deliveryDayOrders,
-                    mealSelections: updateData.activeOrder?.mealSelections
-                }, null, 2));
+
             }
 
             // CRITICAL: Execute the single update call
@@ -4180,7 +4321,7 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                 activeOrderKeys: updateData.activeOrder ? Object.keys(updateData.activeOrder) : [],
                 mealSelections: updateData.activeOrder?.mealSelections
             };
-            console.log('[executeSave] calling updateClient with:', JSON.stringify(payloadLog, null, 2));
+
 
             await updateClient(clientId, updateData);
 
@@ -4194,7 +4335,7 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
 
                 // Save food orders: ALWAYS if service type is Food, to allow clearing
                 if (serviceType === 'Food') {
-                    console.log('[executeSave] Saving to client_food_orders (updating/clearing)');
+
                     await saveClientFoodOrder(clientId, {
                         caseId: updateData.activeOrder.caseId,
                         deliveryDayOrders: updateData.activeOrder.deliveryDayOrders || {}
@@ -4204,20 +4345,17 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                 // Also handle the case where we might have food orders but currently not Food service? 
                 // No, only save to Food table if type is Food.
 
-                // Save meal orders if mealSelections exists OR if service type is Meal
-                if (updateData.activeOrder.mealSelections || serviceType === 'Meal') {
-                    if (updateData.activeOrder.mealSelections || serviceType === 'Meal') {
-                        console.log('[executeSave] Saving to client_meal_orders');
-                        await saveClientMealOrder(clientId, {
-                            caseId: updateData.activeOrder.caseId,
-                            mealSelections: updateData.activeOrder.mealSelections || {}
-                        });
-                    }
+                // Save meal orders if mealSelections exists OR if service type is Meal OR if service type is Food (to allow clearing)
+                if (updateData.activeOrder.mealSelections || serviceType === 'Meal' || serviceType === 'Food') {
+                    await saveClientMealOrder(clientId, {
+                        caseId: updateData.activeOrder.caseId,
+                        mealSelections: updateData.activeOrder.mealSelections || {}
+                    });
                 }
 
                 // Save box orders if it's a Boxes service
                 if (serviceType === 'Boxes') {
-                    console.log('[executeSave] Saving to client_box_orders');
+
                     const boxesToSave = updateData.activeOrder?.boxOrders || [];
                     await saveClientBoxOrder(clientId, boxesToSave.map((box: any) => ({
                         ...box,

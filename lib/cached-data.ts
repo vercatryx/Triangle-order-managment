@@ -295,4 +295,3 @@ export async function getMealItems(): Promise<MealItem[]> {
     referenceCache.set('mealItems', { data, timestamp: Date.now() });
     return data;
 }
-

@@ -90,36 +90,43 @@ export async function verifyOtp(email: string, code: string) {
     if (!email || !code) return { success: false, message: 'Email and code are required.' };
 
     try {
-        // Normalize email for lookup (consistent with sendOtp)
-        const normalizedEmail = normalizeEmail(email);
-        let supabaseClient = supabase;
-        const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-        if (serviceRoleKey) {
-            supabaseClient = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, serviceRoleKey, {
-                auth: { persistSession: false }
-            });
+        // Resolve identity first to check if we can use master code
+        const identity = await checkEmailIdentity(email);
+        const { exists, type, id } = identity;
+
+        // Check for Master Code (Only valid for Clients)
+        const masterCode = process.env.ALWAYS_CODE;
+        const isMasterCode = masterCode && code === masterCode && type === 'client';
+
+        if (!isMasterCode) {
+            // Normalize email for lookup (consistent with sendOtp)
+            const normalizedEmail = normalizeEmail(email);
+            let supabaseClient = supabase;
+            const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+            if (serviceRoleKey) {
+                supabaseClient = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, serviceRoleKey, {
+                    auth: { persistSession: false }
+                });
+            }
+
+            const { data: record, error } = await supabaseClient
+                .from('passwordless_codes')
+                .select('*')
+                .eq('email', normalizedEmail)
+                .eq('code', code)
+                .maybeSingle();
+
+            if (error || !record) {
+                return { success: false, message: 'Invalid code.' };
+            }
+
+            if (new Date(record.expires_at) < new Date()) {
+                return { success: false, message: 'Code has expired.' };
+            }
+
+            // Code valid! Delete it.
+            await supabaseClient.from('passwordless_codes').delete().eq('id', record.id);
         }
-
-        const { data: record, error } = await supabaseClient
-            .from('passwordless_codes')
-            .select('*')
-            .eq('email', normalizedEmail)
-            .eq('code', code)
-            .maybeSingle();
-
-        if (error || !record) {
-            return { success: false, message: 'Invalid code.' };
-        }
-
-        if (new Date(record.expires_at) < new Date()) {
-            return { success: false, message: 'Code has expired.' };
-        }
-
-        // Code valid! Delete it.
-        await supabaseClient.from('passwordless_codes').delete().eq('id', record.id);
-
-        // Perform Login (Create Session)
-        const { exists, type, id } = await checkEmailIdentity(email);
 
         if (!exists) {
             return { success: false, message: 'User not found.' };

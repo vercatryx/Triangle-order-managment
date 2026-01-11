@@ -2497,12 +2497,12 @@ async function syncSingleOrderForDeliveryDay(
 
     const { data: existing } = await query.maybeSingle();
 
-    console.log('[syncSingleOrderForDeliveryDay] Checking existing', {
-        deliveryDay,
-        foundExisting: !!existing,
-        existingId: existing?.id,
-        willCreateNew: !existing
-    });
+    // console.log('[syncSingleOrderForDeliveryDay] Checking existing', {
+    //     deliveryDay,
+    //     foundExisting: !!existing,
+    //     existingId: existing?.id,
+    //     willCreateNew: !existing
+    // });
 
     let upcomingOrderId: string;
 
@@ -2546,15 +2546,15 @@ async function syncSingleOrderForDeliveryDay(
         let calculatedTotalFromItems = 0;
         const allVendorSelections: any[] = [];
 
-        console.log(`[syncSingleOrderForDeliveryDay] Starting to insert items for upcoming_order_id: ${upcomingOrderId}`);
+        // console.log(`[syncSingleOrderForDeliveryDay] Starting to insert items for upcoming_order_id: ${upcomingOrderId}`);
 
         for (const selection of orderConfig.vendorSelections) {
             if (!selection.vendorId || !selection.items) {
-                console.log(`[syncSingleOrderForDeliveryDay] Skipping vendor selection - missing vendorId or items`);
+                // console.log(`[syncSingleOrderForDeliveryDay] Skipping vendor selection - missing vendorId or items`);
                 continue;
             }
 
-            console.log(`[syncSingleOrderForDeliveryDay] Creating vendor selection for vendor ${selection.vendorId}`);
+            // console.log(`[syncSingleOrderForDeliveryDay] Creating vendor selection for vendor ${selection.vendorId}`);
             const { data: vendorSelection, error: vsError } = await supabaseClient
                 .from('upcoming_order_vendor_selections')
                 .insert({
@@ -2570,7 +2570,7 @@ async function syncSingleOrderForDeliveryDay(
             }
 
             allVendorSelections.push(vendorSelection);
-            console.log(`[syncSingleOrderForDeliveryDay] Created vendor selection ${vendorSelection.id}`);
+            // console.log(`[syncSingleOrderForDeliveryDay] Created vendor selection ${vendorSelection.id}`);
 
             // Insert items
             for (const [itemId, qty] of Object.entries(selection.items)) {
@@ -2580,18 +2580,21 @@ async function syncSingleOrderForDeliveryDay(
                     // Use priceEach if available, otherwise fall back to value
                     const itemPrice = item.priceEach ?? item.value;
                     const itemTotal = itemPrice * quantity;
-                    console.log(`[syncSingleOrderForDeliveryDay] Inserting item:`, {
-                        itemId,
-                        itemName: item.name,
-                        quantity,
-                        itemPrice,
-                        itemValue: item.value,
-                        itemPriceEach: item.priceEach,
-                        itemTotal,
-                        calculatedTotalBefore: calculatedTotalFromItems
-                    });
+                    // console.log(`[syncSingleOrderForDeliveryDay] Inserting item:`, {
+                    //     itemId,
+                    //     itemName: item.name,
+                    //     quantity,
+                    //     itemPrice,
+                    //     itemValue: item.value,
+                    //     itemPriceEach: item.priceEach,
+                    //     itemTotal,
+                    //     calculatedTotalBefore: calculatedTotalFromItems
+                    // });
                     calculatedTotalFromItems += itemTotal;
-                    console.log(`[syncSingleOrderForDeliveryDay] Updated calculatedTotalFromItems: ${calculatedTotalFromItems}`);
+                    // console.log(`[syncSingleOrderForDeliveryDay] Updated calculatedTotalFromItems: ${calculatedTotalFromItems}`);
+
+                    // Get item note if exists
+                    const itemNote = selection.itemNotes ? selection.itemNotes[itemId] : null;
 
                     const insertResult = await supabaseClient.from('upcoming_order_items').insert({
                         upcoming_order_id: upcomingOrderId,
@@ -2600,26 +2603,27 @@ async function syncSingleOrderForDeliveryDay(
                         meal_item_id: (item as any).itemType === 'meal' ? itemId : null,
                         quantity: quantity,
                         unit_value: itemPrice,
-                        total_value: itemTotal
+                        total_value: itemTotal,
+                        notes: itemNote || null
                     });
 
                     if (insertResult.error) {
                         console.error(`[syncSingleOrderForDeliveryDay] Error inserting item:`, insertResult.error);
                     } else {
-                        console.log(`[syncSingleOrderForDeliveryDay] Successfully inserted item ${itemId}`);
+                        // console.log(`[syncSingleOrderForDeliveryDay] Successfully inserted item ${itemId}`);
                     }
                 } else {
-                    console.log(`[syncSingleOrderForDeliveryDay] Skipping item ${itemId} - item not found or quantity is 0`);
+                    // console.log(`[syncSingleOrderForDeliveryDay] Skipping item ${itemId} - item not found or quantity is 0`);
                 }
             }
         }
 
-        console.log(`[syncSingleOrderForDeliveryDay] Final calculatedTotalFromItems: ${calculatedTotalFromItems}`);
-        console.log(`[syncSingleOrderForDeliveryDay] Original totalValue: ${totalValue}`);
+        // console.log(`[syncSingleOrderForDeliveryDay] Final calculatedTotalFromItems: ${calculatedTotalFromItems}`);
+        // console.log(`[syncSingleOrderForDeliveryDay] Original totalValue: ${totalValue}`);
 
         // Update total_value to match calculated total from items
         if (calculatedTotalFromItems !== totalValue) {
-            console.log(`[syncSingleOrderForDeliveryDay] Mismatch detected! Updating total_value from ${totalValue} to ${calculatedTotalFromItems}`);
+            // console.log(`[syncSingleOrderForDeliveryDay] Mismatch detected! Updating total_value from ${totalValue} to ${calculatedTotalFromItems}`);
             totalValue = calculatedTotalFromItems;
             const updateResult = await supabaseClient
                 .from('upcoming_orders')
@@ -2629,10 +2633,10 @@ async function syncSingleOrderForDeliveryDay(
             if (updateResult.error) {
                 console.error(`[syncSingleOrderForDeliveryDay] Error updating total_value:`, updateResult.error);
             } else {
-                console.log(`[syncSingleOrderForDeliveryDay] Successfully updated total_value to ${totalValue}`);
+                // console.log(`[syncSingleOrderForDeliveryDay] Successfully updated total_value to ${totalValue}`);
             }
         } else {
-            console.log(`[syncSingleOrderForDeliveryDay] Total values match, no update needed`);
+            // console.log(`[syncSingleOrderForDeliveryDay] Total values match, no update needed`);
         }
 
         // Add total as a separate item in the order_items table
@@ -2695,13 +2699,13 @@ async function syncSingleOrderForDeliveryDay(
             }
         }
     } else if (orderConfig.serviceType === 'Boxes') {
-        console.log('[syncSingleOrderForDeliveryDay] Processing Boxes order for upcoming_order_id:', upcomingOrderId);
-        console.log('[syncSingleOrderForDeliveryDay] Box orderConfig:', {
-            vendorId: orderConfig.vendorId,
-            boxTypeId: orderConfig.boxTypeId,
-            boxQuantity: orderConfig.boxQuantity,
-            hasItems: !!(orderConfig as any)?.items && Object.keys((orderConfig as any).items || {}).length > 0
-        });
+        // console.log('[syncSingleOrderForDeliveryDay] Processing Boxes order for upcoming_order_id:', upcomingOrderId);
+        // console.log('[syncSingleOrderForDeliveryDay] Box orderConfig:', {
+        //     vendorId: orderConfig.vendorId,
+        //     boxTypeId: orderConfig.boxTypeId,
+        //     boxQuantity: orderConfig.boxQuantity,
+        //     hasItems: !!(orderConfig as any)?.items && Object.keys((orderConfig as any).items || {}).length > 0
+        // });
 
         // Insert box selection with prices
         const quantity = orderConfig.boxQuantity || 1;
@@ -2712,66 +2716,74 @@ async function syncSingleOrderForDeliveryDay(
         if (!boxVendorId && orderConfig.boxTypeId) {
             const boxType = boxTypes.find(bt => bt.id === orderConfig.boxTypeId);
             boxVendorId = boxType?.vendorId || null;
-            console.log('[syncSingleOrderForDeliveryDay] Vendor ID from boxType:', { boxTypeId: orderConfig.boxTypeId, vendorId: boxVendorId });
-        }
+            // console.log('[syncSingleOrderForDeliveryDay] Vendor ID from boxType:', { boxTypeId: orderConfig.boxTypeId, vendorId: boxVendorId });
+            const boxItemsRaw = (orderConfig as any).items || {};
+            const boxItemNotes = (orderConfig as any).itemNotes || {};
+            const boxItemPrices = (orderConfig as any).itemPrices || {};
 
-        console.log('[syncSingleOrderForDeliveryDay] Final boxVendorId to save:', boxVendorId);
+            console.log('[syncSingleOrderForDeliveryDay] Processing Box Items:', {
+                itemCount: Object.keys(boxItemsRaw).length,
+                noteCount: Object.keys(boxItemNotes).length
+            });
 
-        const boxItemsRaw = (orderConfig as any).items || {};
-        const boxItemPrices = (orderConfig as any).itemPrices || {};
-        console.log('[syncSingleOrderForDeliveryDay] Box items raw:', boxItemsRaw);
-        console.log('[syncSingleOrderForDeliveryDay] Box item prices:', boxItemPrices);
-        const boxItems: any = {};
-        for (const [itemId, qty] of Object.entries(boxItemsRaw)) {
-            const price = boxItemPrices[itemId];
-            if (price !== undefined && price !== null) {
-                boxItems[itemId] = { quantity: qty, price: price };
-            } else {
-                boxItems[itemId] = qty;
+            const boxItems: any = {};
+            for (const [itemId, qty] of Object.entries(boxItemsRaw)) {
+                const quantity = typeof qty === 'number' ? qty : 0;
+                const price = boxItemPrices[itemId];
+                const note = boxItemNotes[itemId];
+
+                if ((price !== undefined && price !== null) || note) {
+                    const itemEntry: any = { quantity };
+                    if (price !== undefined && price !== null) itemEntry.price = price;
+                    if (note) itemEntry.note = note;
+                    boxItems[itemId] = itemEntry;
+                } else {
+                    boxItems[itemId] = quantity;
+                }
             }
-        }
-        console.log('[syncSingleOrderForDeliveryDay] Box items formatted:', boxItems);
-        console.log('[syncSingleOrderForDeliveryDay] Box items count:', Object.keys(boxItems).length);
+            // console.log('[syncSingleOrderForDeliveryDay] Box items formatted:', boxItems);
+            // console.log('[syncSingleOrderForDeliveryDay] Box items count:', Object.keys(boxItems).length);
 
-        // Calculate total from item prices
-        let calculatedTotal = 0;
-        for (const [itemId, qty] of Object.entries(boxItemsRaw)) {
-            const quantity = typeof qty === 'number' ? qty : 0;
-            const price = boxItemPrices[itemId];
-            if (price !== undefined && price !== null && quantity > 0) {
-                calculatedTotal += price * quantity;
+            // Calculate total from item prices
+            let calculatedTotal = 0;
+            for (const [itemId, qty] of Object.entries(boxItemsRaw)) {
+                const quantity = typeof qty === 'number' ? qty : 0;
+                const price = boxItemPrices[itemId];
+                if (price !== undefined && price !== null && quantity > 0) {
+                    calculatedTotal += price * quantity;
+                }
             }
-        }
 
-        const boxSelectionData: any = {
-            upcoming_order_id: upcomingOrderId,
-            vendor_id: boxVendorId,
-            quantity: quantity,
-            unit_value: 0, // No longer using box type pricing
-            total_value: calculatedTotal,
-            items: boxItems
-        };
-
-        // Include box_type_id if available (for backward compatibility)
-        if (orderConfig.boxTypeId) {
-            boxSelectionData.box_type_id = orderConfig.boxTypeId;
-        }
-
-        const { error: boxSelectionError } = await supabaseClient.from('upcoming_order_box_selections').insert(boxSelectionData);
-
-        if (boxSelectionError) {
-            console.error(`[syncSingleOrderForDeliveryDay] Error inserting box selection:`, boxSelectionError);
-            console.error(`[syncSingleOrderForDeliveryDay] Insert data:`, {
+            const boxSelectionData: any = {
                 upcoming_order_id: upcomingOrderId,
                 vendor_id: boxVendorId,
                 quantity: quantity,
-                unit_value: 0,
+                unit_value: 0, // No longer using box type pricing
                 total_value: calculatedTotal,
                 items: boxItems
-            });
-            throw boxSelectionError;
-        } else {
-            console.log(`[syncSingleOrderForDeliveryDay] Successfully inserted box selection for upcoming_order_id=${upcomingOrderId}, vendor_id=${boxVendorId}, items_count=${Object.keys(boxItems).length}, items=${JSON.stringify(boxItems)}`);
+            };
+
+            // Include box_type_id if available (for backward compatibility)
+            if (orderConfig.boxTypeId) {
+                boxSelectionData.box_type_id = orderConfig.boxTypeId;
+            }
+
+            const { error: boxSelectionError } = await supabaseClient.from('upcoming_order_box_selections').insert(boxSelectionData);
+
+            if (boxSelectionError) {
+                console.error(`[syncSingleOrderForDeliveryDay] Error inserting box selection:`, boxSelectionError);
+                console.error(`[syncSingleOrderForDeliveryDay] Insert data:`, {
+                    upcoming_order_id: upcomingOrderId,
+                    vendor_id: boxVendorId,
+                    quantity: quantity,
+                    unit_value: 0,
+                    total_value: calculatedTotal,
+                    items: boxItems
+                });
+                throw boxSelectionError;
+            } else {
+                // console.log(`[syncSingleOrderForDeliveryDay] Successfully inserted box selection for upcoming_order_id=${upcomingOrderId}, vendor_id=${boxVendorId}, items_count=${Object.keys(boxItems).length}, items=${JSON.stringify(boxItems)}`);
+            }
         }
     }
 }
@@ -2811,6 +2823,8 @@ export async function syncCurrentOrderToUpcoming(clientId: string, client: Clien
         console.warn('[syncCurrentOrderToUpcoming] Service role key not found - using regular client (may be blocked by RLS)');
     }
 
+
+
     // 1. DRAFT PERSISTENCE: Save the raw activeOrder metadata to the clients table.
     // This ensures Case ID, Vendor, and other selections are persisted even if the 
     // full sync to upcoming_orders fails (e.g. if the vendor/delivery day isn't fully set yet).
@@ -2828,9 +2842,40 @@ export async function syncCurrentOrderToUpcoming(clientId: string, client: Clien
         revalidatePath('/clients');
     }
 
+    // 2. NUCLEAR OPTION: Delete ALL existing upcoming orders for this client
+    // This ensures that any removed items/meals/days are correctly removed from the DB
+    // by starting with a clean slate.
+
+
+    // First find all upcoming orders to delete related records
+    const { data: ordersToDelete } = await supabaseClient
+        .from('upcoming_orders')
+        .select('id')
+        .eq('client_id', clientId);
+
+    if (ordersToDelete && ordersToDelete.length > 0) {
+        const ids = ordersToDelete.map(o => o.id);
+
+        // Delete related records manually (in case cascade is not set up or to be safe)
+        const { error: vsError } = await supabaseClient.from('upcoming_order_vendor_selections').delete().in('upcoming_order_id', ids);
+        if (vsError) console.error('Error deleting vendor selections:', vsError);
+
+        const { error: itemsError } = await supabaseClient.from('upcoming_order_items').delete().in('upcoming_order_id', ids);
+        if (itemsError) console.error('Error deleting items:', itemsError);
+
+        const { error: boxError } = await supabaseClient.from('upcoming_order_box_selections').delete().in('upcoming_order_id', ids);
+        if (boxError) console.error('Error deleting box selections:', boxError);
+
+        // Finally delete the orders
+        const { error: deleteError } = await supabaseClient.from('upcoming_orders').delete().in('id', ids);
+        if (deleteError) {
+            console.error('Error deleting upcoming orders:', deleteError);
+            throw new Error(`Failed to clear existing orders: ${deleteError.message}`);
+        }
+    }
+
     if (!orderConfig) {
-        // If no active order, remove any existing upcoming orders
-        await supabaseClient.from('upcoming_orders').delete().eq('client_id', clientId);
+        // If no active order, we are done (config cleared)
         return;
     }
 
@@ -2859,40 +2904,6 @@ export async function syncCurrentOrderToUpcoming(clientId: string, client: Clien
             });
         });
 
-        // console.log('[syncCurrentOrderToUpcoming] Processing deliveryDayOrders format:', {
-        //     allDays: Object.keys(deliveryDayOrders),
-        //     filteredDays: deliveryDays,
-        //     dayDetails: deliveryDays.map(day => ({
-        //         day,
-        //         vendorCount: deliveryDayOrders[day]?.vendorSelections?.length || 0,
-        //         vendors: deliveryDayOrders[day]?.vendorSelections?.map((s: any) => ({
-        //             vendorId: s.vendorId,
-        //             itemCount: Object.keys(s.items || {}).length
-        //         }))
-        //     }))
-        // });
-
-        // Delete orders for delivery days that are no longer in the config
-        const { data: existingOrders } = await supabaseClient
-            .from('upcoming_orders')
-            .select('id, delivery_day')
-            .eq('client_id', clientId);
-
-        if (existingOrders) {
-            const existingDeliveryDays = new Set(existingOrders.map(o => o.delivery_day).filter(Boolean));
-            const currentDeliveryDays = new Set(deliveryDays);
-
-            // Delete orders for days that are no longer in the config
-            for (const day of existingDeliveryDays) {
-                if (!currentDeliveryDays.has(day)) {
-                    const orderToDelete = existingOrders.find(o => o.delivery_day === day);
-                    if (orderToDelete) {
-                        await supabaseClient.from('upcoming_orders').delete().eq('id', orderToDelete.id);
-                    }
-                }
-            }
-        }
-
         // Sync each delivery day order
         for (const deliveryDay of deliveryDays) {
             const dayOrder = deliveryDayOrders[deliveryDay];
@@ -2914,7 +2925,7 @@ export async function syncCurrentOrderToUpcoming(clientId: string, client: Clien
 
                 // Only sync if there are vendors with items
                 if (dayOrderConfig.vendorSelections.length > 0) {
-                    console.log(`[syncCurrentOrderToUpcoming] Syncing order for ${deliveryDay} with ${dayOrderConfig.vendorSelections.length} vendor(s)`);
+                    // console.log(`[syncCurrentOrderToUpcoming] Syncing order for ${deliveryDay}`);
                     await syncSingleOrderForDeliveryDay(
                         clientId,
                         dayOrderConfig,
@@ -2925,8 +2936,6 @@ export async function syncCurrentOrderToUpcoming(clientId: string, client: Clien
                         supabaseClient,
                         'Lunch' // Default meal type for main selections
                     );
-                } else {
-                    console.log(`[syncCurrentOrderToUpcoming] Skipping ${deliveryDay} - no vendors with items`);
                 }
             }
         }
@@ -2951,22 +2960,11 @@ export async function syncCurrentOrderToUpcoming(clientId: string, client: Clien
             deliveryDays = Array.from(allDeliveryDays);
         } else if (orderConfig.serviceType === 'Boxes') {
             // Boxes can exist with or without boxTypeId now
-            console.log('[syncCurrentOrderToUpcoming] Processing Boxes order (old format):', {
-                vendorId: orderConfig.vendorId,
-                boxTypeId: orderConfig.boxTypeId,
-                boxQuantity: orderConfig.boxQuantity,
-                hasItems: !!(orderConfig as any)?.items && Object.keys((orderConfig as any).items || {}).length > 0
-            });
+            // console.log('[syncCurrentOrderToUpcoming] Processing Boxes order (old format)');
 
             const boxType = orderConfig.boxTypeId ? boxTypes.find(bt => bt.id === orderConfig.boxTypeId) : null;
             // Check explicitly for undefined/null/empty string to properly handle vendor assignment
             const boxVendorId = (orderConfig.vendorId && orderConfig.vendorId.trim() !== '') ? orderConfig.vendorId : (boxType?.vendorId || null);
-
-            console.log('[syncCurrentOrderToUpcoming] Box vendor resolution:', {
-                orderConfigVendorId: orderConfig.vendorId,
-                boxTypeVendorId: boxType?.vendorId,
-                resolvedVendorId: boxVendorId
-            });
 
             if (boxVendorId) {
                 const vendor = vendors.find(v => v.id === boxVendorId);
@@ -2981,19 +2979,13 @@ export async function syncCurrentOrderToUpcoming(clientId: string, client: Clien
                 }
             } else {
                 // No vendorId for boxes - will use default delivery day from settings in syncSingleOrderForDeliveryDay
-                console.log(`[syncCurrentOrderToUpcoming] No vendorId found for Boxes order${orderConfig.boxTypeId ? ` with boxTypeId ${orderConfig.boxTypeId}` : ''}, will calculate dates based on settings`);
+                // console.log(`[syncCurrentOrderToUpcoming] No vendorId found for Boxes order, will calculate dates based on settings`);
                 deliveryDays = []; // Empty array - syncSingleOrderForDeliveryDay will handle it with settings
             }
         }
 
         // If vendor(s) have multiple delivery days, create orders for each
         if (deliveryDays.length > 1) {
-            // Delete old orders without delivery_day
-            await supabaseClient.from('upcoming_orders')
-                .delete()
-                .eq('client_id', clientId)
-                .is('delivery_day', null);
-
             // Create order for each delivery day
             for (const deliveryDay of deliveryDays) {
                 await syncSingleOrderForDeliveryDay(
@@ -3007,29 +2999,6 @@ export async function syncCurrentOrderToUpcoming(clientId: string, client: Clien
                 );
             }
         } else {
-            // Single delivery day or no delivery days - use old logic
-
-            // CLEANUP: Ensure no duplicate Box orders exist from previous bugs
-            // Only keep the order for the target delivery day (or null), delete others
-            if (orderConfig.serviceType === 'Boxes') {
-                const targetDay = deliveryDays.length === 1 ? deliveryDays[0] : null;
-                const { data: existing } = await supabaseClient
-                    .from('upcoming_orders')
-                    .select('id, delivery_day')
-                    .eq('client_id', clientId)
-                    .eq('service_type', 'Boxes');
-
-                if (existing) {
-                    const idsToDelete = existing
-                        .filter(o => o.delivery_day !== targetDay)
-                        .map(o => o.id);
-
-                    if (idsToDelete.length > 0) {
-                        await supabaseClient.from('upcoming_orders').delete().in('id', idsToDelete);
-                    }
-                }
-            }
-
             await syncSingleOrderForDeliveryDay(
                 clientId,
                 orderConfig,
@@ -3044,9 +3013,14 @@ export async function syncCurrentOrderToUpcoming(clientId: string, client: Clien
 
     // 3. MEAL SELECTIONS SYNC (Breakfast, Dinner, etc.)
     // MOVED OUTSIDE of hasDeliveryDayOrders check to ensure it runs for all formats
+
+    // LOGGING: Check what we received
+    console.log('[syncCurrentOrderToUpcoming] Syncing meal selections...');
+
     if (orderConfig && orderConfig.mealSelections) {
-        console.log('[syncCurrentOrderToUpcoming] Syncing meal selections', Object.keys(orderConfig.mealSelections));
+        // console.log('[syncCurrentOrderToUpcoming] Syncing meal selections', Object.keys(orderConfig.mealSelections));
         for (const [mealType, selection] of Object.entries(orderConfig.mealSelections)) {
+
             // Create a temporary config for this meal
             // It needs to look like a standard orderConfig with vendorSelections
             // FIX: Ensure vendorId is null if missing, NOT empty string, to avoid UUID errors
@@ -3055,7 +3029,8 @@ export async function syncCurrentOrderToUpcoming(clientId: string, client: Clien
                 serviceType: 'Food' as ServiceType,
                 vendorSelections: [{
                     vendorId: selection.vendorId || null,
-                    items: selection.items
+                    items: selection.items,
+                    itemNotes: selection.itemNotes
                 }]
             };
 
@@ -3107,7 +3082,8 @@ export async function syncCurrentOrderToUpcoming(clientId: string, client: Clien
     await syncLocalDBFromSupabase();
 
     revalidatePath('/clients');
-    revalidatePath(`/ client - portal / ${clientId} `);
+    revalidatePath(`/client-portal/${clientId}`);
+
 }
 
 /**
@@ -3221,7 +3197,8 @@ export async function processUpcomingOrders() {
                                 menu_item_id: item.menu_item_id,
                                 quantity: item.quantity,
                                 unit_value: item.unit_value,
-                                total_value: item.total_value
+                                total_value: item.total_value,
+                                notes: item.notes
                             });
                         }
                     }
@@ -5462,6 +5439,11 @@ export async function getClientBoxOrder(clientId: string): Promise<ClientBoxOrde
     }
     if (!data) return [];
 
+    console.log('[getClientBoxOrder] Fetched data count:', data.length);
+    if (data.length > 0) {
+        console.log('[getClientBoxOrder] Sample item notes:', JSON.stringify(data[0].item_notes, null, 2));
+    }
+
     return data.map(d => ({
         id: d.id,
         clientId: d.client_id,
@@ -5470,6 +5452,7 @@ export async function getClientBoxOrder(clientId: string): Promise<ClientBoxOrde
         vendorId: d.vendor_id,
         quantity: d.quantity,
         items: d.items,
+        itemNotes: d.item_notes, // Map item_notes from DB
         created_at: d.created_at,
         updated_at: d.updated_at,
         updated_by: d.updated_by
@@ -5499,6 +5482,8 @@ export async function saveClientBoxOrder(clientId: string, data: Partial<ClientB
         return [];
     }
 
+    console.log('[saveClientBoxOrder] Received data:', JSON.stringify(data, null, 2));
+
     const insertPayload = data.map(order => {
         const payload: any = {
             client_id: clientId,
@@ -5506,7 +5491,8 @@ export async function saveClientBoxOrder(clientId: string, data: Partial<ClientB
             box_type_id: order.boxTypeId,
             vendor_id: order.vendorId,
             quantity: order.quantity,
-            items: order.items
+            items: order.items,
+            item_notes: (order as any).itemNotes // Save item notes to DB
         };
         if (updatedBy) payload.updated_by = updatedBy;
         return payload;

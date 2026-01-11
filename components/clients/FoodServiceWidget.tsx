@@ -3,7 +3,8 @@
 import React from 'react';
 import { ClientProfile, Vendor, MenuItem, MealCategory, MealItem } from '@/lib/types';
 import { isMeetingMinimum, isMeetingExactTarget } from '@/lib/utils';
-import { Plus, Trash2, Calendar, Check, AlertTriangle } from 'lucide-react';
+import { Plus, Trash2, Calendar, Check, AlertTriangle, MessageSquare } from 'lucide-react';
+import TextareaAutosize from 'react-textarea-autosize';
 import styles from './ClientProfile.module.css'; // Assuming we can reuse styles
 
 interface Props {
@@ -35,7 +36,7 @@ export default function FoodServiceWidget({
     isClientPortal,
     validationStatus
 }: Props) {
-
+    console.log('[FoodServiceWidget] RENDER orderConfig:', orderConfig);
     // -- LOGIC HELPERS --
 
     function getVendorMenuItems(vendorId: string) {
@@ -196,17 +197,24 @@ export default function FoodServiceWidget({
         });
     }
 
-    function handleMealItemChange(mealType: string, itemId: string, qty: number) {
+    function handleMealItemChange(mealType: string, itemId: string, qty: number, note?: string) {
         setOrderConfig((prev: any) => {
             const newConfig = { ...prev };
             if (newConfig.mealSelections && newConfig.mealSelections[mealType]) {
                 const updatedItems = { ...newConfig.mealSelections[mealType].items };
+                const updatedNotes = { ...newConfig.mealSelections[mealType].itemNotes };
+
                 if (qty > 0) {
                     updatedItems[itemId] = qty;
+                    if (note !== undefined) {
+                        updatedNotes[itemId] = note;
+                    }
                 } else {
                     delete updatedItems[itemId];
+                    delete updatedNotes[itemId];
                 }
                 newConfig.mealSelections[mealType].items = updatedItems;
+                newConfig.mealSelections[mealType].itemNotes = updatedNotes;
             }
             return newConfig;
         });
@@ -263,7 +271,8 @@ export default function FoodServiceWidget({
         });
     }
 
-    function handleVendorItemChange(blockIndex: number, itemId: string, qty: number, day?: string) {
+    function handleVendorItemChange(blockIndex: number, itemId: string, qty: number, day?: string, note?: string) {
+        console.log(`[FoodServiceWidget] handleVendorItemChange: index=${blockIndex}, item=${itemId}, qty=${qty}, day=${day}, note=${note}`);
         setOrderConfig((prev: any) => {
             const newConfig = { ...prev };
             if (newConfig.vendorSelections && newConfig.vendorSelections[blockIndex]) {
@@ -275,20 +284,44 @@ export default function FoodServiceWidget({
                     if (!block.itemsByDay) block.itemsByDay = {};
                     if (!block.itemsByDay[day]) block.itemsByDay[day] = {};
 
+                    // Ensure itemNotesByDay initialization
+                    if (!block.itemNotesByDay) block.itemNotesByDay = {};
+                    if (!block.itemNotesByDay[day]) block.itemNotesByDay[day] = {};
+
                     if (qty > 0) {
                         block.itemsByDay[day][itemId] = qty;
+
+                        if (note !== undefined) {
+                            if (note.trim() === '') {
+                                delete block.itemNotesByDay[day][itemId];
+                            } else {
+                                block.itemNotesByDay[day][itemId] = note;
+                            }
+                        }
                     } else {
                         delete block.itemsByDay[day][itemId];
+                        delete block.itemNotesByDay[day][itemId]; // Clean up note if item removed
                     }
                 } else {
                     // Handle single-day format (items)
                     const items = { ...block.items };
+                    const itemNotes = { ...(block.itemNotes || {}) };
+
                     if (qty > 0) {
                         items[itemId] = qty;
+                        if (note !== undefined) {
+                            if (note.trim() === '') {
+                                delete itemNotes[itemId];
+                            } else {
+                                itemNotes[itemId] = note;
+                            }
+                        }
                     } else {
                         delete items[itemId];
+                        delete itemNotes[itemId];
                     }
                     block.items = items;
+                    block.itemNotes = itemNotes;
                 }
 
                 updated[blockIndex] = block;
@@ -514,6 +547,9 @@ export default function FoodServiceWidget({
                                                 {vendorItems.map(item => {
                                                     const dayItems = selection.itemsByDay?.[day] || {};
                                                     const qty = dayItems[item.id] || 0;
+                                                    const dayNotes = selection.itemNotesByDay?.[day] || {};
+                                                    const note = dayNotes[item.id] || '';
+
                                                     return (
                                                         <div key={item.id} className={styles.menuItemCard} style={{ padding: '0.75rem', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-sm)', background: 'var(--bg-surface)' }}>
                                                             <div className={styles.menuItemName} style={{ marginBottom: '8px', fontSize: '0.9rem', fontWeight: 500 }}>
@@ -522,11 +558,29 @@ export default function FoodServiceWidget({
                                                                     (Value: {item.value || 0})
                                                                 </span>
                                                             </div>
-                                                            <div className={styles.quantityControl} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                                            <div className={styles.quantityControl} style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
                                                                 <button onClick={() => handleVendorItemChange(index, item.id, Math.max(0, qty - 1), day)} className="btn btn-secondary" style={{ padding: '2px 8px' }}>-</button>
                                                                 <span style={{ width: '20px', textAlign: 'center' }}>{qty}</span>
                                                                 <button onClick={() => handleVendorItemChange(index, item.id, qty + 1, day)} className="btn btn-secondary" style={{ padding: '2px 8px' }}>+</button>
                                                             </div>
+                                                            {qty > 0 && (
+                                                                <div style={{ marginTop: '8px' }}>
+                                                                    <TextareaAutosize
+                                                                        minRows={1}
+                                                                        placeholder="Add note..."
+                                                                        value={note}
+                                                                        onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => handleVendorItemChange(index, item.id, qty, day, e.target.value)}
+                                                                        style={{
+                                                                            width: '100%',
+                                                                            fontSize: '0.8rem',
+                                                                            padding: '4px',
+                                                                            borderRadius: '4px',
+                                                                            border: '1px solid var(--border-color)',
+                                                                            resize: 'none'
+                                                                        }}
+                                                                    />
+                                                                </div>
+                                                            )}
                                                         </div>
                                                     );
                                                 })}
@@ -559,6 +613,7 @@ export default function FoodServiceWidget({
                                     <div className={styles.menuItemsGrid} style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '10px' }}>
                                         {vendorItems.map(item => {
                                             const qty = selection.items?.[item.id] || 0;
+                                            const note = selection.itemNotes?.[item.id] || '';
                                             return (
                                                 <div key={item.id} className={styles.menuItemCard} style={{ padding: '0.75rem', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-sm)', background: 'var(--bg-surface)' }}>
                                                     <div className={styles.menuItemName} style={{ marginBottom: '8px', fontSize: '0.9rem', fontWeight: 500 }}>
@@ -567,11 +622,29 @@ export default function FoodServiceWidget({
                                                             (Value: {item.value || 0})
                                                         </span>
                                                     </div>
-                                                    <div className={styles.quantityControl} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                                    <div className={styles.quantityControl} style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
                                                         <button onClick={() => handleVendorItemChange(index, item.id, Math.max(0, qty - 1))} className="btn btn-secondary" style={{ padding: '2px 8px' }}>-</button>
                                                         <span style={{ width: '20px', textAlign: 'center' }}>{qty}</span>
                                                         <button onClick={() => handleVendorItemChange(index, item.id, qty + 1)} className="btn btn-secondary" style={{ padding: '2px 8px' }}>+</button>
                                                     </div>
+                                                    {qty > 0 && (
+                                                        <div style={{ marginTop: '8px' }}>
+                                                            <TextareaAutosize
+                                                                minRows={1}
+                                                                placeholder="Add note..."
+                                                                value={note}
+                                                                onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => handleVendorItemChange(index, item.id, qty, undefined, e.target.value)}
+                                                                style={{
+                                                                    width: '100%',
+                                                                    fontSize: '0.8rem',
+                                                                    padding: '4px',
+                                                                    borderRadius: '4px',
+                                                                    border: '1px solid var(--border-color)',
+                                                                    resize: 'none'
+                                                                }}
+                                                            />
+                                                        </div>
+                                                    )}
                                                 </div>
                                             );
                                         })}
@@ -704,11 +777,29 @@ export default function FoodServiceWidget({
                                                             (Value: {item.value || 0})
                                                         </span>
                                                     </div>
-                                                    <div className={styles.quantityControl} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                                    <div className={styles.quantityControl} style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
                                                         <button onClick={() => handleMealItemChange(mealType, item.id, Math.max(0, qty - 1))} className="btn btn-secondary" style={{ padding: '2px 8px' }}>-</button>
                                                         <span style={{ width: '20px', textAlign: 'center' }}>{qty}</span>
                                                         <button onClick={() => handleMealItemChange(mealType, item.id, qty + 1)} className="btn btn-secondary" style={{ padding: '2px 8px' }}>+</button>
                                                     </div>
+                                                    {qty > 0 && (
+                                                        <div style={{ marginTop: '8px' }}>
+                                                            <TextareaAutosize
+                                                                minRows={1}
+                                                                placeholder="Add note..."
+                                                                value={config.itemNotes?.[item.id] || ''}
+                                                                onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => handleMealItemChange(mealType, item.id, qty, e.target.value)}
+                                                                style={{
+                                                                    width: '100%',
+                                                                    fontSize: '0.8rem',
+                                                                    padding: '4px',
+                                                                    borderRadius: '4px',
+                                                                    border: '1px solid var(--border-color)',
+                                                                    resize: 'none'
+                                                                }}
+                                                            />
+                                                        </div>
+                                                    )}
                                                 </div>
                                             );
                                         })}
@@ -751,7 +842,8 @@ export default function FoodServiceWidget({
                     vendorMap.set(sel.vendorId, {
                         vendorId: sel.vendorId,
                         selectedDeliveryDays: [],
-                        itemsByDay: {}
+                        itemsByDay: {},
+                        itemNotesByDay: {}
                     });
                 }
                 const vendorSel = vendorMap.get(sel.vendorId);
@@ -759,10 +851,15 @@ export default function FoodServiceWidget({
                     vendorSel.selectedDeliveryDays.push(day);
                 }
                 vendorSel.itemsByDay[day] = sel.items || {};
+
+                // Populate item notes
+                if (!vendorSel.itemNotesByDay) vendorSel.itemNotesByDay = {};
+                vendorSel.itemNotesByDay[day] = sel.itemNotes || {};
             }
         }
         if (Array.from(vendorMap.values()).length > 0) {
             currentSelections = Array.from(vendorMap.values());
+            console.log('[FoodServiceWidget] Multi-day parsing complete. currentSelections:', currentSelections);
         }
     }
 

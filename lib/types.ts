@@ -51,6 +51,7 @@ export interface OrderConfiguration {
   vendorSelections?: {
     vendorId: string;
     items: { [itemId: string]: number }; // itemId -> quantity
+    itemNotes?: { [itemId: string]: string }; // itemId -> note
   }[];
 
   // Multi-day food orders: organized by delivery day
@@ -59,6 +60,7 @@ export interface OrderConfiguration {
       vendorSelections: {
         vendorId: string;
         items: { [itemId: string]: number };
+        itemNotes?: { [itemId: string]: string };
       }[];
     };
   };
@@ -84,6 +86,7 @@ export interface OrderConfiguration {
     [mealType: string]: {
       vendorId?: string | null;
       items: { [itemId: string]: number };
+      itemNotes?: { [itemId: string]: string };
     }
   };
 
@@ -118,6 +121,7 @@ export interface ClientFoodOrder {
       vendorSelections: {
         vendorId: string;
         items: { [itemId: string]: number };
+        itemNotes?: { [itemId: string]: string };
       }[];
     };
   };
@@ -135,6 +139,7 @@ export interface ClientMealOrder {
     [mealType: string]: {
       vendorId?: string | null;
       items: { [itemId: string]: number };
+      itemNotes?: { [itemId: string]: string };
     }
   };
   created_at?: string;
@@ -150,6 +155,7 @@ export interface ClientBoxOrder {
   vendorId?: string;
   quantity?: number;
   items?: { [itemId: string]: number }; // Custom items if allowed
+  itemNotes?: { [itemId: string]: string }; // Note for specific items
   created_at?: string;
   updated_at?: string;
   updated_by?: string;

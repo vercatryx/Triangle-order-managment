@@ -56,7 +56,7 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
     const pendingPrefetches = useRef<Set<string>>(new Set());
 
     // Track which clients have already logged missing vendor ID warnings (to avoid spam)
-    const loggedMissingVendorIds = useRef<Set<string>>(new Set());
+
 
     // Views
     const [currentView, setCurrentView] = useState<'all' | 'eligible' | 'ineligible' | 'billing' | 'needs-attention'>('all');
@@ -794,15 +794,6 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
 
                 if (!vendorId) {
                     // Only log once per client to avoid spam - this is a data issue with existing clients
-                    if (!loggedMissingVendorIds.current.has(client.id)) {
-                        loggedMissingVendorIds.current.add(client.id);
-                        console.warn('[ClientList] Vendor ID is missing in config for Boxes client:', {
-                            clientId: client.id,
-                            boxTypeId: conf.boxTypeId,
-                            serviceType: st,
-                            note: 'This client needs vendorId or boxTypeId set in their order config'
-                        });
-                    }
                 } else if (!vendorName) {
                     console.log('[ClientList] Warning - Vendor ID not found in list:', {
                         clientId: client.id,
