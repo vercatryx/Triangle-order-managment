@@ -423,7 +423,7 @@ export default function FoodServiceWidget({
             const selectedDays = selection.selectedDeliveryDays || [];
 
             return (
-                <div key={index} className={styles.vendorBlock}>
+                <div key={index} id={`vendor-block-${index}`} className={styles.vendorBlock}>
                     {/* Header */}
                     <div className={styles.vendorHeader}>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', flex: 1 }}>
@@ -629,7 +629,7 @@ export default function FoodServiceWidget({
                 .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
 
             return (
-                <div key={mealType} className={styles.vendorBlock} style={{
+                <div key={mealType} id={`meal-block-${mealType}`} className={styles.vendorBlock} style={{
                     borderLeft: '4px solid var(--color-primary)'
                 }}>
                     {/* Header */}

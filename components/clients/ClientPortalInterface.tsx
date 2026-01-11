@@ -301,6 +301,95 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
     const itemPrices = useMemo(() => (orderConfig as any)?.itemPrices ?? {}, [(orderConfig as any)?.itemPrices]);
     const serviceType = client.serviceType;
 
+    // --- Auto-Scroll Logic ---
+    const prevVendorCountRef = useRef(0);
+    const prevMealKeysRef = useRef<string[]>([]);
+    const prevBoxCountRef = useRef(0);
+
+    // Watch for Vendor Additions
+    useEffect(() => {
+        const currentVendorCount = orderConfig.vendorSelections ? orderConfig.vendorSelections.length : 0;
+        console.log('[AutoScroll] Vendor Effect: current=', currentVendorCount, 'prev=', prevVendorCountRef.current);
+
+        if (currentVendorCount > prevVendorCountRef.current) {
+            setTimeout(() => {
+                const newIndex = currentVendorCount - 1;
+                const elementId = `vendor-block-${newIndex}`;
+                const element = document.getElementById(elementId);
+                console.log('[AutoScroll] Trying to scroll to Vendor:', elementId, 'Found:', !!element);
+
+                if (element) {
+                    element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                } else {
+                    setTimeout(() => {
+                        const elRetry = document.getElementById(elementId);
+                        console.log('[AutoScroll] Retry scrolling to Vendor:', elementId, 'Found:', !!elRetry);
+                        if (elRetry) elRetry.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    }, 300);
+                }
+            }, 400);
+        }
+        prevVendorCountRef.current = currentVendorCount;
+    }, [orderConfig.vendorSelections?.length]);
+
+    // Watch for Meal Type Additions
+    useEffect(() => {
+        const currentKeys = Object.keys(orderConfig.mealSelections || {});
+        const prevKeys = prevMealKeysRef.current;
+        console.log('[AutoScroll] Meal Effect: current=', currentKeys.length, 'prev=', prevKeys.length);
+
+        if (currentKeys.length > prevKeys.length) {
+            const newKey = currentKeys.find(k => !prevKeys.includes(k));
+            console.log('[AutoScroll] New Meal Key detected:', newKey);
+
+            if (newKey) {
+                setTimeout(() => {
+                    const elementId = `meal-block-${newKey}`;
+                    const element = document.getElementById(elementId);
+                    console.log('[AutoScroll] Trying to scroll to Meal:', elementId, 'Found:', !!element);
+
+                    if (element) {
+                        element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    } else {
+                        setTimeout(() => {
+                            const elRetry = document.getElementById(elementId);
+                            console.log('[AutoScroll] Retry scrolling to Meal:', elementId, 'Found:', !!elRetry);
+                            if (elRetry) elRetry.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                        }, 300);
+                    }
+                }, 400);
+            }
+        }
+        prevMealKeysRef.current = currentKeys;
+    }, [orderConfig.mealSelections]);
+
+    // Watch for Box Additions
+    useEffect(() => {
+        const currentBoxCount = orderConfig.boxOrders ? orderConfig.boxOrders.length : 0;
+        console.log('[AutoScroll] Box Effect: current=', currentBoxCount, 'prev=', prevBoxCountRef.current);
+
+        if (currentBoxCount > prevBoxCountRef.current) {
+            setTimeout(() => {
+                const newIndex = currentBoxCount - 1;
+                const elementId = `box-block-${newIndex}`;
+                const element = document.getElementById(elementId);
+                console.log('[AutoScroll] Trying to scroll to Box:', elementId, 'Found:', !!element);
+
+                if (element) {
+                    element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                } else {
+                    setTimeout(() => {
+                        const elRetry = document.getElementById(elementId);
+                        console.log('[AutoScroll] Retry scrolling to Box:', elementId, 'Found:', !!elRetry);
+                        if (elRetry) elRetry.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    }, 300);
+                }
+            }, 400);
+        }
+        prevBoxCountRef.current = currentBoxCount;
+    }, [orderConfig.boxOrders?.length]);
+
+
     // Auto-Save Logic - matching ClientProfile exactly
     // State-based Validation
     const [validationStatus, setValidationStatus] = useState({
@@ -966,7 +1055,9 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
     const handleAddMeal = (mealType: string) => {
         setOrderConfig((prev: any) => {
             const newConfig = { ...prev };
-            if (!newConfig.mealSelections) newConfig.mealSelections = {};
+            // Shallow copy mealSelections to allow change detection
+            newConfig.mealSelections = { ...(newConfig.mealSelections || {}) };
+
             if (!newConfig.mealSelections[mealType]) {
                 newConfig.mealSelections[mealType] = {
                     vendorId: '',
@@ -1082,7 +1173,7 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
                                 return (
                                     <div>
                                         {currentBoxes.map((box: any, index: number) => (
-                                            <div key={index} style={{ marginBottom: '2rem', padding: '1rem', border: '1px solid var(--border-color)', borderRadius: '8px' }}>
+                                            <div key={index} id={`box-block-${index}`} style={{ marginBottom: '2rem', padding: '1rem', border: '1px solid var(--border-color)', borderRadius: '8px' }}>
                                                 <div style={{
                                                     display: 'flex',
                                                     justifyContent: 'space-between',
