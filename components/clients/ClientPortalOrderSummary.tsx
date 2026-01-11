@@ -133,12 +133,14 @@ export default function ClientPortalOrderSummary({
             const itemsList: { name: string; qty: number; note?: string; value: number; sortOrder: number }[] = [];
 
             if (box.items) {
+                const notes = box.itemNotes || {};
                 Object.entries(box.items).forEach(([itemId, qty]) => {
                     const item = menuItems.find(i => i.id === itemId);
                     if (item && (Number(qty) || 0) > 0) {
                         itemsList.push({
                             name: item.name,
                             qty: Number(qty),
+                            note: notes[itemId],
                             value: (item.value || 0) * Number(qty),
                             sortOrder: item.sortOrder ?? 0
                         });

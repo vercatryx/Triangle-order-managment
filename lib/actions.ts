@@ -1,4 +1,5 @@
 'use server';
+// HMR trigger
 
 import { getCurrentTime } from './time';
 import { revalidatePath } from 'next/cache';
@@ -2279,22 +2280,35 @@ async function syncSingleOrderForDeliveryDay(
             takeEffectDate = getTakeEffectDateFromUtils(settings);
         }
     } else if (orderConfig.serviceType === 'Boxes') {
-        // Boxes can exist with or without boxTypeId now
-        // Check explicitly for undefined/null/empty string to properly handle vendor assignment
-        let boxVendorId = (orderConfig.vendorId && orderConfig.vendorId.trim() !== '') ? orderConfig.vendorId : null;
-        if (!boxVendorId && orderConfig.boxTypeId) {
-            const boxType = boxTypes.find(bt => bt.id === orderConfig.boxTypeId);
-            boxVendorId = boxType?.vendorId || null;
+        const boxOrders = orderConfig.boxOrders || [];
+        const uniqueVendorIds = new Set<string>();
+
+        if (boxOrders.length > 0) {
+            boxOrders.forEach((box: any) => {
+                const boxDef = boxTypes.find(bt => bt.id === box.boxTypeId);
+                const vId = box.vendorId || boxDef?.vendorId;
+                if (vId) uniqueVendorIds.add(vId);
+            });
+        } else {
+            // Fallback for legacy format
+            let boxVendorId = (orderConfig.vendorId && orderConfig.vendorId.trim() !== '') ? orderConfig.vendorId : null;
+            if (!boxVendorId && orderConfig.boxTypeId) {
+                const boxType = boxTypes.find(bt => bt.id === orderConfig.boxTypeId);
+                boxVendorId = boxType?.vendorId || null;
+            }
+            if (boxVendorId) uniqueVendorIds.add(boxVendorId);
         }
 
-        if (boxVendorId) {
+        if (uniqueVendorIds.size > 0) {
+            // For Boxes, we take the first available delivery day from any of the vendors involved
+            // Strictly speaking, multi-vendor box orders are tricky, but we usually default to the first one's first day.
+            const primaryVendorId = Array.from(uniqueVendorIds)[0];
+
             if (deliveryDay) {
-                // Calculate scheduled delivery date for the specific day
                 const currentTime = await getCurrentTime();
-                scheduledDeliveryDate = getNextDeliveryDateForDay(deliveryDay, vendors, boxVendorId, currentTime, currentTime);
+                scheduledDeliveryDate = getNextDeliveryDateForDay(deliveryDay, vendors, primaryVendorId, currentTime, currentTime);
             } else {
-                // Fallback: find the first delivery date
-                const vendor = vendors.find(v => v.id === boxVendorId);
+                const vendor = vendors.find(v => v.id === primaryVendorId);
                 if (vendor && vendor.deliveryDays && vendor.deliveryDays.length > 0) {
                     const today = await getCurrentTime();
                     today.setHours(0, 0, 0, 0);
@@ -2316,18 +2330,12 @@ async function syncSingleOrderForDeliveryDay(
                     }
                 }
             }
-
-            // IMPORTANT: take_effect_date must always be a Sunday using weekly locking logic
             takeEffectDate = getTakeEffectDateFromUtils(settings);
         } else {
-            // If no vendorId, we must still provide a take_effect_date to satisfy the NOT NULL constraint in upcoming_orders table.
-            // We'll use a far-future date (2099-12-31) to indicate it's not ready for processing but valid for storage.
-            console.log(`[syncSingleOrderForDeliveryDay] No vendorId for Boxes order - setting fallback take_effect_date (2099-12-31)`);
-
-            // Create date for 2099-12-31
+            console.log(`[syncSingleOrderForDeliveryDay] No vendorId found for Boxes order - setting fallback take_effect_date (2099-12-31)`);
             const fallbackDate = new Date('2099-12-31T00:00:00.000Z');
             takeEffectDate = fallbackDate;
-            scheduledDeliveryDate = fallbackDate; // Also set this so the check below passes
+            scheduledDeliveryDate = fallbackDate;
         }
     }
 
@@ -2425,24 +2433,49 @@ async function syncSingleOrderForDeliveryDay(
             }
         }
     } else if (orderConfig.serviceType === 'Boxes') {
-        totalItems = orderConfig.boxQuantity || 0;
-        const items = (orderConfig as any).items || {};
-        const itemPrices = (orderConfig as any).itemPrices || {};
-        let boxItemsTotal = 0;
-        for (const [itemId, qty] of Object.entries(items)) {
-            const quantity = typeof qty === 'number' ? qty : 0;
-            const price = itemPrices[itemId];
-            if (price !== undefined && price !== null && quantity > 0) {
-                boxItemsTotal += price * quantity;
+        const boxOrders = orderConfig.boxOrders || [];
+        if (boxOrders.length > 0) {
+            boxOrders.forEach((box: any) => {
+                totalItems += box.quantity || 1;
+                const items = box.items || {};
+                const itemPrices = box.itemPrices || {};
+                let boxItemsTotal = 0;
+                for (const [itemId, qty] of Object.entries(items)) {
+                    const quantity = typeof qty === 'number' ? qty : 0;
+                    const price = itemPrices[itemId];
+                    if (price !== undefined && price !== null && quantity > 0) {
+                        boxItemsTotal += price * quantity;
+                    }
+                }
+                if (boxItemsTotal > 0) {
+                    totalValue += boxItemsTotal;
+                } else if (box.boxTypeId) {
+                    const boxType = boxTypes.find(bt => bt.id === box.boxTypeId);
+                    if (boxType && boxType.priceEach) {
+                        totalValue += boxType.priceEach * (box.quantity || 1);
+                    }
+                }
+            });
+        } else {
+            // Fallback for legacy format
+            totalItems = orderConfig.boxQuantity || 0;
+            const items = (orderConfig as any).items || {};
+            const itemPrices = (orderConfig as any).itemPrices || {};
+            let boxItemsTotal = 0;
+            for (const [itemId, qty] of Object.entries(items)) {
+                const quantity = typeof qty === 'number' ? qty : 0;
+                const price = itemPrices[itemId];
+                if (price !== undefined && price !== null && quantity > 0) {
+                    boxItemsTotal += price * quantity;
+                }
             }
-        }
-        if (boxItemsTotal > 0) {
-            totalValue = boxItemsTotal;
-        } else if (orderConfig.boxTypeId) {
-            // Fall back to boxType pricing only if boxTypeId is present
-            const boxType = boxTypes.find(bt => bt.id === orderConfig.boxTypeId);
-            if (boxType && boxType.priceEach) {
-                totalValue = boxType.priceEach * totalItems;
+            if (boxItemsTotal > 0) {
+                totalValue = boxItemsTotal;
+            } else if (orderConfig.boxTypeId) {
+                const boxType = boxTypes.find(bt => bt.id === orderConfig.boxTypeId);
+                if (boxType && boxType.priceEach) {
+                    totalValue = boxType.priceEach * totalItems;
+                }
             }
         }
     }
@@ -2699,34 +2732,19 @@ async function syncSingleOrderForDeliveryDay(
             }
         }
     } else if (orderConfig.serviceType === 'Boxes') {
-        // console.log('[syncSingleOrderForDeliveryDay] Processing Boxes order for upcoming_order_id:', upcomingOrderId);
-        // console.log('[syncSingleOrderForDeliveryDay] Box orderConfig:', {
-        //     vendorId: orderConfig.vendorId,
-        //     boxTypeId: orderConfig.boxTypeId,
-        //     boxQuantity: orderConfig.boxQuantity,
-        //     hasItems: !!(orderConfig as any)?.items && Object.keys((orderConfig as any).items || {}).length > 0
-        // });
+        const boxOrders = orderConfig.boxOrders || [];
 
-        // Insert box selection with prices
-        const quantity = orderConfig.boxQuantity || 1;
-
-        // Get vendor ID from orderConfig, or from boxType if boxTypeId is present
-        // Check explicitly for undefined/null/empty string to properly handle vendor assignment
-        let boxVendorId = (orderConfig.vendorId && orderConfig.vendorId.trim() !== '') ? orderConfig.vendorId : null;
-        if (!boxVendorId && orderConfig.boxTypeId) {
-            const boxType = boxTypes.find(bt => bt.id === orderConfig.boxTypeId);
-            boxVendorId = boxType?.vendorId || null;
-            // console.log('[syncSingleOrderForDeliveryDay] Vendor ID from boxType:', { boxTypeId: orderConfig.boxTypeId, vendorId: boxVendorId });
-            const boxItemsRaw = (orderConfig as any).items || {};
-            const boxItemNotes = (orderConfig as any).itemNotes || {};
-            const boxItemPrices = (orderConfig as any).itemPrices || {};
-
-            console.log('[syncSingleOrderForDeliveryDay] Processing Box Items:', {
-                itemCount: Object.keys(boxItemsRaw).length,
-                noteCount: Object.keys(boxItemNotes).length
-            });
+        const processBox = async (boxData: any) => {
+            const boxDef = boxTypes.find(bt => bt.id === boxData.boxTypeId);
+            const boxVendorId = boxData.vendorId || boxDef?.vendorId || null;
+            const quantity = boxData.quantity || 1;
+            const boxItemsRaw = boxData.items || {};
+            const boxItemNotes = boxData.itemNotes || {};
+            const boxItemPrices = boxData.itemPrices || {};
 
             const boxItems: any = {};
+            let calculatedTotal = 0;
+
             for (const [itemId, qty] of Object.entries(boxItemsRaw)) {
                 const quantity = typeof qty === 'number' ? qty : 0;
                 const price = boxItemPrices[itemId];
@@ -2740,50 +2758,46 @@ async function syncSingleOrderForDeliveryDay(
                 } else {
                     boxItems[itemId] = quantity;
                 }
-            }
-            // console.log('[syncSingleOrderForDeliveryDay] Box items formatted:', boxItems);
-            // console.log('[syncSingleOrderForDeliveryDay] Box items count:', Object.keys(boxItems).length);
 
-            // Calculate total from item prices
-            let calculatedTotal = 0;
-            for (const [itemId, qty] of Object.entries(boxItemsRaw)) {
-                const quantity = typeof qty === 'number' ? qty : 0;
-                const price = boxItemPrices[itemId];
                 if (price !== undefined && price !== null && quantity > 0) {
                     calculatedTotal += price * quantity;
                 }
+            }
+
+            if (calculatedTotal === 0 && boxDef?.priceEach) {
+                calculatedTotal = boxDef.priceEach * quantity;
             }
 
             const boxSelectionData: any = {
                 upcoming_order_id: upcomingOrderId,
                 vendor_id: boxVendorId,
                 quantity: quantity,
-                unit_value: 0, // No longer using box type pricing
+                unit_value: 0,
                 total_value: calculatedTotal,
-                items: boxItems
+                items: boxItems,
+                box_type_id: boxData.boxTypeId || null
             };
 
-            // Include box_type_id if available (for backward compatibility)
-            if (orderConfig.boxTypeId) {
-                boxSelectionData.box_type_id = orderConfig.boxTypeId;
-            }
-
             const { error: boxSelectionError } = await supabaseClient.from('upcoming_order_box_selections').insert(boxSelectionData);
-
             if (boxSelectionError) {
                 console.error(`[syncSingleOrderForDeliveryDay] Error inserting box selection:`, boxSelectionError);
-                console.error(`[syncSingleOrderForDeliveryDay] Insert data:`, {
-                    upcoming_order_id: upcomingOrderId,
-                    vendor_id: boxVendorId,
-                    quantity: quantity,
-                    unit_value: 0,
-                    total_value: calculatedTotal,
-                    items: boxItems
-                });
-                throw boxSelectionError;
-            } else {
-                // console.log(`[syncSingleOrderForDeliveryDay] Successfully inserted box selection for upcoming_order_id=${upcomingOrderId}, vendor_id=${boxVendorId}, items_count=${Object.keys(boxItems).length}, items=${JSON.stringify(boxItems)}`);
             }
+        };
+
+        if (boxOrders.length > 0) {
+            for (const box of boxOrders) {
+                await processBox(box);
+            }
+        } else {
+            // Fallback for legacy format
+            await processBox({
+                boxTypeId: orderConfig.boxTypeId,
+                vendorId: orderConfig.vendorId,
+                quantity: orderConfig.boxQuantity,
+                items: (orderConfig as any).items,
+                itemNotes: (orderConfig as any).itemNotes,
+                itemPrices: (orderConfig as any).itemPrices
+            });
         }
     }
 }
@@ -2959,28 +2973,39 @@ export async function syncCurrentOrderToUpcoming(clientId: string, client: Clien
             }
             deliveryDays = Array.from(allDeliveryDays);
         } else if (orderConfig.serviceType === 'Boxes') {
-            // Boxes can exist with or without boxTypeId now
-            // console.log('[syncCurrentOrderToUpcoming] Processing Boxes order (old format)');
+            const boxOrders = orderConfig.boxOrders || [];
+            const allDeliveryDays = new Set<string>();
 
-            const boxType = orderConfig.boxTypeId ? boxTypes.find(bt => bt.id === orderConfig.boxTypeId) : null;
-            // Check explicitly for undefined/null/empty string to properly handle vendor assignment
-            const boxVendorId = (orderConfig.vendorId && orderConfig.vendorId.trim() !== '') ? orderConfig.vendorId : (boxType?.vendorId || null);
-
-            if (boxVendorId) {
-                const vendor = vendors.find(v => v.id === boxVendorId);
-                if (vendor && vendor.deliveryDays && vendor.deliveryDays.length > 0) {
-                    // FIX: For Boxes, we strictly want ONE recurring order per week, not one per delivery day.
-                    // Since the UI doesn't currently allow selecting a specific day for Boxes,
-                    // we default to the first available delivery day of the vendor.
-                    deliveryDays = [vendor.deliveryDays[0]];
-                } else {
-                    // If vendor has no delivery days, still try to sync (will use default logic)
-                    console.warn(`[syncCurrentOrderToUpcoming] Vendor ${boxVendorId} has no delivery days configured, will attempt sync anyway`);
-                }
+            if (boxOrders.length > 0) {
+                boxOrders.forEach((box: any) => {
+                    const vId = box.vendorId || boxTypes.find(bt => bt.id === box.boxTypeId)?.vendorId;
+                    if (vId) {
+                        const vendor = vendors.find(v => v.id === vId);
+                        if (vendor && vendor.deliveryDays) {
+                            vendor.deliveryDays.forEach((day: string) => allDeliveryDays.add(day));
+                        }
+                    }
+                });
             } else {
-                // No vendorId for boxes - will use default delivery day from settings in syncSingleOrderForDeliveryDay
-                // console.log(`[syncCurrentOrderToUpcoming] No vendorId found for Boxes order, will calculate dates based on settings`);
-                deliveryDays = []; // Empty array - syncSingleOrderForDeliveryDay will handle it with settings
+                // Fallback for legacy format
+                const boxType = orderConfig.boxTypeId ? boxTypes.find(bt => bt.id === orderConfig.boxTypeId) : null;
+                const boxVendorId = (orderConfig.vendorId && orderConfig.vendorId.trim() !== '') ? orderConfig.vendorId : (boxType?.vendorId || null);
+                if (boxVendorId) {
+                    const vendor = vendors.find(v => v.id === boxVendorId);
+                    if (vendor && vendor.deliveryDays) {
+                        vendor.deliveryDays.forEach((day: string) => allDeliveryDays.add(day));
+                    }
+                }
+            }
+
+            if (allDeliveryDays.size > 0) {
+                // For Boxes, we strictly want recurrence. If multi-day, we might need a better policy, 
+                // but for now we follow the existing pattern: if multi-vendor multi-day, take them all.
+                // However, the existing logic (line 2975) was defaulting to the first day for Boxes.
+                // Let's stick to the FIRST day of the set to maintain "one recurring order per week" for boxes.
+                deliveryDays = [Array.from(allDeliveryDays)[0]];
+            } else {
+                deliveryDays = [];
             }
         }
 
@@ -3582,50 +3607,65 @@ export async function getActiveOrderForClient(clientId: string) {
                     ? 'upcoming_order_box_selections'
                     : 'order_box_selections';
 
-                const { data: boxSelection, error: boxSelectionError } = await supabase
+                const { data: boxSelections, error: boxSelectionsError } = await supabase
                     .from(boxSelectionsTable)
                     .select('*')
-                    .eq(orderIdField, orderData.id)
-                    .maybeSingle();
+                    .eq(orderIdField, orderData.id);
 
-                if (boxSelectionError && boxSelectionError.code !== 'PGRST116') {
-                    console.error('Error fetching box selection:', boxSelectionError);
+                if (boxSelectionsError) {
+                    console.error('Error fetching box selections:', boxSelectionsError);
                 }
 
-                if (boxSelection) {
-                    // console.log('[getActiveOrderForClient] Box selection found:', {
-                    //     order_id: orderData.id,
-                    //     vendor_id: boxSelection.vendor_id,
-                    //     box_type_id: boxSelection.box_type_id,
-                    //     quantity: boxSelection.quantity
-                    // });
-
-                    orderConfig.vendorId = boxSelection.vendor_id;
-                    orderConfig.boxTypeId = boxSelection.box_type_id;
-                    orderConfig.boxQuantity = boxSelection.quantity;
-
-                    // Pull items from boxSelection.items (JSONB) - this is the source for box orders
-                    if (boxSelection.items && Object.keys(boxSelection.items).length > 0) {
+                if (boxSelections && boxSelections.length > 0) {
+                    // Populate boxOrders array for the new multi-box format
+                    orderConfig.boxOrders = boxSelections.map((bs: any) => {
                         const itemsMap: any = {};
-                        for (const [itemId, val] of Object.entries(boxSelection.items)) {
-                            if (val && typeof val === 'object') {
-                                itemsMap[itemId] = (val as any).quantity;
-                            } else {
-                                itemsMap[itemId] = val;
+                        if (bs.items && Object.keys(bs.items).length > 0) {
+                            for (const [itemId, val] of Object.entries(bs.items)) {
+                                if (val && typeof val === 'object') {
+                                    itemsMap[itemId] = (val as any).quantity;
+                                } else {
+                                    itemsMap[itemId] = val;
+                                }
                             }
                         }
-                        orderConfig.items = itemsMap;
-                    }
+                        return {
+                            boxTypeId: bs.box_type_id,
+                            vendorId: bs.vendor_id,
+                            quantity: bs.quantity,
+                            items: itemsMap,
+                            itemNotes: bs.item_notes || {}
+                        };
+                    });
+
+                    // Also set top-level properties for backward compatibility (using the first box)
+                    const firstBox = boxSelections[0];
+                    orderConfig.vendorId = firstBox.vendor_id;
+                    orderConfig.boxTypeId = firstBox.box_type_id;
+                    orderConfig.boxQuantity = firstBox.quantity;
+
+                    // Aggregate items into top-level items for backward compatibility
+                    const aggregatedItems: any = {};
+                    boxSelections.forEach((bs: any) => {
+                        if (bs.items && Object.keys(bs.items).length > 0) {
+                            for (const [itemId, val] of Object.entries(bs.items)) {
+                                const qty = (val && typeof val === 'object') ? (val as any).quantity : val;
+                                aggregatedItems[itemId] = (aggregatedItems[itemId] || 0) + (Number(qty) || 0);
+                            }
+                        }
+                    });
+                    orderConfig.items = aggregatedItems;
                 }
 
-                // If items still empty, try to fetch from separate items table as fallback (for migrated data)
-                if ((!orderConfig.items || Object.keys(orderConfig.items).length === 0) && boxSelection?.vendor_id) {
+                // Fallback for migrated data if items still empty (legacy format)
+                if ((!orderConfig.items || Object.keys(orderConfig.items).length === 0) && boxSelections && boxSelections[0]?.vendor_id) {
+                    const firstBoxVId = boxSelections[0].vendor_id;
                     // Find the vendor_selection for the box vendor in this order
                     const { data: vendorSelection } = await supabase
                         .from(vendorSelectionsTable)
                         .select('id')
                         .eq(orderIdField, orderData.id)
-                        .eq('vendor_id', boxSelection.vendor_id)
+                        .eq('vendor_id', firstBoxVId)
                         .maybeSingle();
 
                     if (vendorSelection) {
@@ -3641,6 +3681,8 @@ export async function getActiveOrderForClient(clientId: string) {
                                 itemsMap[item.menu_item_id] = item.quantity;
                             }
                             orderConfig.items = itemsMap;
+                            // If we didn't have boxOrders (unlikely with select('*')), we should at least populate it from this fallback if needed
+                            // But here we are just maintaining the legacy 'items' field.
                         }
                     }
                 }

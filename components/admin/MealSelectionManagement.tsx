@@ -280,7 +280,7 @@ export function MealSelectionManagement() {
     function onImageLoad(e: React.SyntheticEvent<HTMLImageElement>) {
         const { width, height } = e.currentTarget;
         setImgRef(e.currentTarget);
-        const newCrop = centerCrop(makeAspectCrop({ unit: '%', width: 90 }, 1, width, height), width, height);
+        const newCrop = centerCrop({ unit: '%', width: 90, height: 80 }, width, height);
         setCrop(newCrop);
         setCompletedCrop(convertToPixelCrop(newCrop, width, height));
     }
@@ -714,7 +714,7 @@ export function MealSelectionManagement() {
                         <div style={{ background: 'white', padding: '20px', borderRadius: '8px', maxWidth: '600px', width: '100%', display: 'flex', flexDirection: 'column', gap: '20px' }}>
                             <h3>Crop Image</h3>
                             <div style={{ maxHeight: '60vh', overflow: 'auto', display: 'flex', justifyContent: 'center', background: '#333' }}>
-                                <ReactCrop crop={crop} onChange={(_, c) => setCrop(c)} onComplete={c => setCompletedCrop(c)} aspect={1}>
+                                <ReactCrop crop={crop} onChange={(_, c) => setCrop(c)} onComplete={c => setCompletedCrop(c)}>
                                     <img src={imageSrc} onLoad={onImageLoad} alt="" style={{ maxHeight: '60vh' }} />
                                 </ReactCrop>
                             </div>

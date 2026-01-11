@@ -1,4 +1,5 @@
 'use client';
+// HMR trigger
 
 import React, { createContext, useContext, useState, useCallback, useEffect, useRef } from 'react';
 import { ClientProfile, ClientStatus, Navigator, Vendor, MenuItem, BoxType, AppSettings, ItemCategory } from './types';
@@ -26,16 +27,16 @@ interface DataCacheContextType {
     getBoxTypes: () => Promise<BoxType[]>;
     getCategories: () => Promise<ItemCategory[]>;
     getSettings: () => Promise<AppSettings>;
-    
+
     // Client data cache
     getClients: () => Promise<ClientProfile[]>;
     getClient: (id: string) => Promise<ClientProfile | undefined>;
-    
+
     // Cache invalidation
     invalidateReferenceData: () => void;
     invalidateClientData: (clientId?: string) => void;
     invalidateAll: () => void;
-    
+
     // Force refresh
     refreshReferenceData: () => Promise<void>;
 }
@@ -53,19 +54,19 @@ export function DataCacheProvider({ children }: { children: React.ReactNode }) {
         categories?: CacheEntry<ItemCategory[]>;
         settings?: CacheEntry<AppSettings>;
     }>({});
-    
+
     const clientsCacheRef = useRef<CacheEntry<ClientProfile[]> | undefined>(undefined);
     const clientCacheRef = useRef<Map<string, CacheEntry<ClientProfile>>>(new Map());
-    
+
     // State for triggering re-renders when cache updates
     const [, setCacheVersion] = useState(0);
-    
+
     // Helper to check if cache entry is stale
     const isStale = <T,>(entry: CacheEntry<T> | undefined, duration: number): boolean => {
         if (!entry) return true;
         return Date.now() - entry.timestamp > duration;
     };
-    
+
     // Helper to fetch and cache reference data
     const fetchAndCache = useCallback(async <T,>(
         key: keyof typeof referenceCacheRef.current,
@@ -73,62 +74,62 @@ export function DataCacheProvider({ children }: { children: React.ReactNode }) {
         duration: number = CACHE_DURATION.REFERENCE_DATA
     ): Promise<T> => {
         const cached = referenceCacheRef.current[key] as CacheEntry<T> | undefined;
-        
+
         // Return cached data if still fresh
         if (!isStale(cached, duration)) {
             return cached!.data;
         }
-        
+
         // Fetch fresh data
         const data = await fetchFn();
         (referenceCacheRef.current[key] as any) = { data, timestamp: Date.now() };
         setCacheVersion(v => v + 1); // Trigger re-render if needed
         return data;
     }, []);
-    
+
     // Reference data getters
     const getStatuses = useCallback(async () => {
         return fetchAndCache('statuses', () => serverActions.getStatuses());
     }, [fetchAndCache]);
-    
+
     const getNavigators = useCallback(async () => {
         return fetchAndCache('navigators', () => serverActions.getNavigators());
     }, [fetchAndCache]);
-    
+
     const getVendors = useCallback(async () => {
         return fetchAndCache('vendors', () => serverActions.getVendors());
     }, [fetchAndCache]);
-    
+
     const getMenuItems = useCallback(async () => {
         return fetchAndCache('menuItems', () => serverActions.getMenuItems());
     }, [fetchAndCache]);
-    
+
     const getBoxTypes = useCallback(async () => {
         return fetchAndCache('boxTypes', () => serverActions.getBoxTypes());
     }, [fetchAndCache]);
-    
+
     const getCategories = useCallback(async () => {
         return fetchAndCache('categories', () => serverActions.getCategories());
     }, [fetchAndCache]);
-    
+
     const getSettings = useCallback(async () => {
         return fetchAndCache('settings', () => serverActions.getSettings());
     }, [fetchAndCache]);
-    
+
     // Client list getter
     const getClients = useCallback(async () => {
         // Check cache
         if (!isStale(clientsCacheRef.current, CACHE_DURATION.CLIENT_LIST)) {
             return clientsCacheRef.current!.data;
         }
-        
+
         // Fetch fresh data
         const data = await serverActions.getClients();
         clientsCacheRef.current = { data, timestamp: Date.now() };
         setCacheVersion(v => v + 1);
         return data;
     }, []);
-    
+
     // Single client getter
     const getClient = useCallback(async (id: string) => {
         // Check cache
@@ -136,7 +137,7 @@ export function DataCacheProvider({ children }: { children: React.ReactNode }) {
         if (!isStale(cached, CACHE_DURATION.CLIENT_DATA)) {
             return cached!.data;
         }
-        
+
         // Fetch fresh data
         const data = await serverActions.getClient(id);
         if (data) {
@@ -145,13 +146,13 @@ export function DataCacheProvider({ children }: { children: React.ReactNode }) {
         }
         return data;
     }, []);
-    
+
     // Cache invalidation
     const invalidateReferenceData = useCallback(() => {
         referenceCacheRef.current = {};
         setCacheVersion(v => v + 1);
     }, []);
-    
+
     const invalidateClientData = useCallback((clientId?: string) => {
         if (clientId) {
             clientCacheRef.current.delete(clientId);
@@ -161,14 +162,14 @@ export function DataCacheProvider({ children }: { children: React.ReactNode }) {
         }
         setCacheVersion(v => v + 1);
     }, []);
-    
+
     const invalidateAll = useCallback(() => {
         referenceCacheRef.current = {};
         clientCacheRef.current.clear();
         clientsCacheRef.current = undefined;
         setCacheVersion(v => v + 1);
     }, []);
-    
+
     // Force refresh reference data
     const refreshReferenceData = useCallback(async () => {
         const [
@@ -188,7 +189,7 @@ export function DataCacheProvider({ children }: { children: React.ReactNode }) {
             serverActions.getCategories(),
             serverActions.getSettings()
         ]);
-        
+
         referenceCacheRef.current = {
             statuses: { data: statuses, timestamp: Date.now() },
             navigators: { data: navigators, timestamp: Date.now() },
@@ -200,7 +201,7 @@ export function DataCacheProvider({ children }: { children: React.ReactNode }) {
         };
         setCacheVersion(v => v + 1);
     }, []);
-    
+
     // Background refresh for stale cache entries (runs silently)
     useEffect(() => {
         const interval = setInterval(() => {
@@ -215,7 +216,7 @@ export function DataCacheProvider({ children }: { children: React.ReactNode }) {
                 categories: () => serverActions.getCategories(),
                 settings: () => serverActions.getSettings()
             };
-            
+
             keys.forEach(key => {
                 const cached = referenceCacheRef.current[key] as any;
                 if (isStale(cached, CACHE_DURATION.REFERENCE_DATA * 1.5)) {
@@ -227,10 +228,10 @@ export function DataCacheProvider({ children }: { children: React.ReactNode }) {
                 }
             });
         }, 60000); // Check every minute
-        
+
         return () => clearInterval(interval);
     }, []);
-    
+
     const value: DataCacheContextType = {
         getStatuses,
         getNavigators,
@@ -246,7 +247,7 @@ export function DataCacheProvider({ children }: { children: React.ReactNode }) {
         invalidateAll,
         refreshReferenceData
     };
-    
+
     return (
         <DataCacheContext.Provider value={value}>
             {children}

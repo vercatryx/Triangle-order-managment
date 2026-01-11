@@ -758,16 +758,35 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
                     uniqueVendors.forEach(v => vendorSummaries.push(v));
                 }
             } else if (st === 'Boxes') {
-                let computedVendorId = conf.vendorId;
-                if (!computedVendorId && !conf.boxTypeId && typeof conf === 'object') {
-                    const possibleDayKeys = Object.keys(conf).filter(k => k !== 'id' && k !== 'serviceType' && k !== 'caseId' && typeof (conf as any)[k] === 'object' && (conf as any)[k]?.vendorId);
-                    if (possibleDayKeys.length > 0) computedVendorId = (conf as any)[possibleDayKeys[0]].vendorId;
+                const uniqueVendors = new Set<string>();
+                const boxOrders = conf.boxOrders || [];
+
+                if (boxOrders.length > 0) {
+                    boxOrders.forEach((box: any) => {
+                        const boxDef = boxTypes.find(b => b.id === box.boxTypeId);
+                        const vId = box.vendorId || boxDef?.vendorId;
+                        if (vId) {
+                            const vName = vendors.find(v => v.id === vId)?.name;
+                            if (vName) uniqueVendors.add(vName);
+                        }
+                    });
+                } else {
+                    // Fallback for legacy format
+                    let computedVendorId = conf.vendorId;
+                    if (!computedVendorId && !conf.boxTypeId && typeof conf === 'object') {
+                        const possibleDayKeys = Object.keys(conf).filter(k => k !== 'id' && k !== 'serviceType' && k !== 'caseId' && typeof (conf as any)[k] === 'object' && (conf as any)[k]?.vendorId);
+                        if (possibleDayKeys.length > 0) computedVendorId = (conf as any)[possibleDayKeys[0]].vendorId;
+                    }
+                    const box = boxTypes.find(b => b.id === conf.boxTypeId);
+                    const vendorId = computedVendorId || box?.vendorId;
+                    if (vendorId) {
+                        const vName = vendors.find(v => v.id === vendorId)?.name;
+                        if (vName) uniqueVendors.add(vName);
+                    }
                 }
-                const box = boxTypes.find(b => b.id === conf.boxTypeId);
-                const vendorId = computedVendorId || box?.vendorId;
-                if (vendorId) {
-                    const vName = vendors.find(v => v.id === vendorId)?.name;
-                    if (vName) vendorSummaries.push(vName);
+
+                if (uniqueVendors.size > 0) {
+                    uniqueVendors.forEach(v => vendorSummaries.push(v));
                 }
             }
             return (
@@ -847,28 +866,53 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
 
         } else if (st === 'Boxes') {
             // Boxes Logic
-            let computedVendorId = conf.vendorId;
-            if (!computedVendorId && !conf.boxTypeId && typeof conf === 'object') {
-                const possibleDayKeys = Object.keys(conf).filter(k => k !== 'id' && k !== 'serviceType' && k !== 'caseId' && typeof (conf as any)[k] === 'object' && (conf as any)[k]?.vendorId);
-                if (possibleDayKeys.length > 0) computedVendorId = (conf as any)[possibleDayKeys[0]].vendorId;
-            }
-            const box = boxTypes.find(b => b.id === conf.boxTypeId);
-            const vId = computedVendorId || box?.vendorId;
-            vendorName = vendors.find(v => v.id === vId)?.name || 'No Vendor';
+            const boxOrders = conf.boxOrders || [];
+            const uniqueVendors = new Set<string>();
 
-            if (conf.items) {
-                Object.entries(conf.items).forEach(([itemId, qty]) => {
-                    const q = Number(qty);
-                    if (q > 0) {
-                        const item = menuItems.find(i => i.id === itemId);
-                        if (item) itemsList.push({ name: item.name, quantity: q });
+            if (boxOrders.length > 0) {
+                boxOrders.forEach((box: any) => {
+                    const boxDef = boxTypes.find(b => b.id === box.boxTypeId);
+                    const vId = box.vendorId || boxDef?.vendorId;
+                    if (vId) {
+                        const vName = vendors.find(v => v.id === vId)?.name;
+                        if (vName) uniqueVendors.add(vName);
+                    }
+
+                    if (box.items) {
+                        Object.entries(box.items).forEach(([itemId, qty]) => {
+                            const q = Number(qty);
+                            if (q > 0) {
+                                const item = menuItems.find(i => i.id === itemId);
+                                if (item) {
+                                    const existing = itemsList.find(i => i.name === item.name);
+                                    if (existing) existing.quantity += q;
+                                    else itemsList.push({ name: item.name, quantity: q });
+                                }
+                            }
+                        });
                     }
                 });
-            }
-            // If no items but box quantity > 0 (generic box) ?? 
-            // Usually boxes have items. If not, maybe show "Standard Box"
-            if (itemsList.length === 0 && conf.boxQuantity > 0) {
-                // itemsList.push({ name: box?.name || 'Box', quantity: conf.boxQuantity });
+                vendorName = Array.from(uniqueVendors).join(', ') || 'No Vendor';
+            } else {
+                // Legacy Fallback
+                let computedVendorId = conf.vendorId;
+                if (!computedVendorId && !conf.boxTypeId && typeof conf === 'object') {
+                    const possibleDayKeys = Object.keys(conf).filter(k => k !== 'id' && k !== 'serviceType' && k !== 'caseId' && typeof (conf as any)[k] === 'object' && (conf as any)[k]?.vendorId);
+                    if (possibleDayKeys.length > 0) computedVendorId = (conf as any)[possibleDayKeys[0]].vendorId;
+                }
+                const box = boxTypes.find(b => b.id === conf.boxTypeId);
+                const vId = computedVendorId || box?.vendorId;
+                vendorName = vendors.find(v => v.id === vId)?.name || 'No Vendor';
+
+                if (conf.items) {
+                    Object.entries(conf.items).forEach(([itemId, qty]) => {
+                        const q = Number(qty);
+                        if (q > 0) {
+                            const item = menuItems.find(i => i.id === itemId);
+                            if (item) itemsList.push({ name: item.name, quantity: q });
+                        }
+                    });
+                }
             }
         }
 

@@ -664,11 +664,23 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
                 }
             } else if (serviceType === 'Boxes') {
                 // For Boxes: Explicitly preserve all critical fields
-                cleanedOrderConfig.vendorId = orderConfig.vendorId;
-                cleanedOrderConfig.caseId = orderConfig.caseId; // Also set above
-                cleanedOrderConfig.boxTypeId = orderConfig.boxTypeId;
-                cleanedOrderConfig.boxQuantity = orderConfig.boxQuantity || 1;
-                cleanedOrderConfig.items = orderConfig.items || {};
+                cleanedOrderConfig.boxOrders = orderConfig.boxOrders || [];
+
+                // Populate top-level fields from the first box for backward compatibility and sync
+                if (cleanedOrderConfig.boxOrders.length > 0) {
+                    const firstBox = cleanedOrderConfig.boxOrders[0];
+                    cleanedOrderConfig.vendorId = firstBox.vendorId;
+                    cleanedOrderConfig.boxTypeId = firstBox.boxTypeId;
+                    cleanedOrderConfig.boxQuantity = firstBox.quantity || 1;
+                    cleanedOrderConfig.items = firstBox.items || {};
+                } else {
+                    cleanedOrderConfig.vendorId = orderConfig.vendorId;
+                    cleanedOrderConfig.boxTypeId = orderConfig.boxTypeId;
+                    cleanedOrderConfig.boxQuantity = orderConfig.boxQuantity || 1;
+                    cleanedOrderConfig.items = orderConfig.items || {};
+                }
+
+                cleanedOrderConfig.caseId = orderConfig.caseId;
                 cleanedOrderConfig.itemPrices = orderConfig.itemPrices || {};
             }
 
@@ -866,18 +878,32 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
         setOrderConfig({ ...orderConfig, boxOrders: currentBoxes });
     }
 
-    function handleBoxItemUpdate(boxIndex: number, itemId: string, quantity: number) {
+    function handleBoxItemUpdate(boxIndex: number, itemId: string, quantity: number, note?: string) {
         const currentBoxes = [...(orderConfig.boxOrders || [])];
         if (!currentBoxes[boxIndex]) return;
 
         const currentItems = { ...(currentBoxes[boxIndex].items || {}) };
+        const currentNotes = { ...(currentBoxes[boxIndex].itemNotes || {}) };
+
         if (quantity > 0) {
             currentItems[itemId] = quantity;
+            if (note !== undefined) {
+                if (note.trim() === '') {
+                    delete currentNotes[itemId];
+                } else {
+                    currentNotes[itemId] = note;
+                }
+            }
         } else {
             delete currentItems[itemId];
+            delete currentNotes[itemId];
         }
 
-        currentBoxes[boxIndex] = { ...currentBoxes[boxIndex], items: currentItems };
+        currentBoxes[boxIndex] = {
+            ...currentBoxes[boxIndex],
+            items: currentItems,
+            itemNotes: currentNotes
+        };
         setOrderConfig({ ...orderConfig, boxOrders: currentBoxes });
     }
 
@@ -1204,8 +1230,9 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
                                                                                     key={item.id}
                                                                                     item={item}
                                                                                     quantity={selectedItems[item.id] || 0}
+                                                                                    note={box.itemNotes?.[item.id] || ''}
                                                                                     onQuantityChange={(qty) => handleBoxItemUpdate(index, item.id, qty)}
-                                                                                    onNoteChange={() => { }}
+                                                                                    onNoteChange={(note) => handleBoxItemUpdate(index, item.id, selectedItems[item.id] || 0, note)}
                                                                                 />
                                                                             ))}
                                                                         </div>

@@ -3,6 +3,7 @@
 import React from 'react';
 import { logout } from '@/lib/auth-actions';
 import { User, Mail, Phone, MapPin, Package, Truck, Info, CreditCard, LogOut } from 'lucide-react';
+import { ClientProfile } from '@/lib/types';
 import styles from './ClientPortal.module.css';
 
 interface Props {

@@ -3350,12 +3350,13 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                                                 }}>
                                                     <div className={styles.formGroup}>
                                                         <label className="label">Item Description</label>
-                                                        <input
-                                                            type="text"
+                                                        <textarea
                                                             className="input"
                                                             value={customOrder?.itemDescription || ''}
                                                             onChange={e => setCustomOrder(prev => ({ ...prev!, itemDescription: e.target.value }))}
                                                             placeholder="Enter item description..."
+                                                            rows={4}
+                                                            style={{ resize: 'vertical', minHeight: '100px' }}
                                                         />
                                                     </div>
 
@@ -3616,48 +3617,57 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                                                                     )}
 
                                                                     {/* Boxes Order Display - Show vendor, box type, and all items */}
-                                                                    {isBoxes && order.boxTypeId && (
-                                                                        <div style={{ padding: 'var(--spacing-md)', backgroundColor: 'var(--bg-surface)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)' }}>
+                                                                    {isBoxes && (order.boxTypeId || (order.boxOrders && order.boxOrders.length > 0)) && (
+                                                                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
                                                                             {(() => {
-                                                                                const box = boxTypes.find(b => b.id === order.boxTypeId);
-                                                                                // Get vendorId from order first, then fall back to box.vendorId
-                                                                                const boxVendorId = order.vendorId || box?.vendorId || null;
-                                                                                const vendor = boxVendorId ? vendors.find(v => v.id === boxVendorId) : null;
-                                                                                const vendorName = vendor?.name || 'Unassigned';
-                                                                                const boxName = box?.name || 'Unknown Box';
-                                                                                const nextDelivery = boxVendorId ? getNextDeliveryDate(boxVendorId) : null;
-                                                                                const items = order.items || {};
+                                                                                const boxesToDisplay = (order.boxOrders && order.boxOrders.length > 0)
+                                                                                    ? order.boxOrders
+                                                                                    : [{
+                                                                                        boxTypeId: order.boxTypeId,
+                                                                                        vendorId: order.vendorId,
+                                                                                        quantity: order.boxQuantity,
+                                                                                        items: order.items
+                                                                                    }];
 
-                                                                                return (
-                                                                                    <>
-                                                                                        {/* Vendor */}
-                                                                                        <div style={{ marginBottom: 'var(--spacing-sm)', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                                                                                            {vendorName}
-                                                                                        </div>
-                                                                                        {/* Box Type and Quantity */}
-                                                                                        <div style={{ marginBottom: 'var(--spacing-sm)', fontSize: '0.85rem', color: 'var(--text-primary)' }}>
-                                                                                            {boxName} × {order.boxQuantity || 1}
-                                                                                        </div>
-                                                                                        {/* Items List */}
-                                                                                        {Object.keys(items).length > 0 ? (
-                                                                                            <div style={{ fontSize: '0.85rem', color: 'var(--text-primary)' }}>
-                                                                                                {Object.entries(items).map(([itemId, qty]: [string, any]) => {
-                                                                                                    const item = menuItems.find(i => i.id === itemId);
-                                                                                                    return item ? (
-                                                                                                        <div key={itemId} style={{ marginBottom: '4px' }}>
-                                                                                                            {item.name} × {qty}
-                                                                                                        </div>
-                                                                                                    ) : null;
-                                                                                                })}
-                                                                                            </div>
-                                                                                        ) : (
-                                                                                            <div style={{ fontSize: '0.85rem', color: 'var(--text-tertiary)', fontStyle: 'italic' }}>
-                                                                                                No items selected
-                                                                                            </div>
-                                                                                        )}
+                                                                                return boxesToDisplay.map((boxData: any, bIdx: number) => {
+                                                                                    const box = boxTypes.find(b => b.id === boxData.boxTypeId);
+                                                                                    const boxVendorId = boxData.vendorId || box?.vendorId || null;
+                                                                                    const vendor = boxVendorId ? vendors.find(v => v.id === boxVendorId) : null;
+                                                                                    const vendorName = vendor?.name || 'Unassigned';
+                                                                                    const boxName = box?.name || 'Unknown Box';
+                                                                                    const items = boxData.items || {};
 
-                                                                                    </>
-                                                                                );
+                                                                                    return (
+                                                                                        <div key={bIdx} style={{ padding: 'var(--spacing-md)', backgroundColor: 'var(--bg-surface)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)' }}>
+                                                                                            {/* Vendor */}
+                                                                                            <div style={{ marginBottom: 'var(--spacing-xs)', fontSize: '0.8rem', color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.025em', fontWeight: 600 }}>
+                                                                                                {vendorName}
+                                                                                            </div>
+                                                                                            {/* Box Type and Quantity */}
+                                                                                            <div style={{ marginBottom: 'var(--spacing-sm)', fontSize: '0.9rem', color: 'var(--text-primary)', fontWeight: 600 }}>
+                                                                                                {boxName} × {boxData.quantity || 1}
+                                                                                            </div>
+                                                                                            {/* Items List */}
+                                                                                            {Object.keys(items).length > 0 ? (
+                                                                                                <div style={{ fontSize: '0.85rem', color: 'var(--text-primary)' }}>
+                                                                                                    {Object.entries(items).map(([itemId, qty]: [string, any]) => {
+                                                                                                        const item = menuItems.find(i => i.id === itemId);
+                                                                                                        return item ? (
+                                                                                                            <div key={itemId} style={{ marginBottom: '4px', display: 'flex', justifyContent: 'space-between' }}>
+                                                                                                                <span>{item.name}</span>
+                                                                                                                <span style={{ color: 'var(--text-secondary)' }}>× {qty}</span>
+                                                                                                            </div>
+                                                                                                        ) : null;
+                                                                                                    })}
+                                                                                                </div>
+                                                                                            ) : (
+                                                                                                <div style={{ fontSize: '0.85rem', color: 'var(--text-tertiary)', fontStyle: 'italic' }}>
+                                                                                                    No items selected
+                                                                                                </div>
+                                                                                            )}
+                                                                                        </div>
+                                                                                    );
+                                                                                });
                                                                             })()}
                                                                         </div>
                                                                     )}

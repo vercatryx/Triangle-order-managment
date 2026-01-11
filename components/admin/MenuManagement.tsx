@@ -57,15 +57,11 @@ export function MenuManagement() {
         const { width, height } = e.currentTarget;
         setImgRef(e.currentTarget);
         const newCrop = centerCrop(
-            makeAspectCrop(
-                {
-                    unit: '%',
-                    width: 90,
-                },
-                1, // Aspect Ratio
-                width,
-                height
-            ),
+            {
+                unit: '%',
+                width: 90,
+                height: 80,
+            },
             width,
             height
         );
@@ -411,7 +407,6 @@ export function MenuManagement() {
                                                     crop={crop}
                                                     onChange={(_, percentCrop) => setCrop(percentCrop)}
                                                     onComplete={(c) => setCompletedCrop(c)}
-                                                    aspect={1}
                                                     style={{ maxWidth: '100%' }}
                                                 >
                                                     {/* eslint-disable-next-line @next/next/no-img-element */}

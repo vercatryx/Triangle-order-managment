@@ -179,12 +179,7 @@ export function BoxCategoriesManagement() {
     function onImageLoad(e: React.SyntheticEvent<HTMLImageElement>) {
         const { width, height } = e.currentTarget;
         const crop = centerCrop(
-            makeAspectCrop(
-                { unit: '%', width: 90 },
-                1, // Aspect Ratio
-                width,
-                height
-            ),
+            { unit: '%', width: 90, height: 80 },
             width,
             height
         );
@@ -580,7 +575,6 @@ export function BoxCategoriesManagement() {
                                 crop={crop}
                                 onChange={(_, percentCrop) => setCrop(percentCrop)}
                                 onComplete={(c) => setCompletedCrop(c)}
-                                aspect={1}
                             >
                                 <img src={imageSrc} onLoad={onImageLoad} style={{ maxWidth: '100%', maxHeight: '60vh' }} />
                             </ReactCrop>
