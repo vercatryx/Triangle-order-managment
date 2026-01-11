@@ -193,17 +193,9 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate, isVendorView }: P
         }
     }
 
-    function escapeCSV(value: any): string {
-        if (value === null || value === undefined) return '';
-        const stringValue = String(value);
-        // If value contains comma, newline, or quote, wrap in quotes and escape quotes
-        if (stringValue.includes(',') || stringValue.includes('\n') || stringValue.includes('"')) {
-            return `"${stringValue.replace(/"/g, '""')}"`;
-        }
-        return stringValue;
-    }
 
-    function getParsedOrderItems(order: any): { name: string; quantity: number; category?: string }[] {
+
+    function getParsedOrderItems(order: any): { name: string; quantity: number; category?: string; notes?: string }[] {
         if (order.service_type === 'Food' || order.service_type === 'Meal' || order.service_type === 'Custom') {
             const items = order.items || [];
             if (items.length === 0) return [];
@@ -215,7 +207,8 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate, isVendorView }: P
                 }
                 const itemName = item.custom_name || menuItem?.name || item.menuItemName || 'Unknown Item';
                 const quantity = parseInt(item.quantity || 0);
-                return { name: itemName, quantity, category: menuItem?.categoryId || undefined };
+                const notes = item.notes || undefined;
+                return { name: itemName, quantity, category: menuItem?.categoryId || undefined, notes };
             });
         } else if (order.service_type === 'Boxes') {
             const boxSelection = order.boxSelection;
@@ -223,7 +216,7 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate, isVendorView }: P
 
             const items = boxSelection.items || {};
             const itemEntries = Object.entries(items);
-            const result: { name: string; quantity: number; category?: string }[] = [];
+            const result: { name: string; quantity: number; category?: string; notes?: string }[] = [];
 
             for (const [itemId, quantityOrObj] of itemEntries) {
                 const menuItem = menuItems.find(mi => mi.id === itemId);
@@ -319,7 +312,14 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate, isVendorView }: P
         }
 
         // Default for Food, Meal, Equipment
-        return parsedItems.map(item => `${item.name} (Qty: ${item.quantity})`).join('; ');
+        // Default for Food, Meal, Equipment
+        return parsedItems.map(item => {
+            let itemStr = `${item.name} (Qty: ${item.quantity})`;
+            if (item.notes) {
+                itemStr += ` (Note: ${item.notes})`;
+            }
+            return itemStr;
+        }).join('; ');
     }
 
     function exportOrdersToExcel() {
@@ -411,72 +411,55 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate, isVendorView }: P
         });
     }
 
-    function parseCSVRow(row: string): string[] {
-        const result: string[] = [];
-        let current = '';
-        let inQuotes = false;
 
-        for (let i = 0; i < row.length; i++) {
-            const char = row[i];
-            const nextChar = row[i + 1];
 
-            if (char === '"') {
-                if (inQuotes && nextChar === '"') {
-                    current += '"';
-                    i++; // Skip next quote
-                } else {
-                    inQuotes = !inQuotes;
-                }
-            } else if (char === ',' && !inQuotes) {
-                result.push(current);
-                current = '';
-            } else {
-                current += char;
-            }
-        }
-        result.push(current); // Push last field
-        return result;
-    }
-
-    async function handleCSVImport(event: React.ChangeEvent<HTMLInputElement>) {
+    async function handleImport(event: React.ChangeEvent<HTMLInputElement>) {
         const file = event.target.files?.[0];
         if (!file) return;
 
         // Reset input
         event.target.value = '';
 
-        if (!file.name.endsWith('.csv')) {
-            alert('Please select a CSV file');
+        if (!file.name.endsWith('.xlsx') && !file.name.endsWith('.xls') && !file.name.endsWith('.csv')) {
+            alert('Please select an Excel or CSV file');
             return;
         }
 
         try {
-            const text = await file.text();
-            const lines = text.split(/\r?\n/).filter(line => line.trim());
+            const arrayBuffer = await file.arrayBuffer();
+            const workbook = XLSX.read(arrayBuffer);
+            const sheetName = workbook.SheetNames[0];
+            const worksheet = workbook.Sheets[sheetName];
+            const jsonData: any[] = XLSX.utils.sheet_to_json(worksheet, { defval: "" });
 
-            if (lines.length < 2) {
-                alert('CSV file must have at least a header row and one data row');
+            if (jsonData.length === 0) {
+                alert('File appears to be empty or missing data rows');
                 return;
             }
 
-            // Parse header row
-            const headers = parseCSVRow(lines[0]);
-            // Normalize header names for flexible matching (case-insensitive, handle spaces/underscores)
-            const normalizedHeaders = headers.map(h => h.toLowerCase().replace(/[_\s]/g, ''));
-            const orderIdIndex = normalizedHeaders.findIndex(h => h === 'orderid' || h === 'ordernumber');
-            const deliveryProofUrlIndex = normalizedHeaders.findIndex(h => h === 'deliveryproofurl');
+            // Normalize header names from the first row keys
+            const sampleRow = jsonData[0];
+            const keys = Object.keys(sampleRow);
 
-            if (orderIdIndex === -1) {
-                alert('CSV file must contain an "Order ID" or "Order Number" column');
+            // Helper to find key case-insensitively
+            const findKey = (candidates: string[]) => {
+                return keys.find(k => candidates.includes(k.toLowerCase().replace(/[_\s]/g, '')));
+            };
+
+            const orderIdKey = findKey(['orderid', 'ordernumber']);
+            const deliveryProofUrlKey = findKey(['deliveryproofurl']);
+
+            if (!orderIdKey) {
+                alert('File must contain an "Order ID" or "Order Number" column');
                 return;
             }
 
-            if (deliveryProofUrlIndex === -1) {
-                alert('CSV file must contain a "Delivery Proof URL" or "delivery_proof_url" column');
+            if (!deliveryProofUrlKey) {
+                alert('File must contain a "Delivery Proof URL" or "delivery_proof_url" column');
                 return;
             }
 
-            const totalRows = lines.length - 1; // Exclude header row
+            const totalRows = jsonData.length;
 
             // Initialize progress state
             setImportProgress({
@@ -498,16 +481,16 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate, isVendorView }: P
             const errors: string[] = [];
             const skipped: string[] = [];
 
-            for (let i = 1; i < lines.length; i++) {
-                const row = parseCSVRow(lines[i]);
-                const orderIdentifier = row[orderIdIndex]?.trim();
-                const deliveryProofUrl = row[deliveryProofUrlIndex]?.trim();
+            for (let i = 0; i < jsonData.length; i++) {
+                const row = jsonData[i];
+                const orderIdentifier = String(row[orderIdKey] || '').trim();
+                const deliveryProofUrl = String(row[deliveryProofUrlKey] || '').trim();
 
                 // Update progress - current row
                 setImportProgress(prev => ({
                     ...prev,
-                    currentRow: i,
-                    currentStatus: `Processing row ${i} of ${totalRows}...`
+                    currentRow: i + 1,
+                    currentStatus: `Processing row ${i + 1} of ${totalRows}...`
                 }));
 
                 if (!orderIdentifier) {
@@ -537,7 +520,7 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate, isVendorView }: P
                 // Resolve order ID from order number or UUID
                 setImportProgress(prev => ({
                     ...prev,
-                    currentStatus: `Row ${i}: Looking up order ${orderIdentifier}...`
+                    currentStatus: `Row ${i + 1}: Looking up order ${orderIdentifier}...`
                 }));
                 const orderId = await resolveOrderId(orderIdentifier);
                 if (!orderId) {
@@ -555,7 +538,7 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate, isVendorView }: P
                 // Check if order belongs to this vendor
                 setImportProgress(prev => ({
                     ...prev,
-                    currentStatus: `Row ${i}: Verifying order ${orderId}...`
+                    currentStatus: `Row ${i + 1}: Verifying order ${orderId}...`
                 }));
                 const belongsToVendor = await isOrderUnderVendor(orderId, vendorId);
                 if (!belongsToVendor) {
@@ -573,13 +556,6 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate, isVendorView }: P
                 // Check if order matches the delivery date
                 // Note: In delivery view, we're strict about the date.
                 const order = orders.find(o => o.id === orderId);
-                // If it's not in the current orders list, it might be for another date but same vendor.
-                // But for safety, we generally only want to update detailed proofs for what we see.
-                // However, the user might have a massive CSV.
-                // Let's rely on the fact that if it's not in 'orders', we might want to still process it if it's valid?
-                // Actually, let's restrict to current view to match the export.
-                // Or better, check the date if we can or just proceed if it's the vendor's order.
-                // The implementation in VendorDetail checks date. Let's do the same.
 
                 if (order) {
                     const orderDateKey = order.scheduled_delivery_date
@@ -603,7 +579,7 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate, isVendorView }: P
                 // Check if order already has a delivery proof URL (skip if it does)
                 setImportProgress(prev => ({
                     ...prev,
-                    currentStatus: `Row ${i}: Checking order ${orderId}...`
+                    currentStatus: `Row ${i + 1}: Checking order ${orderId}...`
                 }));
                 const alreadyHasProof = await orderHasDeliveryProof(orderId);
                 if (alreadyHasProof) {
@@ -621,7 +597,7 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate, isVendorView }: P
                 // Update order with delivery proof URL and set status to completed (delivered)
                 setImportProgress(prev => ({
                     ...prev,
-                    currentStatus: `Row ${i}: Updating order ${orderId}...`
+                    currentStatus: `Row ${i + 1}: Updating order ${orderId}...`
                 }));
                 const result = await updateOrderDeliveryProof(orderId, deliveryProofUrl);
                 if (result.success) {
@@ -654,7 +630,7 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate, isVendorView }: P
                 await loadData();
             }
         } catch (error: any) {
-            console.error('Error importing CSV:', error);
+            console.error('Error importing file:', error);
             setImportProgress(prev => ({
                 ...prev,
                 isImporting: false,
@@ -821,7 +797,16 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate, isVendorView }: P
 
                                 return (
                                     <tr key={itemKey}>
-                                        <td>{item.custom_name || menuItem?.name || item.menuItemName || 'Unknown Item'}</td>
+                                        <td>
+                                            <div style={{ display: 'flex', flexDirection: 'column' }}>
+                                                <span>{item.custom_name || menuItem?.name || item.menuItemName || 'Unknown Item'}</span>
+                                                {item.notes && (
+                                                    <span style={{ fontSize: '0.85rem', color: '#666', fontStyle: 'italic', marginTop: '2px' }}>
+                                                        (Note: {item.notes})
+                                                    </span>
+                                                )}
+                                            </div>
+                                        </td>
                                         <td>{quantity}</td>
 
                                     </tr>
@@ -1141,8 +1126,8 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate, isVendorView }: P
                                 <Upload size={20} /> Upload Excel
                                 <input
                                     type="file"
-                                    accept=".csv"
-                                    onChange={handleCSVImport}
+                                    accept=".xlsx, .xls"
+                                    onChange={handleImport}
                                     style={{ display: 'none' }}
                                 />
                             </label>

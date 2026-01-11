@@ -1693,6 +1693,44 @@
       "meal_type": "Lunch"
     },
     {
+      "id": "49794f0a-f714-4750-9509-0aa303018fcf",
+      "client_id": "CLIENT-275",
+      "service_type": "Food",
+      "case_id": "123",
+      "status": "scheduled",
+      "last_updated": "2026-01-11T05:42:50.101+00:00",
+      "updated_by": "Avraham ",
+      "created_at": "2026-01-11T05:40:05.995529+00:00",
+      "take_effect_date": null,
+      "total_value": 0,
+      "total_items": 0,
+      "notes": null,
+      "processed_order_id": null,
+      "processed_at": null,
+      "delivery_day": null,
+      "order_number": 100460,
+      "meal_type": "Lunch"
+    },
+    {
+      "id": "284e26b5-d1aa-4b19-9fd5-16cf137ae8f9",
+      "client_id": "CLIENT-248",
+      "service_type": "Food",
+      "case_id": "sdf",
+      "status": "scheduled",
+      "last_updated": "2026-01-11T13:10:22.92+00:00",
+      "updated_by": "Client",
+      "created_at": "2026-01-11T13:10:25.916656+00:00",
+      "take_effect_date": null,
+      "total_value": 192,
+      "total_items": 3,
+      "notes": null,
+      "processed_order_id": null,
+      "processed_at": null,
+      "delivery_day": "Wednesday",
+      "order_number": 100465,
+      "meal_type": "Lunch"
+    },
+    {
       "id": "807e2dc5-f175-4ddd-a095-c9904002901b",
       "client_id": "CLIENT-247",
       "service_type": "Food",
@@ -1826,22 +1864,22 @@
       "meal_type": "Lunch"
     },
     {
-      "id": "45f14e5b-e5b3-4a48-821c-cb5d2a0f0232",
+      "id": "4e5df1fa-6892-4d7d-8d3a-d6a1da6f2b53",
       "client_id": "CLIENT-262",
       "service_type": "Food",
       "case_id": "sdfa",
       "status": "scheduled",
-      "last_updated": "2026-01-09T13:33:10.755+00:00",
+      "last_updated": "2026-01-11T13:44:27.539+00:00",
       "updated_by": "Avraham ",
-      "created_at": "2026-01-09T13:33:12.828627+00:00",
+      "created_at": "2026-01-11T13:44:38.355245+00:00",
       "take_effect_date": null,
-      "total_value": 0,
-      "total_items": 0,
+      "total_value": 144,
+      "total_items": 9,
       "notes": null,
       "processed_order_id": null,
       "processed_at": null,
-      "delivery_day": null,
-      "order_number": 100397,
+      "delivery_day": "Monday",
+      "order_number": 100469,
       "meal_type": "Lunch"
     },
     {
@@ -2168,25 +2206,6 @@
       "meal_type": "Lunch"
     },
     {
-      "id": "14a15939-2bbd-4cab-93fb-42deeb9cd0f5",
-      "client_id": "CLIENT-248",
-      "service_type": "Food",
-      "case_id": "sdf",
-      "status": "scheduled",
-      "last_updated": "2026-01-11T03:24:57.459+00:00",
-      "updated_by": "Client",
-      "created_at": "2026-01-11T03:25:01.716181+00:00",
-      "take_effect_date": null,
-      "total_value": 192,
-      "total_items": 3,
-      "notes": null,
-      "processed_order_id": null,
-      "processed_at": null,
-      "delivery_day": "Wednesday",
-      "order_number": 100456,
-      "meal_type": "Lunch"
-    },
-    {
       "id": "1b9a1a39-8bc7-46e6-ba84-e09350ed64ad",
       "client_id": "CLIENT-135",
       "service_type": "Food",
@@ -2320,14 +2339,14 @@
       "meal_type": "Lunch"
     },
     {
-      "id": "b59d19c2-61fa-4697-af56-50eb698c22c1",
+      "id": "d4647d2b-d362-4408-9d44-06f475c5d072",
       "client_id": "CLIENT-248",
       "service_type": "Meal",
       "case_id": "sdf",
       "status": "scheduled",
-      "last_updated": "2026-01-11T03:24:57.459+00:00",
+      "last_updated": "2026-01-11T13:10:22.92+00:00",
       "updated_by": "Client",
-      "created_at": "2026-01-11T03:25:03.521629+00:00",
+      "created_at": "2026-01-11T13:10:27.626887+00:00",
       "take_effect_date": null,
       "total_value": 6,
       "total_items": 2,
@@ -2335,7 +2354,7 @@
       "processed_order_id": null,
       "processed_at": null,
       "delivery_day": "Wednesday",
-      "order_number": 100457,
+      "order_number": 100466,
       "meal_type": "test"
     },
     {
@@ -2394,6 +2413,25 @@
       "delivery_day": null,
       "order_number": 100386,
       "meal_type": "Lunch"
+    },
+    {
+      "id": "67ed1549-8b2b-474c-8137-1cea80fa30a9",
+      "client_id": "CLIENT-262",
+      "service_type": "Meal",
+      "case_id": "sdfa",
+      "status": "scheduled",
+      "last_updated": "2026-01-11T13:44:27.539+00:00",
+      "updated_by": "Avraham ",
+      "created_at": "2026-01-11T13:44:39.955628+00:00",
+      "take_effect_date": null,
+      "total_value": 224,
+      "total_items": 13,
+      "notes": null,
+      "processed_order_id": null,
+      "processed_at": null,
+      "delivery_day": "Monday",
+      "order_number": 100470,
+      "meal_type": "Breakfast/Lunch"
     },
     {
       "id": "43f0d155-cdbc-4fd8-87b5-cebdb476381a",
@@ -2548,25 +2586,6 @@
       "meal_type": "Lunch"
     },
     {
-      "id": "5a23103a-5fd2-4c71-9b02-0c8a75793922",
-      "client_id": "CLIENT-262",
-      "service_type": "Food",
-      "case_id": "sdfa",
-      "status": "scheduled",
-      "last_updated": "2026-01-11T01:13:37.901+00:00",
-      "updated_by": "Avraham ",
-      "created_at": "2026-01-11T01:01:18.535903+00:00",
-      "take_effect_date": null,
-      "total_value": 144,
-      "total_items": 9,
-      "notes": null,
-      "processed_order_id": null,
-      "processed_at": null,
-      "delivery_day": "Monday",
-      "order_number": 100412,
-      "meal_type": "Lunch"
-    },
-    {
       "id": "b2f7a23a-3da7-4bee-88a9-88036d3d5827",
       "client_id": "CLIENT-239",
       "service_type": "Meal",
@@ -2667,6 +2686,30 @@
   "orderBoxSelections": [],
   "upcomingOrderVendorSelections": [
     {
+      "id": "fea9e3b2-e5b3-4d09-8d81-6ccaeefc3621",
+      "upcoming_order_id": "284e26b5-d1aa-4b19-9fd5-16cf137ae8f9",
+      "vendor_id": "910836db-9b0e-4e9a-bc5d-57b5ebd6878a",
+      "created_at": "2026-01-11T13:10:26.464923+00:00"
+    },
+    {
+      "id": "9659de67-7388-4556-b26a-b001ecbbfb62",
+      "upcoming_order_id": "d4647d2b-d362-4408-9d44-06f475c5d072",
+      "vendor_id": null,
+      "created_at": "2026-01-11T13:10:28.16011+00:00"
+    },
+    {
+      "id": "8ed1fd03-63d6-401d-b846-f4acc903bb8c",
+      "upcoming_order_id": "4e5df1fa-6892-4d7d-8d3a-d6a1da6f2b53",
+      "vendor_id": "1e9e2218-fdff-434f-b279-93d9d7bf4bd2",
+      "created_at": "2026-01-11T13:44:38.929214+00:00"
+    },
+    {
+      "id": "1b541fae-c134-4e19-9b6a-232cb5ce8297",
+      "upcoming_order_id": "67ed1549-8b2b-474c-8137-1cea80fa30a9",
+      "vendor_id": null,
+      "created_at": "2026-01-11T13:44:40.446949+00:00"
+    },
+    {
       "id": "6b9b4c99-b1dd-4801-b9ab-8f54258d3df6",
       "upcoming_order_id": "90737e6d-b323-440b-a4a2-265c6c57c54f",
       "vendor_id": "1e9e2218-fdff-434f-b279-93d9d7bf4bd2",
@@ -2697,12 +2740,6 @@
       "created_at": "2026-01-08T01:09:02.542731+00:00"
     },
     {
-      "id": "cf2fe238-e1a8-43ce-86e0-e4ae1e910a14",
-      "upcoming_order_id": "5a23103a-5fd2-4c71-9b02-0c8a75793922",
-      "vendor_id": "1e9e2218-fdff-434f-b279-93d9d7bf4bd2",
-      "created_at": "2026-01-11T01:13:44.613659+00:00"
-    },
-    {
       "id": "1cfc4edd-36fd-405e-828e-02893ab00078",
       "upcoming_order_id": "90d157d6-2358-439a-a81e-e692f38a2e1e",
       "vendor_id": "1e9e2218-fdff-434f-b279-93d9d7bf4bd2",
@@ -2713,43 +2750,79 @@
       "upcoming_order_id": "482965d2-bd6c-479f-bdfe-34688e41390d",
       "vendor_id": null,
       "created_at": "2026-01-11T01:56:23.688748+00:00"
-    },
-    {
-      "id": "ab18958b-0e3e-426d-b08e-c6d842555e65",
-      "upcoming_order_id": "14a15939-2bbd-4cab-93fb-42deeb9cd0f5",
-      "vendor_id": "910836db-9b0e-4e9a-bc5d-57b5ebd6878a",
-      "created_at": "2026-01-11T03:25:02.253582+00:00"
-    },
-    {
-      "id": "47034375-d6ea-409c-9d3d-1fc608764881",
-      "upcoming_order_id": "b59d19c2-61fa-4697-af56-50eb698c22c1",
-      "vendor_id": null,
-      "created_at": "2026-01-11T03:25:04.043256+00:00"
     }
   ],
   "upcomingOrderItems": [
     {
-      "id": "3dad95ca-93db-4eca-832c-0f562a265555",
-      "upcoming_order_id": "5a23103a-5fd2-4c71-9b02-0c8a75793922",
-      "vendor_selection_id": "cf2fe238-e1a8-43ce-86e0-e4ae1e910a14",
-      "menu_item_id": null,
-      "quantity": 4,
-      "unit_value": 16,
-      "total_value": 64,
-      "created_at": "2026-01-11T01:13:44.748251+00:00",
-      "meal_item_id": null,
-      "notes": "other tests "
-    },
-    {
-      "id": "26950875-871d-4519-8a7d-77623d35bca2",
-      "upcoming_order_id": "5a23103a-5fd2-4c71-9b02-0c8a75793922",
-      "vendor_selection_id": "cf2fe238-e1a8-43ce-86e0-e4ae1e910a14",
+      "id": "7b67371b-f345-4518-8220-6327a3adad21",
+      "upcoming_order_id": "284e26b5-d1aa-4b19-9fd5-16cf137ae8f9",
+      "vendor_selection_id": "fea9e3b2-e5b3-4d09-8d81-6ccaeefc3621",
       "menu_item_id": null,
       "quantity": 1,
-      "unit_value": 144,
-      "total_value": 144,
-      "created_at": "2026-01-11T01:13:45.028373+00:00",
+      "unit_value": 64,
+      "total_value": 64,
+      "created_at": "2026-01-11T13:10:26.719273+00:00",
       "meal_item_id": null,
+      "notes": null
+    },
+    {
+      "id": "d941b0d5-04b1-4a18-b46c-ae8f501e1f19",
+      "upcoming_order_id": "284e26b5-d1aa-4b19-9fd5-16cf137ae8f9",
+      "vendor_selection_id": "fea9e3b2-e5b3-4d09-8d81-6ccaeefc3621",
+      "menu_item_id": null,
+      "quantity": 1,
+      "unit_value": 192,
+      "total_value": 192,
+      "created_at": "2026-01-11T13:10:27.001002+00:00",
+      "meal_item_id": null,
+      "notes": null
+    },
+    {
+      "id": "5ac00bce-ce5f-4489-b2d6-ea5d8ccd2387",
+      "upcoming_order_id": "4e5df1fa-6892-4d7d-8d3a-d6a1da6f2b53",
+      "vendor_selection_id": "8ed1fd03-63d6-401d-b846-f4acc903bb8c",
+      "menu_item_id": null,
+      "quantity": 5,
+      "unit_value": 16,
+      "total_value": 80,
+      "created_at": "2026-01-11T13:44:39.276702+00:00",
+      "meal_item_id": null,
+      "notes": "other other test"
+    },
+    {
+      "id": "2eb8106d-9550-48db-95c6-04359637c58f",
+      "upcoming_order_id": "67ed1549-8b2b-474c-8137-1cea80fa30a9",
+      "vendor_selection_id": "1b541fae-c134-4e19-9b6a-232cb5ce8297",
+      "menu_item_id": null,
+      "quantity": 2,
+      "unit_value": 16,
+      "total_value": 32,
+      "created_at": "2026-01-11T13:44:40.582866+00:00",
+      "meal_item_id": "70568b4f-b9b5-46d0-b655-fde4c3b3b36b",
+      "notes": null
+    },
+    {
+      "id": "0eb9ad01-63df-4708-b2e6-3db7b2486807",
+      "upcoming_order_id": "67ed1549-8b2b-474c-8137-1cea80fa30a9",
+      "vendor_selection_id": "1b541fae-c134-4e19-9b6a-232cb5ce8297",
+      "menu_item_id": null,
+      "quantity": 1,
+      "unit_value": 16,
+      "total_value": 16,
+      "created_at": "2026-01-11T13:44:40.845441+00:00",
+      "meal_item_id": "a3ed9168-fe98-4fb0-8ca9-d728b16dc266",
+      "notes": null
+    },
+    {
+      "id": "c07ffabe-d16b-45aa-b976-71a6f088d5cd",
+      "upcoming_order_id": "67ed1549-8b2b-474c-8137-1cea80fa30a9",
+      "vendor_selection_id": "1b541fae-c134-4e19-9b6a-232cb5ce8297",
+      "menu_item_id": null,
+      "quantity": 3,
+      "unit_value": 16,
+      "total_value": 48,
+      "created_at": "2026-01-11T13:44:41.112578+00:00",
+      "meal_item_id": "ef8bf685-db75-42d2-aab1-3182a0e228bd",
       "notes": null
     },
     {
@@ -2858,42 +2931,6 @@
       "total_value": 5.33,
       "created_at": "2026-01-11T01:56:25.216435+00:00",
       "meal_item_id": "b6bd1f9a-8396-4441-9927-46e1b8bc4349",
-      "notes": null
-    },
-    {
-      "id": "16649b1c-d080-4b74-9561-a19f3943c7ce",
-      "upcoming_order_id": "14a15939-2bbd-4cab-93fb-42deeb9cd0f5",
-      "vendor_selection_id": "ab18958b-0e3e-426d-b08e-c6d842555e65",
-      "menu_item_id": null,
-      "quantity": 1,
-      "unit_value": 64,
-      "total_value": 64,
-      "created_at": "2026-01-11T03:25:02.394973+00:00",
-      "meal_item_id": null,
-      "notes": null
-    },
-    {
-      "id": "8fde5699-31e3-45f2-8590-142279956012",
-      "upcoming_order_id": "14a15939-2bbd-4cab-93fb-42deeb9cd0f5",
-      "vendor_selection_id": "ab18958b-0e3e-426d-b08e-c6d842555e65",
-      "menu_item_id": null,
-      "quantity": 1,
-      "unit_value": 64,
-      "total_value": 64,
-      "created_at": "2026-01-11T03:25:02.731436+00:00",
-      "meal_item_id": null,
-      "notes": null
-    },
-    {
-      "id": "6d36f02b-cd60-4bc4-b87a-11ebd792af42",
-      "upcoming_order_id": "b59d19c2-61fa-4697-af56-50eb698c22c1",
-      "vendor_selection_id": "47034375-d6ea-409c-9d3d-1fc608764881",
-      "menu_item_id": null,
-      "quantity": 2,
-      "unit_value": 3,
-      "total_value": 6,
-      "created_at": "2026-01-11T03:25:04.158917+00:00",
-      "meal_item_id": "c84559c7-8d0a-4c8e-b833-89eff5f2fd9b",
       "notes": null
     },
     {
@@ -3101,16 +3138,100 @@
       "notes": null
     },
     {
-      "id": "91ba60b3-0774-4608-809d-60e74c74aedd",
-      "upcoming_order_id": "5a23103a-5fd2-4c71-9b02-0c8a75793922",
-      "vendor_selection_id": "cf2fe238-e1a8-43ce-86e0-e4ae1e910a14",
+      "id": "0880793c-f3d6-4ca1-8690-6f1d54cbd107",
+      "upcoming_order_id": "284e26b5-d1aa-4b19-9fd5-16cf137ae8f9",
+      "vendor_selection_id": "fea9e3b2-e5b3-4d09-8d81-6ccaeefc3621",
       "menu_item_id": null,
-      "quantity": 5,
-      "unit_value": 16,
-      "total_value": 80,
-      "created_at": "2026-01-11T01:13:44.892966+00:00",
+      "quantity": 1,
+      "unit_value": 64,
+      "total_value": 64,
+      "created_at": "2026-01-11T13:10:26.578001+00:00",
       "meal_item_id": null,
-      "notes": "other other test"
+      "notes": null
+    },
+    {
+      "id": "06bc6651-0c89-4d38-b4c2-c30169d077c4",
+      "upcoming_order_id": "284e26b5-d1aa-4b19-9fd5-16cf137ae8f9",
+      "vendor_selection_id": "fea9e3b2-e5b3-4d09-8d81-6ccaeefc3621",
+      "menu_item_id": null,
+      "quantity": 1,
+      "unit_value": 64,
+      "total_value": 64,
+      "created_at": "2026-01-11T13:10:26.863363+00:00",
+      "meal_item_id": null,
+      "notes": "testign edti "
+    },
+    {
+      "id": "0bbc71c9-80d7-4bb3-996a-6661076c505d",
+      "upcoming_order_id": "d4647d2b-d362-4408-9d44-06f475c5d072",
+      "vendor_selection_id": "9659de67-7388-4556-b26a-b001ecbbfb62",
+      "menu_item_id": null,
+      "quantity": 2,
+      "unit_value": 3,
+      "total_value": 6,
+      "created_at": "2026-01-11T13:10:28.291411+00:00",
+      "meal_item_id": "c84559c7-8d0a-4c8e-b833-89eff5f2fd9b",
+      "notes": null
+    },
+    {
+      "id": "88479990-c9d9-4a97-af87-33745f662bfb",
+      "upcoming_order_id": "4e5df1fa-6892-4d7d-8d3a-d6a1da6f2b53",
+      "vendor_selection_id": "8ed1fd03-63d6-401d-b846-f4acc903bb8c",
+      "menu_item_id": null,
+      "quantity": 4,
+      "unit_value": 16,
+      "total_value": 64,
+      "created_at": "2026-01-11T13:44:39.122894+00:00",
+      "meal_item_id": null,
+      "notes": "other tests "
+    },
+    {
+      "id": "f5b56a78-536b-40de-b898-9656468376d5",
+      "upcoming_order_id": "4e5df1fa-6892-4d7d-8d3a-d6a1da6f2b53",
+      "vendor_selection_id": "8ed1fd03-63d6-401d-b846-f4acc903bb8c",
+      "menu_item_id": null,
+      "quantity": 1,
+      "unit_value": 144,
+      "total_value": 144,
+      "created_at": "2026-01-11T13:44:39.409155+00:00",
+      "meal_item_id": null,
+      "notes": null
+    },
+    {
+      "id": "e9b6f7f5-b984-4089-ab71-f8b5a01b1c4f",
+      "upcoming_order_id": "67ed1549-8b2b-474c-8137-1cea80fa30a9",
+      "vendor_selection_id": "1b541fae-c134-4e19-9b6a-232cb5ce8297",
+      "menu_item_id": null,
+      "quantity": 3,
+      "unit_value": 16,
+      "total_value": 48,
+      "created_at": "2026-01-11T13:44:40.707267+00:00",
+      "meal_item_id": "8908aa74-b95a-444c-bd5d-dbbd8e78a4ce",
+      "notes": null
+    },
+    {
+      "id": "a60a0261-8a97-4521-afdc-75a45cb9c27b",
+      "upcoming_order_id": "67ed1549-8b2b-474c-8137-1cea80fa30a9",
+      "vendor_selection_id": "1b541fae-c134-4e19-9b6a-232cb5ce8297",
+      "menu_item_id": null,
+      "quantity": 1,
+      "unit_value": 32,
+      "total_value": 32,
+      "created_at": "2026-01-11T13:44:40.975547+00:00",
+      "meal_item_id": "cad45e52-e41c-419c-aaff-ed6bd779d045",
+      "notes": null
+    },
+    {
+      "id": "6647b0f0-86bc-41d7-8072-1f39e83c15d3",
+      "upcoming_order_id": "67ed1549-8b2b-474c-8137-1cea80fa30a9",
+      "vendor_selection_id": "1b541fae-c134-4e19-9b6a-232cb5ce8297",
+      "menu_item_id": null,
+      "quantity": 3,
+      "unit_value": 16,
+      "total_value": 48,
+      "created_at": "2026-01-11T13:44:41.255262+00:00",
+      "meal_item_id": "fc173073-cfeb-4dc5-b772-f890d468a7e4",
+      "notes": null
     },
     {
       "id": "c92961b7-3626-4828-8510-b33ee2a20268",
@@ -3218,30 +3339,6 @@
       "total_value": 10.66,
       "created_at": "2026-01-11T01:56:25.087001+00:00",
       "meal_item_id": "edb38994-3667-4694-949f-899c4f44a87a",
-      "notes": null
-    },
-    {
-      "id": "e5f5ef99-fecc-4ac4-ade0-73113d797bc9",
-      "upcoming_order_id": "14a15939-2bbd-4cab-93fb-42deeb9cd0f5",
-      "vendor_selection_id": "ab18958b-0e3e-426d-b08e-c6d842555e65",
-      "menu_item_id": null,
-      "quantity": 1,
-      "unit_value": 64,
-      "total_value": 64,
-      "created_at": "2026-01-11T03:25:02.523694+00:00",
-      "meal_item_id": null,
-      "notes": null
-    },
-    {
-      "id": "0de33c18-dfa2-4b4c-b17c-aab4e9477abd",
-      "upcoming_order_id": "14a15939-2bbd-4cab-93fb-42deeb9cd0f5",
-      "vendor_selection_id": "ab18958b-0e3e-426d-b08e-c6d842555e65",
-      "menu_item_id": null,
-      "quantity": 1,
-      "unit_value": 192,
-      "total_value": 192,
-      "created_at": "2026-01-11T03:25:02.886346+00:00",
-      "meal_item_id": null,
       "notes": null
     }
   ],
@@ -4247,5 +4344,5 @@
       "items": {}
     }
   ],
-  "lastSynced": "2026-01-11T03:43:14.932Z"
+  "lastSynced": "2026-01-11T13:52:37.683Z"
 }

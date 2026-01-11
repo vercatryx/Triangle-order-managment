@@ -165,7 +165,7 @@ export async function POST(request: NextRequest) {
                 // If Breakfast has Item A x 2, and Lunch has Item A x 1. Total x 3.
                 // We need to merge items if same vendor/day.
 
-                const dayGroups = new Map<string, Map<string, Record<string, number>>>(); // Day -> VendorId -> Items
+                const dayGroups = new Map<string, Map<string, { items: Record<string, number>, itemNotes: Record<string, string> }>>(); // Day -> VendorId -> { items, itemNotes }
 
                 for (const [mealType, config] of Object.entries(selections)) {
                     const c = config as any;
@@ -189,15 +189,25 @@ export async function POST(request: NextRequest) {
                     const vendorMap = dayGroups.get(selectedDay)!;
 
                     if (!vendorMap.has(c.vendorId)) {
-                        vendorMap.set(c.vendorId, {});
+                        vendorMap.set(c.vendorId, { items: {}, itemNotes: {} });
                     }
-                    const existingItems = vendorMap.get(c.vendorId)!;
+                    const entry = vendorMap.get(c.vendorId)!;
 
                     // Merge items
                     if (c.items) {
                         for (const [itemId, qty] of Object.entries(c.items)) {
                             const q = Number(qty) || 0;
-                            existingItems[itemId] = (existingItems[itemId] || 0) + q;
+                            entry.items[itemId] = (entry.items[itemId] || 0) + q;
+
+                            // Merge notes (if any)
+                            if (c.itemNotes && c.itemNotes[itemId]) {
+                                const newNote = c.itemNotes[itemId];
+                                if (entry.itemNotes[itemId]) {
+                                    entry.itemNotes[itemId] += `; ${newNote}`;
+                                } else {
+                                    entry.itemNotes[itemId] = newNote;
+                                }
+                            }
                         }
                     }
                 }
@@ -205,10 +215,11 @@ export async function POST(request: NextRequest) {
                 // Create candidates from groups
                 for (const [day, vendorMap] of dayGroups.entries()) {
                     const combinedVendorSelections = [];
-                    for (const [vId, items] of vendorMap.entries()) {
+                    for (const [vId, data] of vendorMap.entries()) {
                         combinedVendorSelections.push({
                             vendorId: vId,
-                            items: items
+                            items: data.items,
+                            itemNotes: data.itemNotes
                         });
                     }
 
@@ -399,6 +410,13 @@ export async function POST(request: NextRequest) {
                         for (const [itemId, qty] of Object.entries(vs.items)) {
                             const quantity = Number(qty);
                             if (quantity > 0) {
+                                // Debug Item Notes
+                                if (vs.itemNotes && vs.itemNotes[itemId]) {
+                                    const msg = `[Simulate] Found note for item ${itemId}: "${vs.itemNotes[itemId]}"`;
+                                    console.log(msg);
+                                    debugLogs.push(msg);
+                                }
+
                                 let menuItem: any = menuItems.find(mi => mi.id === itemId);
                                 if (!menuItem) {
                                     menuItem = mealItems.find(mi => mi.id === itemId);
@@ -409,11 +427,19 @@ export async function POST(request: NextRequest) {
                                 vendorTotal += lineTotal;
                                 totalItems += quantity;
 
+                                const note = vs.itemNotes ? vs.itemNotes[itemId] : null;
+                                if (note) {
+                                    const msg = `[Simulate] Attaching note to insert payload: "${note}"`;
+                                    console.log(msg);
+                                    debugLogs.push(msg);
+                                }
+
                                 itemsToInsert.push({
                                     menu_item_id: itemId,
                                     quantity: quantity,
                                     unit_value: price,
-                                    total_value: lineTotal
+                                    total_value: lineTotal,
+                                    notes: note
                                 });
                             }
                         }
@@ -478,7 +504,8 @@ export async function POST(request: NextRequest) {
                         unit_value: i.unit_value,
                         total_value: i.total_value,
                         vendor_selection_id: newVs.id,
-                        order_id: newOrder.id // Re-added: Required by schema
+                        order_id: newOrder.id, // Re-added: Required by schema
+                        notes: i.notes
                     }));
 
                     // console.log(`[Debug] Inserting items for order ${newOrder.id}:`, JSON.stringify(itemsWithIds));
@@ -584,7 +611,7 @@ export async function POST(request: NextRequest) {
                         items: bo.items
                     });
 
-                if (boxSelErr) errors.push(`Failed Box Sel for ${newOrder.id}`);
+                if (boxSelErr) errors.push(`Failed Box Sel for ${newOrder.id}: ${boxSelErr.message}`);
 
                 console.log(`[Created] Box Order #${nextOrderNumber} for ${candidate.clientId}`);
                 nextOrderNumber++;

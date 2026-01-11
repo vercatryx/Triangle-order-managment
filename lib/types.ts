@@ -339,6 +339,15 @@ export interface CompletedOrderWithDeliveryProof {
   };
 }
 
+export interface Submission {
+  id: string;
+  status: 'pending' | 'accepted' | 'rejected';
+  created_at: string;
+  pdf_url: string | null;
+  token: string;
+  comments: string | null;
+}
+
 export interface DatabaseSchema {
   clients: ClientProfile[];
   statuses: ClientStatus[];
@@ -374,5 +383,6 @@ export interface ClientFullDetails {
   foodOrder?: ClientFoodOrder | null;
   mealOrder?: ClientMealOrder | null;
   boxOrders?: ClientBoxOrder[];
+  submissions?: Submission[];
 }
 

@@ -5,6 +5,7 @@ import { Navigator } from '@/lib/types';
 import { addNavigator, updateNavigator, deleteNavigator, getNavigatorLogs } from '@/lib/actions';
 import { useDataCache } from '@/lib/data-cache';
 import { Plus, Edit2, Trash2, X, Check, Users, Download } from 'lucide-react';
+import * as XLSX from 'xlsx';
 import styles from './NavigatorManagement.module.css';
 
 export function NavigatorManagement() {
@@ -94,7 +95,7 @@ export function NavigatorManagement() {
                 return;
             }
 
-            // Generate CSV
+            // Generate Excel
             const headers = ['Date', 'Client Name', 'Old Status', 'New Status', 'Units Added'];
             const rows = logs.map((log: any) => [
                 new Date(log.createdAt).toLocaleString(),
@@ -104,21 +105,22 @@ export function NavigatorManagement() {
                 log.unitsAdded
             ]);
 
-            const csvContent = [
-                headers.join(','),
-                ...rows.map((row: any[]) => row.map(cell => `"${cell}"`).join(','))
-            ].join('\n');
+            const wb = XLSX.utils.book_new();
+            const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
 
-            // Download
-            const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-            const link = document.createElement('a');
-            const url = URL.createObjectURL(blob);
-            link.setAttribute('href', url);
-            link.setAttribute('download', `navigator_logs_${nav.name.replace(/\s+/g, '_')}_${new Date().toISOString().split('T')[0]}.csv`);
-            link.style.visibility = 'hidden';
-            document.body.appendChild(link);
-            link.click();
-            document.body.removeChild(link);
+            // Set column widths
+            const wscols = [
+                { wch: 25 }, // Date
+                { wch: 30 }, // Client Name
+                { wch: 15 }, // Old Status
+                { wch: 15 }, // New Status
+                { wch: 15 }  // Units Added
+            ];
+            ws['!cols'] = wscols;
+
+            XLSX.utils.book_append_sheet(wb, ws, "Navigator Logs");
+            XLSX.writeFile(wb, `navigator_logs_${nav.name.replace(/\s+/g, '_')}_${new Date().toISOString().split('T')[0]}.xlsx`);
+
         } catch (error) {
             console.error('Error downloading logs:', error);
             alert('Failed to download logs.');

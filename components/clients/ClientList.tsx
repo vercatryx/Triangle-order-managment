@@ -1,6 +1,7 @@
 'use client';
 
 import { ClientProfileDetail } from './ClientProfile';
+import { ClientInfoShelf } from './ClientInfoShelf';
 
 import { useState, useEffect, useRef } from 'react';
 import { ClientProfile, ClientStatus, Navigator, Vendor, BoxType, ClientFullDetails, MenuItem } from '@/lib/types';
@@ -91,6 +92,9 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
 
     // Order Details Visibility Toggle
     const [showOrderDetails, setShowOrderDetails] = useState(false);
+
+    // Info Shelf State
+    const [infoShelfClientId, setInfoShelfClientId] = useState<string | null>(null);
 
     useEffect(() => {
         loadInitialData();
@@ -714,21 +718,27 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
         );
     }
 
-    function getOrderSummary(client: ClientProfile) {
-        if (!client.activeOrder) return '-';
-        const st = client.serviceType;
-        const conf = client.activeOrder;
+    function getOrderSummary(client: ClientProfile, forceDetails: boolean = false) {
+        if (!client.activeOrder) return <span style={{ color: 'var(--text-tertiary)', fontStyle: 'italic' }}>No active order</span>;
 
-        if (!showOrderDetails) {
+        const conf = client.activeOrder;
+        const st = conf.serviceType || client.serviceType;
+
+        // If we are just showing the simple list table cell (forceDetails=false)
+        if (!showOrderDetails && !forceDetails) {
+            // ... existing logic for table cell summary ...
+            // For now, let's just keep the string logic for the table cell if needed, 
+            // BUT forceDetails=true is passed for the ClientInfoShelf.
+            // The table usually uses this function too? 
+            // Let's check usage. The table usage likely doesn't pass true.
+            // If !forceDetails, return the string summary we had before or a simple ReactNode.
+
             let label: string = st;
             const vendorSummaries: React.ReactNode[] = [];
 
             if (st === 'Food') {
                 const uniqueVendors = new Set<string>();
-
-                // Check if it's multi-day format
                 const isMultiDay = conf.deliveryDayOrders && typeof conf.deliveryDayOrders === 'object';
-
                 if (isMultiDay) {
                     Object.values(conf.deliveryDayOrders || {}).forEach((dayOrder: any) => {
                         if (dayOrder?.vendorSelections) {
@@ -744,256 +754,150 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
                         if (vName) uniqueVendors.add(vName);
                     });
                 }
-
                 if (uniqueVendors.size > 0) {
                     uniqueVendors.forEach(v => vendorSummaries.push(v));
                 }
+            } else if (st === 'Boxes') {
+                let computedVendorId = conf.vendorId;
+                if (!computedVendorId && !conf.boxTypeId && typeof conf === 'object') {
+                    const possibleDayKeys = Object.keys(conf).filter(k => k !== 'id' && k !== 'serviceType' && k !== 'caseId' && typeof (conf as any)[k] === 'object' && (conf as any)[k]?.vendorId);
+                    if (possibleDayKeys.length > 0) computedVendorId = (conf as any)[possibleDayKeys[0]].vendorId;
+                }
+                const box = boxTypes.find(b => b.id === conf.boxTypeId);
+                const vendorId = computedVendorId || box?.vendorId;
+                if (vendorId) {
+                    const vName = vendors.find(v => v.id === vendorId)?.name;
+                    if (vName) vendorSummaries.push(vName);
+                }
+            }
+            return (
+                <div style={{ fontSize: '0.85rem' }}>
+                    <span className={`badge ${st === 'Boxes' ? 'badge-blue' : 'badge-green'}`} style={{ marginRight: '6px' }}>{st}</span>
+                    <span style={{ color: 'var(--text-secondary)' }}>
+                        {vendorSummaries.length > 0 ? vendorSummaries.join(', ') : 'No Vendor'}
+                    </span>
+                </div>
+            );
+        }
 
-                // Check for Meal Orders
-                const mealSelections = client.mealOrder?.mealSelections || client.activeOrder?.mealSelections;
-                if (mealSelections) {
-                    const mealTypes = Object.keys(mealSelections);
-                    if (mealTypes.length > 0) {
-                        label = 'Food & Meal';
-                        mealTypes.forEach(type => {
-                            const selection = mealSelections[type];
-                            if (selection.vendorId) {
-                                const vName = vendors.find(ven => ven.id === selection.vendorId)?.name;
-                                if (vName && !Array.from(uniqueVendors).includes(vName)) {
-                                    vendorSummaries.push(vName);
+        // Full Details for ClientInfoShelf (forceDetails=true)
+        const itemsList: { name: string; quantity: number }[] = [];
+        let vendorName = '';
+
+        if (st === 'Food') {
+            // Collect all items from all vendors/days
+            const isMultiDay = conf.deliveryDayOrders && typeof conf.deliveryDayOrders === 'object';
+
+            // Helper to process selections
+            const processSelections = (selections: any[]) => {
+                selections.forEach(sel => {
+                    const vName = vendors.find(v => v.id === sel.vendorId)?.name;
+                    if (vName && !vendorName.includes(vName)) {
+                        vendorName = vendorName ? `${vendorName}, ${vName}` : vName;
+                    }
+                    if (sel.items) {
+                        Object.entries(sel.items).forEach(([itemId, qty]) => {
+                            const q = Number(qty);
+                            if (q > 0) {
+                                const item = menuItems.find(i => i.id === itemId);
+                                if (item) {
+                                    // Check if already in list (aggregate?) - Usually we want row per item per vendor, but here simple list
+                                    const existing = itemsList.find(i => i.name === item.name);
+                                    if (existing) existing.quantity += q;
+                                    else itemsList.push({ name: item.name, quantity: q });
                                 }
-                            } else {
-                                vendorSummaries.push(<span key={`missing-${type}`} style={{ color: 'red' }}>Not Set</span>);
                             }
                         });
                     }
-                }
-            } else if (st === 'Boxes') {
-                // Check vendorId from order config first, then fall back to boxType
-                // Also handle multi-day format fallthrough (where data is nested under delivery day)
-                let computedVendorId = conf.vendorId;
-
-                if (!computedVendorId && !conf.boxTypeId && typeof conf === 'object') {
-                    // Check if it's nested (e.g. { "Thursday": { vendorId: ... } })
-                    const possibleDayKeys = Object.keys(conf).filter(k =>
-                        k !== 'id' && k !== 'serviceType' && k !== 'caseId' && typeof (conf as any)[k] === 'object' && (conf as any)[k]?.vendorId
-                    );
-
-                    if (possibleDayKeys.length > 0) {
-                        computedVendorId = (conf as any)[possibleDayKeys[0]].vendorId;
-                        // Also try to get boxTypeId from there if needed
-                        if (!conf.boxTypeId) {
-                            conf.boxTypeId = (conf as any)[possibleDayKeys[0]].boxTypeId;
-                        }
-                    }
-                }
-
-                const box = boxTypes.find(b => b.id === conf.boxTypeId);
-                const vendorId = computedVendorId || box?.vendorId;
-                const vendorName = vendors.find(v => v.id === vendorId)?.name;
-
-                if (!vendorId) {
-                    // Only log once per client to avoid spam - this is a data issue with existing clients
-                } else if (!vendorName) {
-                    console.log('[ClientList] Warning - Vendor ID not found in list:', {
-                        clientId: client.id,
-                        orderVendorId: vendorId,
-                        availableVendorsCount: vendors.length
-                    });
-                }
-
-                if (vendorName) vendorSummaries.push(vendorName);
-            }
-
-            return (
-                <div>
-                    <div>
-                        <strong style={{ fontWeight: 600, color: 'var(--color-primary)' }}>{label}</strong>
-                        <span style={{ color: 'var(--text-primary)', marginLeft: '4px' }}>
-                            - {vendorSummaries.length > 0 ? vendorSummaries.reduce((prev, curr) => [prev, ', ', curr]) : 'Not Set'}
-                        </span>
-                    </div>
-                </div>
-            );
-        }
-
-        if (st === 'Food') {
-            // Check if it's multi-day format
-            const isMultiDay = conf.deliveryDayOrders && typeof conf.deliveryDayOrders === 'object';
+                });
+            };
 
             if (isMultiDay) {
-                // Multi-day format: deliveryDayOrders[day].vendorSelections
-                const days = Object.keys(conf.deliveryDayOrders || {}).sort();
-
-                if (days.length === 0) {
-                    return (
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                            <div><strong style={{ fontWeight: 600 }}>Food</strong> - Vendor: Not Set</div>
-                            {getMealOrderSummaryJSX(client)}
-                        </div>
-                    );
-                }
-
-                const dayLines = days.map(day => {
-                    const dayOrder = conf.deliveryDayOrders?.[day];
-                    const vendorSelections = dayOrder?.vendorSelections || [];
-
-                    if (vendorSelections.length === 0) {
-                        return { day, vendors: [] };
-                    }
-
-                    const vendorLines = vendorSelections.map((v: any) => {
-                        const vendorName = vendors.find(ven => ven.id === v.vendorId)?.name || 'Not Set';
-                        const items = v.items || {};
-                        const itemEntries = Object.entries(items);
-
-                        const hasItems = itemEntries.some(([_, qty]) => Number(qty) > 0);
-                        if (!hasItems) return null;
-
-                        const itemDetails = itemEntries
-                            .filter(([_, qty]) => Number(qty) > 0)
-                            .map(([id, qty]) => {
-                                const item = menuItems.find(i => i.id === id);
-                                return item ? `${item.name} x${qty}` : null;
-                            })
-                            .filter((item): item is string => item !== null)
-                            .join(', ');
-
-                        return { vendorName, itemDetails };
-                    }).filter((line): line is { vendorName: string; itemDetails: string } => line !== null);
-
-                    return { day, vendors: vendorLines };
-                }).filter((dayLine): dayLine is { day: string; vendors: { vendorName: string; itemDetails: string }[] } => dayLine.vendors.length > 0);
-
-                if (dayLines.length === 0) {
-                    return (
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                            <div><strong style={{ fontWeight: 600 }}>Food</strong> - Vendor: Not Set</div>
-                            {getMealOrderSummaryJSX(client)}
-                        </div>
-                    );
-                }
-
-                return (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                        {dayLines.map((dayLine, dayIdx) => (
-                            <div key={dayIdx} style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                                <div>
-                                    {dayIdx === 0 && <strong style={{ fontWeight: 600 }}>Food</strong>}
-                                    {dayIdx === 0 && ' - '}
-                                    <span style={{ fontWeight: 500, color: 'var(--text-secondary)' }}>{dayLine.day}:</span>
-                                </div>
-                                {dayLine.vendors.map((vendor: { vendorName: string; itemDetails: string }, vIdx: number) => (
-                                    <div key={vIdx} style={{ marginLeft: '0' }}>
-                                        <span style={{ fontWeight: 500 }}>Vendor: {vendor.vendorName}</span>
-                                        {vendor.itemDetails && (
-                                            <div style={{ fontSize: '0.85em', color: 'var(--text-secondary)', marginLeft: '0' }}>
-                                                {vendor.itemDetails}
-                                            </div>
-                                        )}
-                                    </div>
-                                ))}
-                            </div>
-                        ))}
-                        {getMealOrderSummaryJSX(client)}
-                    </div>
-                );
-            } else {
-                // Single-day format: vendorSelections array
-                const vendorSelections = conf.vendorSelections || [];
-
-                if (vendorSelections.length === 0) {
-                    return (
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                            <div><strong style={{ fontWeight: 600 }}>Food</strong> - Vendor: Not Set</div>
-                            {getMealOrderSummaryJSX(client)}
-                        </div>
-                    );
-                }
-
-                const vendorLines = vendorSelections.map(v => {
-                    const vendorName = vendors.find(ven => ven.id === v.vendorId)?.name || 'Not Set';
-                    const items = v.items || {};
-                    const itemEntries = Object.entries(items);
-
-                    const hasItems = itemEntries.some(([_, qty]) => Number(qty) > 0);
-                    if (!hasItems) return null;
-
-                    const itemDetails = itemEntries
-                        .filter(([_, qty]) => Number(qty) > 0)
-                        .map(([id, qty]) => {
-                            const item = menuItems.find(i => i.id === id);
-                            return item ? `${item.name} x${qty}` : null;
-                        })
-                        .filter((item): item is string => item !== null)
-                        .join(', ');
-
-                    return { vendorName, itemDetails };
-                }).filter((line): line is { vendorName: string; itemDetails: string } => line !== null);
-
-                if (vendorLines.length === 0) {
-                    return (
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                            <div><strong style={{ fontWeight: 600 }}>Food</strong> - Vendor: Not Set</div>
-                            {getMealOrderSummaryJSX(client)}
-                        </div>
-                    );
-                }
-
-                return (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                        {vendorLines.map((line, idx) => (
-                            <div key={idx}>
-                                {idx === 0 && <strong style={{ fontWeight: 600 }}>Food</strong>}
-                                {idx === 0 && ' - '}
-                                <span style={{ fontWeight: 500 }}>Vendor: {line.vendorName}</span>
-                                {line.itemDetails && (
-                                    <div style={{ fontSize: '0.85em', color: 'var(--text-secondary)', marginLeft: '0' }}>
-                                        {line.itemDetails}
-                                    </div>
-                                )}
-                            </div>
-                        ))}
-                        {getMealOrderSummaryJSX(client)}
-                    </div>
-                );
+                Object.values(conf.deliveryDayOrders || {}).forEach((dayOrder: any) => {
+                    if (dayOrder?.vendorSelections) processSelections(dayOrder.vendorSelections);
+                });
+            } else if (conf.vendorSelections) {
+                processSelections(conf.vendorSelections);
             }
+
+            // Add Meal Items
+            const mealSelections = client.mealOrder?.mealSelections || client.activeOrder?.mealSelections;
+            if (mealSelections) {
+                Object.keys(mealSelections).forEach(type => {
+                    const sel = mealSelections[type];
+                    if (sel.items) {
+                        Object.entries(sel.items).forEach(([itemId, qty]) => {
+                            const q = Number(qty);
+                            if (q > 0) {
+                                // Try to find in menu items or meal items (though meal items usually separate)
+                                const item = menuItems.find(i => i.id === itemId) || mealItems.find(i => i.id === itemId);
+                                if (item) {
+                                    const existing = itemsList.find(i => i.name === item.name);
+                                    if (existing) existing.quantity += q;
+                                    else itemsList.push({ name: item.name, quantity: q });
+                                } else {
+                                    // Fallback for ID if not found
+                                    itemsList.push({ name: `Item #${itemId.slice(0, 5)}`, quantity: q });
+                                }
+                            }
+                        });
+                    }
+                });
+            }
+
         } else if (st === 'Boxes') {
+            // Boxes Logic
+            let computedVendorId = conf.vendorId;
+            if (!computedVendorId && !conf.boxTypeId && typeof conf === 'object') {
+                const possibleDayKeys = Object.keys(conf).filter(k => k !== 'id' && k !== 'serviceType' && k !== 'caseId' && typeof (conf as any)[k] === 'object' && (conf as any)[k]?.vendorId);
+                if (possibleDayKeys.length > 0) computedVendorId = (conf as any)[possibleDayKeys[0]].vendorId;
+            }
             const box = boxTypes.find(b => b.id === conf.boxTypeId);
-            const vendorId = conf.vendorId || box?.vendorId;
-            const vendorName = vendors.find(v => v.id === vendorId)?.name || 'Not Set';
+            const vId = computedVendorId || box?.vendorId;
+            vendorName = vendors.find(v => v.id === vId)?.name || 'No Vendor';
 
-            const items = conf.items || {};
-            const itemDetails = Object.entries(items)
-                .filter(([_, qty]) => Number(qty) > 0)
-                .map(([id, qty]) => {
-                    const item = menuItems.find(i => i.id === id);
-                    return item ? `${item.name} x${qty}` : null;
-                })
-                .filter(Boolean)
-                .join(', ');
-
-            return (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                    <div>
-                        <strong style={{ fontWeight: 600 }}>Boxes</strong> - Vendor: <span style={{ color: vendorName === 'Not Set' ? 'var(--color-danger)' : 'inherit' }}>{vendorName}</span>
-                    </div>
-                    {itemDetails && (
-                        <div style={{ fontSize: '0.85em', color: 'var(--text-secondary)' }}>
-                            {itemDetails}
-                        </div>
-                    )}
-                    {!itemDetails && (
-                        <div style={{ fontSize: '0.85em', color: 'var(--text-secondary)' }}>
-                            Items: Not Set
-                        </div>
-                    )}
-                </div>
-            );
+            if (conf.items) {
+                Object.entries(conf.items).forEach(([itemId, qty]) => {
+                    const q = Number(qty);
+                    if (q > 0) {
+                        const item = menuItems.find(i => i.id === itemId);
+                        if (item) itemsList.push({ name: item.name, quantity: q });
+                    }
+                });
+            }
+            // If no items but box quantity > 0 (generic box) ?? 
+            // Usually boxes have items. If not, maybe show "Standard Box"
+            if (itemsList.length === 0 && conf.boxQuantity > 0) {
+                // itemsList.push({ name: box?.name || 'Box', quantity: conf.boxQuantity });
+            }
         }
 
-        return '-';
+        return (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                <div style={{ fontWeight: 600, fontSize: '0.9rem' }}>
+                    {st} - <span style={{ fontWeight: 500 }}>{vendorName || 'Vendor Not Set'}</span>
+                </div>
+                {itemsList.length > 0 ? (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                        {itemsList.map((item, idx) => (
+                            <div key={idx} style={{ fontSize: '0.9rem', lineHeight: '1.4' }}>
+                                <span style={{ fontWeight: 600 }}>{item.quantity}</span> * {item.name}
+                            </div>
+                        ))}
+                    </div>
+                ) : (
+                    <div style={{ fontStyle: 'italic', color: 'var(--text-tertiary)' }}>No items selected</div>
+                )}
+
+                {/* 
+                   For Meal specific detailed display, we could reuse getMealOrderSummaryJSX logic 
+                   but we just aggregated everything above for a cleaner list as requested.
+                   "2 * Challah"
+                  */}
+            </div>
+        );
     }
+
 
     function getScreeningStatus(client: ClientProfile) {
         const status = client.screeningStatus || 'not_started';
@@ -1643,9 +1547,9 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
                                     }
                                     setIsAddingDependent(true);
                                 } else {
-                                    // Check if we have data ready
-                                    // If not, the modal will handle showing a loading state and fetching data.
-                                    setSelectedClientId(client.id);
+                                    // Open the info shelf instead of the full profile directly
+                                    setInfoShelfClientId(client.id);
+                                    prefetchClient(client.id);
                                 }
                             }}
                             className={`${styles.clientRow} ${isDependent ? styles.clientRowDependent : ''}`}
@@ -1767,6 +1671,38 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
                         loadInitialData();
                     }}></div>
                 </div>
+            )}
+
+            {infoShelfClientId && clients.find(c => c.id === infoShelfClientId) && (
+                <ClientInfoShelf
+                    client={detailsCache[infoShelfClientId]?.client || clients.find(c => c.id === infoShelfClientId)!}
+                    statuses={statuses}
+                    navigators={navigators}
+                    orderSummary={getOrderSummary(detailsCache[infoShelfClientId]?.client || clients.find(c => c.id === infoShelfClientId)!, true)}
+                    submissions={detailsCache[infoShelfClientId]?.submissions || []}
+                    allClients={allClientsForLookup}
+                    onClose={() => setInfoShelfClientId(null)}
+                    onOpenProfile={(clientId) => {
+                        setInfoShelfClientId(null);
+                        setSelectedClientId(clientId);
+                    }}
+                    onClientUpdated={() => {
+                        // Clear cache for this client to force re-fetch
+                        const updatedClientId = infoShelfClientId;
+                        if (updatedClientId) {
+                            setDetailsCache(prev => {
+                                const newCache = { ...prev };
+                                delete newCache[updatedClientId];
+                                return newCache;
+                            });
+                        }
+                        loadInitialData();
+                    }}
+                    onClientDeleted={() => {
+                        setInfoShelfClientId(null);
+                        loadInitialData();
+                    }}
+                />
             )}
         </div>
     );

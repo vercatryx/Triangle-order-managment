@@ -24,6 +24,7 @@ import {
     getCompletedOrdersWithDeliveryProof as serverGetCompletedOrdersWithDeliveryProof,
     getMealCategories as serverGetMealCategories,
     getMealItems as serverGetMealItems,
+    getRecentOrdersForClient as serverGetRecentOrdersForClient,
 } from './actions';
 
 import { ClientProfile, ClientStatus, Navigator, Vendor, MenuItem, BoxType, AppSettings, ItemCategory, DeliveryRecord, CompletedOrderWithDeliveryProof, Equipment, MealCategory, MealItem } from './types';
@@ -48,6 +49,7 @@ let clientsCache: CacheEntry<ClientProfile[]> | undefined;
 const clientCache: Map<string, CacheEntry<ClientProfile>> = new Map();
 // Order-related caches (per client)
 const activeOrderCache: Map<string, CacheEntry<any>> = new Map();
+const recentOrdersCache: Map<string, CacheEntry<any>> = new Map();
 const upcomingOrderCache: Map<string, CacheEntry<any>> = new Map();
 const orderHistoryCache: Map<string, CacheEntry<any[]>> = new Map();
 const deliveryHistoryCache: Map<string, CacheEntry<DeliveryRecord[]>> = new Map();
@@ -180,7 +182,9 @@ export function invalidateClientData(clientId?: string) {
         upcomingOrderCache.delete(clientId);
         orderHistoryCache.delete(clientId);
         deliveryHistoryCache.delete(clientId);
+        deliveryHistoryCache.delete(clientId);
         billingHistoryCache.delete(clientId);
+        recentOrdersCache.delete(clientId);
     } else {
         clientCache.clear();
         clientsCache = undefined;
@@ -188,7 +192,9 @@ export function invalidateClientData(clientId?: string) {
         upcomingOrderCache.clear();
         orderHistoryCache.clear();
         deliveryHistoryCache.clear();
+        deliveryHistoryCache.clear();
         billingHistoryCache.clear();
+        recentOrdersCache.clear();
     }
 }
 
@@ -200,7 +206,9 @@ export function invalidateAll() {
     upcomingOrderCache.clear();
     orderHistoryCache.clear();
     deliveryHistoryCache.clear();
+    deliveryHistoryCache.clear();
     billingHistoryCache.clear();
+    recentOrdersCache.clear();
 }
 
 // Order-related data getters (cached)
@@ -221,6 +229,17 @@ export async function getUpcomingOrderForClient(clientId: string): Promise<any> 
     }
     const data = await serverGetUpcomingOrderForClient(clientId);
     upcomingOrderCache.set(clientId, { data, timestamp: Date.now() });
+    return data;
+}
+
+export async function getRecentOrdersForClient(clientId: string, limit: number = 3): Promise<any> {
+    const cacheKey = `${clientId}_${limit}`;
+    const cached = recentOrdersCache.get(cacheKey);
+    if (!isStale(cached, CACHE_DURATION.ORDER_DATA)) {
+        return cached!.data;
+    }
+    const data = await serverGetRecentOrdersForClient(clientId, limit);
+    recentOrdersCache.set(cacheKey, { data, timestamp: Date.now() });
     return data;
 }
 
@@ -271,7 +290,15 @@ export function invalidateOrderData(clientId: string) {
     orderHistoryCache.delete(clientId);
     deliveryHistoryCache.delete(clientId);
     billingHistoryCache.delete(clientId);
+    billingHistoryCache.delete(clientId);
     completedOrdersWithDeliveryProofCache.delete(clientId);
+    recentOrdersCache.delete(clientId);
+    // Also clear with limits since keys include limit
+    for (const key of recentOrdersCache.keys()) {
+        if (key.startsWith(`${clientId}_`)) {
+            recentOrdersCache.delete(key);
+        }
+    }
 }
 
 // --- MEAL SELECTION HELPERS (Cached) ---

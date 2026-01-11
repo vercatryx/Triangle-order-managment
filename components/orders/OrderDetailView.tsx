@@ -72,6 +72,7 @@ export function OrderDetailView({ order }: OrderDetailViewProps) {
                                         <th>Quantity</th>
                                         <th>Unit Value</th>
                                         <th>Total</th>
+                                        <th>Notes</th>
                                     </tr>
                                 </thead>
                                 <tbody>
@@ -81,6 +82,9 @@ export function OrderDetailView({ order }: OrderDetailViewProps) {
                                             <td>{item.quantity}</td>
                                             <td>${item.unitValue.toFixed(2)}</td>
                                             <td>${item.totalValue.toFixed(2)}</td>
+                                            <td style={{ maxWidth: '200px', fontSize: '0.9rem', color: '#555' }}>
+                                                {item.notes || '-'}
+                                            </td>
                                         </tr>
                                     ))}
                                 </tbody>

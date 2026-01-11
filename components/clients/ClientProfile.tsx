@@ -2,10 +2,11 @@
 
 import { useState, useEffect, Fragment, useMemo, useRef, ReactNode } from 'react';
 import { useRouter, useParams } from 'next/navigation';
+import Link from 'next/link';
 import { ClientProfile, ClientStatus, Navigator, Vendor, MenuItem, BoxType, ServiceType, AppSettings, DeliveryRecord, ItemCategory, ClientFullDetails, BoxQuota, MealCategory, MealItem, ClientFoodOrder, ClientMealOrder, ClientBoxOrder } from '@/lib/types';
 import { updateClient, addClient, deleteClient, updateDeliveryProof, recordClientChange, syncCurrentOrderToUpcoming, logNavigatorAction, getBoxQuotas, saveEquipmentOrder, getRegularClients, getDependentsByParentId, addDependent, checkClientNameExists, getClientFullDetails, saveClientFoodOrder, saveClientMealOrder, saveClientBoxOrder, saveCustomOrder } from '@/lib/actions';
 import { getSingleForm, getClientSubmissions } from '@/lib/form-actions';
-import { getClient, getStatuses, getNavigators, getVendors, getMenuItems, getBoxTypes, getSettings, getCategories, getEquipment, getClients, invalidateClientData, invalidateReferenceData, getActiveOrderForClient, getUpcomingOrderForClient, getOrderHistory, getClientHistory, getBillingHistory, invalidateOrderData, getMealCategories, getMealItems } from '@/lib/cached-data';
+import { getClient, getStatuses, getNavigators, getVendors, getMenuItems, getBoxTypes, getSettings, getCategories, getEquipment, getClients, invalidateClientData, invalidateReferenceData, getActiveOrderForClient, getUpcomingOrderForClient, getOrderHistory, getClientHistory, getBillingHistory, invalidateOrderData, getMealCategories, getMealItems, getRecentOrdersForClient } from '@/lib/cached-data';
 import { areAnyDeliveriesLocked, getEarliestEffectiveDate, getLockedWeekDescription } from '@/lib/weekly-lock';
 import {
     getNextDeliveryDate as getNextDeliveryDateUtil,
@@ -792,7 +793,7 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
             getMealCategories(),
             getMealItems(),
             getUpcomingOrderForClient(clientId),
-            getActiveOrderForClient(clientId),
+            getRecentOrdersForClient(clientId),
             getClientHistory(clientId),
             getOrderHistory(clientId),
             getBillingHistory(clientId)
@@ -2354,52 +2355,57 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                 ) : (
                     // Regular client view
                     <div className={styles.grid}>
-                        <div className={styles.column}>
-                            <section className={styles.card}>
-                                <h3 className={styles.sectionTitle}>Client Details</h3>
+                        {isNewClient && (
+                            <div className={styles.column}>
+                                <section className={styles.card}>
+                                    <h3 className={styles.sectionTitle}>Client Details</h3>
 
-                                <div className={styles.formGroup}>
-                                    <label className="label">Full Name</label>
-                                    <input className="input" value={formData.fullName || ''} onChange={e => setFormData({ ...formData, fullName: e.target.value })} />
-                                </div>
+                                    <div className={styles.formGroup}>
+                                        <label className="label">Full Name</label>
+                                        <input className="input" value={formData.fullName || ''} onChange={e => setFormData({ ...formData, fullName: e.target.value })} />
+                                    </div>
 
-                                <div className={styles.formGroup}>
-                                    <label className="label">Status</label>
-                                    <select className="input" value={formData.statusId} onChange={e => setFormData({ ...formData, statusId: e.target.value })}>
-                                        {statuses.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-                                    </select>
-                                </div>
+                                    <div className={styles.formGroup}>
+                                        <label className="label">Status</label>
+                                        <select className="input" value={formData.statusId} onChange={e => setFormData({ ...formData, statusId: e.target.value })}>
+                                            {statuses.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                                        </select>
+                                    </div>
 
-                                <div className={styles.formGroup}>
-                                    <label className="label">Assigned Navigator</label>
-                                    <select className="input" value={formData.navigatorId} onChange={e => setFormData({ ...formData, navigatorId: e.target.value })}>
-                                        <option value="">Unassigned</option>
-                                        {navigators.map(n => <option key={n.id} value={n.id}>{n.name}</option>)}
-                                    </select>
-                                </div>
+                                    <div className={styles.formGroup}>
+                                        <label className="label">Assigned Navigator</label>
+                                        <select className="input" value={formData.navigatorId} onChange={e => setFormData({ ...formData, navigatorId: e.target.value })}>
+                                            <option value="">Unassigned</option>
+                                            {navigators.map(n => <option key={n.id} value={n.id}>{n.name}</option>)}
+                                        </select>
+                                    </div>
 
-                                <div className={styles.formGroup}>
-                                    <label className="label">Address</label>
-                                    <input className="input" value={formData.address || ''} onChange={e => setFormData({ ...formData, address: e.target.value })} />
-                                </div>
+                                    <div className={styles.formGroup}>
+                                        <label className="label">Address</label>
+                                        <input className="input" value={formData.address || ''} onChange={e => setFormData({ ...formData, address: e.target.value })} />
+                                    </div>
 
-                                <div className={styles.formGroup}>
-                                    <label className="label">Phone</label>
-                                    <input className="input" value={formData.phoneNumber || ''} onChange={e => setFormData({ ...formData, phoneNumber: e.target.value })} />
-                                    <div style={{ height: '1rem' }} /> {/* Spacer */}
-                                    <label className="label">Secondary Phone</label>
-                                    <input className="input" value={formData.secondaryPhoneNumber || ''} onChange={e => setFormData({ ...formData, secondaryPhoneNumber: e.target.value })} />
-                                    <div style={{ height: '1rem' }} /> {/* Spacer */}
-                                    <label className="label">Email</label>
-                                    <input className="input" value={formData.email || ''} onChange={e => setFormData({ ...formData, email: e.target.value })} />
-                                </div>
+                                    <div className={styles.formGroup}>
+                                        <label className="label">Phone</label>
+                                        <input className="input" value={formData.phoneNumber || ''} onChange={e => setFormData({ ...formData, phoneNumber: e.target.value })} />
+                                        <div style={{ height: '1rem' }} /> {/* Spacer */}
+                                        <label className="label">Secondary Phone</label>
+                                        <input className="input" value={formData.secondaryPhoneNumber || ''} onChange={e => setFormData({ ...formData, secondaryPhoneNumber: e.target.value })} />
+                                        <div style={{ height: '1rem' }} /> {/* Spacer */}
+                                        <label className="label">Email</label>
+                                        <input className="input" value={formData.email || ''} onChange={e => setFormData({ ...formData, email: e.target.value })} />
+                                    </div>
 
-                                <div className={styles.formGroup}>
-                                    {(currentUser?.role === 'admin' || currentUser?.role === 'super_admin') && (
-                                        <>
+                                    {/* Financial Controls for NEW CLIENTS - Moved here above notes */}
+                                    {isNewClient && (currentUser?.role === 'admin' || currentUser?.role === 'super_admin') && (
+                                        <div className={styles.formGroup} style={{ marginBottom: '1.5rem', paddingBottom: '1.5rem', borderBottom: '1px solid var(--border-color)' }}>
+                                            <h4 style={{ fontSize: '0.9rem', fontWeight: 600, marginBottom: '1rem', color: 'var(--text-secondary)' }}>
+                                                Initial Authorization
+                                            </h4>
+
                                             {formData.serviceType === 'Boxes' ? (
                                                 <>
-                                                    <label className="label">Max Boxes</label>
+                                                    <label className="label">Max Boxes Authorized</label>
                                                     <input
                                                         type="number"
                                                         className="input"
@@ -2408,254 +2414,258 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                                                         min={1}
                                                         placeholder="1"
                                                     />
-                                                    <div style={{ height: '1rem' }} /> {/* Spacer */}
                                                 </>
                                             ) : (
                                                 <>
-                                                    <label className="label">Approved Meals Per Week</label>
-                                                    <input
-                                                        type="number"
-                                                        className="input"
-                                                        value={formData.approvedMealsPerWeek ?? ''}
-                                                        onChange={e => setFormData({ ...formData, approvedMealsPerWeek: e.target.value ? parseInt(e.target.value) : undefined })}
-                                                        min={MIN_APPROVED_MEALS_PER_WEEK}
-                                                        max={MAX_APPROVED_MEALS_PER_WEEK}
-                                                        placeholder="21"
-                                                    />
-                                                    <div style={{ height: '1rem' }} /> {/* Spacer */}
+                                                    {isNewClient && (
+                                                        <>
+                                                            <label className="label">Authorized Amount ($)</label>
+                                                            <input
+                                                                type="number"
+                                                                step="0.01"
+                                                                className="input"
+                                                                value={formData.authorizedAmount ?? ''}
+                                                                onChange={e => setFormData({ ...formData, authorizedAmount: e.target.value ? parseFloat(e.target.value) : null })}
+                                                                placeholder="0.00"
+                                                            />
+                                                        </>
+                                                    )}
+
+                                                    {formData.serviceType === 'Food' && (
+                                                        <>
+                                                            <div style={{ height: '1rem' }} />
+                                                            <label className="label">Approved Meals Per Week</label>
+                                                            <input
+                                                                type="number"
+                                                                className="input"
+                                                                value={formData.approvedMealsPerWeek ?? ''}
+                                                                onChange={e => setFormData({ ...formData, approvedMealsPerWeek: e.target.value ? parseInt(e.target.value) : undefined })}
+                                                                min={MIN_APPROVED_MEALS_PER_WEEK}
+                                                                max={MAX_APPROVED_MEALS_PER_WEEK}
+                                                                placeholder="21"
+                                                            />
+                                                        </>
+                                                    )}
                                                 </>
                                             )}
-                                        </>
-                                    )}
-                                    {formData.serviceType === 'Equipment' && (
-                                        <>
-                                            <label className="label">Authorized Amount</label>
-                                            <input
-                                                type="number"
-                                                step="0.01"
-                                                className="input"
-                                                value={formData.authorizedAmount ?? ''}
-                                                onChange={e => setFormData({ ...formData, authorizedAmount: e.target.value ? parseFloat(e.target.value) : null })}
-                                                placeholder="0.00"
-                                            />
-                                            <div style={{ height: '1rem' }} /> {/* Spacer */}
-                                        </>
-                                    )}
-                                    <label className="label">Expiration Date</label>
-                                    <input
-                                        type="date"
-                                        className="input"
-                                        value={formData.expirationDate ? (formData.expirationDate.includes('T') ? formData.expirationDate.split('T')[0] : formData.expirationDate) : ''}
-                                        onChange={e => setFormData({ ...formData, expirationDate: e.target.value || null })}
-                                    />
-                                </div>
 
-                                <div className={styles.formGroup}>
-                                    <label className="label">General Notes</label>
-                                    <textarea className="input" style={{ height: '100px' }} value={formData.notes || ''} onChange={e => setFormData({ ...formData, notes: e.target.value })} />
-                                </div>
-
-                                <div className={styles.formGroup}>
-                                    <label className="label">Screening Status</label>
-                                    <div style={{
-                                        display: 'inline-flex',
-                                        alignItems: 'center',
-                                        gap: '8px',
-                                        padding: '12px 16px',
-                                        borderRadius: 'var(--radius-md)',
-                                        fontSize: '1rem',
-                                        fontWeight: 500,
-                                        backgroundColor: (() => {
-                                            const status = client?.screeningStatus || 'not_started';
-                                            switch (status) {
-                                                case 'waiting_approval': return 'rgba(234, 179, 8, 0.1)';
-                                                case 'approved': return 'rgba(34, 197, 94, 0.1)';
-                                                case 'rejected': return 'rgba(239, 68, 68, 0.1)';
-                                                default: return 'var(--bg-surface-hover)';
-                                            }
-                                        })(),
-                                        color: (() => {
-                                            const status = client?.screeningStatus || 'not_started';
-                                            switch (status) {
-                                                case 'waiting_approval': return '#eab308';
-                                                case 'approved': return 'var(--color-success)';
-                                                case 'rejected': return 'var(--color-danger)';
-                                                default: return 'var(--text-tertiary)';
-                                            }
-                                        })(),
-                                        border: '1px solid var(--border-color)'
-                                    }}>
-                                        {(() => {
-                                            const status = client?.screeningStatus || 'not_started';
-                                            switch (status) {
-                                                case 'not_started': return <><Square size={18} /> Not Started</>;
-                                                case 'waiting_approval': return <><CheckSquare size={18} /> Pending Approval</>;
-                                                case 'approved': return <><CheckSquare size={18} /> Approved</>;
-                                                case 'rejected': return <><Square size={18} /> Rejected</>;
-                                                default: return <><Square size={18} /> Not Started</>;
-                                            }
-                                        })()}
-                                    </div>
-                                    <p style={{
-                                        fontSize: '0.85rem',
-                                        color: 'var(--text-tertiary)',
-                                        marginTop: '8px',
-                                        fontStyle: 'italic'
-                                    }}>
-                                        Status updates automatically when screening forms are submitted and reviewed.
-                                    </p>
-                                </div>
-
-                            </section>
-
-                            {!isDependent && (
-                                <section className={styles.card}>
-                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-                                        <h3 className={styles.sectionTitle} style={{ margin: 0 }}>Dependents {dependents.length > 0 && `(${dependents.length})`}</h3>
-                                        <button
-                                            className="btn btn-secondary"
-                                            onClick={() => setShowAddDependentForm(!showAddDependentForm)}
-                                            style={{ fontSize: '0.875rem', padding: '0.375rem 0.75rem' }}
-                                        >
-                                            <Plus size={14} /> {showAddDependentForm ? 'Cancel' : 'Add Dependent'}
-                                        </button>
-                                    </div>
-
-                                    {showAddDependentForm && (
-                                        <div style={{
-                                            padding: '1rem',
-                                            border: '1px solid var(--border-color)',
-                                            borderRadius: 'var(--radius-md)',
-                                            backgroundColor: 'var(--bg-surface-hover)',
-                                            marginBottom: '0.75rem'
-                                        }}>
-                                            <label className="label" style={{ marginBottom: '0.5rem' }}>Dependent Name</label>
-                                            <input
-                                                className="input"
-                                                placeholder="Enter dependent name"
-                                                value={dependentName}
-                                                onChange={e => setDependentName(e.target.value)}
-                                                onKeyDown={e => {
-                                                    if (e.key === 'Enter' && dependentName.trim()) {
-                                                        handleCreateDependent();
-                                                    }
-                                                }}
-                                                style={{ marginBottom: '0.75rem' }}
-                                                autoFocus
-                                            />
-                                            <label className="label" style={{ marginBottom: '0.5rem' }}>Date of Birth</label>
+                                            <div style={{ height: '1rem' }} />
+                                            <label className="label">Authorization Expiration Date</label>
                                             <input
                                                 type="date"
                                                 className="input"
-                                                value={dependentDob}
-                                                onChange={e => setDependentDob(e.target.value)}
-                                                style={{ marginBottom: '0.75rem' }}
+                                                value={formData.expirationDate ? (formData.expirationDate.includes('T') ? formData.expirationDate.split('T')[0] : formData.expirationDate) : ''}
+                                                onChange={e => setFormData({ ...formData, expirationDate: e.target.value || null })}
                                             />
-                                            <label className="label" style={{ marginBottom: '0.5rem' }}>CIN#</label>
-                                            <input
-                                                type="text"
-                                                className="input"
-                                                placeholder="CIN Number"
-                                                value={dependentCin}
-                                                onChange={e => setDependentCin(e.target.value)}
-                                                style={{ marginBottom: '0.75rem' }}
-                                            />
-                                            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem' }}>
-                                                <button
-                                                    className="btn btn-secondary"
-                                                    onClick={() => {
-                                                        setShowAddDependentForm(false);
-                                                        setDependentName('');
-                                                        setDependentDob('');
-                                                        setDependentCin('');
-                                                    }}
-                                                    disabled={creatingDependent}
-                                                >
-                                                    Cancel
-                                                </button>
-                                                <button
-                                                    className="btn btn-primary"
-                                                    onClick={handleCreateDependent}
-                                                    disabled={!dependentName.trim() || creatingDependent}
-                                                >
-                                                    {creatingDependent ? <Loader2 className="spin" size={14} /> : <Plus size={14} />} Create Dependent
-                                                </button>
-                                            </div>
                                         </div>
                                     )}
 
-                                    {dependents.length > 0 ? (
-                                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                                            {dependents.map(dependent => (
-                                                <div
-                                                    key={dependent.id}
-                                                    onClick={() => {
-                                                        if (onClose) {
-                                                            onClose();
-                                                        } else {
-                                                            router.push(`/clients/${dependent.id}`);
+                                    <div className={styles.formGroup}>
+                                        <label className="label">General Notes</label>
+                                        <textarea className="input" style={{ height: '100px' }} value={formData.notes || ''} onChange={e => setFormData({ ...formData, notes: e.target.value })} />
+                                    </div>
+
+                                    <div className={styles.formGroup}>
+                                        <label className="label">Screening Status</label>
+                                        <div style={{
+                                            display: 'inline-flex',
+                                            alignItems: 'center',
+                                            gap: '8px',
+                                            padding: '12px 16px',
+                                            borderRadius: 'var(--radius-md)',
+                                            fontSize: '1rem',
+                                            fontWeight: 500,
+                                            backgroundColor: (() => {
+                                                const status = client?.screeningStatus || 'not_started';
+                                                switch (status) {
+                                                    case 'waiting_approval': return 'rgba(234, 179, 8, 0.1)';
+                                                    case 'approved': return 'rgba(34, 197, 94, 0.1)';
+                                                    case 'rejected': return 'rgba(239, 68, 68, 0.1)';
+                                                    default: return 'var(--bg-surface-hover)';
+                                                }
+                                            })(),
+                                            color: (() => {
+                                                const status = client?.screeningStatus || 'not_started';
+                                                switch (status) {
+                                                    case 'waiting_approval': return '#eab308';
+                                                    case 'approved': return 'var(--color-success)';
+                                                    case 'rejected': return 'var(--color-danger)';
+                                                    default: return 'var(--text-tertiary)';
+                                                }
+                                            })(),
+                                            border: '1px solid var(--border-color)'
+                                        }}>
+                                            {(() => {
+                                                const status = client?.screeningStatus || 'not_started';
+                                                switch (status) {
+                                                    case 'not_started': return <><Square size={18} /> Not Started</>;
+                                                    case 'waiting_approval': return <><CheckSquare size={18} /> Pending Approval</>;
+                                                    case 'approved': return <><CheckSquare size={18} /> Approved</>;
+                                                    case 'rejected': return <><Square size={18} /> Rejected</>;
+                                                    default: return <><Square size={18} /> Not Started</>;
+                                                }
+                                            })()}
+                                        </div>
+                                        <p style={{
+                                            fontSize: '0.85rem',
+                                            color: 'var(--text-tertiary)',
+                                            marginTop: '8px',
+                                            fontStyle: 'italic'
+                                        }}>
+                                            Status updates automatically when screening forms are submitted and reviewed.
+                                        </p>
+                                    </div>
+
+                                </section>
+
+                                {!isDependent && (
+                                    <section className={styles.card}>
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                                            <h3 className={styles.sectionTitle} style={{ margin: 0 }}>Dependents {dependents.length > 0 && `(${dependents.length})`}</h3>
+                                            <button
+                                                className="btn btn-secondary"
+                                                onClick={() => setShowAddDependentForm(!showAddDependentForm)}
+                                                style={{ fontSize: '0.875rem', padding: '0.375rem 0.75rem' }}
+                                            >
+                                                <Plus size={14} /> {showAddDependentForm ? 'Cancel' : 'Add Dependent'}
+                                            </button>
+                                        </div>
+
+                                        {showAddDependentForm && (
+                                            <div style={{
+                                                padding: '1rem',
+                                                border: '1px solid var(--border-color)',
+                                                borderRadius: 'var(--radius-md)',
+                                                backgroundColor: 'var(--bg-surface-hover)',
+                                                marginBottom: '0.75rem'
+                                            }}>
+                                                <label className="label" style={{ marginBottom: '0.5rem' }}>Dependent Name</label>
+                                                <input
+                                                    className="input"
+                                                    placeholder="Enter dependent name"
+                                                    value={dependentName}
+                                                    onChange={e => setDependentName(e.target.value)}
+                                                    onKeyDown={e => {
+                                                        if (e.key === 'Enter' && dependentName.trim()) {
+                                                            handleCreateDependent();
                                                         }
                                                     }}
-                                                    style={{
-                                                        padding: '0.75rem',
-                                                        border: '1px solid var(--border-color)',
-                                                        borderRadius: 'var(--radius-md)',
-                                                        backgroundColor: 'var(--bg-surface)',
-                                                        cursor: 'pointer',
-                                                        transition: 'background-color 0.2s'
-                                                    }}
-                                                    onMouseEnter={(e) => {
-                                                        e.currentTarget.style.backgroundColor = 'var(--bg-surface-hover)';
-                                                    }}
-                                                    onMouseLeave={(e) => {
-                                                        e.currentTarget.style.backgroundColor = 'var(--bg-surface)';
-                                                    }}
-                                                >
-                                                    <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>
-                                                        {dependent.fullName}
-                                                    </div>
-                                                    {(dependent.dob || dependent.cin) && (
-                                                        <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginTop: '0.25rem' }}>
-                                                            {dependent.dob && <span>DOB: {new Date(dependent.dob).toLocaleDateString()}</span>}
-                                                            {dependent.dob && dependent.cin && <span> • </span>}
-                                                            {dependent.cin && <span>CIN#: {dependent.cin}</span>}
-                                                        </div>
-                                                    )}
+                                                    style={{ marginBottom: '0.75rem' }}
+                                                    autoFocus
+                                                />
+                                                <label className="label" style={{ marginBottom: '0.5rem' }}>Date of Birth</label>
+                                                <input
+                                                    type="date"
+                                                    className="input"
+                                                    value={dependentDob}
+                                                    onChange={e => setDependentDob(e.target.value)}
+                                                    style={{ marginBottom: '0.75rem' }}
+                                                />
+                                                <label className="label" style={{ marginBottom: '0.5rem' }}>CIN#</label>
+                                                <input
+                                                    type="text"
+                                                    className="input"
+                                                    placeholder="CIN Number"
+                                                    value={dependentCin}
+                                                    onChange={e => setDependentCin(e.target.value)}
+                                                    style={{ marginBottom: '0.75rem' }}
+                                                />
+                                                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem' }}>
+                                                    <button
+                                                        className="btn btn-secondary"
+                                                        onClick={() => {
+                                                            setShowAddDependentForm(false);
+                                                            setDependentName('');
+                                                            setDependentDob('');
+                                                            setDependentCin('');
+                                                        }}
+                                                        disabled={creatingDependent}
+                                                    >
+                                                        Cancel
+                                                    </button>
+                                                    <button
+                                                        className="btn btn-primary"
+                                                        onClick={handleCreateDependent}
+                                                        disabled={!dependentName.trim() || creatingDependent}
+                                                    >
+                                                        {creatingDependent ? <Loader2 className="spin" size={14} /> : <Plus size={14} />} Create Dependent
+                                                    </button>
                                                 </div>
-                                            ))}
+                                            </div>
+                                        )}
+
+                                        {dependents.length > 0 ? (
+                                            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                                                {dependents.map(dependent => (
+                                                    <div
+                                                        key={dependent.id}
+                                                        onClick={() => {
+                                                            if (onClose) {
+                                                                onClose();
+                                                            } else {
+                                                                router.push(`/clients/${dependent.id}`);
+                                                            }
+                                                        }}
+                                                        style={{
+                                                            padding: '0.75rem',
+                                                            border: '1px solid var(--border-color)',
+                                                            borderRadius: 'var(--radius-md)',
+                                                            backgroundColor: 'var(--bg-surface)',
+                                                            cursor: 'pointer',
+                                                            transition: 'background-color 0.2s'
+                                                        }}
+                                                        onMouseEnter={(e) => {
+                                                            e.currentTarget.style.backgroundColor = 'var(--bg-surface-hover)';
+                                                        }}
+                                                        onMouseLeave={(e) => {
+                                                            e.currentTarget.style.backgroundColor = 'var(--bg-surface)';
+                                                        }}
+                                                    >
+                                                        <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>
+                                                            {dependent.fullName}
+                                                        </div>
+                                                        {(dependent.dob || dependent.cin) && (
+                                                            <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginTop: '0.25rem' }}>
+                                                                {dependent.dob && <span>DOB: {new Date(dependent.dob).toLocaleDateString()}</span>}
+                                                                {dependent.dob && dependent.cin && <span> • </span>}
+                                                                {dependent.cin && <span>CIN#: {dependent.cin}</span>}
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        ) : (
+                                            <p style={{ color: 'var(--text-secondary)', fontStyle: 'italic', margin: 0 }}>
+                                                No dependents yet. Click "Add Dependent" to create one.
+                                            </p>
+                                        )}
+                                    </section>
+                                )}
+
+                                {/* Screening Form Submissions */}
+                                <section className={styles.card}>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                                        <h3 className={styles.sectionTitle} style={{ margin: 0 }}>Screening Form Submissions</h3>
+                                        <button
+                                            className="btn btn-primary"
+                                            onClick={handleOpenScreeningForm}
+                                            disabled={loadingForm}
+                                            style={{ fontSize: '14px' }}
+                                        >
+                                            {loadingForm ? <Loader2 size={16} className="animate-spin" /> : <FileText size={16} />}
+                                            Fill Screening Form
+                                        </button>
+                                    </div>
+                                    {loadingSubmissions ? (
+                                        <div style={{ textAlign: 'center', padding: '20px' }}>
+                                            <Loader2 size={24} className="animate-spin" />
                                         </div>
                                     ) : (
-                                        <p style={{ color: 'var(--text-secondary)', fontStyle: 'italic', margin: 0 }}>
-                                            No dependents yet. Click "Add Dependent" to create one.
-                                        </p>
+                                        <SubmissionsList submissions={submissions} />
                                     )}
                                 </section>
-                            )}
-
-                            {/* Screening Form Submissions */}
-                            <section className={styles.card}>
-                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-                                    <h3 className={styles.sectionTitle} style={{ margin: 0 }}>Screening Form Submissions</h3>
-                                    <button
-                                        className="btn btn-primary"
-                                        onClick={handleOpenScreeningForm}
-                                        disabled={loadingForm}
-                                        style={{ fontSize: '14px' }}
-                                    >
-                                        {loadingForm ? <Loader2 size={16} className="animate-spin" /> : <FileText size={16} />}
-                                        Fill Screening Form
-                                    </button>
-                                </div>
-                                {loadingSubmissions ? (
-                                    <div style={{ textAlign: 'center', padding: '20px' }}>
-                                        <Loader2 size={24} className="animate-spin" />
-                                    </div>
-                                ) : (
-                                    <SubmissionsList submissions={submissions} />
-                                )}
-                            </section>
-
-                        </div>
+                            </div>
+                        )}
 
                         <div className={styles.column}>
                             <section className={styles.card}>
@@ -2686,6 +2696,84 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                                         placeholder="Enter Case ID to enable configuration..."
                                         onChange={e => setOrderConfig({ ...orderConfig, caseId: e.target.value })}
                                     />
+                                </div>
+
+                                <div className={styles.formGroup}>
+                                    {!isNewClient && (currentUser?.role === 'admin' || currentUser?.role === 'super_admin') && (
+                                        <>
+                                            {formData.serviceType === 'Boxes' ? (
+                                                <>
+                                                    <label className="label" style={{ marginTop: '1rem' }}>Max Boxes Authorized</label>
+                                                    <input
+                                                        type="number"
+                                                        className="input"
+                                                        value={formData.authorizedAmount ?? ''}
+                                                        onChange={e => setFormData({ ...formData, authorizedAmount: e.target.value ? parseFloat(e.target.value) : null })}
+                                                        min={1}
+                                                        placeholder="1"
+                                                    />
+                                                    {isNewClient && (
+                                                        <>
+                                                            <div style={{ height: '1rem' }} />
+                                                            <label className="label">Authorization Expiration Date</label>
+                                                            <input
+                                                                type="date"
+                                                                className="input"
+                                                                value={formData.expirationDate ? (formData.expirationDate.includes('T') ? formData.expirationDate.split('T')[0] : formData.expirationDate) : ''}
+                                                                onChange={e => setFormData({ ...formData, expirationDate: e.target.value || null })}
+                                                            />
+                                                        </>
+                                                    )}
+                                                </>
+                                            ) : (
+                                                <>
+                                                    {/* Money-based Authorization for Food, Equipment, etc. */}
+                                                    {isNewClient && (
+                                                        <>
+                                                            <label className="label" style={{ marginTop: '1rem' }}>Authorized Amount ($)</label>
+                                                            <input
+                                                                type="number"
+                                                                step="0.01"
+                                                                className="input"
+                                                                value={formData.authorizedAmount ?? ''}
+                                                                onChange={e => setFormData({ ...formData, authorizedAmount: e.target.value ? parseFloat(e.target.value) : null })}
+                                                                placeholder="0.00"
+                                                            />
+                                                        </>
+                                                    )}
+                                                    {isNewClient && (
+                                                        <>
+                                                            <div style={{ height: '1rem' }} />
+                                                            <label className="label">Authorization Expiration Date</label>
+                                                            <input
+                                                                type="date"
+                                                                className="input"
+                                                                value={formData.expirationDate ? (formData.expirationDate.includes('T') ? formData.expirationDate.split('T')[0] : formData.expirationDate) : ''}
+                                                                onChange={e => setFormData({ ...formData, expirationDate: e.target.value || null })}
+                                                            />
+                                                        </>
+                                                    )}
+
+                                                    {/* Meal-specific field */}
+                                                    {formData.serviceType === 'Food' && (
+                                                        <>
+                                                            <div style={{ height: '1rem' }} />
+                                                            <label className="label">Approved Meals Per Week</label>
+                                                            <input
+                                                                type="number"
+                                                                className="input"
+                                                                value={formData.approvedMealsPerWeek ?? ''}
+                                                                onChange={e => setFormData({ ...formData, approvedMealsPerWeek: e.target.value ? parseInt(e.target.value) : undefined })}
+                                                                min={MIN_APPROVED_MEALS_PER_WEEK}
+                                                                max={MAX_APPROVED_MEALS_PER_WEEK}
+                                                                placeholder="21"
+                                                            />
+                                                        </>
+                                                    )}
+                                                </>
+                                            )}
+                                        </>
+                                    )}
                                 </div>
 
                                 {!orderConfig.caseId && (
@@ -3428,10 +3516,16 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                                                                         fontWeight: 600,
                                                                         color: 'var(--text-secondary)'
                                                                     }}>
-                                                                        {order.orderNumber ? `Order #${order.orderNumber}` : `Order ${orderIdx + 1}`}
+                                                                        {order.id ? (
+                                                                            <Link href={`/orders/${order.id}`} style={{ color: 'var(--color-primary)', textDecoration: 'none', cursor: 'pointer' }}>
+                                                                                {order.orderNumber ? `Order #${order.orderNumber}` : `Order ${orderIdx + 1}`}
+                                                                            </Link>
+                                                                        ) : (
+                                                                            <span>{order.orderNumber ? `Order #${order.orderNumber}` : `Order ${orderIdx + 1}`}</span>
+                                                                        )}
                                                                         {isMultiple && !order.orderNumber && ` of ${ordersToDisplay.length}`}
                                                                         {order.scheduledDeliveryDate && (
-                                                                            <span style={{ marginLeft: 'var(--spacing-sm)', fontSize: '0.85rem', fontWeight: 400 }}>
+                                                                            <span style={{ marginLeft: 'var(--spacing-sm)', fontSize: '0.85rem', fontWeight: 400, color: 'var(--text-secondary)' }}>
                                                                                 • Scheduled: {new Date(order.scheduledDeliveryDate).toLocaleDateString('en-US', { timeZone: 'UTC' })}
                                                                             </span>
                                                                         )}
@@ -3508,11 +3602,7 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                                                                                                         No items selected
                                                                                                     </div>
                                                                                                 )}
-                                                                                                {nextDelivery && (
-                                                                                                    <div style={{ marginTop: 'var(--spacing-sm)', fontSize: '0.8rem', color: 'var(--text-secondary)', fontWeight: 500 }}>
-                                                                                                        Next delivery: {nextDelivery.dayOfWeek}, {nextDelivery.date}
-                                                                                                    </div>
-                                                                                                )}
+
                                                                                             </div>
                                                                                         );
                                                                                     })}
@@ -3565,11 +3655,7 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                                                                                                 No items selected
                                                                                             </div>
                                                                                         )}
-                                                                                        {nextDelivery && (
-                                                                                            <div style={{ marginTop: 'var(--spacing-sm)', fontSize: '0.8rem', color: 'var(--text-secondary)', fontWeight: 500 }}>
-                                                                                                Next delivery: {nextDelivery.dayOfWeek}, {nextDelivery.date}
-                                                                                            </div>
-                                                                                        )}
+
                                                                                     </>
                                                                                 );
                                                                             })()}
@@ -3616,11 +3702,7 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                                                                                                 ${price.toFixed(2)}
                                                                                             </span>
                                                                                         </div>
-                                                                                        {nextDelivery && (
-                                                                                            <div style={{ marginTop: 'var(--spacing-sm)', fontSize: '0.8rem', color: 'var(--text-secondary)', fontWeight: 500 }}>
-                                                                                                Next delivery: {nextDelivery.dayOfWeek}, {nextDelivery.date}
-                                                                                            </div>
-                                                                                        )}
+
                                                                                     </>
                                                                                 );
                                                                             })()}
