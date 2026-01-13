@@ -84,53 +84,51 @@ export default function ClientPortalHeader({
 
             {/* Bottom Row: Actions */}
             <div className={styles.headerBottomRow}>
-                {client.serviceType === 'Food' && (
-                    <>
-                        {onAddVendor && (
-                            <button
-                                onClick={onAddVendor}
-                                className="btn btn-warning"
-                                style={{
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    gap: '8px',
-                                    backgroundColor: '#fbbf24',
-                                    border: 'none',
-                                    color: 'black',
-                                    fontWeight: 600,
-                                    padding: '10px 24px',
-                                    borderRadius: '8px',
-                                    boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
-                                }}
-                            >
-                                <Plus size={16} /> Add Vendor
-                            </button>
-                        )}
-
-                        {onAddMeal && Array.from(new Set(mealCategories.map(c => c.mealType)))
-                            .filter(type => !orderConfig?.mealSelections?.[type])
-                            .map(type => (
-                                <button
-                                    key={type}
-                                    onClick={() => onAddMeal(type)}
-                                    className="btn btn-outline"
-                                    style={{
-                                        display: 'flex',
-                                        alignItems: 'center',
-                                        gap: '8px',
-                                        borderColor: '#fbbf24',
-                                        color: '#fbbf24',
-                                        fontWeight: 600,
-                                        padding: '10px 24px',
-                                        borderRadius: '8px',
-                                        backgroundColor: 'transparent'
-                                    }}
-                                >
-                                    <Plus size={16} /> Add {type}
-                                </button>
-                            ))}
-                    </>
+                {/* Add Vendor Button - Food Only */}
+                {client.serviceType === 'Food' && onAddVendor && (
+                    <button
+                        onClick={onAddVendor}
+                        className="btn btn-warning"
+                        style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '8px',
+                            backgroundColor: '#fbbf24',
+                            border: 'none',
+                            color: 'black',
+                            fontWeight: 600,
+                            padding: '10px 24px',
+                            borderRadius: '8px',
+                            boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+                        }}
+                    >
+                        <Plus size={16} /> Add Vendor
+                    </button>
                 )}
+
+                {/* Add Meal Buttons - Food OR Meal */}
+                {(client.serviceType === 'Food' || client.serviceType === 'Meal') && onAddMeal && Array.from(new Set(mealCategories.map(c => c.mealType)))
+                    .filter(type => !orderConfig?.mealSelections?.[type])
+                    .map(type => (
+                        <button
+                            key={type}
+                            onClick={() => onAddMeal(type)}
+                            className="btn btn-outline"
+                            style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '8px',
+                                borderColor: '#fbbf24',
+                                color: '#fbbf24',
+                                fontWeight: 600,
+                                padding: '10px 24px',
+                                borderRadius: '8px',
+                                backgroundColor: 'transparent'
+                            }}
+                        >
+                            <Plus size={16} /> Add {type}
+                        </button>
+                    ))}
             </div>
         </div>
     );

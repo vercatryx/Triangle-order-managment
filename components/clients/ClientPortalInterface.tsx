@@ -1150,7 +1150,7 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
                         </div>
                     </div>
 
-                    {client.serviceType === 'Food' && (
+                    {(client.serviceType === 'Food' || client.serviceType === 'Meal') && (
                         <FoodServiceWidget
                             orderConfig={orderConfig}
                             setOrderConfig={setOrderConfig}
@@ -1265,7 +1265,7 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
                                                         <>
                                                             {categories.map(category => {
                                                                 const availableItems = menuItems.filter(i =>
-                                                                    (i.vendorId === null || i.vendorId === '') &&
+                                                                    ((i.vendorId === null || i.vendorId === '') || i.vendorId === box.vendorId) &&
                                                                     i.isActive &&
                                                                     i.categoryId === category.id
                                                                 );

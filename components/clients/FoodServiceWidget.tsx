@@ -853,7 +853,83 @@ export default function FoodServiceWidget({
 
     return (
         <div className={styles.vendorsList}>
+            {/* Sticky Action Header - ADMIN ONLY (Portal has its own header) */}
+            {!isClientPortal && (
+                <div style={{
+                    position: 'sticky',
+                    top: 0,
+                    zIndex: 40,
+                    backgroundColor: 'rgba(255, 255, 255, 0.95)',
+                    backdropFilter: 'blur(8px)',
+                    borderBottom: '1px solid var(--border-color)',
+                    padding: '12px 16px',
+                    marginBottom: '16px',
+                    boxShadow: '0 4px 20px -10px rgba(0, 0, 0, 0.05)',
+                    margin: '-16px -16px 16px -16px', // Negative margin to stretch full width of container padding
+                    display: 'flex',
+                    gap: '12px',
+                    alignItems: 'center',
+                    flexWrap: 'wrap'
+                }}>
+                    {/* Add Vendor Button - Food Only */}
+                    {client.serviceType === 'Food' && (
+                        <button
+                            type="button"
+                            onClick={handleAddVendorBlock}
+                            className="btn btn-warning"
+                            style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '8px',
+                                backgroundColor: '#fbbf24',
+                                border: 'none',
+                                color: 'black',
+                                fontWeight: 600,
+                                padding: '8px 16px',
+                                borderRadius: '8px',
+                                boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+                                fontSize: '0.9rem'
+                            }}
+                        >
+                            <Plus size={16} /> Add Vendor
+                        </button>
+                    )}
 
+                    {/* Add Meal Buttons - Dynamic */}
+                    {(() => {
+                        const existingMealTypes = Object.keys(orderConfig?.mealSelections || {});
+                        const availableMealTypes = mealCategories
+                            .map(c => c.mealType)
+                            .filter((val, idx, arr) => arr.indexOf(val) === idx)
+                            .filter(type => !existingMealTypes.includes(type));
+
+                        return availableMealTypes.map(type => (
+                            <button
+                                key={type}
+                                type="button"
+                                onClick={() => handleAddMeal(type)}
+                                className="btn btn-outline"
+                                style={{
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '8px',
+                                    borderColor: '#fbbf24',
+                                    color: '#fbbf24',
+                                    fontWeight: 600,
+                                    padding: '8px 16px',
+                                    borderRadius: '8px',
+                                    backgroundColor: 'transparent',
+                                    fontSize: '0.9rem'
+                                }}
+                            >
+                                <Plus size={16} /> Add {type}
+                            </button>
+                        ));
+                    })()}
+                </div>
+            )}
+
+            {/* Generic Vendor Blocks (Main/Lunch) */}
             {/* Generic Vendor Blocks (Main/Lunch) */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', marginBottom: '1rem' }}>
                 {renderVendorBlocks()}

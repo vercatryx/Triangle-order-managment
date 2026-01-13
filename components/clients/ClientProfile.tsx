@@ -2791,7 +2791,7 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
 
                                 {orderConfig.caseId && (
                                     <>
-                                        {formData.serviceType === 'Food' && (
+                                        {(formData.serviceType === 'Food' || formData.serviceType === 'Meal') && (
                                             <div className="animate-fade-in" style={{ marginTop: '1rem' }}>
                                                 <FoodServiceWidget
                                                     orderConfig={orderConfig}
