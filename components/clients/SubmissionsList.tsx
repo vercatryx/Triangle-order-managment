@@ -108,9 +108,10 @@ export default function SubmissionsList({ submissions }: SubmissionsListProps) {
                                             alert('R2 domain is not configured. Please contact an administrator.');
                                             return;
                                         }
-                                        const url = R2_DOMAIN.startsWith('http') 
-                                            ? `${R2_DOMAIN}/${submission.pdf_url}`
-                                            : `https://${R2_DOMAIN}/${submission.pdf_url}`;
+                                        const baseUrl = R2_DOMAIN.replace(/\/$/, '');
+                                        const url = baseUrl.startsWith('http')
+                                            ? `${baseUrl}/${submission.pdf_url}`
+                                            : `https://${baseUrl}/${submission.pdf_url}`;
                                         window.open(url, '_blank');
                                     }}
                                     className="btn btn-primary"

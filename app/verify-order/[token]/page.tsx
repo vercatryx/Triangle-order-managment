@@ -4,7 +4,7 @@ import { useEffect, useState, useRef } from 'react';
 import { useParams } from 'next/navigation';
 import { getSubmissionByToken, updateSubmissionStatus, finalizeSubmission } from '@/lib/form-actions';
 import { FormSchema } from '@/lib/form-types';
-import { CheckCircle, XCircle, Loader2, Edit, MessageSquare, User } from 'lucide-react';
+import { CheckCircle, XCircle, Loader2, Edit, MessageSquare, User, Download } from 'lucide-react';
 import SignatureCanvas from 'react-signature-canvas';
 import { jsPDF } from 'jspdf';
 import { PDFDocument } from 'pdf-lib';
@@ -123,7 +123,12 @@ export default function VerifyOrderPage() {
             }
 
             setCompleted(true);
-            setSubmission({ ...submission, status: 'accepted', comments });
+            setSubmission({
+                ...submission,
+                status: 'accepted',
+                comments,
+                pdf_url: uploadResult.pdfUrl
+            });
         } catch (err: any) {
             console.error('[handleSignAndComplete] Error:', err);
             setError(err.message);
@@ -233,161 +238,105 @@ export default function VerifyOrderPage() {
 
     async function mergeWithBottomPdf(mainPdfBlob: Blob): Promise<Blob> {
         try {
-            // Load the main PDF
-            const mainPdfBytes = await mainPdfBlob.arrayBuffer();
-            const mainPdfDoc = await PDFDocument.load(mainPdfBytes);
+            const mainPdf = await PDFDocument.load(await mainPdfBlob.arrayBuffer());
 
-            // Fetch and load bottom.pdf from public folder
+            // Try to load bottom.pdf from public folder
             const bottomPdfResponse = await fetch('/bottom.pdf');
-            if (!bottomPdfResponse.ok) {
-                console.warn('Could not load bottom.pdf, returning main PDF only');
-                return mainPdfBlob;
+            if (bottomPdfResponse.ok) {
+                const bottomPdfBytes = await bottomPdfResponse.arrayBuffer();
+                const bottomPdf = await PDFDocument.load(bottomPdfBytes);
+
+                // Copy all pages from bottom PDF to main PDF
+                const bottomPages = await mainPdf.copyPages(bottomPdf, bottomPdf.getPageIndices());
+                bottomPages.forEach((page) => {
+                    mainPdf.addPage(page);
+                });
             }
-            const bottomPdfBytes = await bottomPdfResponse.arrayBuffer();
-            const bottomPdfDoc = await PDFDocument.load(bottomPdfBytes);
 
-            // Copy all pages from bottom.pdf to main PDF
-            const bottomPages = await mainPdfDoc.copyPages(bottomPdfDoc, bottomPdfDoc.getPageIndices());
-            bottomPages.forEach((page) => {
-                mainPdfDoc.addPage(page);
-            });
-
-            // Save and return the merged PDF
-            const mergedPdfBytes = await mainPdfDoc.save();
-            return new Blob([mergedPdfBytes as any], { type: 'application/pdf' });
+            const mergedPdfBytes = await mainPdf.save();
+            return new Blob([mergedPdfBytes as BlobPart], { type: 'application/pdf' });
         } catch (error) {
             console.error('Error merging PDFs:', error);
-            // If merging fails, return the main PDF
+            // If merging fails, just return the main PDF
             return mainPdfBlob;
         }
     }
 
     if (loading) {
         return (
-            <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '100vh', background: 'var(--bg-primary)' }}>
-                <Loader2 size={48} className="animate-spin" />
+            <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <Loader2 size={32} className="animate-spin" />
             </div>
         );
     }
 
     if (error) {
         return (
-            <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '100vh', flexDirection: 'column', gap: '20px', background: 'var(--bg-primary)' }}>
-                <XCircle size={64} color="#ef4444" />
-                <h1 style={{ fontSize: '24px', fontWeight: 'bold' }}>Error</h1>
-                <p>{error}</p>
+            <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <div style={{ textAlign: 'center' }}>
+                    <XCircle size={48} style={{ color: '#ef4444', marginBottom: '16px' }} />
+                    <p style={{ fontSize: '18px', color: 'var(--text-primary)' }}>{error}</p>
+                </div>
+            </div>
+        );
+    }
+
+    if (!submission || !formSchema) {
+        return (
+            <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <p style={{ fontSize: '18px', color: 'var(--text-primary)' }}>Submission not found</p>
             </div>
         );
     }
 
     if (completed) {
         return (
-            <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '100vh', flexDirection: 'column', gap: '20px', padding: '20px', background: 'var(--bg-primary)' }}>
-                {submission.status === 'accepted' ? (
-                    <>
-                        <CheckCircle size={64} color="#10b981" />
-                        <h1 style={{ fontSize: '24px', fontWeight: 'bold' }}>Screening Form Accepted!</h1>
-                        {client && (
-                            <p style={{ fontSize: '18px', fontWeight: '600', color: 'var(--text-primary)', marginTop: '8px' }}>
-                                Client: {client.fullName}
-                            </p>
+            <div style={{ minHeight: '100vh', background: 'var(--bg-primary)', padding: '40px 20px' }}>
+                <div style={{ maxWidth: '800px', margin: '0 auto' }}>
+                    <div style={{ background: 'var(--bg-secondary)', padding: '30px', borderRadius: '12px', textAlign: 'center' }}>
+                        {submission.status === 'accepted' ? (
+                            <>
+                                <CheckCircle size={48} style={{ color: '#10b981', marginBottom: '16px' }} />
+                                <h1 style={{ fontSize: '24px', fontWeight: 'bold', marginBottom: '8px' }}>Submission Accepted</h1>
+                                <p style={{ color: 'var(--text-secondary)', marginBottom: '16px' }}>
+                                    This submission has been accepted and signed.
+                                </p>
+                                {submission.pdf_url && (
+                                    <button
+                                        onClick={() => {
+                                            const r2Domain = process.env.NEXT_PUBLIC_R2_DOMAIN || 'pub-820fa32211a14c0b8bdc7c41106bfa02.r2.dev';
+                                            // Ensure no double slashes and correct protocol
+                                            const baseUrl = r2Domain.replace(/\/$/, ''); // Remove trailing slash
+                                            const fileUrl = baseUrl.startsWith('http')
+                                                ? `${baseUrl}/${submission.pdf_url}`
+                                                : `https://${baseUrl}/${submission.pdf_url}`;
+                                            window.open(fileUrl, '_blank');
+                                        }}
+                                        className="btn btn-primary"
+                                        style={{
+                                            display: 'inline-flex',
+                                            alignItems: 'center',
+                                            gap: '8px',
+                                            padding: '12px 24px',
+                                            marginTop: '10px'
+                                        }}
+                                    >
+                                        <Download size={16} />
+                                        Download Signed PDF
+                                    </button>
+                                )}
+                            </>
+                        ) : (
+                            <>
+                                <XCircle size={48} style={{ color: '#ef4444', marginBottom: '16px' }} />
+                                <h1 style={{ fontSize: '24px', fontWeight: 'bold', marginBottom: '8px' }}>Submission Rejected</h1>
+                                <p style={{ color: 'var(--text-secondary)' }}>
+                                    {submission.comments || 'This submission has been rejected.'}
+                                </p>
+                            </>
                         )}
-                        <p>The screening form has been signed and submitted successfully.</p>
-                        {client && (
-                            <div style={{ marginTop: '20px', padding: '20px', background: 'var(--bg-secondary)', borderRadius: '8px', maxWidth: '600px', width: '100%' }}>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '16px' }}>
-                                    <User size={18} style={{ color: 'var(--text-primary)' }} />
-                                    <h2 style={{ fontSize: '16px', fontWeight: 'bold', margin: 0 }}>Client Information</h2>
-                                </div>
-                                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '12px' }}>
-                                    <div>
-                                        <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '4px' }}>Full Name</div>
-                                        <div style={{ fontSize: '14px', fontWeight: '500' }}>{client.fullName}</div>
-                                    </div>
-                                    {client.email && (
-                                        <div>
-                                            <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '4px' }}>Email</div>
-                                            <div style={{ fontSize: '14px', fontWeight: '500' }}>{client.email}</div>
-                                        </div>
-                                    )}
-                                    {client.phoneNumber && (
-                                        <div>
-                                            <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '4px' }}>Phone</div>
-                                            <div style={{ fontSize: '14px', fontWeight: '500' }}>{client.phoneNumber}</div>
-                                        </div>
-                                    )}
-                                    {client.secondaryPhoneNumber && (
-                                        <div>
-                                            <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '4px' }}>Secondary Phone</div>
-                                            <div style={{ fontSize: '14px', fontWeight: '500' }}>{client.secondaryPhoneNumber}</div>
-                                        </div>
-                                    )}
-                                </div>
-                            </div>
-                        )}
-                        {comments && (
-                            <div style={{ marginTop: '20px', padding: '16px', background: 'var(--bg-secondary)', borderRadius: '8px', maxWidth: '600px', width: '100%' }}>
-                                <div style={{ fontWeight: 'bold', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                    <MessageSquare size={16} />
-                                    Comments:
-                                </div>
-                                <div style={{ color: 'var(--text-secondary)' }}>{comments}</div>
-                            </div>
-                        )}
-                    </>
-                ) : (
-                    <>
-                        <XCircle size={64} color="#ef4444" />
-                        <h1 style={{ fontSize: '24px', fontWeight: 'bold' }}>Screening Form Rejected</h1>
-                        {client && (
-                            <p style={{ fontSize: '18px', fontWeight: '600', color: 'var(--text-primary)', marginTop: '8px' }}>
-                                Client: {client.fullName}
-                            </p>
-                        )}
-                        <p>This screening form has been rejected.</p>
-                        {client && (
-                            <div style={{ marginTop: '20px', padding: '20px', background: 'var(--bg-secondary)', borderRadius: '8px', maxWidth: '600px', width: '100%' }}>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '16px' }}>
-                                    <User size={18} style={{ color: 'var(--text-primary)' }} />
-                                    <h2 style={{ fontSize: '16px', fontWeight: 'bold', margin: 0 }}>Client Information</h2>
-                                </div>
-                                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '12px' }}>
-                                    <div>
-                                        <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '4px' }}>Full Name</div>
-                                        <div style={{ fontSize: '14px', fontWeight: '500' }}>{client.fullName}</div>
-                                    </div>
-                                    {client.email && (
-                                        <div>
-                                            <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '4px' }}>Email</div>
-                                            <div style={{ fontSize: '14px', fontWeight: '500' }}>{client.email}</div>
-                                        </div>
-                                    )}
-                                    {client.phoneNumber && (
-                                        <div>
-                                            <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '4px' }}>Phone</div>
-                                            <div style={{ fontSize: '14px', fontWeight: '500' }}>{client.phoneNumber}</div>
-                                        </div>
-                                    )}
-                                    {client.secondaryPhoneNumber && (
-                                        <div>
-                                            <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '4px' }}>Secondary Phone</div>
-                                            <div style={{ fontSize: '14px', fontWeight: '500' }}>{client.secondaryPhoneNumber}</div>
-                                        </div>
-                                    )}
-                                </div>
-                            </div>
-                        )}
-                        {comments && (
-                            <div style={{ marginTop: '20px', padding: '16px', background: 'var(--bg-secondary)', borderRadius: '8px', maxWidth: '600px', width: '100%' }}>
-                                <div style={{ fontWeight: 'bold', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                    <MessageSquare size={16} />
-                                    Reason:
-                                </div>
-                                <div style={{ color: 'var(--text-secondary)' }}>{comments}</div>
-                            </div>
-                        )}
-                    </>
-                )}
+                    </div>
+                </div>
             </div>
         );
     }
