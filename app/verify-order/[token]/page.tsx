@@ -109,6 +109,7 @@ export default function VerifyOrderPage() {
             setCompleted(true);
             setSubmission({ ...submission, status: 'accepted', comments });
         } catch (err: any) {
+            console.error('[handleSignAndComplete] Error:', err);
             setError(err.message);
         } finally {
             setProcessing(false);

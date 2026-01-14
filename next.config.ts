@@ -19,6 +19,7 @@ const nextConfig: NextConfig = {
         'verify-order-app.vercel.app', // Adding implicit vercel domains just in case
         'localhost:3000'
       ],
+      bodySizeLimit: '10mb',
     },
   },
 };
