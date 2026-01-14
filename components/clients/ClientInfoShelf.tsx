@@ -10,7 +10,7 @@ import {
 import { ClientProfile, ClientStatus, Navigator, Submission } from '@/lib/types';
 import { useState, useEffect } from 'react';
 import { addDependent, getDependentsByParentId, updateClient, deleteClient } from '@/lib/actions';
-import { getSingleForm } from '@/lib/form-actions';
+import { getSingleForm, deleteSubmission } from '@/lib/form-actions';
 import FormFiller from '@/components/forms/FormFiller';
 import { FormSchema } from '@/lib/form-types';
 import styles from './ClientInfoShelf.module.css';
@@ -180,6 +180,22 @@ export function ClientInfoShelf({
         setIsFillingForm(false);
         setFormSchema(null);
         if (onClientUpdated) onClientUpdated();
+    };
+
+    const handleDeleteSubmission = async (submissionId: string) => {
+        if (!confirm('Are you sure you want to delete this submission? This action cannot be undone and will delete the associated files.')) return;
+
+        try {
+            const res = await deleteSubmission(submissionId);
+            if (res.success) {
+                if (onClientUpdated) onClientUpdated();
+            } else {
+                alert('Failed to delete submission: ' + res.error);
+            }
+        } catch (error) {
+            console.error('Error deleting submission:', error);
+            alert('An error occurred while deleting the submission.');
+        }
     };
 
     return (
@@ -656,22 +672,59 @@ export function ClientInfoShelf({
                                                 {sub.status === 'pending' && <Clock size={16} color="#f59e0b" />}
                                                 <span className={styles.subDate}>{new Date(sub.created_at).toLocaleDateString()}</span>
                                             </div>
-                                            {sub.status === 'accepted' && sub.pdf_url && (
+                                            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                                                {sub.status === 'pending' && (
+                                                    <a
+                                                        href={`/verify-order/${sub.token}`}
+                                                        target="_blank"
+                                                        rel="noopener noreferrer"
+                                                        className={styles.downloadBtn}
+                                                        style={{ textDecoration: 'none' }}
+                                                    >
+                                                        <ExternalLink size={14} /> Open
+                                                    </a>
+                                                )}
+                                                {sub.status === 'accepted' && sub.pdf_url && (
+                                                    <button
+                                                        className={styles.downloadBtn}
+                                                        onClick={() => {
+                                                            const r2Domain = process.env.NEXT_PUBLIC_R2_DOMAIN;
+                                                            if (!r2Domain) return;
+                                                            // Remove trailing slash if present
+                                                            const cleanDomain = r2Domain.endsWith('/') ? r2Domain.slice(0, -1) : r2Domain;
+                                                            const url = cleanDomain.startsWith('http')
+                                                                ? `${cleanDomain}/${sub.pdf_url}`
+                                                                : `https://${cleanDomain}/${sub.pdf_url}`;
+                                                            window.open(url, '_blank');
+                                                        }}
+                                                    >
+                                                        <Download size={14} /> PDF
+                                                    </button>
+                                                )}
                                                 <button
-                                                    className={styles.downloadBtn}
-                                                    onClick={() => {
-                                                        const r2Domain = process.env.NEXT_PUBLIC_R2_DOMAIN;
-                                                        if (!r2Domain) return;
-                                                        const url = r2Domain.startsWith('http')
-                                                            ? `${r2Domain}/${sub.pdf_url}`
-                                                            : `https://${r2Domain}/${sub.pdf_url}`;
-                                                        window.open(url, '_blank');
+                                                    className={styles.deleteBtn}
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        handleDeleteSubmission(sub.id);
                                                     }}
+                                                    title="Delete Submission"
+                                                    style={{ padding: '4px', height: 'auto', minHeight: 'unset', width: 'auto' }}
                                                 >
-                                                    <Download size={14} /> PDF
+                                                    <Trash2 size={14} />
                                                 </button>
-                                            )}
+                                            </div>
                                         </div>
+                                        {sub.comments && (
+                                            <div style={{
+                                                marginTop: '8px',
+                                                fontSize: '0.8125rem',
+                                                color: 'var(--text-secondary)',
+                                                borderTop: '1px solid var(--border-color)',
+                                                paddingTop: '8px'
+                                            }}>
+                                                <strong>Comment:</strong> {sub.comments}
+                                            </div>
+                                        )}
                                     </div>
                                 ))
                             )}

@@ -283,7 +283,7 @@ export async function getSingleForm() {
 
 // --- FILE STORAGE (R2) ---
 
-import { uploadFile } from './storage';
+import { uploadFile, deleteFile } from './storage';
 
 export async function uploadFormPdf(formData: FormData) {
     try {
@@ -611,5 +611,76 @@ export async function sendSubmissionToNutritionist(
     } catch (error: any) {
         console.error('Error sending submission to nutritionist:', error);
         return { success: false, error: error.message || 'Failed to send submission' };
+    }
+}
+
+export async function deleteSubmission(submissionId: string) {
+    try {
+        // 1. Get submission details to find file keys
+        const { data: submission, error: fetchError } = await supabase
+            .from('form_submissions')
+            .select('*')
+            .eq('id', submissionId)
+            .single();
+
+        if (fetchError) throw fetchError;
+
+        // 2. Delete files from R2 if they exist
+        if (submission.pdf_url) {
+            await deleteFile(submission.pdf_url);
+        }
+        if (submission.signature_url) {
+            await deleteFile(submission.signature_url);
+        }
+
+        // 3. Delete submission record
+        const { error: deleteError } = await supabase
+            .from('form_submissions')
+            .delete()
+            .eq('id', submissionId);
+
+        if (deleteError) throw deleteError;
+
+        // 4. Update client status based on remaining submissions
+        if (submission.client_id) {
+            const { data: remainingSubmissions, error: remainingError } = await supabase
+                .from('form_submissions')
+                .select('status')
+                .eq('client_id', submission.client_id)
+                .order('created_at', { ascending: false }) // Latest first
+                .limit(1);
+
+            let newStatus = 'not_started';
+
+            if (!remainingError && remainingSubmissions && remainingSubmissions.length > 0) {
+                const latestSubmission = remainingSubmissions[0];
+                switch (latestSubmission.status) {
+                    case 'accepted':
+                        newStatus = 'approved';
+                        break;
+                    case 'pending':
+                        newStatus = 'waiting_approval';
+                        break;
+                    case 'rejected':
+                        newStatus = 'rejected';
+                        break;
+                }
+            }
+
+            const { error: updateError } = await supabase
+                .from('clients')
+                .update({ screening_status: newStatus })
+                .eq('id', submission.client_id);
+
+            if (updateError) {
+                console.error('Error updating client status after submission deletion:', updateError);
+            }
+        }
+
+        revalidatePath('/clients'); // Revalidate wherever this is shown
+        return { success: true };
+    } catch (error: any) {
+        console.error('Error deleting submission:', error);
+        return { success: false, error: error.message };
     }
 }

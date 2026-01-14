@@ -1274,7 +1274,7 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
         return { isValid: true, messages: [] };
     }
 
-    function validateOrder(): { isValid: boolean, messages: string[] } {
+    async function validateOrder(): Promise<{ isValid: boolean, messages: string[] }> {
         if (formData.serviceType === 'Food') {
             const messages: string[] = [];
 
@@ -1364,67 +1364,71 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
         if (formData.serviceType === 'Boxes') {
             const messages: string[] = [];
 
-            // Validate box category quotas - each category must have exactly the required quota value
-            if (orderConfig.boxTypeId && boxQuotas.length > 0 && orderConfig.items) {
-                const selectedItems = orderConfig.items || {};
-                const boxQuantity = orderConfig.boxQuantity || 1;
+            // Use the boxOrders array which supports multiple boxes
+            const boxOrders = orderConfig.boxOrders || [];
 
-                // Check each quota requirement
-                for (const quota of boxQuotas) {
-                    // Calculate total quota value for this category
-                    let categoryQuotaValue = 0;
+            // Fallback for legacy single-box config if array is empty but legacy fields exist
+            const effectiveBoxOrders = boxOrders.length > 0 ? boxOrders : (
+                orderConfig.boxTypeId ? [{
+                    boxTypeId: orderConfig.boxTypeId,
+                    quantity: orderConfig.boxQuantity || 1,
+                    items: orderConfig.items || {}
+                }] : []
+            );
 
-                    // Sum up (item quantity * item quotaValue) for all items in this category
-                    for (const [itemId, qty] of Object.entries(selectedItems)) {
-                        const item = menuItems.find(i => i.id === itemId);
-                        if (item && item.categoryId === quota.categoryId) {
-                            const itemQuotaValue = item.quotaValue || 1;
-                            categoryQuotaValue += (qty as number) * itemQuotaValue;
-                        }
+            // Validate each box order
+            for (let i = 0; i < effectiveBoxOrders.length; i++) {
+                const box = effectiveBoxOrders[i];
+                if (!box.boxTypeId) continue;
+
+                try {
+                    // Fetch quotas for this box type to ensure we have the latest rules
+                    // We must fetch it because boxQuotas state only tracks the first box
+                    let quotas: BoxQuota[] = [];
+                    // Optimization: if it's the first box, we might have it in state, but clearer to just fetch or find in boxTypes
+
+                    // Check if quotas are already attached to boxType in state
+                    const boxTypeC = boxTypes.find(bt => bt.id === box.boxTypeId);
+                    if (boxTypeC && boxTypeC.quotas && boxTypeC.quotas.length > 0) {
+                        quotas = boxTypeC.quotas;
+                    } else {
+                        // Fetch if not available
+                        quotas = await getBoxQuotas(box.boxTypeId);
                     }
 
-                    // Calculate required quota value (targetValue * boxQuantity)
-                    const requiredQuotaValue = quota.targetValue * boxQuantity;
+                    if (quotas && quotas.length > 0) {
+                        const boxQty = box.quantity || 1;
+                        const selectedItems = box.items || {};
 
-                    // Check if it matches exactly
-                    if (!isMeetingExactTarget(categoryQuotaValue, requiredQuotaValue)) {
-                        const category = categories.find(c => c.id === quota.categoryId);
-                        const categoryName = category?.name || 'Unknown Category';
-                        messages.push(
-                            `Category "${categoryName}" requires exactly ${requiredQuotaValue} quota value, but you have ${categoryQuotaValue}. ` +
-                            `Please adjust items in this category to match exactly.`
-                        );
-                    }
-                }
-            }
+                        for (const quota of quotas) {
+                            let categoryQuotaValue = 0;
 
-            // Validate category set values - categories with setValue must have exactly that quota value
-            if (orderConfig.items) {
-                const selectedItems = orderConfig.items || {};
+                            // Calculate current value for this category in this box
+                            for (const [itemId, qty] of Object.entries(selectedItems)) {
+                                const item = menuItems.find(it => it.id === itemId);
+                                // Ensure item belongs to the quota's category
+                                if (item && item.categoryId === quota.categoryId) {
+                                    const itemQuotaValue = item.quotaValue || 1;
+                                    categoryQuotaValue += (qty as number) * itemQuotaValue;
+                                }
+                            }
 
-                // Check each category that has a setValue
-                for (const category of categories) {
-                    if (category.setValue !== undefined && category.setValue !== null) {
-                        // Calculate total quota value for this category
-                        let categoryQuotaValue = 0;
+                            const requiredQuotaValue = quota.targetValue * boxQty;
 
-                        // Sum up (item quantity * item quotaValue) for all items in this category
-                        for (const [itemId, qty] of Object.entries(selectedItems)) {
-                            const item = menuItems.find(i => i.id === itemId);
-                            if (item && item.categoryId === category.id) {
-                                const itemQuotaValue = item.quotaValue || 1;
-                                categoryQuotaValue += (qty as number) * itemQuotaValue;
+                            if (!isMeetingExactTarget(categoryQuotaValue, requiredQuotaValue)) {
+                                const category = categories.find(c => c.id === quota.categoryId);
+                                const categoryName = category?.name || 'Unknown Category';
+                                const boxIndexLabel = effectiveBoxOrders.length > 1 ? ` (Box ${i + 1})` : '';
+
+                                messages.push(
+                                    `Category "${categoryName}"${boxIndexLabel} requires exactly ${requiredQuotaValue} quota value, but you have ${categoryQuotaValue}. ` +
+                                    `Please adjust items in this category to match exactly.`
+                                );
                             }
                         }
-
-                        // Check if it matches exactly the setValue
-                        if (!isMeetingExactTarget(categoryQuotaValue, category.setValue)) {
-                            messages.push(
-                                `You must have a total of ${category.setValue} ${category.name} points, but you have ${categoryQuotaValue}. ` +
-                                `Please adjust items in this category to match exactly.`
-                            );
-                        }
                     }
+                } catch (err) {
+                    console.error('Error validating box quotas:', err);
                 }
             }
 
@@ -3898,7 +3902,7 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
 
         // Validate Order Config before saving (if we have config)
         if (orderConfig && orderConfig.caseId) {
-            const validation = validateOrder();
+            const validation = await validateOrder();
             if (!validation.isValid) {
                 setValidationError(validation.messages.join('\n'));
                 return false;

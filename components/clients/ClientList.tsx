@@ -360,23 +360,33 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
         // Filter by Service Type (Active Order)
         const matchesServiceTypeFilter = !serviceTypeFilter || c.serviceType === serviceTypeFilter;
 
-        // Filter by Needs Vendor (for Boxes clients without vendor)
+        // Filter by Needs Vendor (for Boxes clients without vendor OR Meal orders without vendor)
         let matchesNeedsVendorFilter = true;
         if (needsVendorFilter) {
-            if (c.serviceType !== 'Boxes') {
-                matchesNeedsVendorFilter = false;
-            } else {
-                // Check if client has vendor set in their active order (same logic as getOrderSummary)
+            let needsBoxVendor = false;
+            let needsMealVendor = false;
+
+            // Check Boxes
+            if (c.serviceType === 'Boxes') {
                 if (c.activeOrder && c.activeOrder.serviceType === 'Boxes') {
                     const box = boxTypes.find(b => b.id === c.activeOrder?.boxTypeId);
                     const vendorId = c.activeOrder.vendorId || box?.vendorId;
-                    // If vendor is set, exclude from needs-vendor filter
-                    matchesNeedsVendorFilter = !vendorId;
+                    needsBoxVendor = !vendorId;
                 } else {
-                    // If no active order or not Boxes, they need vendor assignment
-                    matchesNeedsVendorFilter = true;
+                    needsBoxVendor = true;
                 }
             }
+
+            // Check Meals
+            const mealSelections = c.mealOrder?.mealSelections || c.activeOrder?.mealSelections;
+            if (mealSelections) {
+                const mealTypes = Object.keys(mealSelections);
+                if (mealTypes.length > 0) {
+                    needsMealVendor = mealTypes.some(type => !mealSelections[type].vendorId);
+                }
+            }
+
+            matchesNeedsVendorFilter = needsBoxVendor || needsMealVendor;
         }
 
         // Filter by Dependents visibility
@@ -1526,6 +1536,14 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
                                                 fontWeight: serviceTypeFilter === 'Boxes' ? 600 : 400
                                             }}>
                                             Boxes
+                                        </div>
+                                        <div onClick={() => { setServiceTypeFilter('Custom'); setOpenFilterMenu(null); }}
+                                            style={{
+                                                padding: '8px 12px', cursor: 'pointer',
+                                                backgroundColor: serviceTypeFilter === 'Custom' ? 'var(--bg-surface-hover)' : 'transparent',
+                                                fontWeight: serviceTypeFilter === 'Custom' ? 600 : 400
+                                            }}>
+                                            Custom
                                         </div>
                                         <div style={{ height: '1px', backgroundColor: 'var(--border-color)', margin: '4px 0' }}></div>
                                         <div onClick={() => { setNeedsVendorFilter(!needsVendorFilter); setOpenFilterMenu(null); }}

@@ -220,11 +220,7 @@ export function OrderDeliveryFlow({ order }: { order: OrderDetails }) {
                     <p className="text-subtitle" style={{ marginTop: '1rem' }}>Proof has been securely saved.</p>
                 </div>
 
-                {order.alreadyDelivered && (
-                    <div style={{ backgroundColor: 'rgba(234, 179, 8, 0.1)', color: '#eab308', padding: '0.75rem', borderRadius: '0.5rem', fontSize: '0.875rem' }}>
-                        This order was already marked as delivered.
-                    </div>
-                )}
+
 
                 <div className="divider" style={{ marginTop: '1rem' }} />
 
