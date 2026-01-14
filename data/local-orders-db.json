@@ -2947,44 +2947,6 @@
       "meal_type": "Lunch"
     },
     {
-      "id": "ed1ebc7b-9714-4228-abd3-8c9ae83dded9",
-      "client_id": "CLIENT-275",
-      "service_type": "Food",
-      "case_id": null,
-      "status": "scheduled",
-      "last_updated": "2026-01-13T22:12:16.508+00:00",
-      "updated_by": "Avraham ",
-      "created_at": "2026-01-13T22:12:25.572847+00:00",
-      "take_effect_date": null,
-      "total_value": 0,
-      "total_items": 0,
-      "notes": null,
-      "processed_order_id": null,
-      "processed_at": null,
-      "delivery_day": null,
-      "order_number": 100620,
-      "meal_type": "Lunch"
-    },
-    {
-      "id": "6b85cfb6-40e0-48c0-9351-f3fdc44f4919",
-      "client_id": "CLIENT-263",
-      "service_type": "Boxes",
-      "case_id": "sdfg",
-      "status": "scheduled",
-      "last_updated": "2026-01-14T01:35:40.367+00:00",
-      "updated_by": "Client",
-      "created_at": "2026-01-14T01:35:44.457806+00:00",
-      "take_effect_date": null,
-      "total_value": 0,
-      "total_items": 1,
-      "notes": null,
-      "processed_order_id": null,
-      "processed_at": null,
-      "delivery_day": "Tuesday",
-      "order_number": 100626,
-      "meal_type": "Lunch"
-    },
-    {
       "id": "674633d5-36e5-4374-b151-4b8bdb6fb180",
       "client_id": "CLIENT-202",
       "service_type": "Food",
@@ -3344,6 +3306,44 @@
       "delivery_day": "Wednesday",
       "order_number": 100653,
       "meal_type": "Lunch"
+    },
+    {
+      "id": "7af5b19f-ee71-41c2-ad82-52b02cfdfa6c",
+      "client_id": "CLIENT-275",
+      "service_type": "Custom",
+      "case_id": "123",
+      "status": "scheduled",
+      "last_updated": "2026-01-14T03:15:16.473+00:00",
+      "updated_by": "Avraham ",
+      "created_at": "2026-01-14T03:15:26.052209+00:00",
+      "take_effect_date": null,
+      "total_value": 100,
+      "total_items": 1,
+      "notes": "banana\napple",
+      "processed_order_id": null,
+      "processed_at": null,
+      "delivery_day": "Wednesday",
+      "order_number": 100655,
+      "meal_type": "Lunch"
+    },
+    {
+      "id": "b5343c85-e18d-4dc0-9325-8b520323391d",
+      "client_id": "CLIENT-263",
+      "service_type": "Boxes",
+      "case_id": "sdfg",
+      "status": "scheduled",
+      "last_updated": "2026-01-14T01:35:40.367+00:00",
+      "updated_by": "Client",
+      "created_at": "2026-01-14T03:52:57.251378+00:00",
+      "take_effect_date": null,
+      "total_value": 0,
+      "total_items": 1,
+      "notes": null,
+      "processed_order_id": null,
+      "processed_at": null,
+      "delivery_day": "Tuesday",
+      "order_number": 100657,
+      "meal_type": "Lunch"
     }
   ],
   "orderVendorSelections": [],
@@ -3379,6 +3379,12 @@
       "upcoming_order_id": "991221a0-b03f-48f1-913c-7ffc0d6c32f0",
       "vendor_id": "1e9e2218-fdff-434f-b279-93d9d7bf4bd2",
       "created_at": "2026-01-14T03:05:21.099128+00:00"
+    },
+    {
+      "id": "2d0fe501-a72a-4f5d-a36b-dc00b2c739ec",
+      "upcoming_order_id": "7af5b19f-ee71-41c2-ad82-52b02cfdfa6c",
+      "vendor_id": "3ed55563-e64e-4f9b-ab34-3e0b45f895a5",
+      "created_at": "2026-01-14T03:15:26.775018+00:00"
     },
     {
       "id": "6b9b4c99-b1dd-4801-b9ab-8f54258d3df6",
@@ -4237,6 +4243,20 @@
       "created_at": "2026-01-12T20:14:40.935581+00:00",
       "meal_item_id": null,
       "notes": null,
+      "custom_name": null,
+      "custom_price": null
+    },
+    {
+      "id": "2a62912a-7a24-486b-8f70-ca289e0269eb",
+      "upcoming_order_id": "7af5b19f-ee71-41c2-ad82-52b02cfdfa6c",
+      "vendor_selection_id": "2d0fe501-a72a-4f5d-a36b-dc00b2c739ec",
+      "menu_item_id": null,
+      "quantity": 1,
+      "unit_value": 100,
+      "total_value": 100,
+      "created_at": "2026-01-14T03:15:26.923967+00:00",
+      "meal_item_id": null,
+      "notes": "banana\napple",
       "custom_name": null,
       "custom_price": null
     },
@@ -5475,5 +5495,5 @@
       "items": {}
     }
   ],
-  "lastSynced": "2026-01-14T03:06:39.195Z"
+  "lastSynced": "2026-01-14T03:52:58.754Z"
 }

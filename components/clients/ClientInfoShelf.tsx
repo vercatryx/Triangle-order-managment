@@ -397,18 +397,10 @@ export function ClientInfoShelf({
                                             <input
                                                 type="number"
                                                 className={styles.editInput}
-                                                value={client.serviceType === 'Boxes' ? editForm.authorizedAmount : editForm.approvedMealsPerWeek}
+                                                value={editForm.approvedMealsPerWeek}
                                                 onChange={e => {
                                                     const val = parseInt(e.target.value) || 0;
-                                                    if (client.serviceType === 'Boxes') {
-                                                        setEditForm({
-                                                            ...editForm,
-                                                            approvedMealsPerWeek: val,
-                                                            authorizedAmount: val
-                                                        });
-                                                    } else {
-                                                        setEditForm({ ...editForm, approvedMealsPerWeek: val });
-                                                    }
+                                                    setEditForm({ ...editForm, approvedMealsPerWeek: val });
                                                 }}
                                             />
                                             <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
@@ -417,7 +409,7 @@ export function ClientInfoShelf({
                                         </div>
                                     ) : (
                                         client.serviceType === 'Boxes'
-                                            ? `${client.authorizedAmount || 0} Boxes/Cycle`
+                                            ? `${client.approvedMealsPerWeek || 0} Boxes/Cycle`
                                             : `${client.approvedMealsPerWeek || 0} Meals/Week`
                                     )}
                                 </div>

@@ -2459,8 +2459,8 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                                                     <input
                                                         type="number"
                                                         className="input"
-                                                        value={formData.authorizedAmount ?? ''}
-                                                        onChange={e => setFormData({ ...formData, authorizedAmount: e.target.value ? parseFloat(e.target.value) : null })}
+                                                        value={formData.approvedMealsPerWeek ?? ''}
+                                                        onChange={e => setFormData({ ...formData, approvedMealsPerWeek: e.target.value ? parseInt(e.target.value) : undefined })}
                                                         min={1}
                                                         placeholder="1"
                                                     />
@@ -3326,7 +3326,7 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                                                         ))}
 
                                                         {/* Add Box Button */}
-                                                        {(!formData.authorizedAmount || currentBoxes.length < formData.authorizedAmount) && (
+                                                        {(!formData.approvedMealsPerWeek || currentBoxes.length < formData.approvedMealsPerWeek) && (
                                                             <button
                                                                 type="button"
                                                                 className="btn btn-outline"
