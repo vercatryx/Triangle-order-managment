@@ -14,6 +14,46 @@ import { Vendor, AppSettings } from './types';
 import { getEarliestEffectiveDate } from './weekly-lock';
 
 /**
+ * Calculate the number of WHOLE DAYS until a delivery date.
+ * Ignores time of day completely.
+ * 
+ * Logic:
+ * deliveryDate (set to midnight) - fromDate (set to midnight)
+ * result in days.
+ * 
+ * Example:
+ * Today = Monday. Delivery = Wednesday.
+ * Mon -> Tue (1), Tue -> Wed (2). Result = 2.
+ */
+export function getDaysUntilDelivery(deliveryDate: Date, fromDate: Date = new Date()): number {
+    const d1 = new Date(fromDate);
+    d1.setHours(0, 0, 0, 0);
+
+    const d2 = new Date(deliveryDate);
+    d2.setHours(0, 0, 0, 0);
+
+    const diffMs = d2.getTime() - d1.getTime();
+    const diffDays = Math.round(diffMs / (1000 * 60 * 60 * 24));
+
+    return diffDays;
+}
+
+/**
+ * Check if a delivery date matches the EXACT cutoff day requirement.
+ * 
+ * Rule: days_until_delivery == cutoff_days
+ * 
+ * @param deliveryDate The target delivery date
+ * @param cutoffDays The vendor's cutoff in whole days
+ * @param fromDate Reference date (default now)
+ */
+export function isWithinCutoff(deliveryDate: Date, cutoffDays: number, fromDate: Date = new Date()): boolean {
+    const daysUntil = getDaysUntilDelivery(deliveryDate, fromDate);
+    return daysUntil === cutoffDays;
+}
+
+
+/**
  * Day name to day number mapping (consistent across all date calculations)
  */
 export const DAY_NAME_TO_NUMBER: { [key: string]: number } = {
