@@ -130,6 +130,7 @@ export interface ClientFoodOrder {
       }[];
     };
   };
+  notes?: string;
   created_at?: string;
   updated_at?: string;
   updated_by?: string;
@@ -147,6 +148,7 @@ export interface ClientMealOrder {
       itemNotes?: { [itemId: string]: string };
     }
   };
+  notes?: string;
   created_at?: string;
   updated_at?: string;
   updated_by?: string;
@@ -161,6 +163,7 @@ export interface ClientBoxOrder {
   quantity?: number;
   items?: { [itemId: string]: number }; // Custom items if allowed
   itemNotes?: { [itemId: string]: string }; // Note for specific items
+  notes?: string;
   created_at?: string;
   updated_at?: string;
   updated_by?: string;

@@ -5558,6 +5558,7 @@ export async function getClientFoodOrder(clientId: string): Promise<ClientFoodOr
         clientId: data.client_id,
         caseId: data.case_id,
         deliveryDayOrders: data.delivery_day_orders,
+        notes: data.notes,
         created_at: data.created_at,
         updated_at: data.updated_at,
         updated_by: data.updated_by
@@ -5588,6 +5589,7 @@ export async function saveClientFoodOrder(clientId: string, data: Partial<Client
         const updatePayload: any = {
             case_id: data.caseId,
             delivery_day_orders: data.deliveryDayOrders,
+            notes: data.notes,
             updated_at: new Date().toISOString()
         };
         if (updatedBy) updatePayload.updated_by = updatedBy;
@@ -5620,7 +5622,8 @@ export async function saveClientFoodOrder(clientId: string, data: Partial<Client
         const insertPayload: any = {
             client_id: clientId,
             case_id: data.caseId,
-            delivery_day_orders: data.deliveryDayOrders
+            delivery_day_orders: data.deliveryDayOrders,
+            notes: data.notes
         };
         if (updatedBy) insertPayload.updated_by = updatedBy;
 
@@ -5665,6 +5668,7 @@ export async function getClientMealOrder(clientId: string): Promise<ClientMealOr
         clientId: data.client_id,
         caseId: data.case_id,
         mealSelections: data.meal_selections,
+        notes: data.notes,
         created_at: data.created_at,
         updated_at: data.updated_at,
         updated_by: data.updated_by
@@ -5682,6 +5686,7 @@ export async function saveClientMealOrder(clientId: string, data: Partial<Client
         const updatePayload: any = {
             case_id: data.caseId,
             meal_selections: data.mealSelections,
+            notes: data.notes,
             updated_at: new Date().toISOString()
         };
         if (updatedBy) updatePayload.updated_by = updatedBy;
@@ -5712,7 +5717,8 @@ export async function saveClientMealOrder(clientId: string, data: Partial<Client
         const insertPayload: any = {
             client_id: clientId,
             case_id: data.caseId,
-            meal_selections: data.mealSelections
+            meal_selections: data.mealSelections,
+            notes: data.notes
         };
         if (updatedBy) insertPayload.updated_by = updatedBy;
 
@@ -5763,6 +5769,7 @@ export async function getClientBoxOrder(clientId: string): Promise<ClientBoxOrde
         quantity: d.quantity,
         items: d.items,
         itemNotes: d.item_notes, // Map item_notes from DB
+        notes: d.notes,
         created_at: d.created_at,
         updated_at: d.updated_at,
         updated_by: d.updated_by
@@ -5802,7 +5809,8 @@ export async function saveClientBoxOrder(clientId: string, data: Partial<ClientB
             vendor_id: order.vendorId,
             quantity: order.quantity,
             items: order.items,
-            item_notes: (order as any).itemNotes // Save item notes to DB
+            item_notes: (order as any).itemNotes, // Save item notes to DB
+            notes: order.notes // Save order-level notes
         };
         if (updatedBy) payload.updated_by = updatedBy;
         return payload;

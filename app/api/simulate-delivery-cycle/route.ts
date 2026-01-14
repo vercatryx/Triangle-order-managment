@@ -293,7 +293,7 @@ export async function POST(request: NextRequest) {
                             null,
                             valueTotal,
                             itemsTotal,
-                            null,
+                            (fo as any).notes || null,
                             fo.case_id
                         );
 
@@ -466,7 +466,7 @@ export async function POST(request: NextRequest) {
                     targetVendorId,
                     totalBoxValue,
                     template.quantity || 1,
-                    null,
+                    (template as any).notes || null,
                     template.case_id
                 );
 
@@ -508,7 +508,7 @@ export async function POST(request: NextRequest) {
                     null, // No single vendor
                     0, // Value calc later
                     0, // Items calc later
-                    null,
+                    (template as any).notes || null,
                     template.case_id
                 );
 

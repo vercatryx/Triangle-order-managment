@@ -2851,6 +2851,17 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                                                     mealItems={mealItems}
                                                     settings={settings}
                                                 />
+                                                <div style={{ marginTop: '1rem' }}>
+                                                    <label className={styles.label}>Order Notes</label>
+                                                    <textarea
+                                                        className="input"
+                                                        placeholder="Add general notes for this order..."
+                                                        value={orderConfig.notes || ''}
+                                                        onChange={(e) => setOrderConfig({ ...orderConfig, notes: e.target.value })}
+                                                        rows={2}
+                                                        style={{ resize: 'vertical', minHeight: '3rem' }}
+                                                    />
+                                                </div>
                                             </div>
                                         )}
 
@@ -3340,6 +3351,18 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                                                                 <Plus size={16} /> Add Another Box
                                                             </button>
                                                         )}
+
+                                                        <div style={{ marginTop: '2rem' }}>
+                                                            <label className={styles.label}>General Order Notes</label>
+                                                            <textarea
+                                                                className="input"
+                                                                placeholder="Add general notes for this order..."
+                                                                value={orderConfig.notes || ''}
+                                                                onChange={(e) => setOrderConfig({ ...orderConfig, notes: e.target.value })}
+                                                                rows={2}
+                                                                style={{ resize: 'vertical', minHeight: '3rem' }}
+                                                            />
+                                                        </div>
                                                     </div>
                                                 );
                                             })()
