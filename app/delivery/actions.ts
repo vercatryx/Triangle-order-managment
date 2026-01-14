@@ -90,7 +90,9 @@ export async function processDeliveryProof(formData: FormData) {
         const key = `proof-${orderNumber}-${timestamp}.${extension}`;
 
         await uploadFile(key, buffer, file.type, process.env.R2_DELIVERY_BUCKET_NAME);
-        const publicUrl = `${process.env.R2_PUBLIC_URL_BASE || 'https://pub-820fa32211a14c0b8bdc7c41106bfa02.r2.dev'}/${key}`;
+        const publicUrlBase = process.env.NEXT_PUBLIC_R2_DOMAIN || 'https://pub-820fa32211a14c0b8bdc7c41106bfa02.r2.dev';
+        const baseUrl = publicUrlBase.endsWith('/') ? publicUrlBase.slice(0, -1) : publicUrlBase;
+        const publicUrl = `${baseUrl}/${key}`;
 
         // 3. Update Order in Supabase
         // For upcoming_orders, use saveDeliveryProofUrlAndProcessOrder to properly process the order

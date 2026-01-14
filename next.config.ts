@@ -5,7 +5,9 @@ const nextConfig: NextConfig = {
     remotePatterns: [
       {
         protocol: 'https',
-        hostname: 'pub-820fa32211a14c0b8bdc7c41106bfa02.r2.dev',
+        hostname: process.env.NEXT_PUBLIC_R2_DOMAIN
+          ? new URL(process.env.NEXT_PUBLIC_R2_DOMAIN).hostname
+          : 'pub-820fa32211a14c0b8bdc7c41106bfa02.r2.dev',
       },
     ],
   },

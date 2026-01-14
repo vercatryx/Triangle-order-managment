@@ -860,11 +860,13 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate, isVendorView }: P
                                                     if (item.notes) return `Custom Item (${item.notes})`;
                                                     return 'Unknown Item';
                                                 })()}</span>
-                                                {item.notes && (
-                                                    <span style={{ fontSize: '0.85rem', color: '#666', fontStyle: 'italic', marginTop: '2px' }}>
-                                                        (Note: {item.notes})
-                                                    </span>
-                                                )}
+                                                {item.notes &&
+                                                    item.notes.trim().toLowerCase() !== (item.custom_name || '').trim().toLowerCase() &&
+                                                    item.notes.trim().toLowerCase() !== (menuItem?.name || item.menuItemName || '').trim().toLowerCase() && (
+                                                        <span style={{ fontSize: '0.85rem', color: '#666', fontStyle: 'italic', marginTop: '2px' }}>
+                                                            (Note: {item.notes})
+                                                        </span>
+                                                    )}
                                             </div>
                                         </td>
                                         <td>{quantity}</td>

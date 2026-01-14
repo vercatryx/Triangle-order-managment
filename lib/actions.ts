@@ -206,8 +206,11 @@ export async function uploadMenuItemImage(formData: FormData) {
 
     // Construct public URL
     // Priority: Env Var -> Hardcoded fallback (matches delivery action)
-    const publicUrlBase = process.env.R2_PUBLIC_URL_BASE || 'https://pub-820fa32211a14c0b8bdc7c41106bfa02.r2.dev';
-    const publicUrl = `${publicUrlBase}/${key}`;
+    const publicUrlBase = process.env.NEXT_PUBLIC_R2_DOMAIN || 'https://pub-820fa32211a14c0b8bdc7c41106bfa02.r2.dev';
+
+    // Ensure no trailing slash for consistent path joining
+    const baseUrl = publicUrlBase.endsWith('/') ? publicUrlBase.slice(0, -1) : publicUrlBase;
+    const publicUrl = `${baseUrl}/${key}`;
 
     return { success: true, url: publicUrl };
 }

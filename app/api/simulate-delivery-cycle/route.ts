@@ -605,51 +605,59 @@ export async function POST(request: NextRequest) {
         // --- 5. Process CUSTOM Orders ---
         // "Created ONLY on the exact cutoff day"
         // "One per week... First valid wins"
+        console.log('[Unified Scheduling] Starting Custom Order Processing...');
         const { data: customOrders } = await supabase.from('upcoming_orders').select('*').eq('service_type', 'Custom');
 
         if (customOrders) {
+            console.log(`[Custom Debug] Found ${customOrders.length} custom order candidates.`);
             for (const co of customOrders) {
-                if (!isClientEligible(co.client_id)) continue;
+                console.log(`[Custom Debug] Processing candidate ${co.id} for client ${co.client_id}`);
+
+                if (!isClientEligible(co.client_id)) {
+                    console.log(`[Custom Debug] Client ${co.client_id} is not eligible. Skipping.`);
+                    continue;
+                }
 
                 // Validate Delivery Day Config
                 if (!co.delivery_day) {
                     logUnexpected(clientMap.get(co.client_id)?.full_name || co.client_id, 'Custom', 'N/A', 'Missing delivery_day configuration');
+                    console.log(`[Custom Debug] Missing delivery_day for ${co.id}. Skipping.`);
                     continue;
                 }
 
                 // Identify Cutoff
-                // Custom orders in `upcoming_orders` might link to a vendor via `upcoming_order_vendor_selections`?
-                // Or we need to look it up.
                 const { data: vs } = await supabase
                     .from('upcoming_order_vendor_selections')
-                    .select('vendor_id')
+                    .select('id, vendor_id')
                     .eq('upcoming_order_id', co.id)
                     .single();
 
                 const vendorId = vs?.vendor_id;
                 if (!vendorId) {
                     // No vendor = cannot determine cutoff. Spec says "Custom orders have: A vendor".
+                    console.log(`[Custom Debug] No vendor found for ${co.id}. Skipping.`);
                     continue;
                 }
                 const vendor = vendorMap.get(vendorId);
                 const cutoff = vendor?.cutoffDays || 0;
+                console.log(`[Custom Debug] Vendor ${vendorId} found. Cutoff: ${cutoff} days.`);
 
                 // Target Date Calc:
-                // Is there a delivery date D such that days_until(D) == cutoff?
-                // The delivery date D must match co.delivery_day (e.g. "Friday").
-                // So, does (Today + Cutoff) == "Friday"?
-
                 const targetDate = new Date(today);
                 targetDate.setDate(today.getDate() + cutoff);
                 const targetDayName = targetDate.toLocaleDateString('en-US', { weekday: 'long' });
 
-                if (targetDayName !== co.delivery_day) continue; // Not the cutoff day
+                console.log(`[Custom Debug] Target Day for Cutoff is ${targetDayName} (${targetDate.toISOString().split('T')[0]}). Configured Day: ${co.delivery_day}`);
+
+                if (targetDayName !== co.delivery_day) {
+                    console.log(`[Custom Debug] Day mismatch. Skipping.`);
+                    continue; // Not the cutoff day
+                }
 
                 // EXACT MATCH -> Proceed
                 const deliveryDate = targetDate;
 
                 // Weekly Limit Check
-                // "Only ONE Custom order... per week"
                 const cDate = new Date(deliveryDate);
                 const dayNum = cDate.getDay();
                 const weekStart = new Date(cDate);
@@ -665,11 +673,14 @@ export async function POST(request: NextRequest) {
                     .gte('scheduled_delivery_date', weekStart.toISOString().split('T')[0])
                     .lte('scheduled_delivery_date', weekEnd.toISOString().split('T')[0]);
 
-                if (count && count > 0) continue; // Blocked (Limit Reached)
+                if (count && count > 0) {
+                    console.log(`[Custom Debug] Weekly limit reached for client ${co.client_id}. Skipping.`);
+                    continue; // Blocked (Limit Reached)
+                }
+
+                console.log(`[Custom Debug] Creating order for client ${co.client_id} on ${deliveryDate.toISOString()}`);
 
                 // Create Custom Order
-                // Convert upcoming_order items structure to order structure...
-                // Simplified for rewrite:
                 const newOrder = await createOrder(
                     co.client_id,
                     'Custom',
@@ -683,17 +694,98 @@ export async function POST(request: NextRequest) {
                 );
 
                 if (newOrder) {
+                    console.log(`[Custom Debug] Order ${newOrder.id} created successfully.`);
+
                     // Link Vendor
                     const { data: newVs } = await supabase.from('order_vendor_selections').insert({
                         order_id: newOrder.id,
                         vendor_id: vendorId
                     }).select().single();
 
-                    // Copy items if needed or just use Custom fields
-                    // For Custom, often we just rely on total_value/notes, but if items exist in template:
-                    // ... copy logic ...
+                    if (newVs) {
+                        console.log(`[Custom Debug] Vendor selection ${newVs.id} created.`);
+
+                        const upcomingVsId = vs?.id; // 'vs' is from line 623
+
+                        if (upcomingVsId) {
+                            const { data: upcomingItems } = await supabase
+                                .from('upcoming_order_items')
+                                .select('*')
+                                .eq('upcoming_order_vendor_selection_id', upcomingVsId);
+
+                            console.log(`[Custom Debug] Found ${upcomingItems?.length || 0} items in upcoming_order_items for VS ${upcomingVsId}`);
+
+                            if (upcomingItems && upcomingItems.length > 0) {
+                                for (const uItem of upcomingItems) {
+                                    // Use custom_name if available, else usage notes as name?
+                                    // Often custom order item name is just the note.
+
+                                    const itemName = uItem.custom_name || uItem.notes || 'Custom Item';
+                                    const itemPrice = uItem.custom_price || uItem.total_value || 0;
+
+                                    await supabase.from('order_items').insert({
+                                        order_id: newOrder.id,
+                                        vendor_selection_id: newVs.id,
+                                        menu_item_id: null,
+                                        custom_name: itemName,
+                                        custom_price: itemPrice,
+                                        quantity: uItem.quantity || 1,
+                                        unit_value: itemPrice,
+                                        total_value: (itemPrice * (uItem.quantity || 1)),
+                                        notes: uItem.notes // Keep note in notes too
+                                    });
+                                }
+                                console.log(`[Custom Debug] Items transferred.`);
+                            } else {
+                                console.log(`[Custom Debug] No items found, creating fallback item from order details.`);
+                                // Use co.notes as name if available, as that's where the user text is
+                                const rawItemName = co.custom_name || co.notes || 'Custom Item';
+
+                                // Split by comma to support multiple items
+                                const itemNames = rawItemName.split(',').map((s: string) => s.trim()).filter((s: string) => s.length > 0);
+
+                                if (itemNames.length > 0) {
+                                    const totalOrderValue = co.total_value || 0;
+                                    const pricePerItem = totalOrderValue / itemNames.length;
+
+                                    for (const name of itemNames) {
+                                        await supabase.from('order_items').insert({
+                                            order_id: newOrder.id,
+                                            vendor_selection_id: newVs.id,
+                                            menu_item_id: null,
+                                            custom_name: name,
+                                            custom_price: pricePerItem,
+                                            quantity: 1,
+                                            unit_value: pricePerItem,
+                                            total_value: pricePerItem,
+                                            notes: null // Don't duplicate the full list into the notes of each item
+                                        });
+                                    }
+                                } else {
+                                    // Fallback if split results in empty (shouldn't happen with default)
+                                    await supabase.from('order_items').insert({
+                                        order_id: newOrder.id,
+                                        vendor_selection_id: newVs.id,
+                                        menu_item_id: null,
+                                        custom_name: 'Custom Item',
+                                        custom_price: co.total_value,
+                                        quantity: 1,
+                                        unit_value: co.total_value,
+                                        total_value: co.total_value,
+                                        notes: co.notes
+                                    });
+                                }
+                            }
+                        }
+                    } else {
+                        console.error(`[Custom Debug] Failed to create order_vendor_selections for order ${newOrder.id}`);
+                    }
+                } else {
+                    console.error(`[Custom Debug] Failed to create order shell.`);
                 }
             }
+        } else {
+            console.log('[Custom Debug] No custom orders passed filter.');
         }
 
         // --- 6. Send Report ---
