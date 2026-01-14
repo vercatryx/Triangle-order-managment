@@ -368,6 +368,7 @@ export async function createSubmission(data: Record<string, string>, clientId?: 
 }
 
 export async function getSubmissionByToken(token: string) {
+    console.log(`[getSubmissionByToken] Called with token: ${token}`);
     try {
         const { data: submission, error } = await supabase
             .from('form_submissions')
@@ -459,6 +460,7 @@ export async function updateSubmissionStatus(token: string, status: 'accepted' |
 }
 
 export async function finalizeSubmission(token: string, pdfBlob: Blob) {
+    console.log(`[finalizeSubmission] Called with token: ${token}, blob size: ${pdfBlob.size}`);
     try {
         const buffer = Buffer.from(await pdfBlob.arrayBuffer());
         const timestamp = new Date().getTime();

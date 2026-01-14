@@ -68,6 +68,7 @@ export default function VerifyOrderPage() {
                 throw new Error(result.error || 'Failed to reject');
             }
         } catch (err: any) {
+            console.error('[handleReject] Error:', err);
             setError(err.message);
         } finally {
             setProcessing(false);
@@ -99,6 +100,7 @@ export default function VerifyOrderPage() {
             const pdfBlob = await generateSignedPDF(signatureDataUrl);
 
             // Upload PDF
+            console.log(`[handleSignAndComplete] Uploading PDF, size: ${pdfBlob.size} bytes`);
             const uploadResult = await finalizeSubmission(token, pdfBlob);
             if (!uploadResult.success) {
                 throw new Error(uploadResult.error || 'Failed to upload PDF');

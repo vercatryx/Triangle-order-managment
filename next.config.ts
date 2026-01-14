@@ -11,6 +11,16 @@ const nextConfig: NextConfig = {
       },
     ],
   },
+  experimental: {
+    serverActions: {
+      allowedOrigins: [
+        'www.trianglesquareservices.com',
+        'trianglesquareservices.com',
+        'verify-order-app.vercel.app', // Adding implicit vercel domains just in case
+        'localhost:3000'
+      ],
+    },
+  },
 };
 
 export default nextConfig;
