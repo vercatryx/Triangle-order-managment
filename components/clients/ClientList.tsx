@@ -788,10 +788,14 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
                 if (uniqueVendors.size > 0) {
                     uniqueVendors.forEach(v => vendorSummaries.push(v));
                 }
+            } else if (st === 'Custom') {
+                const vId = conf.vendorId;
+                const vName = vendors.find(v => v.id === vId)?.name;
+                if (vName) vendorSummaries.push(vName);
             }
             return (
                 <div style={{ fontSize: '0.85rem' }}>
-                    <span className={`badge ${st === 'Boxes' ? 'badge-blue' : 'badge-green'}`} style={{ marginRight: '6px' }}>{st}</span>
+                    <span className={`badge ${st === 'Boxes' ? 'badge-blue' : st === 'Custom' ? 'badge-purple' : 'badge-green'}`} style={{ marginRight: '6px' }}>{st}</span>
                     <span style={{ color: 'var(--text-secondary)' }}>
                         {vendorSummaries.length > 0 ? vendorSummaries.join(', ') : 'No Vendor'}
                     </span>
@@ -914,6 +918,18 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
                     });
                 }
             }
+        } else if (st === 'Custom') {
+            // Custom Order Logic
+            const vId = conf.vendorId;
+            vendorName = vendors.find(v => v.id === vId)?.name || 'No Vendor';
+
+            const desc = conf.custom_name || conf.description || conf.notes || 'Custom Item';
+            const price = conf.custom_price || conf.totalValue || conf.price || 0;
+
+            itemsList.push({
+                name: `${desc} ($${Number(price).toFixed(2)})`,
+                quantity: 1
+            });
         }
 
         return (

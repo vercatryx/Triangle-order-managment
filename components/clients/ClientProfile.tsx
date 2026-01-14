@@ -570,6 +570,46 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
             setBoxOrderConfig(null);
             setOriginalBoxOrderConfig(null);
         }
+
+        // Custom
+        // Check if the client has a Custom active order or if the loaded upcoming order is Custom
+        if (data.client.serviceType === 'Custom') {
+            // Try to find custom order data in upcomingOrder first (most recent)
+            const upcoming = data.upcomingOrder as any;
+
+            // Check if upcoming order is the multi-day object format (though Custom is single-day, safety check)
+            // or direct object
+            let customData = upcoming;
+
+            // If upcoming is keyed by day, grab the first valid entry
+            if (upcoming && !upcoming.serviceType && typeof upcoming === 'object') {
+                const firstKey = Object.keys(upcoming)[0];
+                if (firstKey) customData = upcoming[firstKey];
+            }
+
+            if (customData && customData.serviceType === 'Custom') {
+                console.log('[LOAD] Hydrating Custom order from upcoming:', customData);
+                const conf = {
+                    serviceType: 'Custom',
+                    caseId: customData.caseId || data.client.activeOrder?.caseId,
+                    custom_name: customData.custom_name || customData.notes, // custom_name comes from local-db, notes from direct DB?
+                    custom_price: customData.custom_price || customData.totalValue,
+                    vendorId: customData.vendorId,
+                    deliveryDay: customData.deliveryDay,
+                    // Ensure mapped fields are present for form
+                    description: customData.custom_name || customData.notes,
+                    totalValue: customData.custom_price || customData.totalValue
+                };
+                setOrderConfig(conf);
+                setOriginalOrderConfig(JSON.parse(JSON.stringify(conf)));
+            } else if (data.client.activeOrder && data.client.activeOrder.serviceType === 'Custom') {
+                // Fallback to activeOrder from client profile if upcoming not found
+                console.log('[LOAD] Hydrating Custom order from client.activeOrder');
+                const conf = { ...data.client.activeOrder };
+                setOrderConfig(conf);
+                setOriginalOrderConfig(JSON.parse(JSON.stringify(conf)));
+            }
+        }
     }
 
     function _hydrateFromInitialDataLegacy(data: ClientFullDetails) {
@@ -1585,7 +1625,11 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
             if (!confirmSwitch) return;
         }
 
-        setFormData({ ...formData, serviceType: type });
+        const updatedFormData = { ...formData, serviceType: type };
+        if (type === 'Boxes') {
+            updatedFormData.authorizedAmount = 1;
+        }
+        setFormData(updatedFormData);
         // Reset order config for new type completely, ensuring caseId is reset too
         // The user must enter a NEW case ID for the new service type.
         if (type === 'Food') {
@@ -2851,7 +2895,22 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                                                             <select
                                                                 className="input"
                                                                 value={orderConfig.vendorId || ''}
-                                                                onChange={e => setOrderConfig({ ...orderConfig, vendorId: e.target.value })}
+                                                                onChange={e => {
+                                                                    const newVendorId = e.target.value;
+                                                                    let newDeliveryDay = orderConfig.deliveryDay;
+
+                                                                    // Check if current day is valid for new vendor
+                                                                    if (newVendorId && newDeliveryDay) {
+                                                                        const selectedVendor = vendors.find(v => v.id === newVendorId);
+                                                                        if (selectedVendor && selectedVendor.deliveryDays && selectedVendor.deliveryDays.length > 0) {
+                                                                            if (!selectedVendor.deliveryDays.includes(newDeliveryDay)) {
+                                                                                newDeliveryDay = ''; // Reset if invalid
+                                                                            }
+                                                                        }
+                                                                    }
+
+                                                                    setOrderConfig({ ...orderConfig, vendorId: newVendorId, deliveryDay: newDeliveryDay });
+                                                                }}
                                                             >
                                                                 <option value="">Select Vendor</option>
                                                                 {vendors.filter(v => v.isActive).map(v => (
@@ -2867,9 +2926,21 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                                                                 onChange={e => setOrderConfig({ ...orderConfig, deliveryDay: e.target.value })}
                                                             >
                                                                 <option value="">Select Day</option>
-                                                                {['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'].map(day => (
-                                                                    <option key={day} value={day}>{day}</option>
-                                                                ))}
+                                                                {(() => {
+                                                                    // Determine available days
+                                                                    let availableDays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+
+                                                                    if (orderConfig.vendorId) {
+                                                                        const selectedVendor = vendors.find(v => v.id === orderConfig.vendorId);
+                                                                        if (selectedVendor && selectedVendor.deliveryDays && selectedVendor.deliveryDays.length > 0) {
+                                                                            availableDays = selectedVendor.deliveryDays;
+                                                                        }
+                                                                    }
+
+                                                                    return availableDays.map(day => (
+                                                                        <option key={day} value={day}>{day}</option>
+                                                                    ));
+                                                                })()}
                                                             </select>
                                                         </div>
                                                     </div>
@@ -2947,7 +3018,7 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                                                                                 color: 'var(--text-secondary)',
                                                                                 textAlign: 'center'
                                                                             }}>
-                                                                                <strong style={{ color: 'var(--text-primary)' }}>Take Effect Date:</strong> {takeEffect?.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', timeZone: 'UTC' })} (always a Sunday)
+                                                                                Changes may not take effect till next week
                                                                             </div>
                                                                         );
                                                                     }

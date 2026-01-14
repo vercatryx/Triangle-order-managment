@@ -13,7 +13,7 @@ interface Props {
     totalMealCount: number;
     approvedLimit?: number | null;
     validationError?: string | null;
-    takingEffectDate?: string | null;
+    takingEffectDate?: React.ReactNode;
 
     // Actions
     onAddVendor?: () => void;

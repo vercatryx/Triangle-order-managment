@@ -505,5 +505,53 @@ export function getNextOccurrence(
 
 
 
+/**
+ * Calculate the effective date for a vendor based on cutoff hours.
+ * This simply adds the cutoff hours to the current time.
+ * 
+ * @param cutoffHours - Number of hours before delivery cutoff
+ * @param referenceDate - Optional reference date (defaults to now)
+ * @returns Date when the changes will take effect
+ */
+export function calculateVendorEffectiveDate(
+    cutoffHours: number,
+    referenceDate: Date = new Date(),
+    deliveryDays?: string[]
+): Date {
+    const effectiveDate = new Date(referenceDate);
+    effectiveDate.setHours(effectiveDate.getHours() + (cutoffHours || 0));
+
+    // If delivery days provided, find the next one *after* the effective date
+    if (deliveryDays && deliveryDays.length > 0) {
+        const targetDayNumbers = deliveryDays
+            .map(d => DAY_NAME_TO_NUMBER[d])
+            .filter(n => n !== undefined) as number[];
+
+        if (targetDayNumbers.length > 0) {
+            // Logic: Effective date is X. We need the first delivery day >= X.
+            // Actually, usually effective date means "cutoff passed", so we need the delivery day associated with that cutoff?
+            // "if its friday and they don'tdilver till monday"
+            // If I change order on Friday. Cutoff is 48h (Sunday). Delivery is Monday.
+            // Friday + 48h = Sunday. Next delivery day after Sunday is Monday.
+            // So we just need to find the next valid delivery day starting from effectiveDate.
+
+            // Iterate 0-7 days from effectiveDate
+            const start = new Date(effectiveDate);
+            // We shouldn't change the time of effectiveDate, as it represents the precise moment the change is valid.
+            // However, usually deliveries are "on a day".
+            // Let's assume we look for the next OCCURRENCE of a delivery day after effectiveDate.
+
+            for (let i = 0; i <= 21; i++) { // Check up to 3 weeks just in case
+                const check = new Date(start);
+                check.setDate(start.getDate() + i);
+                if (targetDayNumbers.includes(check.getDay())) {
+                    return check;
+                }
+            }
+        }
+    }
+
+    return effectiveDate;
+}
 
 

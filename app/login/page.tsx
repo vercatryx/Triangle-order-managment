@@ -45,6 +45,13 @@ export default function LoginPage() {
             }
 
             if (result.exists) {
+                // Check if client is allowed to login
+                if (result.type === 'client' && (result as any).serviceType === 'Custom') {
+                    setIdentityError('Contact admin to change your order.');
+                    setCheckingIdentity(false);
+                    return;
+                }
+
                 if (result.type === 'client' && result.id) {
                     // Check if passwordless is enabled for this user (which means global enabled + is client)
                     if (result.enablePasswordless) {

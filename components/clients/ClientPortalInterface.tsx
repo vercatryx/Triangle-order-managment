@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { ClientProfile, ClientStatus, Navigator, Vendor, MenuItem, BoxType, ItemCategory, BoxQuota, MealCategory, MealItem, AppSettings } from '@/lib/types';
 import { syncCurrentOrderToUpcoming, getBoxQuotas, invalidateOrderData, updateClient, saveClientFoodOrder, saveClientMealOrder, saveClientBoxOrder } from '@/lib/actions';
 import { getSettings } from '@/lib/cached-data';
-import { getNextDeliveryDate as getNextDeliveryDateUtil, getTakeEffectDate, formatDeliveryDate } from '@/lib/order-dates';
+import { getNextDeliveryDate as getNextDeliveryDateUtil, getTakeEffectDate, formatDeliveryDate, calculateVendorEffectiveDate } from '@/lib/order-dates';
 import { isMeetingMinimum, isExceedingMaximum, isMeetingExactTarget } from '@/lib/utils';
 import { Package, Truck, User, Loader2, Info, Plus, Calendar, AlertTriangle, Check, Trash2, Construction } from 'lucide-react';
 import styles from './ClientProfile.module.css';
@@ -1070,10 +1070,50 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
 
     // Calculate take effect date
     const takingEffectDate = useMemo(() => {
-        if (!settings) return null;
-        const date = getTakeEffectDate(settings);
-        return date ? formatDeliveryDate(date) : null;
-    }, [settings]);
+        // --- EFFECTIVE DATE CALCULATION FOR HEADER ---
+        let headerEffectiveDate: React.ReactNode = null;
+
+        if (client.serviceType === 'Food') {
+            const uniqueVendorIds = new Set<string>();
+            // Collect vendors from either format
+            if (orderConfig.deliveryDayOrders) {
+                Object.values(orderConfig.deliveryDayOrders).forEach((dayOrder: any) => {
+                    if (dayOrder.vendorSelections) {
+                        dayOrder.vendorSelections.forEach((s: any) => s.vendorId && uniqueVendorIds.add(s.vendorId));
+                    }
+                });
+            } else if (orderConfig.vendorSelections) {
+                orderConfig.vendorSelections.forEach((s: any) => s.vendorId && uniqueVendorIds.add(s.vendorId));
+            }
+
+            const dates: React.ReactNode[] = [];
+            uniqueVendorIds.forEach(vId => {
+                const v = vendors.find(vend => vend.id === vId);
+                if (v) {
+                    const cutoff = v.cutoffHours || 0;
+                    const effectiveDate = calculateVendorEffectiveDate(cutoff);
+                    const dateString = effectiveDate.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', timeZone: 'UTC' });
+                    dates.push(
+                        <div key={v.id} style={{ lineHeight: '1.2' }}>
+                            Changes for <strong>{v.name}</strong>: <strong>{dateString}</strong>
+                        </div>
+                    );
+                }
+            });
+
+            if (dates.length > 0) {
+                headerEffectiveDate = <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '0.9rem' }}>{dates}</div>;
+            }
+        } else if (settings && client.serviceType !== 'Boxes') {
+            // const nextDate = getNextDeliveryDateUtil(client, settings); // Broken signature
+            const takeEffect = getTakeEffectDate(settings, new Date());
+            if (takeEffect) {
+                headerEffectiveDate = takeEffect.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', timeZone: 'UTC' });
+            }
+        }
+
+        return headerEffectiveDate;
+    }, [settings, client, orderConfig.deliveryDayOrders, orderConfig.vendorSelections, vendors]);
 
     return (
         <div className={stylesClientPortal.portalContainer}>
@@ -1112,8 +1152,10 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
                                 }
 
                                 if (client.serviceType === 'Food') {
+                                    // Banner removed - moved to Header
+                                    /*
                                     const uniqueVendorIds = new Set<string>();
-
+ 
                                     // Collect vendors from either format
                                     if (orderConfig.deliveryDayOrders) {
                                         Object.values(orderConfig.deliveryDayOrders).forEach((dayOrder: any) => {
@@ -1124,25 +1166,31 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
                                     } else if (orderConfig.vendorSelections) {
                                         orderConfig.vendorSelections.forEach((s: any) => s.vendorId && uniqueVendorIds.add(s.vendorId));
                                     }
-
-                                    const messages: string[] = [];
+ 
+                                    const messages: React.ReactNode[] = [];
                                     uniqueVendorIds.forEach(vId => {
                                         const v = vendors.find(vend => vend.id === vId);
                                         if (v) {
                                             const cutoff = v.cutoffHours || 0;
-                                            messages.push(`Orders for ${v.name} must be placed ${cutoff} hours before delivery.`);
+                                            const effectiveDate = calculateVendorEffectiveDate(cutoff);
+                                            const dateString = effectiveDate.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', timeZone: 'UTC' });
+                                            // messages.push(`Orders for ${v.name} must be placed ${cutoff} hours before delivery.`); // Legacy message
+                                            messages.push(
+                                                <div key={v.id}>
+                                                    Changes for <strong>{v.name}</strong> will take effect from <strong>{dateString}</strong>.
+                                                </div>
+                                            );
                                         }
                                     });
-
+ 
                                     if (messages.length > 0) {
                                         return (
                                             <div style={{ marginTop: '0.5rem', fontSize: '0.9rem', fontWeight: 500 }}>
-                                                {messages.map((msg, i) => (
-                                                    <div key={i}>{msg}</div>
-                                                ))}
+                                                {messages}
                                             </div>
                                         );
                                     }
+                                    */
                                 }
 
                                 return null;
@@ -1197,46 +1245,7 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
                                                     )}
                                                 </div>
 
-                                                {/* Take Effect Date & Warning Logic */}
-                                                {box.vendorId && settings && (() => {
-                                                    const nextDate = getNextDeliveryDateForVendor(box.vendorId);
-                                                    if (nextDate) {
-                                                        const takeEffect = getTakeEffectDate(settings, new Date(nextDate));
-                                                        return (
-                                                            <div style={{
-                                                                marginTop: 'var(--spacing-md)',
-                                                                padding: '0.75rem',
-                                                                backgroundColor: 'var(--bg-surface-hover)',
-                                                                borderRadius: 'var(--radius-sm)',
-                                                                border: '1px solid var(--border-color)',
-                                                                fontSize: '0.85rem',
-                                                                color: 'var(--text-secondary)',
-                                                                textAlign: 'center'
-                                                            }}>
-                                                                <strong style={{ color: 'var(--text-primary)' }}>Take Effect Date:</strong> {takeEffect?.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', timeZone: 'UTC' })} (always a Sunday)
-                                                            </div>
-                                                        );
-                                                    }
-                                                    return (
-                                                        <div style={{
-                                                            marginTop: 'var(--spacing-md)',
-                                                            padding: '0.75rem',
-                                                            backgroundColor: 'rgba(239, 68, 68, 0.1)',
-                                                            borderRadius: 'var(--radius-sm)',
-                                                            border: '1px solid var(--color-danger)',
-                                                            fontSize: '0.85rem',
-                                                            color: 'var(--color-danger)',
-                                                            display: 'flex',
-                                                            alignItems: 'center',
-                                                            gap: '0.5rem',
-                                                            textAlign: 'center',
-                                                            justifyContent: 'center'
-                                                        }}>
-                                                            <AlertTriangle size={16} />
-                                                            <span><strong>Warning:</strong> Check vendor delivery days.</span>
-                                                        </div>
-                                                    );
-                                                })()}
+
 
 
                                                 {/* Box Content Selection Reuse */}

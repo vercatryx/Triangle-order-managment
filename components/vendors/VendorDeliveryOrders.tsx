@@ -205,7 +205,16 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate, isVendorView }: P
                 if (!menuItem) {
                     menuItem = mealItems.find(mi => mi.id === item.menu_item_id);
                 }
-                const itemName = item.custom_name || menuItem?.name || item.menuItemName || 'Unknown Item';
+
+                let itemName = 'Unknown Item';
+                if (item.custom_name) {
+                    itemName = `Custom Item (${item.custom_name})`;
+                } else if (menuItem?.name || item.menuItemName) {
+                    itemName = menuItem?.name || item.menuItemName;
+                } else if (order.service_type === 'Custom' && item.notes) {
+                    itemName = `Custom Item (${item.notes})`;
+                }
+
                 const quantity = parseInt(item.quantity || 0);
                 const notes = item.notes || undefined;
                 return { name: itemName, quantity, category: menuItem?.categoryId || undefined, notes };
@@ -845,7 +854,12 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate, isVendorView }: P
                                     <tr key={itemKey}>
                                         <td>
                                             <div style={{ display: 'flex', flexDirection: 'column' }}>
-                                                <span>{item.custom_name || menuItem?.name || item.menuItemName || 'Unknown Item'}</span>
+                                                <span>{(() => {
+                                                    if (item.custom_name) return `Custom Item (${item.custom_name})`;
+                                                    if (menuItem?.name || item.menuItemName) return menuItem?.name || item.menuItemName;
+                                                    if (item.notes) return `Custom Item (${item.notes})`;
+                                                    return 'Unknown Item';
+                                                })()}</span>
                                                 {item.notes && (
                                                     <span style={{ fontSize: '0.85rem', color: '#666', fontStyle: 'italic', marginTop: '2px' }}>
                                                         (Note: {item.notes})

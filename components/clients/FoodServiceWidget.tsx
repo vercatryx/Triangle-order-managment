@@ -3,7 +3,8 @@
 import React from 'react';
 import { ClientProfile, Vendor, MenuItem, MealCategory, MealItem } from '@/lib/types';
 import { isMeetingMinimum, isMeetingExactTarget } from '@/lib/utils';
-import { Plus, Trash2, Calendar, Check, AlertTriangle, MessageSquare } from 'lucide-react';
+import { Plus, Trash2, Calendar, Check, AlertTriangle, MessageSquare, Info } from 'lucide-react';
+import { calculateVendorEffectiveDate } from '@/lib/order-dates';
 import TextareaAutosize from 'react-textarea-autosize';
 import styles from './ClientProfile.module.css';
 import MenuItemCard from './MenuItemCard';
@@ -38,6 +39,51 @@ export default function FoodServiceWidget({
     validationStatus
 }: Props) {
     console.log('[FoodServiceWidget] RENDER orderConfig:', orderConfig);
+
+    // --- EFFECTIVE DATE BANNER LOGIC ---
+    const renderEffectiveDateBanner = () => {
+        if (!orderConfig) return null;
+
+        const uniqueVendorIds = new Set<string>();
+        // Collect vendors from either format
+        if (orderConfig.deliveryDayOrders) {
+            Object.values(orderConfig.deliveryDayOrders).forEach((dayOrder: any) => {
+                if (dayOrder.vendorSelections) {
+                    dayOrder.vendorSelections.forEach((s: any) => s.vendorId && uniqueVendorIds.add(s.vendorId));
+                }
+            });
+        } else if (orderConfig.vendorSelections) {
+            orderConfig.vendorSelections.forEach((s: any) => s.vendorId && uniqueVendorIds.add(s.vendorId));
+        }
+
+        const messages: React.ReactNode[] = [];
+        uniqueVendorIds.forEach(vId => {
+            const v = vendors.find(vend => vend.id === vId);
+            if (v) {
+                const cutoff = v.cutoffHours || 0;
+                const effectiveDate = calculateVendorEffectiveDate(cutoff);
+                const dateString = effectiveDate.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', timeZone: 'UTC' });
+                messages.push(
+                    <div key={v.id}>
+                        Changes for <strong>{v.name}</strong> will take effect from <strong>{dateString}</strong>.
+                    </div>
+                );
+            }
+        });
+
+        if (messages.length > 0) {
+            return (
+                <div className={styles.alert} style={{ marginBottom: '1rem', display: 'flex', alignItems: 'flex-start', gap: '0.75rem' }}>
+                    <Info size={18} style={{ flexShrink: 0, marginTop: '2px' }} />
+                    <div style={{ fontSize: '0.9rem', lineHeight: '1.4' }}>
+                        {messages}
+                    </div>
+                </div>
+            );
+        }
+        return null;
+    };
+
     // -- LOGIC HELPERS --
 
     function getVendorMenuItems(vendorId: string) {
@@ -405,218 +451,224 @@ export default function FoodServiceWidget({
     const renderVendorBlocks = () => {
         const selections = orderConfig.vendorSelections || [];
 
-        return selections.map((selection: any, index: number) => {
-            const vendorId = selection.vendorId;
-            const vendor = vendors.find(v => v.id === vendorId);
-            const vendorItems = vendorId ? getVendorMenuItems(vendorId) : [];
+        return (
+            <>
+                {/* banner moved to sticky header */}
+                {selections.map((selection: any, index: number) => {
+                    const vendorId = selection.vendorId;
+                    const vendor = vendors.find(v => v.id === vendorId);
+                    const vendorItems = vendorId ? getVendorMenuItems(vendorId) : [];
 
-            // Calculate vendor meal count
-            const vendorMealCount = getVendorMealCount(vendorId, selection);
-            const vendorMinimum = vendor?.minimumMeals || 0;
-            const meetsMinimum = vendorMinimum === 0 || isMeetingMinimum(vendorMealCount, vendorMinimum);
+                    // Calculate vendor meal count
+                    const vendorMealCount = getVendorMealCount(vendorId, selection);
+                    const vendorMinimum = vendor?.minimumMeals || 0;
+                    const meetsMinimum = vendorMinimum === 0 || isMeetingMinimum(vendorMealCount, vendorMinimum);
 
-            // Get vendor's delivery days
-            const vendorDeliveryDays = vendor?.deliveryDays || [];
-            const hasMultipleDays = vendorDeliveryDays.length > 1;
+                    // Get vendor's delivery days
+                    const vendorDeliveryDays = vendor?.deliveryDays || [];
+                    const hasMultipleDays = vendorDeliveryDays.length > 1;
 
-            // Check if multi-day mode is active for this vendor
-            const selectedDays = selection.selectedDeliveryDays || [];
+                    // Check if multi-day mode is active for this vendor
+                    const selectedDays = selection.selectedDeliveryDays || [];
 
-            return (
-                <div key={index} id={`vendor-block-${index}`} className={styles.vendorBlock}>
-                    {/* Header */}
-                    <div className={styles.vendorHeader}>
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', flex: 1 }}>
-                            <select
-                                className="input"
-                                value={vendorId || ''}
-                                onChange={(e) => handleVendorSelectionChange(index, e.target.value)}
-                            >
-                                <option value="">Select Vendor...</option>
-                                {vendors
-                                    .filter(v => {
-                                        if (!v.serviceTypes.includes('Food') || !v.isActive) return false;
-                                        // Feature: Filter out vendors already selected in OTHER blocks
-                                        return !selections.some((s: any, idx: number) => s.vendorId === v.id && idx !== index);
-                                    })
-                                    .map(v => (
-                                        <option key={v.id} value={v.id}>{v.name}</option>
-                                    ))}
-                            </select>
+                    return (
+                        <div key={index} id={`vendor-block-${index}`} className={styles.vendorBlock}>
+                            {/* Header */}
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', flex: 1 }}>
+                                <select
+                                    className="input"
+                                    value={vendorId || ''}
+                                    onChange={(e) => handleVendorSelectionChange(index, e.target.value)}
+                                >
+                                    <option value="">Select Vendor...</option>
+                                    {vendors
+                                        .filter(v => {
+                                            if (!v.serviceTypes.includes('Food') || !v.isActive) return false;
+                                            // Feature: Filter out vendors already selected in OTHER blocks
+                                            return !selections.some((s: any, idx: number) => s.vendorId === v.id && idx !== index);
+                                        })
+                                        .map(v => (
+                                            <option key={v.id} value={v.id}>{v.name}</option>
+                                        ))}
+                                </select>
 
-                            {/* Multi-Day Selection - Toggle Buttons */}
-                            {vendorId && hasMultipleDays && (
-                                <div style={{
-                                    display: 'flex',
-                                    flexDirection: 'column',
-                                    gap: '6px',
-                                    padding: '8px',
-                                    backgroundColor: 'var(--bg-surface-hover)',
-                                    borderRadius: '6px',
-                                    border: '1px solid var(--border-color)'
-                                }}>
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                                        <Calendar size={14} />
-                                        <span style={{ fontWeight: 600 }}>Select Delivery Days:</span>
-                                    </div>
-                                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
-                                        {vendorDeliveryDays.map(day => {
-                                            const isSelected = selectedDays.includes(day);
-                                            return (
-                                                <button
-                                                    key={day}
-                                                    type="button"
-                                                    onClick={() => {
-                                                        handleDeliveryDayToggle(index, day);
-                                                    }}
-                                                    style={{
-                                                        padding: '6px 14px',
-                                                        backgroundColor: isSelected ? 'var(--color-primary)' : 'var(--bg-surface)',
-                                                        color: isSelected ? 'white' : 'var(--text-primary)',
-                                                        borderRadius: '20px',
-                                                        cursor: 'pointer',
-                                                        fontSize: '0.85rem',
-                                                        fontWeight: isSelected ? 600 : 400,
-                                                        border: `2px solid ${isSelected ? 'var(--color-primary)' : 'var(--border-color)'}`,
-                                                        transition: 'all 0.2s ease',
-                                                        outline: 'none',
-                                                        display: 'flex',
-                                                        alignItems: 'center',
-                                                        gap: '6px'
-                                                    }}
-                                                >
-                                                    {day}
-                                                    {isSelected && <Check size={12} />}
-                                                </button>
-                                            );
-                                        })}
-                                    </div>
-                                </div>
-                            )}
-                        </div>
-                        <button className={`${styles.iconBtn} ${styles.danger}`} onClick={() => handleRemoveVendorBlock(index)}>
-                            <Trash2 size={16} />
-                        </button>
-                    </div>
-
-                    {/* Items Display */}
-                    {vendorId && (
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-                            {hasMultipleDays && selectedDays.length === 0 ? (
-                                <div className={styles.hint} style={{ textAlign: 'center', padding: '1rem', fontStyle: 'italic', color: 'var(--text-tertiary)' }}>
-                                    Please select at least one delivery day to view the menu.
-                                </div>
-                            ) : selectedDays.length > 0 ? (
-                                // Multi-day view - show STACKED menu blocks for each selected day
-                                selectedDays.map((day: string) => {
-                                    return (
-                                        <div key={day} className="animate-in fade-in slide-in-from-top-1 duration-200" style={{
-                                            border: '1px solid var(--border-color)',
-                                            borderRadius: '8px',
-                                            padding: '16px',
-                                            backgroundColor: 'var(--bg-surface)'
-                                        }}>
-                                            <div style={{
-                                                marginBottom: '12px',
-                                                paddingBottom: '8px',
-                                                borderBottom: '1px solid var(--border-color)',
-                                                display: 'flex',
-                                                justifyContent: 'space-between',
-                                                alignItems: 'center'
-                                            }}>
-                                                <span style={{ fontWeight: 600, color: 'var(--text-primary)', fontSize: '1rem' }}>
-                                                    {day} Menu
-                                                </span>
-                                                {vendorMinimum > 0 && (() => {
-                                                    const dayCount = getVendorMealCountForDay(vendorId, selection, day);
-                                                    const dayMet = isMeetingMinimum(dayCount, vendorMinimum);
-                                                    return (
-                                                        <span style={{
+                                {/* Multi-Day Selection - Toggle Buttons */}
+                                {vendorId && hasMultipleDays && (
+                                    <div style={{
+                                        display: 'flex',
+                                        flexDirection: 'column',
+                                        gap: '6px',
+                                        padding: '8px',
+                                        backgroundColor: 'var(--bg-surface-hover)',
+                                        borderRadius: '6px',
+                                        border: '1px solid var(--border-color)'
+                                    }}>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                                            <Calendar size={14} />
+                                            <span style={{ fontWeight: 600 }}>Select Delivery Days:</span>
+                                        </div>
+                                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+                                            {vendorDeliveryDays.map(day => {
+                                                const isSelected = selectedDays.includes(day);
+                                                return (
+                                                    <button
+                                                        key={day}
+                                                        type="button"
+                                                        onClick={() => {
+                                                            handleDeliveryDayToggle(index, day);
+                                                        }}
+                                                        style={{
+                                                            padding: '6px 14px',
+                                                            backgroundColor: isSelected ? 'var(--color-primary)' : 'var(--bg-surface)',
+                                                            color: isSelected ? 'white' : 'var(--text-primary)',
+                                                            borderRadius: '20px',
+                                                            cursor: 'pointer',
+                                                            fontSize: '0.85rem',
+                                                            fontWeight: isSelected ? 600 : 400,
+                                                            border: `2px solid ${isSelected ? 'var(--color-primary)' : 'var(--border-color)'}`,
+                                                            transition: 'all 0.2s ease',
+                                                            outline: 'none',
                                                             display: 'flex',
                                                             alignItems: 'center',
-                                                            gap: '6px',
-                                                            padding: '4px 8px',
-                                                            borderRadius: '6px',
-                                                            backgroundColor: dayMet ? '#d1fae5' : '#fee2e2',
-                                                            color: dayMet ? '#065f46' : '#991b1b',
-                                                            fontSize: '0.85rem',
-                                                            fontWeight: 600
-                                                        }}>
-                                                            {dayMet ? <Check size={14} /> : <AlertTriangle size={14} />}
-                                                            {dayCount} / {vendorMinimum} meals
-                                                        </span>
-                                                    );
-                                                })()}
-                                            </div>
-
-                                            <div className={styles.menuItemsGrid} style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '10px' }}>
-                                                {vendorItems.map(item => {
-                                                    const dayItems = selection.itemsByDay?.[day] || {};
-                                                    const qty = dayItems[item.id] || 0;
-                                                    const dayNotes = selection.itemNotesByDay?.[day] || {};
-                                                    const note = dayNotes[item.id] || '';
-
-                                                    return (
-                                                        <MenuItemCard
-                                                            key={item.id}
-                                                            item={item}
-                                                            quantity={qty}
-                                                            note={note}
-                                                            onQuantityChange={(newQty) => handleVendorItemChange(index, item.id, newQty, day)}
-                                                            onNoteChange={(newNote) => handleVendorItemChange(index, item.id, qty, day, newNote)}
-                                                        />
-                                                    );
-                                                })}
-                                                {vendorItems.length === 0 && <span className={styles.hint}>No items available for this vendor.</span>}
-                                            </div>
+                                                            gap: '6px'
+                                                        }}
+                                                    >
+                                                        {day}
+                                                        {isSelected && <Check size={12} />}
+                                                    </button>
+                                                );
+                                            })}
                                         </div>
-                                    );
-                                })
-                            ) : (
-                                // Single-day / No-day view (fallback for vendors without multiple delivery days or no days selected)
-                                <>
-                                    {vendorMinimum > 0 && (
-                                        <div style={{
-                                            marginBottom: '1rem',
-                                            padding: '8px 12px',
-                                            borderRadius: '6px',
-                                            backgroundColor: meetsMinimum ? '#d1fae5' : '#fee2e2',
-                                            color: meetsMinimum ? '#065f46' : '#991b1b',
-                                            border: `1px solid ${meetsMinimum ? '#10b981' : '#ef4444'}`,
-                                            display: 'flex',
-                                            alignItems: 'center',
-                                            gap: '8px',
-                                            fontSize: '0.9rem',
-                                            fontWeight: 600
-                                        }}>
-                                            {meetsMinimum ? <Check size={16} /> : <AlertTriangle size={16} />}
-                                            <span>Minimum: {vendorMinimum} meals | Selected: {vendorMealCount} meals</span>
-                                        </div>
-                                    )}
-                                    <div className={styles.menuItemsGrid} style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '16px' }}>
-                                        {vendorItems.map(item => {
-                                            const qty = selection.items?.[item.id] || 0;
-                                            const note = selection.itemNotes?.[item.id] || '';
-                                            return (
-                                                <MenuItemCard
-                                                    key={item.id}
-                                                    item={item}
-                                                    quantity={qty}
-                                                    note={note}
-                                                    onQuantityChange={(newQty) => handleVendorItemChange(index, item.id, newQty)}
-                                                    onNoteChange={(newNote) => handleVendorItemChange(index, item.id, qty, undefined, newNote)}
-                                                />
-                                            );
-                                        })}
-                                        {vendorItems.length === 0 && <span className={styles.hint}>No items available for this vendor.</span>}
                                     </div>
-                                </>
-                            )}
+                                )}
+                            </div>
+                            <button className={`${styles.iconBtn} ${styles.danger}`} onClick={() => handleRemoveVendorBlock(index)}>
+                                <Trash2 size={16} />
+                            </button>
+
+
+                            {/* Items Display */}
+                            {
+                                vendorId && (
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                                        {hasMultipleDays && selectedDays.length === 0 ? (
+                                            <div className={styles.hint} style={{ textAlign: 'center', padding: '1rem', fontStyle: 'italic', color: 'var(--text-tertiary)' }}>
+                                                Please select at least one delivery day to view the menu.
+                                            </div>
+                                        ) : selectedDays.length > 0 ? (
+                                            // Multi-day view - show STACKED menu blocks for each selected day
+                                            selectedDays.map((day: string) => {
+                                                return (
+                                                    <div key={day} className="animate-in fade-in slide-in-from-top-1 duration-200" style={{
+                                                        border: '1px solid var(--border-color)',
+                                                        borderRadius: '8px',
+                                                        padding: '16px',
+                                                        backgroundColor: 'var(--bg-surface)'
+                                                    }}>
+                                                        <div style={{
+                                                            marginBottom: '12px',
+                                                            paddingBottom: '8px',
+                                                            borderBottom: '1px solid var(--border-color)',
+                                                            display: 'flex',
+                                                            justifyContent: 'space-between',
+                                                            alignItems: 'center'
+                                                        }}>
+                                                            <span style={{ fontWeight: 600, color: 'var(--text-primary)', fontSize: '1rem' }}>
+                                                                {day} Menu
+                                                            </span>
+                                                            {vendorMinimum > 0 && (() => {
+                                                                const dayCount = getVendorMealCountForDay(vendorId, selection, day);
+                                                                const dayMet = isMeetingMinimum(dayCount, vendorMinimum);
+                                                                return (
+                                                                    <span style={{
+                                                                        display: 'flex',
+                                                                        alignItems: 'center',
+                                                                        gap: '6px',
+                                                                        padding: '4px 8px',
+                                                                        borderRadius: '6px',
+                                                                        backgroundColor: dayMet ? '#d1fae5' : '#fee2e2',
+                                                                        color: dayMet ? '#065f46' : '#991b1b',
+                                                                        fontSize: '0.85rem',
+                                                                        fontWeight: 600
+                                                                    }}>
+                                                                        {dayMet ? <Check size={14} /> : <AlertTriangle size={14} />}
+                                                                        {dayCount} / {vendorMinimum} meals
+                                                                    </span>
+                                                                );
+                                                            })()}
+                                                        </div>
+
+                                                        <div className={styles.menuItemsGrid} style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '10px' }}>
+                                                            {vendorItems.map(item => {
+                                                                const dayItems = selection.itemsByDay?.[day] || {};
+                                                                const qty = dayItems[item.id] || 0;
+                                                                const dayNotes = selection.itemNotesByDay?.[day] || {};
+                                                                const note = dayNotes[item.id] || '';
+
+                                                                return (
+                                                                    <MenuItemCard
+                                                                        key={item.id}
+                                                                        item={item}
+                                                                        quantity={qty}
+                                                                        note={note}
+                                                                        onQuantityChange={(newQty) => handleVendorItemChange(index, item.id, newQty, day)}
+                                                                        onNoteChange={(newNote) => handleVendorItemChange(index, item.id, qty, day, newNote)}
+                                                                    />
+                                                                );
+                                                            })}
+                                                            {vendorItems.length === 0 && <span className={styles.hint}>No items available for this vendor.</span>}
+                                                        </div>
+                                                    </div>
+                                                );
+                                            })
+                                        ) : (
+                                            // Single-day / No-day view (fallback for vendors without multiple delivery days or no days selected)
+                                            <>
+                                                {vendorMinimum > 0 && (
+                                                    <div style={{
+                                                        marginBottom: '1rem',
+                                                        padding: '8px 12px',
+                                                        borderRadius: '6px',
+                                                        backgroundColor: meetsMinimum ? '#d1fae5' : '#fee2e2',
+                                                        color: meetsMinimum ? '#065f46' : '#991b1b',
+                                                        border: `1px solid ${meetsMinimum ? '#10b981' : '#ef4444'}`,
+                                                        display: 'flex',
+                                                        alignItems: 'center',
+                                                        gap: '8px',
+                                                        fontSize: '0.9rem',
+                                                        fontWeight: 600
+                                                    }}>
+                                                        {meetsMinimum ? <Check size={16} /> : <AlertTriangle size={16} />}
+                                                        <span>Minimum: {vendorMinimum} meals | Selected: {vendorMealCount} meals</span>
+                                                    </div>
+                                                )}
+                                                <div className={styles.menuItemsGrid} style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '16px' }}>
+                                                    {vendorItems.map(item => {
+                                                        const qty = selection.items?.[item.id] || 0;
+                                                        const note = selection.itemNotes?.[item.id] || '';
+                                                        return (
+                                                            <MenuItemCard
+                                                                key={item.id}
+                                                                item={item}
+                                                                quantity={qty}
+                                                                note={note}
+                                                                onQuantityChange={(newQty) => handleVendorItemChange(index, item.id, newQty)}
+                                                                onNoteChange={(newNote) => handleVendorItemChange(index, item.id, qty, undefined, newNote)}
+                                                            />
+                                                        );
+                                                    })}
+                                                    {vendorItems.length === 0 && <span className={styles.hint}>No items available for this vendor.</span>}
+                                                </div>
+                                            </>
+                                        )}
+                                    </div>
+                                )
+                            }
                         </div>
-                    )}
-                </div>
-            );
-        });
+                    );
+                })}
+            </>
+        );
     };
 
     const renderMealBlocks = () => {
@@ -867,65 +919,145 @@ export default function FoodServiceWidget({
                     boxShadow: '0 4px 20px -10px rgba(0, 0, 0, 0.05)',
                     margin: '-16px -16px 16px -16px', // Negative margin to stretch full width of container padding
                     display: 'flex',
-                    gap: '12px',
                     alignItems: 'center',
+                    justifyContent: 'space-between', // Changed to space-between
                     flexWrap: 'wrap'
                 }}>
-                    {/* Add Vendor Button - Food Only */}
-                    {client.serviceType === 'Food' && (
-                        <button
-                            type="button"
-                            onClick={handleAddVendorBlock}
-                            className="btn btn-warning"
-                            style={{
-                                display: 'flex',
-                                alignItems: 'center',
-                                gap: '8px',
-                                backgroundColor: '#fbbf24',
-                                border: 'none',
-                                color: 'black',
-                                fontWeight: 600,
-                                padding: '8px 16px',
-                                borderRadius: '8px',
-                                boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
-                                fontSize: '0.9rem'
-                            }}
-                        >
-                            <Plus size={16} /> Add Vendor
-                        </button>
-                    )}
-
-                    {/* Add Meal Buttons - Dynamic */}
-                    {(() => {
-                        const existingMealTypes = Object.keys(orderConfig?.mealSelections || {});
-                        const availableMealTypes = mealCategories
-                            .map(c => c.mealType)
-                            .filter((val, idx, arr) => arr.indexOf(val) === idx)
-                            .filter(type => !existingMealTypes.includes(type));
-
-                        return availableMealTypes.map(type => (
+                    <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+                        {/* Add Vendor Button - Food Only */}
+                        {client.serviceType === 'Food' && (
                             <button
-                                key={type}
                                 type="button"
-                                onClick={() => handleAddMeal(type)}
-                                className="btn btn-outline"
+                                onClick={handleAddVendorBlock}
+                                className="btn btn-warning"
                                 style={{
                                     display: 'flex',
                                     alignItems: 'center',
                                     gap: '8px',
-                                    borderColor: '#fbbf24',
-                                    color: '#fbbf24',
+                                    backgroundColor: '#fbbf24',
+                                    border: 'none',
+                                    color: 'black',
                                     fontWeight: 600,
                                     padding: '8px 16px',
                                     borderRadius: '8px',
-                                    backgroundColor: 'transparent',
+                                    boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
                                     fontSize: '0.9rem'
                                 }}
                             >
-                                <Plus size={16} /> Add {type}
+                                <Plus size={16} /> Add Vendor
                             </button>
-                        ));
-                    })()}
+                        )}
+                        {/* Add Meal Buttons */}
+                        {(() => {
+                            const existingMealTypes = Object.keys(orderConfig?.mealSelections || {});
+                            const availableMealTypes = mealCategories
+                                .map(c => c.mealType)
+                                .filter((val, idx, arr) => arr.indexOf(val) === idx)
+                                .filter(type => !existingMealTypes.includes(type));
+
+                            return availableMealTypes.map(type => (
+                                <button
+                                    key={type}
+                                    type="button"
+                                    onClick={() => handleAddMeal(type)}
+                                    className="btn btn-outline"
+                                    style={{
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        gap: '8px',
+                                        borderColor: '#fbbf24',
+                                        color: '#fbbf24',
+                                        fontWeight: 600,
+                                        padding: '8px 16px',
+                                        borderRadius: '8px',
+                                        backgroundColor: 'transparent',
+                                        fontSize: '0.9rem'
+                                    }}
+                                >
+                                    <Plus size={16} /> Add {type}
+                                </button>
+                            ));
+                        })()}
+                    </div>
+
+
+                    {/* Effective Date For Admin Header */}
+                    {client.serviceType === 'Food' && (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+
+                            {/* Meal Counter */}
+                            {(() => {
+                                const total = getTotalMealCountAllDays();
+                                const limit = client.approvedMealsPerWeek || 0;
+                                const isOver = limit > 0 && total > limit;
+
+                                return (
+                                    <div style={{
+                                        padding: '6px 12px',
+                                        borderRadius: '6px',
+                                        backgroundColor: isOver ? '#fee2e2' : '#f3f4f6',
+                                        color: isOver ? '#991b1b' : 'var(--text-secondary)',
+                                        border: `1px solid ${isOver ? '#ef4444' : 'var(--border-color)'}`,
+                                        fontSize: '0.9rem',
+                                        fontWeight: 600,
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        gap: '6px'
+                                    }}>
+                                        {isOver ? <AlertTriangle size={16} /> : <Check size={16} />}
+                                        <span>Items: {total} / {limit}</span>
+                                    </div>
+                                );
+                            })()}
+
+                            {/* Effective Date Banner */}
+                            {(() => {
+                                const banner = renderEffectiveDateBanner();
+                                // We need to extract the content or re-render somewhat cleaner for header
+                                // But re-using the logic is easiest.
+                                // However, renderEffectiveDateBanner returns a div with margin/style.
+                                // Let's just create a modified version right here inline or reuse the logic.
+                                const uniqueVendorIds = new Set<string>();
+                                if (orderConfig.deliveryDayOrders) {
+                                    Object.values(orderConfig.deliveryDayOrders).forEach((dayOrder: any) => {
+                                        if (dayOrder.vendorSelections) {
+                                            dayOrder.vendorSelections.forEach((s: any) => s.vendorId && uniqueVendorIds.add(s.vendorId));
+                                        }
+                                    });
+                                } else if (orderConfig.vendorSelections) {
+                                    orderConfig.vendorSelections.forEach((s: any) => s.vendorId && uniqueVendorIds.add(s.vendorId));
+                                }
+
+                                const dates: React.ReactNode[] = [];
+                                uniqueVendorIds.forEach(vId => {
+                                    const v = vendors.find(vend => vend.id === vId);
+                                    if (v) {
+                                        const cutoff = v.cutoffHours || 0;
+                                        // Pass delivery days to find the next actual delivery date
+                                        const effectiveDate = calculateVendorEffectiveDate(cutoff, undefined, v.deliveryDays);
+                                        const dateString = effectiveDate.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', timeZone: 'UTC' });
+                                        dates.push(
+                                            <div key={v.id} style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                                                Changes for <strong>{v.name}</strong>: <strong>{dateString}</strong>
+                                            </div>
+                                        );
+                                    }
+                                });
+
+                                if (dates.length > 0) {
+                                    return (
+                                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '2px' }}>
+                                            <div style={{ fontSize: '0.7rem', textTransform: 'uppercase', color: 'var(--text-tertiary)', fontWeight: 600, marginBottom: '2px' }}>
+                                                Changes Take Effect
+                                            </div>
+                                            {dates}
+                                        </div>
+                                    );
+                                }
+                                return null;
+                            })()}
+                        </div>
+                    )}
                 </div>
             )}
 

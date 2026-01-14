@@ -46,7 +46,7 @@ export async function POST(request: NextRequest) {
         // Fetch all clients to check status
         const { data: clients, error: clientsError } = await supabase
             .from('clients')
-            .select('id, status_id, created_at, service_type');
+            .select('id, status_id, created_at, service_type, full_name');
 
         if (clientsError) throw new Error(`Failed to fetch clients: ${clientsError.message}`);
         const clientMap = new Map(clients.map(c => [c.id, c]));
@@ -76,12 +76,13 @@ export async function POST(request: NextRequest) {
         // --- 2. Flatten Candidates ---
         interface CandidateOrder {
             clientId: string;
-            serviceType: 'Food' | 'Boxes' | 'Meal';
+            serviceType: 'Food' | 'Boxes' | 'Meal' | 'Custom';
             deliveryDay: string; // "Monday", etc.
             sourceRef: any; // The original record or specific config
             isBox?: boolean;
             isFood?: boolean;
             isMeal?: boolean;
+            isCustom?: boolean;
             vendorId?: string; // For Meal/Box where strictly defined
             caseId?: string;
         }
@@ -94,6 +95,9 @@ export async function POST(request: NextRequest) {
                 const client = clientMap.get(fo.client_id);
                 // Only process if client exists and matches service type (sanity check)
                 if (!client) continue;
+
+                // STRICT CHECK: Ensure client still has service_type='Food'
+                if (client.service_type !== 'Food') continue;
 
                 // Parse delivery_day_orders JSON
                 const dayOrders = typeof fo.delivery_day_orders === 'string'
@@ -122,6 +126,11 @@ export async function POST(request: NextRequest) {
             for (const bo of boxOrders) {
                 const client = clientMap.get(bo.client_id);
                 if (!client) continue;
+
+                // STRICT CHECK: Ensure client still has service_type='Boxes'
+                // Note: Some clients might be hybrid, but usually service_type is master switch.
+                // If they are 'Custom', they shouldn't get Boxes via this auto-logic unless 'Custom' logic handles it.
+                if (client.service_type !== 'Boxes') continue;
 
                 if (!bo.vendor_id) continue;
 
@@ -153,6 +162,11 @@ export async function POST(request: NextRequest) {
             for (const mo of mealOrders) {
                 const client = clientMap.get(mo.client_id);
                 if (!client) continue;
+
+                // STRICT CHECK: Ensure client still has service_type='Meal' or 'Food' (if Meal is sub-feature)
+                // Actually, 'Meal' type exists.
+                // If client is 'Custom', skip.
+                if (client.service_type !== 'Meal' && client.service_type !== 'Food') continue;
 
                 const selections = typeof mo.meal_selections === 'string'
                     ? JSON.parse(mo.meal_selections)
@@ -237,6 +251,85 @@ export async function POST(request: NextRequest) {
             }
         }
 
+        // --- D. Custom Orders ---
+        // Fetch raw upcoming_orders for Custom type
+        const { data: customOrders, error: customError } = await supabase
+            .from('upcoming_orders')
+            .select(`
+                *,
+                upcoming_order_vendor_selections (
+                    *,
+                    upcoming_order_items (*)
+                )
+            `)
+            .eq('service_type', 'Custom');
+
+        if (customError) errors.push(`Error fetching custom orders: ${customError.message}`);
+
+        if (customOrders) {
+            console.log(`[Simulate Delivery] Found ${customOrders.length} custom order templates`);
+            customOrders.forEach(co => console.log(`[Custom Debug] Found template for Client ${clientMap.get(co.client_id)?.full_name} (${co.client_id}) Day ${co.delivery_day}`));
+
+            for (const co of customOrders) {
+                const client = clientMap.get(co.client_id);
+                if (!client) continue;
+
+                // Custom orders must have a delivery_day set
+                if (!co.delivery_day) {
+                    // errors.push(`Custom order ${co.id} missing delivery_day`); 
+                    continue;
+                }
+
+                // Construct SourceRef that mimics what the loop expects (vendor selections)
+                // or handle Custom explicitly in the loop.
+                // Converting to standard format similar to Food/Meal makes reuse easier.
+
+                const vendorSelections = [];
+                if (co.upcoming_order_vendor_selections) {
+                    for (const vs of co.upcoming_order_vendor_selections) {
+                        const itemsObj: Record<string, number> = {};
+                        const notesObj: Record<string, string> = {};
+
+                        if (vs.upcoming_order_items) {
+                            for (const item of vs.upcoming_order_items) {
+                                // For custom orders, items might not have menu_item_id if they are truly custom lines?
+                                // Actually actions.ts saves 'custom_name' as 'notes' and 'price' as 'total_value' in upcoming_orders directly for the main header?
+                                // But syncSingleOrderForDeliveryDay also inserts a dummy item into upcoming_order_items.
+                                // Let's check how we saved it.
+                                // We saved it as: menu_item_id: null, notes: custom_name, total_value: price, quantity: 1
+
+                                // For the simulation loop, if we want to reuse the item creation logic, we need to pass these through.
+                                // The loop expects `items: { itemId: qty }` and looks up menuItems.
+                                // But Custom items don't have menuItems. 
+
+                                // We better handle Custom explicitly in the loop or make the loop robust to missing menuItemId.
+                                // Let's handle generic structure here.
+                            }
+                        }
+
+                        // Actually, for Custom orders, we might just want to pass the raw objects
+                        vendorSelections.push({
+                            vendorId: vs.vendor_id,
+                            rawItems: vs.upcoming_order_items // Pass raw DB items
+                        });
+                    }
+                }
+
+                candidates.push({
+                    clientId: co.client_id,
+                    serviceType: 'Custom',
+                    deliveryDay: co.delivery_day,
+                    sourceRef: {
+                        totalValue: co.total_value,
+                        notes: co.notes,
+                        vendorSelections: vendorSelections // We'll need to handle this structure downstream
+                    },
+                    isCustom: true,
+                    caseId: co.case_id
+                });
+            }
+        }
+
         console.log(`[Simulate Delivery] Generated ${candidates.length} candidate orders for processing`);
 
         // --- 3. Process Candidates ---
@@ -264,6 +357,12 @@ export async function POST(request: NextRequest) {
         for (const candidate of candidates) {
             const client = clientMap.get(candidate.clientId);
 
+            if (candidate.serviceType === 'Custom') {
+                console.log(`[Custom Debug] Evaluating Candidate: ${client?.full_name} (${candidate.clientId})`);
+                console.log(`[Custom Debug] - Delivery Day: ${candidate.deliveryDay}`);
+                console.log(`[Custom Debug] - Source Ref Keys: ${Object.keys(candidate.sourceRef).join(', ')}`);
+            }
+
             // Check Eligibility
             if (client) {
                 const isAllowed = statusMap.get(client.status_id);
@@ -289,7 +388,7 @@ export async function POST(request: NextRequest) {
             let maxCutoffHours = 0;
             let hasValidVendor = false;
 
-            if (candidate.isFood || candidate.isMeal) {
+            if (candidate.isFood || candidate.isMeal || candidate.isCustom) {
                 // Parse vendor selections from the day config
                 const dayConfig = candidate.sourceRef;
                 const vSelections = dayConfig.vendorSelections || [];
@@ -315,6 +414,7 @@ export async function POST(request: NextRequest) {
             }
 
             if (!hasValidVendor) {
+                if (candidate.serviceType === 'Custom') console.log(`[Custom Debug] SKIP rule: No Valid Vendor. (ValidVendor=${hasValidVendor})`);
                 trackSkip('No Valid Vendor', `Client ${candidate.clientId} (${candidate.serviceType})`);
                 continue;
             }
@@ -330,11 +430,24 @@ export async function POST(request: NextRequest) {
             }
 
             // JIT Check
-            if (timeRemainingHours > maxCutoffHours) {
-                // Too early
-                // console.log(`[JIT] Skipping ${candidate.clientId} for ${deliveryDateStr}. Too early.`);
-                trackSkip('Waiting for Cutoff', `Client ${candidate.clientId} delivery ${deliveryDateStr}`);
-                continue;
+            // JIT Check
+            if (candidate.serviceType === 'Custom') {
+                // Custom Orders: Do not wait for cutoff (generate early), but skip if verified too late
+                if (timeRemainingHours < maxCutoffHours) {
+                    console.log(`[Custom Debug] SKIP rule: Missed Cutoff. Hours=${timeRemainingHours.toFixed(1)} < Cutoff=${maxCutoffHours}`);
+                    const clientName = client?.full_name || candidate.clientId;
+                    trackSkip('Missed Cutoff', `Client ${clientName} (Custom) delivered ${deliveryDateStr} - Too late`);
+                    continue;
+                }
+            } else {
+                if (timeRemainingHours > maxCutoffHours) {
+                    // Standard JIT Logic: Wait until close to cutoff
+                    // Too early
+                    // console.log(`[JIT] Skipping ${candidate.clientId} for ${deliveryDateStr}. Too early.`);
+                    const clientName = client?.full_name || candidate.clientId;
+                    trackSkip('Waiting for Cutoff', `Client ${clientName} delivery ${deliveryDateStr}`);
+                    continue;
+                }
             }
 
             // --- Create Order ---
@@ -614,6 +727,87 @@ export async function POST(request: NextRequest) {
                 if (boxSelErr) errors.push(`Failed Box Sel for ${newOrder.id}: ${boxSelErr.message}`);
 
                 console.log(`[Created] Box Order #${nextOrderNumber} for ${candidate.clientId}`);
+                nextOrderNumber++;
+                processedCount++;
+            } else if (candidate.isCustom) {
+                // Custom Order Creation
+                const { sourceRef, deliveryDay } = candidate;
+
+                // 1. Duplicate Check
+                const { data: existing } = await supabase
+                    .from('orders')
+                    .select('id')
+                    .eq('client_id', candidate.clientId)
+                    .eq('scheduled_delivery_date', deliveryDateStr)
+                    .eq('service_type', 'Custom') // Check specifically for Custom
+                    .maybeSingle();
+
+                if (existing) {
+                    trackSkip('Order Already Exists', `Client ${candidate.clientId} Custom order for ${deliveryDateStr}`);
+                    continue;
+                }
+
+                // 2. Prepare Data
+                const totalValue = Number(sourceRef.totalValue) || 0;
+                const description = sourceRef.notes || 'Custom Order';
+
+                // 3. Create Order
+                const { data: newOrder, error: orderErr } = await supabase
+                    .from('orders')
+                    .insert({
+                        client_id: candidate.clientId,
+                        service_type: 'Custom',
+                        case_id: candidate.caseId || `CASE-${Date.now()}`,
+                        status: 'scheduled',
+                        scheduled_delivery_date: deliveryDateStr,
+                        total_value: totalValue,
+                        total_items: 1,
+                        order_number: nextOrderNumber,
+                        created_at: currentTime.toISOString(),
+                        last_updated: currentTime.toISOString(),
+                        notes: description // Save description in notes? Or custom field? Usually notes.
+                    })
+                    .select()
+                    .single();
+
+                if (orderErr || !newOrder) {
+                    console.error(`[Create Error] Failed to insert Custom order for ${candidate.clientId}:`, orderErr);
+                    errors.push(`Failed to create Custom order for ${candidate.clientId}: ${orderErr?.message}`);
+                    continue;
+                }
+
+                // 4. Create Vendor Selection & Items
+                // Custom orders usually have 1 vendor and 1 item (the custom charge)
+                const vendorSelections = sourceRef.vendorSelections || [];
+                for (const vs of vendorSelections) {
+                    if (vs.vendorId) {
+                        const { data: newVs, error: vsErr } = await supabase
+                            .from('order_vendor_selections')
+                            .insert({
+                                order_id: newOrder.id,
+                                vendor_id: vs.vendorId
+                            })
+                            .select()
+                            .single();
+
+                        if (newVs && vs.rawItems) {
+                            for (const item of vs.rawItems) {
+                                // Insert item directly, mapping columns
+                                await supabase.from('order_items').insert({
+                                    order_id: newOrder.id,
+                                    vendor_selection_id: newVs.id,
+                                    // menu_item_id is null for custom usually
+                                    quantity: item.quantity,
+                                    unit_value: item.unit_value,
+                                    total_value: item.total_value,
+                                    notes: item.notes
+                                });
+                            }
+                        }
+                    }
+                }
+
+                console.log(`[Created] Custom Order #${nextOrderNumber} for ${candidate.clientId}`);
                 nextOrderNumber++;
                 processedCount++;
             }

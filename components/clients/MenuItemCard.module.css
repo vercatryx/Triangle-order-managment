@@ -14,6 +14,10 @@
     cursor: pointer;
 }
 
+.card.selected {
+    border: 2px solid var(--color-primary);
+}
+
 .imageContainer {
     width: 100%;
     height: 140px;

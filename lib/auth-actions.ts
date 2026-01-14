@@ -17,9 +17,16 @@ export async function sendOtp(email: string) {
     if (!email) return { success: false, message: 'Email is required.' };
 
     try {
-        const { exists, type } = await checkEmailIdentity(email);
+        const identity = await checkEmailIdentity(email);
+        const { exists, type } = identity;
+
         if (!exists) {
             return { success: false, message: 'No account found with that email.' };
+        }
+
+        // Block 'Custom' clients from logging in
+        if (type === 'client' && (identity as any).serviceType === 'Custom') {
+            return { success: false, message: 'Contact admin to change your order.' };
         }
 
         // Generate Code
@@ -355,7 +362,7 @@ export async function checkEmailIdentity(identifier: string) {
     // 5. Check Clients (by Email)
     const { data: clientsData } = await supabaseClient
         .from('clients')
-        .select('id, email')
+        .select('id, email, service_type')
         .not('email', 'is', null);
 
     if (clientsData && clientsData.length > 0) {
@@ -365,7 +372,8 @@ export async function checkEmailIdentity(identifier: string) {
         if (exactMatches.length > 0) {
             matches.push(...exactMatches.map(c => ({
                 type: 'client' as const,
-                id: c.id
+                id: c.id,
+                serviceType: c.service_type
             })));
         }
     }
@@ -420,6 +428,7 @@ export async function checkEmailIdentity(identifier: string) {
             exists: true,
             type: 'client',
             id: match.id,
+            serviceType: (match as any).serviceType,
             enablePasswordless
         };
     }

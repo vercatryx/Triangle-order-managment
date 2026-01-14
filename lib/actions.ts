@@ -2219,7 +2219,14 @@ async function syncSingleOrderForDeliveryDay(
         serviceType: orderConfig.serviceType,
         deliveryDay,
         itemsCount: orderConfig.items ? Object.keys(orderConfig.items).length : 0,
-        boxQuantity: orderConfig.boxQuantity
+        boxQuantity: orderConfig.boxQuantity,
+        // Detailed logging for standard inputs to help debug persistence
+        fullOrderConfigKeys: Object.keys(orderConfig),
+        customFields: orderConfig.serviceType === 'Custom' ? {
+            description: orderConfig.description,
+            items: orderConfig.items,
+            totalValue: orderConfig.totalValue
+        } : 'N/A'
     });
 
     // Calculate dates for this specific delivery day
@@ -2799,6 +2806,62 @@ async function syncSingleOrderForDeliveryDay(
                 itemPrices: (orderConfig as any).itemPrices
             });
         }
+    } else if (orderConfig.serviceType === 'Custom') {
+        console.log('[syncSingleOrderForDeliveryDay] Processing Custom order', {
+            description: orderConfig.description || orderConfig.custom_name,
+            totalValue: orderConfig.totalValue || orderConfig.custom_price,
+            vendorId: orderConfig.vendorId
+        });
+
+        // For Custom orders, we treat it as a single item order
+        const description = orderConfig.custom_name || orderConfig.description || 'Custom Order';
+        const price = Number(orderConfig.custom_price ?? orderConfig.totalValue ?? 0);
+
+        // 1. Update upcoming_orders record with totals
+        totalValue = price;
+        totalItems = 1;
+
+        const updateResult = await supabaseClient
+            .from('upcoming_orders')
+            .update({
+                total_value: totalValue,
+                total_items: totalItems,
+                notes: description
+            })
+            .eq('id', upcomingOrderId);
+
+        if (updateResult.error) {
+            console.error('[syncSingleOrderForDeliveryDay] Error updating Custom order totals:', updateResult.error);
+        }
+
+        // 2. Insert a single item into upcoming_order_items
+        const { data: vendorSelection, error: vsError } = await supabaseClient
+            .from('upcoming_order_vendor_selections')
+            .insert({
+                upcoming_order_id: upcomingOrderId,
+                vendor_id: orderConfig.vendorId || null
+            })
+            .select()
+            .single();
+
+        if (vsError) {
+            console.error('[syncSingleOrderForDeliveryDay] Error creating Custom vendor selection:', vsError);
+        } else if (vendorSelection) {
+            const { error: itemError } = await supabaseClient.from('upcoming_order_items').insert({
+                upcoming_order_id: upcomingOrderId,
+                vendor_selection_id: vendorSelection.id,
+                menu_item_id: null,
+                meal_item_id: null,
+                quantity: 1,
+                unit_value: price,
+                total_value: price,
+                notes: description
+            });
+
+            if (itemError) {
+                console.error('[syncSingleOrderForDeliveryDay] Error inserting Custom item:', itemError);
+            }
+        }
     }
 }
 
@@ -3007,6 +3070,16 @@ export async function syncCurrentOrderToUpcoming(clientId: string, client: Clien
             } else {
                 deliveryDays = [];
             }
+        } else if (orderConfig.serviceType === 'Custom') {
+            // [CUSTOM ORDER LOG]
+            console.log('[syncCurrentOrderToUpcoming] Custom Order Delivery Day extraction:', {
+                deliveryDay: orderConfig.deliveryDay,
+                hasDeliveryDay: !!orderConfig.deliveryDay
+            });
+
+            if (orderConfig.deliveryDay) {
+                deliveryDays = [orderConfig.deliveryDay];
+            }
         }
 
         // If vendor(s) have multiple delivery days, create orders for each
@@ -3024,6 +3097,13 @@ export async function syncCurrentOrderToUpcoming(clientId: string, client: Clien
                 );
             }
         } else {
+            // [CUSTOM ORDER LOG]
+            if (orderConfig.serviceType === 'Custom') {
+                console.log('[syncCurrentOrderToUpcoming] calling syncSingleOrderForDeliveryDay for Custom Order', {
+                    deliveryDay: deliveryDays.length === 1 ? deliveryDays[0] : null
+                });
+            }
+
             await syncSingleOrderForDeliveryDay(
                 clientId,
                 orderConfig,
@@ -5268,6 +5348,10 @@ export async function getOrderById(orderId: string) {
             // Group items by category
             Object.entries(boxItems).forEach(([itemId, qty]: [string, any]) => {
                 const menuItem = menuItems.find(mi => mi.id === itemId);
+
+                // Handle both object format {quantity: X} and direct number format
+                const quantity = typeof qty === 'object' && qty !== null ? (qty as any).quantity : Number(qty) || 0;
+
                 if (menuItem && menuItem.categoryId) {
                     const category = categories.find(c => c.id === menuItem.categoryId);
                     if (category) {
@@ -5277,15 +5361,43 @@ export async function getOrderById(orderId: string) {
                                 items: []
                             };
                         }
-                        // Handle both object format {quantity: X} and direct number format
-                        const quantity = typeof qty === 'object' && qty !== null ? (qty as any).quantity : qty;
+
                         itemsByCategory[category.id].items.push({
                             itemId: itemId,
                             itemName: menuItem.name,
-                            quantity: Number(quantity) || 0,
+                            quantity: quantity,
+                            quotaValue: menuItem.quotaValue || 1
+                        });
+                    } else {
+                        // Category not found but item exists
+                        if (!itemsByCategory['uncategorized']) {
+                            itemsByCategory['uncategorized'] = {
+                                categoryName: 'Uncategorized',
+                                items: []
+                            };
+                        }
+                        itemsByCategory['uncategorized'].items.push({
+                            itemId: itemId,
+                            itemName: menuItem.name,
+                            quantity: quantity,
                             quotaValue: menuItem.quotaValue || 1
                         });
                     }
+                } else {
+                    // Menu item not found - fallback
+                    if (!itemsByCategory['uncategorized']) {
+                        itemsByCategory['uncategorized'] = {
+                            categoryName: 'Uncategorized',
+                            items: []
+                        };
+                    }
+
+                    itemsByCategory['uncategorized'].items.push({
+                        itemId: itemId,
+                        itemName: menuItem?.name || 'Unknown Item (' + itemId + ')',
+                        quantity: quantity,
+                        quotaValue: 1
+                    });
                 }
             });
 
@@ -5299,6 +5411,19 @@ export async function getOrderById(orderId: string) {
                 items: boxSelection.items || {},
                 itemsByCategory: itemsByCategory,
                 totalValue: boxTotalValue
+            };
+        } else {
+            // Fallback if box selection is missing
+            orderDetails = {
+                serviceType: orderData.service_type,
+                vendorId: null,
+                vendorName: 'Unknown Vendor (Missing Selection Data)',
+                boxTypeId: null,
+                boxTypeName: 'Unknown Box Type',
+                boxQuantity: 1,
+                items: {},
+                itemsByCategory: {},
+                totalValue: parseFloat(orderData.total_value || 0)
             };
         }
     } else if (orderData.service_type === 'Equipment') {

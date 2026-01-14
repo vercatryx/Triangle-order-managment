@@ -39,7 +39,7 @@ export default function MenuItemCard({
     const stopPropagation = (e: React.MouseEvent) => e.stopPropagation();
 
     return (
-        <div className={styles.card} onClick={toggleModal}>
+        <div className={`${styles.card} ${quantity > 0 ? styles.selected : ''}`} onClick={toggleModal}>
             {/* Image Section */}
             <div className={styles.imageContainer}>
                 {item.imageUrl ? (

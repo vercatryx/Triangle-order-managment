@@ -693,8 +693,10 @@ export async function getUpcomingOrderForClientLocal(clientId: string) {
 
                     const items = db.upcomingOrderItems.filter(item => item.vendor_selection_id === vs.id);
                     if (items.length > 0) {
-                        currentConfig.custom_name = items[0].custom_name;
-                        currentConfig.custom_price = items[0].custom_price;
+                        // Map stored fields back to form fields
+                        // We store description in 'notes' and price in 'total_value'/'unit_value'
+                        currentConfig.custom_name = items[0].notes;
+                        currentConfig.custom_price = items[0].total_value;
                     }
                 }
             } else if (data.service_type === 'Meal') {
