@@ -100,8 +100,24 @@ export default function VerifyOrderPage() {
             const pdfBlob = await generateSignedPDF(signatureDataUrl);
 
             // Upload PDF
-            console.log(`[handleSignAndComplete] Uploading PDF, size: ${pdfBlob.size} bytes`);
-            const uploadResult = await finalizeSubmission(token, pdfBlob);
+            console.log(`[handleSignAndComplete] Uploading PDF via API, size: ${pdfBlob.size} bytes`);
+
+            const formData = new FormData();
+            formData.append('token', token);
+            formData.append('file', pdfBlob);
+
+            const uploadResponse = await fetch('/api/verify-order/upload', {
+                method: 'POST',
+                body: formData,
+            });
+
+            if (!uploadResponse.ok) {
+                const errorData = await uploadResponse.json().catch(() => ({}));
+                throw new Error(errorData.error || `Upload failed with status: ${uploadResponse.status}`);
+            }
+
+            const uploadResult = await uploadResponse.json();
+
             if (!uploadResult.success) {
                 throw new Error(uploadResult.error || 'Failed to upload PDF');
             }
