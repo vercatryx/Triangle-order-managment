@@ -60,7 +60,7 @@ export default function FoodServiceWidget({
         uniqueVendorIds.forEach(vId => {
             const v = vendors.find(vend => vend.id === vId);
             if (v) {
-                const cutoff = v.cutoffHours || 0;
+                const cutoff = v.cutoffDays || 0;
                 const effectiveDate = calculateVendorEffectiveDate(cutoff);
                 const dateString = effectiveDate.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', timeZone: 'UTC' });
                 messages.push(
@@ -1032,7 +1032,7 @@ export default function FoodServiceWidget({
                                 uniqueVendorIds.forEach(vId => {
                                     const v = vendors.find(vend => vend.id === vId);
                                     if (v) {
-                                        const cutoff = v.cutoffHours || 0;
+                                        const cutoff = v.cutoffDays || 0;
                                         // Pass delivery days to find the next actual delivery date
                                         const effectiveDate = calculateVendorEffectiveDate(cutoff, undefined, v.deliveryDays);
                                         const dateString = effectiveDate.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', timeZone: 'UTC' });

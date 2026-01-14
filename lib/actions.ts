@@ -99,7 +99,7 @@ export async function getVendors() {
         allowsMultipleDeliveries: v.delivery_frequency === 'Multiple',
         isActive: v.is_active,
         minimumMeals: v.minimum_meals ?? 0,
-        cutoffHours: v.cutoff_hours ?? 0
+        cutoffDays: v.cutoff_hours ?? 0
     }));
 }
 
@@ -116,7 +116,7 @@ export async function getVendor(id: string) {
         allowsMultipleDeliveries: v.delivery_frequency === 'Multiple',
         isActive: v.is_active,
         minimumMeals: v.minimum_meals ?? 0,
-        cutoffHours: v.cutoff_hours ?? 0
+        cutoffDays: v.cutoff_hours ?? 0
     };
 }
 
@@ -128,7 +128,7 @@ export async function addVendor(data: Omit<Vendor, 'id'> & { password?: string; 
         delivery_frequency: data.allowsMultipleDeliveries ? 'Multiple' : 'Once',
         is_active: data.isActive,
         minimum_meals: data.minimumMeals ?? 0,
-        cutoff_hours: data.cutoffHours ?? 0
+        cutoff_hours: data.cutoffDays ?? 0
     };
 
     if (data.email !== undefined && data.email !== null) {
@@ -157,7 +157,7 @@ export async function updateVendor(id: string, data: Partial<Vendor & { password
     }
     if (data.isActive !== undefined) payload.is_active = data.isActive;
     if (data.minimumMeals !== undefined) payload.minimum_meals = data.minimumMeals;
-    if (data.cutoffHours !== undefined) payload.cutoff_hours = data.cutoffHours;
+    if (data.cutoffDays !== undefined) payload.cutoff_hours = data.cutoffDays;
     if (data.email !== undefined) {
         // Trim email and set to null if empty string
         const trimmedEmail = data.email?.trim() || '';

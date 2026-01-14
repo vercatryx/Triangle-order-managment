@@ -103,8 +103,8 @@ export function getNextDeliveryDate(
         // Must order by Monday 00:00.
         // If Now is Monday 01:00. Now+48 = Wednesday 01:00. > Wednesday 00:00. Too late. Correct.
 
-        const cutoffHours = vendor.cutoffHours ?? 0;
-        const cutoffMs = cutoffHours * 60 * 60 * 1000;
+        const cutoffDays = vendor.cutoffDays ?? 0;
+        const cutoffMs = cutoffDays * 24 * 60 * 60 * 1000;
         const now = new Date();
         const minimumDate = new Date(now.getTime() + cutoffMs);
 
@@ -196,8 +196,8 @@ export function getNextDeliveryDateForDay(
             if (vendorId) {
                 const vendor = vendors.find(v => v.id === vendorId);
                 if (vendor) {
-                    const cutoffHours = vendor.cutoffHours ?? 0;
-                    const cutoffMs = cutoffHours * 60 * 60 * 1000;
+                    const cutoffDays = vendor.cutoffDays ?? 0;
+                    const cutoffMs = cutoffDays * 24 * 60 * 60 * 1000;
                     const now = currentTime || referenceDate || new Date();
                     const minimumDate = new Date(now.getTime() + cutoffMs);
 
@@ -514,12 +514,12 @@ export function getNextOccurrence(
  * @returns Date when the changes will take effect
  */
 export function calculateVendorEffectiveDate(
-    cutoffHours: number,
+    cutoffDays: number,
     referenceDate: Date = new Date(),
     deliveryDays?: string[]
 ): Date {
     const effectiveDate = new Date(referenceDate);
-    effectiveDate.setHours(effectiveDate.getHours() + (cutoffHours || 0));
+    effectiveDate.setDate(effectiveDate.getDate() + (cutoffDays || 0));
 
     // If delivery days provided, find the next one *after* the effective date
     if (deliveryDays && deliveryDays.length > 0) {

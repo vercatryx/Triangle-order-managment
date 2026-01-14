@@ -1090,7 +1090,7 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
             uniqueVendorIds.forEach(vId => {
                 const v = vendors.find(vend => vend.id === vId);
                 if (v) {
-                    const cutoff = v.cutoffHours || 0;
+                    const cutoff = v.cutoffDays || 0;
                     const effectiveDate = calculateVendorEffectiveDate(cutoff);
                     const dateString = effectiveDate.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', timeZone: 'UTC' });
                     dates.push(

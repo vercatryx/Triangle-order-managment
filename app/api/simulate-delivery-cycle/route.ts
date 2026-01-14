@@ -398,7 +398,7 @@ export async function POST(request: NextRequest) {
                         const vendor = vendors.find(v => v.id === sel.vendorId);
                         if (vendor) {
                             hasValidVendor = true;
-                            if ((vendor.cutoffHours || 0) > maxCutoffHours) maxCutoffHours = vendor.cutoffHours || 0;
+                            if ((vendor.cutoffDays || 0) * 24 > maxCutoffHours) maxCutoffHours = (vendor.cutoffDays || 0) * 24;
                         }
                     }
                 }
@@ -408,7 +408,7 @@ export async function POST(request: NextRequest) {
                     const vendor = vendors.find(v => v.id === bo.vendor_id);
                     if (vendor) {
                         hasValidVendor = true;
-                        if ((vendor.cutoffHours || 0) > maxCutoffHours) maxCutoffHours = vendor.cutoffHours || 0;
+                        if ((vendor.cutoffDays || 0) * 24 > maxCutoffHours) maxCutoffHours = (vendor.cutoffDays || 0) * 24;
                     }
                 }
             }

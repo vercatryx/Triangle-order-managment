@@ -923,8 +923,8 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
             const vId = conf.vendorId;
             vendorName = vendors.find(v => v.id === vId)?.name || 'No Vendor';
 
-            const desc = conf.custom_name || conf.description || conf.notes || 'Custom Item';
-            const price = conf.custom_price || conf.totalValue || conf.price || 0;
+            const desc = conf.custom_name || 'Custom Item';
+            const price = conf.custom_price || 0;
 
             itemsList.push({
                 name: `${desc} ($${Number(price).toFixed(2)})`,

@@ -185,7 +185,7 @@ export interface Vendor {
   allowsMultipleDeliveries: boolean;
   serviceTypes: ServiceType[]; // Vendor can support multiple service types
   minimumMeals?: number; // Minimum meals/value required when ordering from this vendor (default 0, meaning no minimum)
-  cutoffHours?: number; // Hours before delivery cutoff
+  cutoffDays?: number; // Days before delivery cutoff
 }
 
 export interface ItemCategory {
