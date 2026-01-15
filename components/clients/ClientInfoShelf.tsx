@@ -14,6 +14,8 @@ import { getSingleForm, deleteSubmission } from '@/lib/form-actions';
 import FormFiller from '@/components/forms/FormFiller';
 import { FormSchema } from '@/lib/form-types';
 import styles from './ClientInfoShelf.module.css';
+import { UnitsModal } from './UnitsModal';
+import { logNavigatorAction } from '@/lib/actions';
 
 interface ClientInfoShelfProps {
     client: ClientProfile;
@@ -26,6 +28,7 @@ interface ClientInfoShelfProps {
     onOpenProfile: (clientId: string) => void;
     onClientUpdated?: () => void;
     onClientDeleted?: () => void;
+    currentUser?: { role: string; id: string } | null;
 }
 
 export function ClientInfoShelf({
@@ -38,10 +41,16 @@ export function ClientInfoShelf({
     onClose,
     onOpenProfile,
     onClientUpdated,
-    onClientDeleted
+    onClientDeleted,
+    currentUser
 }: ClientInfoShelfProps) {
     const [isEditing, setIsEditing] = useState(false);
     const [isSaving, setIsSaving] = useState(false);
+
+    // Units Prompt State
+    const [showUnitsModal, setShowUnitsModal] = useState(false);
+    const [pendingStatusChange, setPendingStatusChange] = useState<{ oldStatusId: string, newStatusId: string } | null>(null);
+    const [pendingEditForm, setPendingEditForm] = useState<any>(null);
     const [editForm, setEditForm] = useState({
         fullName: client.fullName,
         statusId: client.statusId,
@@ -92,20 +101,58 @@ export function ClientInfoShelf({
     const navigator = navigators.find(n => n.id === (isEditing ? editForm.navigatorId : client.navigatorId));
 
     const handleSave = async () => {
+        // Intercept for Navigator Status Change
+        if (currentUser?.role === 'navigator' && editForm.statusId !== client.statusId) {
+            const newStatus = statuses.find(s => s.id === editForm.statusId);
+            if (newStatus?.requiresUnitsOnChange) {
+                setPendingStatusChange({
+                    oldStatusId: client.statusId,
+                    newStatusId: editForm.statusId
+                });
+                setPendingEditForm(editForm);
+                setShowUnitsModal(true);
+                return; // Stop here, wait for modal
+            }
+        }
+
+        await executeSave(0);
+    };
+
+    const executeSave = async (unitsAdded: number) => {
         setIsSaving(true);
         try {
+            // Use pending form if available (from modal flow), otherwise current editForm
+            const formToSave = pendingEditForm || editForm;
+
             // Include caseId in activeOrder if it was modified
             const updatedActiveOrder = {
                 ...(client.activeOrder || { serviceType: client.serviceType }),
-                caseId: editForm.caseId,
+                caseId: formToSave.caseId,
                 serviceType: client.activeOrder?.serviceType || client.serviceType
             };
 
             await updateClient(client.id, {
-                ...editForm,
+                ...formToSave,
                 activeOrder: updatedActiveOrder
             });
+
+            // Log units if applicable
+            if (currentUser?.role === 'navigator' && unitsAdded > 0 && pendingStatusChange) {
+                await logNavigatorAction(
+                    client.id,
+                    currentUser.id,
+                    pendingStatusChange.oldStatusId,
+                    pendingStatusChange.newStatusId,
+                    unitsAdded
+                );
+            }
+
             setIsEditing(false);
+            // Reset pending state
+            setShowUnitsModal(false);
+            setPendingStatusChange(null);
+            setPendingEditForm(null);
+
             if (onClientUpdated) onClientUpdated();
         } catch (error) {
             console.error('Failed to update client:', error);
@@ -200,6 +247,16 @@ export function ClientInfoShelf({
 
     return (
         <>
+            <UnitsModal
+                isOpen={showUnitsModal}
+                onClose={() => {
+                    setShowUnitsModal(false);
+                    setPendingStatusChange(null);
+                    setPendingEditForm(null);
+                }}
+                onConfirm={executeSave}
+                saving={isSaving}
+            />
             <div className={styles.shelfOverlay} onClick={onClose} />
             <div className={styles.shelf}>
                 <div className={styles.header}>

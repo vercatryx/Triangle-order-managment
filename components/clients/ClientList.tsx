@@ -1780,6 +1780,7 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
                         setInfoShelfClientId(null);
                         loadInitialData();
                     }}
+                    currentUser={currentUser}
                 />
             )}
         </div>

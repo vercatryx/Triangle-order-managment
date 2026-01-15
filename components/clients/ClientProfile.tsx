@@ -3967,11 +3967,20 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
         // Only show units modal if the new status requires units on change
         // Skip this check for new clients
         if (!isNewClient && client) {
+            console.log('[DEBUG] Checking status change:', {
+                role: currentUser?.role,
+                currentStatusId: client.statusId,
+                newStatusId: formData.statusId,
+                statusesLoaded: statuses.length
+            });
+
             if (currentUser?.role === 'navigator' && formData.statusId !== client.statusId) {
                 const newStatus = statuses.find(s => s.id === formData.statusId);
+                console.log('[DEBUG] Status change detected for Navigator. New Status:', newStatus);
 
                 // Only show modal if the new status has requiresUnitsOnChange enabled
                 if (newStatus?.requiresUnitsOnChange) {
+                    console.log('[DEBUG] Units required for this status. Triggering modal.');
                     try {
                         const oldStatusName = getStatusName(client.statusId);
                         const newStatusName = getStatusName(formData.statusId!);
@@ -3981,6 +3990,8 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                     } catch (e) {
                         console.error('[handleSave] Error in status change logic:', e);
                     }
+                } else {
+                    console.log('[DEBUG] Units NOT required for this status.');
                 }
             }
         }
