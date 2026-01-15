@@ -25,23 +25,8 @@ const supabase = createClient(
 );
 
 export async function POST(request: NextRequest) {
-    // Security Check: Verify Cron Secret OR Admin Session
-    const authHeader = request.headers.get('authorization');
-    const isCronAuthorized = authHeader === `Bearer ${process.env.CRON_SECRET}`;
-
-    // Check for admin session
-    let isAdminAuthorized = false;
-    const session = await getSession();
-    if (session && (session.role === 'admin' || session.role === 'superadmin')) {
-        isAdminAuthorized = true;
-    }
-
-    if (!isCronAuthorized && !isAdminAuthorized) {
-        console.warn(`[Unified Scheduling] Unauthorized access attempt. Cron: ${isCronAuthorized}, Admin: ${isAdminAuthorized}`);
-        return new NextResponse('Unauthorized', { status: 401 });
-    }
-
-    console.log(`[Unified Scheduling] Starting execution... (Triggered by: ${isCronAuthorized ? 'CRON' : 'ADMIN'})`);
+    // PUBLIC ACCESS ENABLED (Per User Request)
+    console.log('[Unified Scheduling] Starting execution... (Public Trigger)');
 
     // --- 0. Setup Reporting ---
     const report = {
