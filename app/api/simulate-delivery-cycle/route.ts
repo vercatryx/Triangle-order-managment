@@ -1,3 +1,4 @@
+import { getSession } from '@/lib/session';
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { getCurrentTime } from '@/lib/time';
@@ -23,24 +24,24 @@ const supabase = createClient(
     process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
 
-/**
- * UNIFIED ORDER SCHEDULING API
- * Authoritative Implementation
- * 
- * Rules:
- * 1. Single API for all recurring orders (Food, Meal, Box, Custom).
- * 2. Strict Whole Day Cutoffs (days_until == cutoff).
- * 3. Strict Inclusion/Exclusion (Client Status, Equipment excluded).
- * 4. Reporting is mandatory.
- */
 export async function POST(request: NextRequest) {
-    // Security Check: Verify Cron Secret
+    // Security Check: Verify Cron Secret OR Admin Session
     const authHeader = request.headers.get('authorization');
-    if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
+    const isCronAuthorized = authHeader === `Bearer ${process.env.CRON_SECRET}`;
+
+    // Check for admin session
+    let isAdminAuthorized = false;
+    const session = await getSession();
+    if (session && (session.role === 'admin' || session.role === 'superadmin')) {
+        isAdminAuthorized = true;
+    }
+
+    if (!isCronAuthorized && !isAdminAuthorized) {
+        console.warn(`[Unified Scheduling] Unauthorized access attempt. Cron: ${isCronAuthorized}, Admin: ${isAdminAuthorized}`);
         return new NextResponse('Unauthorized', { status: 401 });
     }
 
-    console.log('[Unified Scheduling] Starting execution...');
+    console.log(`[Unified Scheduling] Starting execution... (Triggered by: ${isCronAuthorized ? 'CRON' : 'ADMIN'})`);
 
     // --- 0. Setup Reporting ---
     const report = {
