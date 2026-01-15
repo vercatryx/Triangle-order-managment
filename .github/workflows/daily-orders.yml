@@ -3,7 +3,8 @@ name: Daily Order Creation
 on:
   schedule:
     # Runs at 12:01 AM EST (05:01 UTC) every day
-    - cron: '1 5 * * *'
+    # TEMPORARY TEST: 11:37 AM EST (16:37 UTC)
+    - cron: '37 16 * * *'
   workflow_dispatch: # Allows manual triggering from GitHub UI
 
 jobs:
