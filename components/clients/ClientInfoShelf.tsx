@@ -29,6 +29,7 @@ interface ClientInfoShelfProps {
     onClientUpdated?: () => void;
     onClientDeleted?: () => void;
     currentUser?: { role: string; id: string } | null;
+    onBackgroundSave?: (clientId: string, clientName: string, saveAction: () => Promise<void>) => void;
 }
 
 export function ClientInfoShelf({
@@ -42,7 +43,8 @@ export function ClientInfoShelf({
     onOpenProfile,
     onClientUpdated,
     onClientDeleted,
-    currentUser
+    currentUser,
+    onBackgroundSave
 }: ClientInfoShelfProps) {
     const [isEditing, setIsEditing] = useState(false);
     const [isSaving, setIsSaving] = useState(false);
@@ -63,8 +65,7 @@ export function ClientInfoShelf({
         authorizedAmount: client.authorizedAmount || 0,
         expirationDate: client.expirationDate || '',
         approvedMealsPerWeek: client.approvedMealsPerWeek || 0,
-        caseId: client.activeOrder?.caseId || '',
-        serviceType: client.serviceType
+        caseId: client.activeOrder?.caseId || ''
     });
 
     // Dependent State
@@ -115,8 +116,19 @@ export function ClientInfoShelf({
             }
         }
 
-        await executeSave(0);
-        return true; // Proceed to close if needed
+        const performSave = async () => {
+            await executeSave(0);
+        };
+
+        if (onBackgroundSave) {
+            // Background save mode: trigger and return true to indicate shelf can close
+            onBackgroundSave(client.id, client.fullName, performSave);
+            return true;
+        } else {
+            // Fallback to blocking save
+            await executeSave(0);
+            return true;
+        }
     };
 
     const handleOverlayClick = async () => {
@@ -304,8 +316,7 @@ export function ClientInfoShelf({
                                         authorizedAmount: client.authorizedAmount || 0,
                                         expirationDate: client.expirationDate || '',
                                         approvedMealsPerWeek: client.approvedMealsPerWeek || 0,
-                                        caseId: client.activeOrder?.caseId || '',
-                                        serviceType: client.serviceType
+                                        caseId: client.activeOrder?.caseId || ''
                                     });
                                 }}>
                                     <X size={18} />
@@ -388,19 +399,7 @@ export function ClientInfoShelf({
                             <div className={styles.infoItem}>
                                 <div className={styles.label}>Service Type</div>
                                 <div className={styles.value}>
-                                    {isEditing ? (
-                                        <select
-                                            className={styles.editSelect}
-                                            value={editForm.serviceType}
-                                            onChange={e => setEditForm({ ...editForm, serviceType: e.target.value as any })}
-                                        >
-                                            <option value="Food">Food</option>
-                                            <option value="Boxes">Boxes</option>
-                                            <option value="Equipment">Equipment</option>
-                                        </select>
-                                    ) : (
-                                        client.serviceType || '-'
-                                    )}
+                                    {client.serviceType || '-'}
                                 </div>
                             </div>
                             <div className={styles.infoItem}>

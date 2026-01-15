@@ -3,6 +3,7 @@
 
 import { getCurrentTime } from './time';
 import { revalidatePath } from 'next/cache';
+import { cache } from 'react';
 import { supabase } from './supabase';
 import { ClientStatus, Vendor, MenuItem, BoxType, AppSettings, Navigator, Nutritionist, ClientProfile, DeliveryRecord, ItemCategory, BoxQuota, ServiceType, Equipment, ClientFoodOrder, ClientMealOrder, ClientBoxOrder } from './types';
 import { uploadFile, deleteFile } from './storage';
@@ -21,7 +22,7 @@ function handleError(error: any) {
 
 // --- STATUS ACTIONS ---
 
-export async function getStatuses() {
+export const getStatuses = cache(async function () {
     const { data, error } = await supabase.from('client_statuses').select('*').order('created_at', { ascending: true });
     if (error) {
         console.error('Error fetching statuses:', error);
@@ -34,7 +35,7 @@ export async function getStatuses() {
         deliveriesAllowed: s.deliveries_allowed,
         requiresUnitsOnChange: s.requires_units_on_change ?? false
     }));
-}
+});
 
 export async function addStatus(name: string) {
     const { data, error } = await supabase
@@ -86,7 +87,7 @@ export async function updateStatus(id: string, data: Partial<ClientStatus>) { //
 
 // --- VENDOR ACTIONS ---
 
-export async function getVendors() {
+export const getVendors = cache(async function () {
     const { data, error } = await supabase.from('vendors').select('*');
     if (error) return [];
 
@@ -101,7 +102,7 @@ export async function getVendors() {
         minimumMeals: v.minimum_meals ?? 0,
         cutoffDays: v.cutoff_hours ?? 0
     }));
-}
+});
 
 export async function getVendor(id: string) {
     const { data: v, error } = await supabase.from('vendors').select('*').eq('id', id).single();
@@ -217,7 +218,7 @@ export async function uploadMenuItemImage(formData: FormData) {
 
 // --- MENU ACTIONS ---
 
-export async function getMenuItems() {
+export const getMenuItems = cache(async function () {
     const { data, error } = await supabase.from('menu_items')
         .select('*')
         .order('sort_order', { ascending: true })
@@ -236,7 +237,7 @@ export async function getMenuItems() {
         imageUrl: i.image_url || null,
         sortOrder: i.sort_order ?? 0
     }));
-}
+});
 
 export async function addMenuItem(data: Omit<MenuItem, 'id'>) {
     const payload: any = {
@@ -840,7 +841,7 @@ export async function deleteBoxQuota(id: string) {
 
 // --- BOX TYPE ACTIONS ---
 
-export async function getBoxTypes() {
+export const getBoxTypes = cache(async function () {
     const { data, error } = await supabase.from('box_types').select('*');
     if (error) return [];
     return data.map((b: any) => ({
@@ -850,7 +851,7 @@ export async function getBoxTypes() {
         isActive: b.is_active,
         priceEach: b.price_each ?? undefined
     }));
-}
+});
 
 export async function addBoxType(data: Omit<BoxType, 'id'>) {
     const payload: any = {
@@ -1086,11 +1087,11 @@ export async function getClientsLight() {
     }));
 }
 
-export async function getClient(id: string) {
+export const getClient = cache(async function (id: string) {
     const { data, error } = await supabase.from('clients').select('*').eq('id', id).single();
     if (error || !data) return undefined;
     return mapClientFromDB(data);
-}
+});
 
 export async function checkClientNameExists(fullName: string, excludeId?: string): Promise<boolean> {
     if (!fullName || !fullName.trim()) return false;
@@ -1312,9 +1313,8 @@ export async function updateClient(id: string, data: Partial<ClientProfile>) {
 
     // If activeOrder was updated, sync to upcoming_orders
     if (data.activeOrder) {
-        const updatedClient = await getClient(id);
-        if (updatedClient) {
-            await syncCurrentOrderToUpcoming(id, updatedClient, true);
+        if (updatedData) {
+            await syncCurrentOrderToUpcoming(id, mapClientFromDB(updatedData), true);
         }
     } else {
         // Trigger local DB sync in background even if activeOrder wasn't updated

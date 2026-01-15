@@ -1806,14 +1806,16 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
                                     delete newCache[updatedClientId];
                                     return newCache;
                                 });
+                                // Optimized: Just refresh this single client instead of everything
+                                refreshSingleClient(updatedClientId);
                             }
-                            refreshDataInBackground();
                         }}
                         onClientDeleted={() => {
                             setInfoShelfClientId(null);
                             refreshDataInBackground();
                         }}
                         currentUser={currentUser}
+                        onBackgroundSave={handleBackgroundSave}
                     />
                 )
             }

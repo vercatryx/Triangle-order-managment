@@ -3044,21 +3044,7 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                                                                         </button>
                                                                     )}
                                                                 </div>
-                                                                <div style={{ display: 'flex', gap: '1rem' }}>
-                                                                    <div className={styles.formGroup} style={{ flex: 1 }}>
-                                                                        <label className="label">Box Type</label>
-                                                                        <select
-                                                                            className="input"
-                                                                            value={box.boxTypeId || ''}
-                                                                            onChange={e => handleBoxUpdate(index, 'boxTypeId', e.target.value)}
-                                                                        >
-                                                                            <option value="">Select Box Type...</option>
-                                                                            {boxTypes.filter(bt => bt.isActive).map(bt => (
-                                                                                <option key={bt.id} value={bt.id}>{bt.name}</option>
-                                                                            ))}
-                                                                        </select>
-                                                                    </div>
-                                                                </div>
+                                                                {/* Box Type dropdown removed - defaulting to first active type in background */}
 
                                                                 <div className={styles.formGroup}>
                                                                     <label className="label">Vendor</label>
