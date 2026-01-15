@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { getNavigatorLogs } from '@/lib/actions';
 import { History } from 'lucide-react';
 import styles from './NavigatorHistory.module.css';
+import { ClientStatus } from '@/lib/types';
 
 interface NavigatorLog {
     id: string;
@@ -15,13 +16,21 @@ interface NavigatorLog {
     createdAt: string;
 }
 
+
 interface NavigatorHistoryProps {
     navigatorId: string;
+    statuses: ClientStatus[];
 }
 
-export function NavigatorHistory({ navigatorId }: NavigatorHistoryProps) {
+export function NavigatorHistory({ navigatorId, statuses }: NavigatorHistoryProps) {
     const [logs, setLogs] = useState<NavigatorLog[]>([]);
     const [isLoading, setIsLoading] = useState(true);
+
+    // Create a lookup for easy access
+    const statusMap = statuses.reduce((acc, status) => {
+        acc[status.id] = status.name;
+        return acc;
+    }, {} as Record<string, string>);
 
     useEffect(() => {
         loadHistory();
@@ -60,13 +69,13 @@ export function NavigatorHistory({ navigatorId }: NavigatorHistoryProps) {
                 // Group logs by date
                 const logsByDate = logs.reduce((acc, log) => {
                     const date = new Date(log.createdAt);
-                    const dateKey = date.toLocaleDateString('en-US', { 
-                        year: 'numeric', 
-                        month: 'long', 
-                        day: 'numeric' 
+                    const dateKey = date.toLocaleDateString('en-US', {
+                        year: 'numeric',
+                        month: 'long',
+                        day: 'numeric'
                     });
                     const dateSortKey = date.toISOString().split('T')[0]; // For sorting
-                    
+
                     if (!acc[dateSortKey]) {
                         acc[dateSortKey] = {
                             displayDate: dateKey,
@@ -114,11 +123,13 @@ export function NavigatorHistory({ navigatorId }: NavigatorHistoryProps) {
                                                         </td>
                                                         <td style={{ fontWeight: 500 }}>{log.clientName}</td>
                                                         <td>
-                                                            <span className={styles.statusBadge}>{log.oldStatus || 'N/A'}</span>
+                                                            <span className={styles.statusBadge}>
+                                                                {statusMap[log.oldStatus] || log.oldStatus || 'N/A'}
+                                                            </span>
                                                         </td>
                                                         <td>
                                                             <span className={`${styles.statusBadge} ${styles.statusNew}`}>
-                                                                {log.newStatus || 'N/A'}
+                                                                {statusMap[log.newStatus] || log.newStatus || 'N/A'}
                                                             </span>
                                                         </td>
                                                         <td style={{ textAlign: 'right', fontWeight: 600, color: 'var(--color-success)' }}>

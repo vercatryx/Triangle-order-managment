@@ -1,10 +1,11 @@
 import { NavigatorHistory } from '@/components/navigators/NavigatorHistory';
 import { getSession } from '@/lib/session';
+import { getStatuses } from '@/lib/actions';
 import { redirect } from 'next/navigation';
 
 export default async function NavigatorHistoryPage() {
     const session = await getSession();
-    
+
     if (!session) {
         redirect('/login');
     }
@@ -14,7 +15,9 @@ export default async function NavigatorHistoryPage() {
         redirect('/clients');
     }
 
-    return <NavigatorHistory navigatorId={session.userId} />;
+    const statuses = await getStatuses();
+
+    return <NavigatorHistory navigatorId={session.userId} statuses={statuses} />;
 }
 
 

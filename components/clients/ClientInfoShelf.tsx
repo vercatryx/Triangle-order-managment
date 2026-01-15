@@ -100,7 +100,7 @@ export function ClientInfoShelf({
     const status = statuses.find(s => s.id === (isEditing ? editForm.statusId : client.statusId));
     const navigator = navigators.find(n => n.id === (isEditing ? editForm.navigatorId : client.navigatorId));
 
-    const handleSave = async () => {
+    const handleSave = async (): Promise<boolean> => {
         // Intercept for Navigator Status Change
         if (currentUser?.role === 'navigator' && editForm.statusId !== client.statusId) {
             const newStatus = statuses.find(s => s.id === editForm.statusId);
@@ -111,11 +111,23 @@ export function ClientInfoShelf({
                 });
                 setPendingEditForm(editForm);
                 setShowUnitsModal(true);
-                return; // Stop here, wait for modal
+                return false; // Stop here, wait for modal, DO NOT CLOSE SHELF
             }
         }
 
         await executeSave(0);
+        return true; // Proceed to close if needed
+    };
+
+    const handleOverlayClick = async () => {
+        if (isEditing) {
+            const success = await handleSave();
+            if (success) {
+                onClose();
+            }
+        } else {
+            onClose();
+        }
     };
 
     const executeSave = async (unitsAdded: number) => {
@@ -138,13 +150,13 @@ export function ClientInfoShelf({
 
             // Log units if applicable
             if (currentUser?.role === 'navigator' && unitsAdded > 0 && pendingStatusChange) {
-                await logNavigatorAction(
-                    client.id,
-                    currentUser.id,
-                    pendingStatusChange.oldStatusId,
-                    pendingStatusChange.newStatusId,
+                await logNavigatorAction({
+                    navigatorId: currentUser.id,
+                    clientId: client.id,
+                    oldStatus: pendingStatusChange.oldStatusId,
+                    newStatus: pendingStatusChange.newStatusId,
                     unitsAdded
-                );
+                });
             }
 
             setIsEditing(false);
@@ -257,7 +269,7 @@ export function ClientInfoShelf({
                 onConfirm={executeSave}
                 saving={isSaving}
             />
-            <div className={styles.shelfOverlay} onClick={onClose} />
+            <div className={styles.shelfOverlay} onClick={handleOverlayClick} />
             <div className={styles.shelf}>
                 <div className={styles.header}>
                     <div className={styles.titleSection}>
@@ -455,7 +467,7 @@ export function ClientInfoShelf({
                                         />
                                     ) : (
                                         client.expirationDate
-                                            ? new Date(client.expirationDate).toLocaleDateString()
+                                            ? new Date(client.expirationDate).toLocaleDateString(undefined, { timeZone: 'UTC' })
                                             : '-'
                                     )}
                                 </div>
@@ -660,7 +672,7 @@ export function ClientInfoShelf({
                                         >
                                             <div className={styles.depName}>{dep.fullName}</div>
                                             <div className={styles.depInfo}>
-                                                {dep.dob && <span>DOB: {new Date(dep.dob).toLocaleDateString()}</span>}
+                                                {dep.dob && <span>DOB: {new Date(dep.dob).toLocaleDateString(undefined, { timeZone: 'UTC' })}</span>}
                                                 {dep.cin && <span> | CIN: {dep.cin}</span>}
                                             </div>
                                         </div>

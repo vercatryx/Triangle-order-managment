@@ -183,9 +183,11 @@ export function MealSelectionManagement() {
     async function handleSaveItem() {
         if (!activeCategoryId || !itemForm.name) return;
 
+        const processedName = itemForm.name.replace(/\n/g, ' ').trim();
+
         if (editingItemId) {
             await updateMealItem(editingItemId, {
-                name: itemForm.name,
+                name: processedName,
                 quotaValue: itemForm.quotaValue,
                 priceEach: (itemForm.priceEach || 0) > 0 ? itemForm.priceEach : undefined,
                 imageUrl: itemForm.imageUrl,
@@ -194,7 +196,7 @@ export function MealSelectionManagement() {
         } else {
             await addMealItem({
                 categoryId: activeCategoryId,
-                name: itemForm.name,
+                name: processedName,
                 quotaValue: itemForm.quotaValue || 1,
                 priceEach: (itemForm.priceEach || 0) > 0 ? itemForm.priceEach : undefined,
                 isActive: true,
@@ -663,7 +665,13 @@ export function MealSelectionManagement() {
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                                 <div>
                                     <label className="label">Name</label>
-                                    <input className="input" value={itemForm.name} onChange={e => setItemForm({ ...itemForm, name: e.target.value })} autoFocus />
+                                    <textarea
+                                        className="input"
+                                        value={itemForm.name}
+                                        onChange={e => setItemForm({ ...itemForm, name: e.target.value })}
+                                        style={{ minHeight: '80px', resize: 'vertical' }}
+                                        autoFocus
+                                    />
                                 </div>
                                 <div style={{ display: 'flex', gap: '10px' }}>
                                     <div style={{ flex: 1 }}>
