@@ -34,6 +34,12 @@ const supabase = createClient(
  * 4. Reporting is mandatory.
  */
 export async function POST(request: NextRequest) {
+    // Security Check: Verify Cron Secret
+    const authHeader = request.headers.get('authorization');
+    if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
+        return new NextResponse('Unauthorized', { status: 401 });
+    }
+
     console.log('[Unified Scheduling] Starting execution...');
 
     // --- 0. Setup Reporting ---
@@ -74,8 +80,8 @@ export async function POST(request: NextRequest) {
 
         // Get Settings for Report Email
         const { data: settingsData } = await supabase.from('app_settings').select('*').single();
-        const settings = settingsData as AppSettings;
-        const reportEmail = settings?.reportEmail || 'admin@example.com'; // Fallback if not set
+        const settings = settingsData as any;
+        const reportEmail = settings?.report_email || 'admin@example.com'; // Fallback if not set
 
         // Map Helpers
         const statusMap = new Map(allStatuses.map(s => [s.id, s]));

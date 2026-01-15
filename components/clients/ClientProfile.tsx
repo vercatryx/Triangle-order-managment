@@ -4,9 +4,9 @@ import { useState, useEffect, Fragment, useMemo, useRef, ReactNode } from 'react
 import { useRouter, useParams } from 'next/navigation';
 import Link from 'next/link';
 import { ClientProfile, ClientStatus, Navigator, Vendor, MenuItem, BoxType, ServiceType, AppSettings, DeliveryRecord, ItemCategory, ClientFullDetails, BoxQuota, MealCategory, MealItem, ClientFoodOrder, ClientMealOrder, ClientBoxOrder } from '@/lib/types';
-import { updateClient, addClient, deleteClient, updateDeliveryProof, recordClientChange, syncCurrentOrderToUpcoming, logNavigatorAction, getBoxQuotas, saveEquipmentOrder, getRegularClients, getDependentsByParentId, addDependent, checkClientNameExists, getClientFullDetails, saveClientFoodOrder, saveClientMealOrder, saveClientBoxOrder, saveClientCustomOrder } from '@/lib/actions';
+import { updateClient, addClient, deleteClient, updateDeliveryProof, recordClientChange, syncCurrentOrderToUpcoming, logNavigatorAction, getBoxQuotas, saveEquipmentOrder, getRegularClients, getDependentsByParentId, addDependent, checkClientNameExists, getClientFullDetails, saveClientFoodOrder, saveClientMealOrder, saveClientBoxOrder, saveClientCustomOrder, getEquipment } from '@/lib/actions';
 import { getSingleForm, getClientSubmissions } from '@/lib/form-actions';
-import { getClient, getStatuses, getNavigators, getVendors, getMenuItems, getBoxTypes, getSettings, getCategories, getEquipment, getClients, invalidateClientData, invalidateReferenceData, getActiveOrderForClient, getUpcomingOrderForClient, getOrderHistory, getClientHistory, getBillingHistory, invalidateOrderData, getMealCategories, getMealItems, getRecentOrdersForClient } from '@/lib/cached-data';
+import { getClient, getStatuses, getNavigators, getVendors, getMenuItems, getBoxTypes, getSettings, getCategories, getClients, invalidateClientData, invalidateReferenceData, getActiveOrderForClient, getUpcomingOrderForClient, getOrderHistory, getClientHistory, getBillingHistory, invalidateOrderData, getMealCategories, getMealItems, getRecentOrdersForClient } from '@/lib/cached-data';
 import { areAnyDeliveriesLocked, getEarliestEffectiveDate, getLockedWeekDescription } from '@/lib/weekly-lock';
 import {
     getNextDeliveryDate as getNextDeliveryDateUtil,
@@ -193,7 +193,7 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
     const [boxQuotas, setBoxQuotas] = useState<BoxQuota[]>([]);
     const [equipment, setEquipment] = useState<any[]>([]);
     const [showEquipmentOrder, setShowEquipmentOrder] = useState(false);
-    const [equipmentOrder, setEquipmentOrder] = useState<{ vendorId: string; equipmentId: string } | null>(null);
+    const [equipmentOrder, setEquipmentOrder] = useState<{ vendorId: string; equipmentId: string; caseId: string } | null>(null);
     const [submittingEquipmentOrder, setSubmittingEquipmentOrder] = useState(false);
 
 
@@ -3377,7 +3377,19 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                                             {!showEquipmentOrder ? (
                                                 <button
                                                     className="btn btn-secondary"
-                                                    onClick={() => setShowEquipmentOrder(true)}
+                                                    onClick={async () => {
+                                                        setShowEquipmentOrder(true);
+                                                        try {
+                                                            // Bypass cache and fetch directly
+                                                            const freshEquipment = await getEquipment();
+                                                            if (freshEquipment && freshEquipment.length > 0) {
+                                                                setEquipment(freshEquipment);
+                                                            }
+                                                        } catch (err) {
+                                                            // Silent fail desirable here? or just standard error log? Keeping minimal as per 'remove debug' request
+                                                            console.error('Error fetching equipment:', err);
+                                                        }
+                                                    }}
                                                     style={{ width: '100%' }}
                                                 >
                                                     Equipment Order
@@ -3397,7 +3409,8 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                                                             onChange={e => setEquipmentOrder({
                                                                 ...equipmentOrder,
                                                                 vendorId: e.target.value,
-                                                                equipmentId: '' // Reset equipment selection when vendor changes
+                                                                equipmentId: '', // Reset equipment selection when vendor changes
+                                                                caseId: orderConfig.caseId || '' // Initialize with current caseId but allow override
                                                             })}
                                                         >
                                                             <option value="">Select Vendor...</option>
@@ -3425,19 +3438,37 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                                                                 className="input"
                                                                 value={equipmentOrder?.equipmentId || ''}
                                                                 onChange={e => setEquipmentOrder({
-                                                                    ...equipmentOrder,
+                                                                    ...equipmentOrder!,
                                                                     equipmentId: e.target.value
                                                                 })}
                                                             >
                                                                 <option value="">Select Equipment Item...</option>
                                                                 {equipment
-                                                                    .filter(eq => !eq.vendorId || eq.vendorId === equipmentOrder.vendorId)
                                                                     .map(eq => (
                                                                         <option key={eq.id} value={eq.id}>
                                                                             {eq.name} - ${eq.price.toFixed(2)}
                                                                         </option>
                                                                     ))}
                                                             </select>
+                                                        </div>
+                                                    )}
+
+                                                    {equipmentOrder?.equipmentId && (
+                                                        <div className={styles.formGroup}>
+                                                            <label className="label">Case ID (Equipment Only)</label>
+                                                            <input
+                                                                type="text"
+                                                                className="input"
+                                                                value={equipmentOrder.caseId}
+                                                                onChange={e => setEquipmentOrder({
+                                                                    ...equipmentOrder,
+                                                                    caseId: e.target.value
+                                                                })}
+                                                                placeholder="Enter Case ID for this order"
+                                                            />
+                                                            <p style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)', marginTop: '0.25rem' }}>
+                                                                This Case ID will be used for this specific equipment order only.
+                                                            </p>
                                                         </div>
                                                     )}
 
@@ -3460,7 +3491,7 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                                                                             clientId,
                                                                             equipmentOrder.vendorId,
                                                                             equipmentOrder.equipmentId,
-                                                                            orderConfig.caseId
+                                                                            equipmentOrder.caseId
                                                                         );
                                                                         setMessage('Equipment order submitted successfully!');
                                                                         setTimeout(() => setMessage(null), 3000);

@@ -1,0 +1,17 @@
+name: Daily Order Creation
+
+on:
+  schedule:
+    # Runs at 12:01 AM EST (05:01 UTC) every day
+    - cron: '1 5 * * *'
+  workflow_dispatch: # Allows manual triggering from GitHub UI
+
+jobs:
+  trigger-orders:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Order Creation API
+        run: |
+          curl -X POST ${{ secrets.APP_URL }}/api/simulate-delivery-cycle \
+          -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+          -H "Content-Type: application/json"
