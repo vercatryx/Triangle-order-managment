@@ -1,4 +1,4 @@
-name: Daily Order Creation
+name: Daily Order Creation (v2)
 
 on:
   schedule:

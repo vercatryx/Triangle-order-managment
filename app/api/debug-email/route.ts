@@ -29,6 +29,7 @@ export async function GET(request: NextRequest) {
             GMAIL_BACKUP_PASS_SET: !!process.env.GMAIL_BACKUP_PASS,
             CRON_SECRET_SET_ON_SERVER: !!process.env.CRON_SECRET,
             SUPABASE_SERVICE_ROLE_KEY_SET: !!process.env.SUPABASE_SERVICE_ROLE_KEY,
+            SECRET_MATCHES_HARDCODED: process.env.CRON_SECRET === 'tr1angl3-s3cr3t-k3y-2024',
         },
         databaseSettings: {} as any,
         testSend: {
