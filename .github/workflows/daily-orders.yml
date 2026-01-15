@@ -3,13 +3,13 @@ name: Daily Order Creation
 on:
   schedule:
     # Runs at 12:01 AM EST (05:01 UTC) every day
-    # TEMPORARY TEST: 11:37 AM EST (16:37 UTC)
-    - cron: '37 16 * * *'
+    - cron: '1 5 * * *'
   workflow_dispatch: # Allows manual triggering from GitHub UI
 
 jobs:
   trigger-orders:
     runs-on: ubuntu-latest
+    environment: Production # REQUIRED: Access secrets defined in the 'Production' environment
     steps:
       - name: Trigger Order Creation API
         run: |
