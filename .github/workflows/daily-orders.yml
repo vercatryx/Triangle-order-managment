@@ -3,8 +3,7 @@ name: Daily Order Creation
 on:
   schedule:
     # Runs at 12:01 AM EST (05:01 UTC) every day
-    # TEMPORARY TEST: 11:50 AM EST (16:50 UTC)
-    - cron: '50 16 * * *'
+    - cron: '1 5 * * *'
   workflow_dispatch: # Allows manual triggering from GitHub UI
 
 jobs:
@@ -12,8 +11,15 @@ jobs:
     runs-on: ubuntu-latest
     environment: Production # REQUIRED: Access secrets defined in the 'Production' environment
     steps:
-      - name: Trigger Order Creation API
         run: |
-          curl -X POST ${{ secrets.APP_URL }}/api/simulate-delivery-cycle \
+          response=$(curl -s -w "\nHTTP_STATUS:%{http_code}" -X POST ${{ secrets.APP_URL }}/api/simulate-delivery-cycle \
           -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
-          -H "Content-Type: application/json"
+          -H "Content-Type: application/json")
+          
+          echo "$response"
+          
+          # Check if response contains HTTP_STATUS:200
+          if [[ "$response" != *"HTTP_STATUS:200"* ]]; then
+            echo "❌ API Request Failed"
+            exit 1
+          fi

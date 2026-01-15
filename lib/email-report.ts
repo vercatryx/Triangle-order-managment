@@ -83,13 +83,15 @@ export async function sendSchedulingReport(report: SimulationReport, recipient: 
     </p>
     `;
 
-    try {
-        await sendEmail({
-            to: recipient,
-            subject,
-            html
-        });
-    } catch (error) {
-        console.error('Failed to send scheduling report email:', error);
+    const result = await sendEmail({
+        to: recipient,
+        subject,
+        html
+    });
+
+    if (!result.success) {
+        throw new Error(`Email sending failed: ${result.error}`);
     }
+
+    return { provider: result.provider };
 }

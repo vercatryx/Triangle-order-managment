@@ -37,7 +37,7 @@ async function sendWithTransporter(
     });
 }
 
-export async function sendEmail(options: EmailOptions): Promise<{ success: boolean; error?: string }> {
+export async function sendEmail(options: EmailOptions): Promise<{ success: boolean; error?: string; provider?: 'main' | 'gmail' }> {
     // Try main email service first
     const host = process.env.SMTP_HOST;
     const port = process.env.SMTP_PORT ? parseInt(process.env.SMTP_PORT, 10) : 587;
@@ -59,7 +59,7 @@ export async function sendEmail(options: EmailOptions): Promise<{ success: boole
             });
 
             await sendWithTransporter(transporter, user, options);
-            return { success: true };
+            return { success: true, provider: 'main' };
         } catch (error: any) {
             console.warn('Main email service failed, attempting Gmail fallback:', error.message);
             // Fall through to Gmail backup
@@ -92,7 +92,7 @@ export async function sendEmail(options: EmailOptions): Promise<{ success: boole
 
         await sendWithTransporter(gmailTransporter, gmailUser, options);
         console.log('Email sent successfully using Gmail fallback');
-        return { success: true };
+        return { success: true, provider: 'gmail' };
     } catch (error: any) {
         console.error('Error sending email with Gmail fallback:', error);
         return {

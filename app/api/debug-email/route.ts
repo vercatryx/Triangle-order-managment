@@ -28,6 +28,7 @@ export async function GET(request: NextRequest) {
             GMAIL_BACKUP_USER: process.env.GMAIL_BACKUP_USER || '(not set)',
             GMAIL_BACKUP_PASS_SET: !!process.env.GMAIL_BACKUP_PASS,
             CRON_SECRET_SET_ON_SERVER: !!process.env.CRON_SECRET,
+            SUPABASE_SERVICE_ROLE_KEY_SET: !!process.env.SUPABASE_SERVICE_ROLE_KEY,
         },
         databaseSettings: {} as any,
         testSend: {

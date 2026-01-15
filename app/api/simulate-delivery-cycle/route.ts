@@ -797,10 +797,13 @@ export async function POST(request: NextRequest) {
 
         // --- 6. Send Report ---
         console.log('[Unified Scheduling] Complete. Sending report...');
-        await sendSchedulingReport(report, reportEmail);
+        const emailResult = await sendSchedulingReport(report, reportEmail);
 
+        // --- 7. Return Result ---
         return NextResponse.json({
             success: true,
+            reportEmail: reportEmail,
+            emailProvider: emailResult?.provider || null,
             report
         });
 
