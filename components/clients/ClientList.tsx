@@ -21,10 +21,11 @@ import {
     updateClient,
     getUpcomingOrderForClient as serverGetUpcomingOrderForClient,
     getCompletedOrdersWithDeliveryProof as serverGetCompletedOrdersWithDeliveryProof,
-    getBatchClientDetails
+    getBatchClientDetails,
+    getClient
 } from '@/lib/actions';
 import { invalidateClientData } from '@/lib/cached-data';
-import { Plus, Search, ChevronRight, CheckSquare, Square, StickyNote, Package, ArrowUpDown, ArrowUp, ArrowDown, Filter, Eye, EyeOff, Loader2, AlertCircle, X } from 'lucide-react';
+import { Plus, Search, ChevronRight, CheckSquare, Square, StickyNote, Package, ArrowUpDown, ArrowUp, ArrowDown, Filter, Eye, EyeOff, Loader2, AlertCircle, X, RefreshCcw } from 'lucide-react';
 import styles from './ClientList.module.css';
 import { useRouter } from 'next/navigation';
 
@@ -45,14 +46,11 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
     const [search, setSearch] = useState('');
     const [isLoading, setIsLoading] = useState(true);
     const [isRefreshing, setIsRefreshing] = useState(false);
+    // Map of Client ID -> Client Name for background saving tasks
+    const [backgroundTasks, setBackgroundTasks] = useState<Map<string, string>>(new Map());
 
-    // Pagination State
-    const [page, setPage] = useState(1);
-    const [totalClients, setTotalClients] = useState(0);
-    const [isFetchingMore, setIsFetchingMore] = useState(false);
-    const PAGE_SIZE = 20;
-
-    // Prefetching State
+    // Single Batch Loading State - No Pagination
+    // All clients are loaded at once.
     const [detailsCache, setDetailsCache] = useState<Record<string, ClientFullDetails>>({});
     const pendingPrefetches = useRef<Set<string>>(new Set());
 
@@ -107,14 +105,8 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
         }
     }, [currentView]);
 
-    // Progressive Loading Effect
-    useEffect(() => {
-        if (!isLoading && clients.length < totalClients && !isFetchingMore) {
-            // Fetch next page
-            const nextPage = page + 1;
-            fetchMoreClients(nextPage);
-        }
-    }, [clients.length, totalClients, isLoading, isFetchingMore, page, currentView]);
+    // PREVIOUS: Progressive Loading Effect (Removed)
+    // We now load all clients in one go, so no need for fetchMoreClients logic.
 
     // Background Prefetching Effect - Re-enabled with Batch Fetching
     useEffect(() => {
@@ -167,15 +159,16 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
     async function loadInitialData() {
         setIsLoading(true);
         try {
-            const [sData, nData, vData, bData, mData, mealData, cRes, allClientsData] = await Promise.all([
+            // Fetch ALL data in parallel. 
+            // Note: getClients now returns ALL clients, not paginated.
+            const [sData, nData, vData, bData, mData, mealData, allClients] = await Promise.all([
                 getStatuses(),
                 getNavigators(),
                 getVendors(),
                 getBoxTypes(),
                 getMenuItems(),
                 getMealItems(),
-                getClientsPaginated(1, PAGE_SIZE, ''),
-                getClients() // Load all clients for parent client lookup
+                getClients()
             ]);
 
             setStatuses(sData);
@@ -184,10 +177,9 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
             setBoxTypes(bData);
             setMenuItems(mData);
             setMealItems(mealData as any);
-            setClients(cRes.clients);
-            setTotalClients(cRes.total);
-            setAllClientsForLookup(allClientsData);
-            setPage(1);
+            setClients(allClients); // Set ALL clients at once
+            // setTotalClients(allClients.length); // Not strictly needed if not paginating
+            setAllClientsForLookup(allClients);
         } catch (error) {
             console.error("Error loading initial data:", error);
         } finally {
@@ -198,33 +190,26 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
     async function refreshDataInBackground() {
         setIsRefreshing(true);
         try {
-            // Invalidate cache to ensure fresh data
             invalidateClientData();
 
-            // Fetch fresh data
-            const [sData, nData, vData, bData, mData, mealData, cRes] = await Promise.all([
+            const [sData, nData, vData, bData, mData, mealData, allClients] = await Promise.all([
                 getStatuses(),
                 getNavigators(),
                 getVendors(),
                 getBoxTypes(),
                 getMenuItems(),
                 getMealItems(),
-                getClientsPaginated(1, PAGE_SIZE, '')
+                getClients()
             ]);
 
-            // Update all data
             setStatuses(sData);
             setNavigators(nData);
             setVendors(vData);
             setBoxTypes(bData);
             setMenuItems(mData);
             setMealItems(mealData as any);
-            setClients(cRes.clients);
-            setTotalClients(cRes.total);
-            // Refresh all clients lookup when refreshing
-            const allClientsData = await getClients();
-            setAllClientsForLookup(allClientsData);
-            setPage(1);
+            setClients(allClients);
+            setAllClientsForLookup(allClients);
         } catch (error) {
             console.error("Error refreshing data:", error);
         } finally {
@@ -232,25 +217,54 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
         }
     }
 
-    async function fetchMoreClients(nextPage: number) {
-        setIsFetchingMore(true);
+    const handleBackgroundSave = async (clientId: string, clientName: string, saveAction: () => Promise<void>) => {
+        // Add to background tasks
+        setBackgroundTasks(prev => new Map(prev).set(clientId, clientName));
+
         try {
-            const res = await getClientsPaginated(nextPage, PAGE_SIZE, '');
-            setClients(prev => {
-                // Deduplicate just in case
-                const existingIds = new Set(prev.map(c => c.id));
-                const newClients = res.clients.filter(c => !existingIds.has(c.id));
-                return [...prev, ...newClients];
-            });
-            setPage(nextPage);
-            // Update total just in case it changed
-            setTotalClients(res.total);
+            // Execute the save action
+            await saveAction();
+
+            // Refresh this client's data in the list
+            await refreshSingleClient(clientId);
         } catch (error) {
-            console.error(`Error fetching page ${nextPage}:`, error);
+            console.error(`Error saving client ${clientName}:`, error);
+            // Ideally assume we'd show a toast here, but for now console error is consistent with app
+            alert(`Failed to save ${clientName} in background. Please try again.`);
         } finally {
-            setIsFetchingMore(false);
+            // Remove from tasks
+            setBackgroundTasks(prev => {
+                const next = new Map(prev);
+                next.delete(clientId);
+                return next;
+            });
+        }
+    };
+
+    async function refreshSingleClient(clientId: string) {
+        if (!clientId) return;
+        try {
+            // Fetch just this client
+            const updatedClient = await getClient(clientId);
+            if (updatedClient) {
+                setClients(prev => {
+                    // Check if client exists in list
+                    const exists = prev.find(c => c.id === clientId);
+                    if (exists) {
+                        // Update existing
+                        return prev.map(c => c.id === clientId ? updatedClient : c);
+                    } else {
+                        // Safest is to only update existing
+                        return prev;
+                    }
+                });
+            }
+        } catch (err) {
+            console.error("Failed to refresh single client:", err);
         }
     }
+
+    // Removed fetchMoreClients as it's no longer needed for single-batch loading
 
     async function prefetchClient(clientId: string) {
         if (detailsCache[clientId] || pendingPrefetches.current.has(clientId)) return;
@@ -533,19 +547,27 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
 
             if (editingDependentId) {
                 // Update existing dependent
-                await updateClient(editingDependentId, {
+                const updated = await updateClient(editingDependentId, {
                     fullName: dependentName.trim(),
                     parentClientId: selectedParentClientId,
                     dob: dobValue,
                     cin: cinValue
                 });
+
+                // Optimistic update
+                if (updated) {
+                    setClients(prev => prev.map(c => c.id === editingDependentId ? { ...c, ...updated } : c));
+                }
             } else {
                 // Create new dependent
                 const newDependent = await addDependent(dependentName.trim(), selectedParentClientId, dobValue, cinValue);
                 if (!newDependent) return;
+
+                // Optimistic update: Add to list immediately
+                setClients(prev => [...prev, newDependent]);
             }
 
-            invalidateClientData(); // Invalidate cache
+            // invalidateClientData(); // Avoid full cache invalidation to prevent refetch loops
             setIsAddingDependent(false);
             setDependentName('');
             setDependentDob('');
@@ -553,7 +575,9 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
             setSelectedParentClientId('');
             setParentClientSearch('');
             setEditingDependentId(null);
-            window.location.reload(); // Reload to refresh the list
+            // window.location.reload(); // Removed full reload
+
+            // Optionally refresh background data silently if needed, but local update is better
         } catch (error) {
             console.error('Error saving dependent:', error);
             alert(error instanceof Error ? error.message : 'Failed to save dependent');
@@ -1104,39 +1128,26 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
         return date >= startOfWeek && date <= endOfWeek;
     }
 
-    if (isLoading) {
-        return (
-            <div className={styles.container}>
-                <div className={styles.header}>
-                    <h1 className={styles.title}>Clients</h1>
-                </div>
-                <div className={styles.loadingContainer}>
-                    <div className="spinner"></div>
-                    <p>Loading clients...</p>
-                </div>
-            </div>
-        );
-    }
-
     return (
         <div className={styles.container}>
             <div className={styles.header}>
                 <div style={{ display: 'flex', alignItems: 'baseline', gap: '12px' }}>
                     <h1 className={styles.title}>Clients</h1>
                     {!isLoading && (
-                        <>
-                            <span style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
-                                Total: {totalRegularClients} clients
-                            </span>
-                            <span style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
-                                ({clients.length} / {totalClients} loaded)
-                            </span>
-                        </>
+                        <span style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
+                            Total: {totalRegularClients} clients
+                        </span>
                     )}
-                    {isRefreshing && (
+                    {(isRefreshing || (isLoading && clients.length > 0)) && (
                         <div className={styles.refreshIndicator}>
                             <Loader2 size={14} className="animate-spin" />
                             <span>Refreshing...</span>
+                        </div>
+                    )}
+                    {backgroundTasks.size > 0 && (
+                        <div className={styles.refreshIndicator} style={{ color: 'var(--primary)', backgroundColor: 'var(--primary-light)' }}>
+                            <Loader2 size={14} className="animate-spin" />
+                            <span>Saving {Array.from(backgroundTasks.values())[0]}{backgroundTasks.size > 1 ? ` (+${backgroundTasks.size - 1} others)` : ''}...</span>
                         </div>
                     )}
                 </div>
@@ -1181,6 +1192,14 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
                     </div>
 
                     <div style={{ display: 'flex', gap: '0.5rem' }}>
+                        <button
+                            className="btn btn-secondary"
+                            onClick={refreshDataInBackground}
+                            disabled={isRefreshing || isLoading}
+                            title="Refresh List"
+                        >
+                            <RefreshCcw size={16} className={isRefreshing || isLoading ? "animate-spin" : ""} />
+                        </button>
                         <button className="btn btn-primary" onClick={handleCreate}>
                             <Plus size={16} /> New Client
                         </button>
@@ -1240,124 +1259,126 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
             </div>
 
 
-            {isAddingDependent && (
-                <div className={styles.createModal}>
-                    <div className={styles.createCard} style={{ width: '500px' }}>
-                        <h3>{editingDependentId ? 'Edit Dependent' : 'Add Dependent'}</h3>
-                        <div className={styles.formGroup}>
-                            <label className="label">Dependent Name</label>
-                            <input
-                                className="input"
-                                placeholder="Full Name"
-                                value={dependentName}
-                                onChange={e => setDependentName(e.target.value)}
-                                autoFocus
-                            />
-                        </div>
-                        <div className={styles.formGroup}>
-                            <label className="label">Date of Birth</label>
-                            <input
-                                type="date"
-                                className="input"
-                                value={dependentDob}
-                                onChange={e => setDependentDob(e.target.value)}
-                            />
-                        </div>
-                        <div className={styles.formGroup}>
-                            <label className="label">CIN#</label>
-                            <input
-                                type="text"
-                                className="input"
-                                placeholder="CIN Number"
-                                value={dependentCin}
-                                onChange={e => setDependentCin(e.target.value)}
-                            />
-                        </div>
-                        <div className={styles.formGroup}>
-                            <label className="label">Parent Client</label>
-                            <div style={{ position: 'relative' }}>
+            {
+                isAddingDependent && (
+                    <div className={styles.createModal}>
+                        <div className={styles.createCard} style={{ width: '500px' }}>
+                            <h3>{editingDependentId ? 'Edit Dependent' : 'Add Dependent'}</h3>
+                            <div className={styles.formGroup}>
+                                <label className="label">Dependent Name</label>
                                 <input
                                     className="input"
-                                    placeholder="Search for client..."
-                                    value={parentClientSearch}
-                                    onChange={e => setParentClientSearch(e.target.value)}
-                                    style={{ marginBottom: '0.5rem' }}
+                                    placeholder="Full Name"
+                                    value={dependentName}
+                                    onChange={e => setDependentName(e.target.value)}
+                                    autoFocus
                                 />
-                                <div style={{
-                                    maxHeight: '300px',
-                                    overflowY: 'auto',
-                                    overflowX: 'hidden',
-                                    border: '1px solid var(--border-color)',
-                                    borderRadius: 'var(--radius-md)',
-                                    backgroundColor: 'var(--bg-surface)'
-                                }}>
-                                    {filteredRegularClients.length === 0 ? (
-                                        <div style={{ padding: '0.75rem', color: 'var(--text-secondary)', textAlign: 'center' }}>
-                                            No clients found
-                                        </div>
-                                    ) : (
-                                        filteredRegularClients.map(client => (
-                                            <div
-                                                key={client.id}
-                                                onClick={() => {
-                                                    setSelectedParentClientId(client.id);
-                                                    setParentClientSearch(client.fullName);
-                                                }}
-                                                style={{
-                                                    padding: '0.75rem',
-                                                    cursor: 'pointer',
-                                                    backgroundColor: selectedParentClientId === client.id ? 'var(--bg-surface-hover)' : 'transparent',
-                                                    borderBottom: '1px solid var(--border-color)',
-                                                    transition: 'background-color 0.2s'
-                                                }}
-                                                onMouseEnter={(e) => {
-                                                    if (selectedParentClientId !== client.id) {
-                                                        e.currentTarget.style.backgroundColor = 'var(--bg-surface-hover)';
-                                                    }
-                                                }}
-                                                onMouseLeave={(e) => {
-                                                    if (selectedParentClientId !== client.id) {
-                                                        e.currentTarget.style.backgroundColor = 'transparent';
-                                                    }
-                                                }}
-                                            >
-                                                {client.fullName}
+                            </div>
+                            <div className={styles.formGroup}>
+                                <label className="label">Date of Birth</label>
+                                <input
+                                    type="date"
+                                    className="input"
+                                    value={dependentDob}
+                                    onChange={e => setDependentDob(e.target.value)}
+                                />
+                            </div>
+                            <div className={styles.formGroup}>
+                                <label className="label">CIN#</label>
+                                <input
+                                    type="text"
+                                    className="input"
+                                    placeholder="CIN Number"
+                                    value={dependentCin}
+                                    onChange={e => setDependentCin(e.target.value)}
+                                />
+                            </div>
+                            <div className={styles.formGroup}>
+                                <label className="label">Parent Client</label>
+                                <div style={{ position: 'relative' }}>
+                                    <input
+                                        className="input"
+                                        placeholder="Search for client..."
+                                        value={parentClientSearch}
+                                        onChange={e => setParentClientSearch(e.target.value)}
+                                        style={{ marginBottom: '0.5rem' }}
+                                    />
+                                    <div style={{
+                                        maxHeight: '300px',
+                                        overflowY: 'auto',
+                                        overflowX: 'hidden',
+                                        border: '1px solid var(--border-color)',
+                                        borderRadius: 'var(--radius-md)',
+                                        backgroundColor: 'var(--bg-surface)'
+                                    }}>
+                                        {filteredRegularClients.length === 0 ? (
+                                            <div style={{ padding: '0.75rem', color: 'var(--text-secondary)', textAlign: 'center' }}>
+                                                No clients found
                                             </div>
-                                        ))
-                                    )}
+                                        ) : (
+                                            filteredRegularClients.map(client => (
+                                                <div
+                                                    key={client.id}
+                                                    onClick={() => {
+                                                        setSelectedParentClientId(client.id);
+                                                        setParentClientSearch(client.fullName);
+                                                    }}
+                                                    style={{
+                                                        padding: '0.75rem',
+                                                        cursor: 'pointer',
+                                                        backgroundColor: selectedParentClientId === client.id ? 'var(--bg-surface-hover)' : 'transparent',
+                                                        borderBottom: '1px solid var(--border-color)',
+                                                        transition: 'background-color 0.2s'
+                                                    }}
+                                                    onMouseEnter={(e) => {
+                                                        if (selectedParentClientId !== client.id) {
+                                                            e.currentTarget.style.backgroundColor = 'var(--bg-surface-hover)';
+                                                        }
+                                                    }}
+                                                    onMouseLeave={(e) => {
+                                                        if (selectedParentClientId !== client.id) {
+                                                            e.currentTarget.style.backgroundColor = 'transparent';
+                                                        }
+                                                    }}
+                                                >
+                                                    {client.fullName}
+                                                </div>
+                                            ))
+                                        )}
+                                    </div>
                                 </div>
                             </div>
+                            <div className={styles.modalActions}>
+                                <button
+                                    className="btn btn-primary"
+                                    onClick={handleAddDependent}
+                                    disabled={!dependentName.trim() || !selectedParentClientId}
+                                >
+                                    {editingDependentId ? 'Save Changes' : 'Create Dependent'}
+                                </button>
+                                <button className="btn btn-secondary" onClick={() => {
+                                    setIsAddingDependent(false);
+                                    setDependentName('');
+                                    setDependentDob('');
+                                    setDependentCin('');
+                                    setSelectedParentClientId('');
+                                    setParentClientSearch('');
+                                    setEditingDependentId(null);
+                                }}>Cancel</button>
+                            </div>
                         </div>
-                        <div className={styles.modalActions}>
-                            <button
-                                className="btn btn-primary"
-                                onClick={handleAddDependent}
-                                disabled={!dependentName.trim() || !selectedParentClientId}
-                            >
-                                {editingDependentId ? 'Save Changes' : 'Create Dependent'}
-                            </button>
-                            <button className="btn btn-secondary" onClick={() => {
-                                setIsAddingDependent(false);
-                                setDependentName('');
-                                setDependentDob('');
-                                setDependentCin('');
-                                setSelectedParentClientId('');
-                                setParentClientSearch('');
-                                setEditingDependentId(null);
-                            }}>Cancel</button>
-                        </div>
+                        <div className={styles.overlay} onClick={() => {
+                            setIsAddingDependent(false);
+                            setDependentName('');
+                            setDependentDob('');
+                            setDependentCin('');
+                            setSelectedParentClientId('');
+                            setParentClientSearch('');
+                            setEditingDependentId(null);
+                        }}></div>
                     </div>
-                    <div className={styles.overlay} onClick={() => {
-                        setIsAddingDependent(false);
-                        setDependentName('');
-                        setDependentDob('');
-                        setDependentCin('');
-                        setSelectedParentClientId('');
-                        setParentClientSearch('');
-                        setEditingDependentId(null);
-                    }}></div>
-                </div>
-            )}
+                )
+            }
 
             <div className={styles.list}>
                 <div className={styles.listHeader}>
@@ -1699,6 +1720,14 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
                         </div>
                     );
                 })}
+                {/* Loading State in List Area */}
+                {isLoading && clients.length === 0 && (
+                    <div className={styles.loadingContainer} style={{ padding: '2rem' }}>
+                        <div className="spinner"></div>
+                        <p>Loading clients...</p>
+                    </div>
+                )}
+
                 {filteredClients.length === 0 && !isLoading && (
                     <div className={styles.empty}>
                         {needsVendorFilter ? 'No clients with box orders needing vendor assignment.' :
@@ -1710,80 +1739,85 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
                 )}
             </div>
 
-            {selectedClientId && (
-                <div className={styles.profileModal}>
-                    <div className={styles.profileCard}>
-                        <ClientProfileDetail
-                            clientId={selectedClientId}
-                            initialData={detailsCache[selectedClientId]}
-                            statuses={statuses}
-                            navigators={navigators}
-                            vendors={vendors}
-                            menuItems={menuItems}
-                            boxTypes={boxTypes}
-                            currentUser={currentUser}
-                            onClose={() => {
-                                const closedClientId = selectedClientId;
-                                setSelectedClientId(null);
-                                // Clear the cache for this client
-                                setDetailsCache(prev => {
-                                    const next = { ...prev };
-                                    delete next[closedClientId];
-                                    return next;
-                                });
-                                // Simple refresh to update the list with any changes
-                                loadInitialData();
-                            }}
-                        />
-                    </div>
-                    <div className={styles.overlay} onClick={() => {
-                        const closedClientId = selectedClientId;
-                        setSelectedClientId(null);
-                        // Clear the cache for this client
-                        setDetailsCache(prev => {
-                            const next = { ...prev };
-                            delete next[closedClientId];
-                            return next;
-                        });
-                        // Simple refresh to update the list with any changes
-                        loadInitialData();
-                    }}></div>
-                </div>
-            )}
-
-            {infoShelfClientId && clients.find(c => c.id === infoShelfClientId) && (
-                <ClientInfoShelf
-                    client={detailsCache[infoShelfClientId]?.client || clients.find(c => c.id === infoShelfClientId)!}
-                    statuses={statuses}
-                    navigators={navigators}
-                    orderSummary={getOrderSummary(detailsCache[infoShelfClientId]?.client || clients.find(c => c.id === infoShelfClientId)!, true)}
-                    submissions={detailsCache[infoShelfClientId]?.submissions || []}
-                    allClients={allClientsForLookup}
-                    onClose={() => setInfoShelfClientId(null)}
-                    onOpenProfile={(clientId) => {
-                        setInfoShelfClientId(null);
-                        setSelectedClientId(clientId);
-                    }}
-                    onClientUpdated={() => {
-                        // Clear cache for this client to force re-fetch
-                        const updatedClientId = infoShelfClientId;
-                        if (updatedClientId) {
+            {
+                selectedClientId && (
+                    <div className={styles.profileModal}>
+                        <div className={styles.profileCard}>
+                            <ClientProfileDetail
+                                clientId={selectedClientId}
+                                initialData={detailsCache[selectedClientId]}
+                                statuses={statuses}
+                                navigators={navigators}
+                                vendors={vendors}
+                                menuItems={menuItems}
+                                boxTypes={boxTypes}
+                                currentUser={currentUser}
+                                onClose={() => {
+                                    const closedClientId = selectedClientId;
+                                    setSelectedClientId(null);
+                                    // Clear the cache for this client
+                                    setDetailsCache(prev => {
+                                        const next = { ...prev };
+                                        delete next[closedClientId];
+                                        return next;
+                                    });
+                                    // Refresh ONLY this client in background
+                                    refreshSingleClient(closedClientId);
+                                }}
+                                onBackgroundSave={handleBackgroundSave}
+                            />
+                        </div>
+                        <div className={styles.overlay} onClick={() => {
+                            const closedClientId = selectedClientId;
+                            setSelectedClientId(null);
+                            // Clear the cache for this client
                             setDetailsCache(prev => {
-                                const newCache = { ...prev };
-                                delete newCache[updatedClientId];
-                                return newCache;
+                                const next = { ...prev };
+                                delete next[closedClientId];
+                                return next;
                             });
-                        }
-                        loadInitialData();
-                    }}
-                    onClientDeleted={() => {
-                        setInfoShelfClientId(null);
-                        loadInitialData();
-                    }}
-                    currentUser={currentUser}
-                />
-            )}
-        </div>
+                            // Refresh ONLY this client in background
+                            refreshSingleClient(closedClientId);
+                        }}></div>
+                    </div>
+                )
+            }
+
+            {
+                infoShelfClientId && clients.find(c => c.id === infoShelfClientId) && (
+                    <ClientInfoShelf
+                        client={detailsCache[infoShelfClientId]?.client || clients.find(c => c.id === infoShelfClientId)!}
+                        statuses={statuses}
+                        navigators={navigators}
+                        orderSummary={getOrderSummary(detailsCache[infoShelfClientId]?.client || clients.find(c => c.id === infoShelfClientId)!, true)}
+                        submissions={detailsCache[infoShelfClientId]?.submissions || []}
+                        allClients={allClientsForLookup}
+                        onClose={() => setInfoShelfClientId(null)}
+                        onOpenProfile={(clientId) => {
+                            setInfoShelfClientId(null);
+                            setSelectedClientId(clientId);
+                        }}
+                        onClientUpdated={() => {
+                            // Clear cache for this client to force re-fetch
+                            const updatedClientId = infoShelfClientId;
+                            if (updatedClientId) {
+                                setDetailsCache(prev => {
+                                    const newCache = { ...prev };
+                                    delete newCache[updatedClientId];
+                                    return newCache;
+                                });
+                            }
+                            refreshDataInBackground();
+                        }}
+                        onClientDeleted={() => {
+                            setInfoShelfClientId(null);
+                            refreshDataInBackground();
+                        }}
+                        currentUser={currentUser}
+                    />
+                )
+            }
+        </div >
     );
 }
 

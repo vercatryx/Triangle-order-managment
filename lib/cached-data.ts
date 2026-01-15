@@ -153,6 +153,17 @@ export async function getClients(): Promise<ClientProfile[]> {
     return data;
 }
 
+let clientsLightCache: CacheEntry<any[]> | undefined;
+export async function getClientsLight(): Promise<any[]> {
+    if (!isStale(clientsLightCache, CACHE_DURATION.CLIENT_LIST)) {
+        return clientsLightCache!.data;
+    }
+    const { getClientsLight: serverGetClientsLight } = await import('./actions');
+    const data = await serverGetClientsLight();
+    clientsLightCache = { data, timestamp: Date.now() };
+    return data;
+}
+
 export async function getClient(id: string): Promise<ClientProfile | undefined> {
     const cached = clientCache.get(id);
     if (!isStale(cached, CACHE_DURATION.CLIENT_DATA)) {

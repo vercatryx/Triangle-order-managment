@@ -4,9 +4,9 @@ import { useState, useEffect, Fragment, useMemo, useRef, ReactNode } from 'react
 import { useRouter, useParams } from 'next/navigation';
 import Link from 'next/link';
 import { ClientProfile, ClientStatus, Navigator, Vendor, MenuItem, BoxType, ServiceType, AppSettings, DeliveryRecord, ItemCategory, ClientFullDetails, BoxQuota, MealCategory, MealItem, ClientFoodOrder, ClientMealOrder, ClientBoxOrder } from '@/lib/types';
-import { updateClient, addClient, deleteClient, updateDeliveryProof, recordClientChange, syncCurrentOrderToUpcoming, logNavigatorAction, getBoxQuotas, saveEquipmentOrder, getRegularClients, getDependentsByParentId, addDependent, checkClientNameExists, getClientFullDetails, saveClientFoodOrder, saveClientMealOrder, saveClientBoxOrder, saveClientCustomOrder, getEquipment } from '@/lib/actions';
+import { updateClient, addClient, deleteClient, updateDeliveryProof, recordClientChange, syncCurrentOrderToUpcoming, logNavigatorAction, getBoxQuotas, saveEquipmentOrder, getRegularClients, getDependentsByParentId, addDependent, checkClientNameExists, getClientFullDetails, saveClientFoodOrder, saveClientMealOrder, saveClientBoxOrder, saveClientCustomOrder, getEquipment, getClientProfileData } from '@/lib/actions';
 import { getSingleForm, getClientSubmissions } from '@/lib/form-actions';
-import { getClient, getStatuses, getNavigators, getVendors, getMenuItems, getBoxTypes, getSettings, getCategories, getClients, invalidateClientData, invalidateReferenceData, getActiveOrderForClient, getUpcomingOrderForClient, getOrderHistory, getClientHistory, getBillingHistory, invalidateOrderData, getMealCategories, getMealItems, getRecentOrdersForClient } from '@/lib/cached-data';
+import { getClient, getStatuses, getNavigators, getVendors, getMenuItems, getBoxTypes, getSettings, getCategories, getClients, invalidateClientData, invalidateReferenceData, getActiveOrderForClient, getUpcomingOrderForClient, getOrderHistory, getClientHistory, getBillingHistory, invalidateOrderData, getMealCategories, getMealItems, getRecentOrdersForClient, getClientsLight } from '@/lib/cached-data';
 import { areAnyDeliveriesLocked, getEarliestEffectiveDate, getLockedWeekDescription } from '@/lib/weekly-lock';
 import {
     getNextDeliveryDate as getNextDeliveryDateUtil,
@@ -36,6 +36,7 @@ interface Props {
     menuItems?: MenuItem[];
     boxTypes?: BoxType[];
     currentUser?: { role: string; id: string } | null;
+    onBackgroundSave?: (clientId: string, clientName: string, saveAction: () => Promise<void>) => void;
 }
 
 const SERVICE_TYPES: ServiceType[] = ['Food', 'Boxes', 'Custom'];
@@ -168,7 +169,7 @@ function DuplicateNameConfirmationModal({
     );
 }
 
-export function ClientProfileDetail({ clientId: propClientId, onClose, initialData, statuses: initialStatuses, navigators: initialNavigators, vendors: initialVendors, menuItems: initialMenuItems, boxTypes: initialBoxTypes, currentUser }: Props): ReactNode {
+export function ClientProfileDetail({ clientId: propClientId, onClose, initialData, statuses: initialStatuses, navigators: initialNavigators, vendors: initialVendors, menuItems: initialMenuItems, boxTypes: initialBoxTypes, currentUser, onBackgroundSave }: Props): ReactNode {
     const router = useRouter();
     const params = useParams();
     const propClientIdValue = (params?.id as string) || propClientId;
@@ -202,11 +203,15 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
     const [orderHistory, setOrderHistory] = useState<any[]>([]);
     const [billingHistory, setBillingHistory] = useState<any[]>([]);
     const [activeHistoryTab, setActiveHistoryTab] = useState<'deliveries' | 'audit' | 'billing'>('deliveries');
-    const [allClients, setAllClients] = useState<ClientProfile[]>([]);
+    const [allClients, setAllClients] = useState<any[]>([]); // optimization: lightweight list
     const [expandedBillingRows, setExpandedBillingRows] = useState<Set<string>>(new Set());
-    const [regularClients, setRegularClients] = useState<ClientProfile[]>([]);
+    const [regularClients, setRegularClients] = useState<any[]>([]); // optimization: lightweight list
     const [parentClientSearch, setParentClientSearch] = useState('');
     const [dependents, setDependents] = useState<ClientProfile[]>([]);
+
+    // Lazy Loading State
+    const [historyLoaded, setHistoryLoaded] = useState(false);
+    const [loadingHistory, setLoadingHistory] = useState(false);
 
     const [formData, setFormData] = useState<Partial<ClientProfile>>({});
     const [orderConfig, setOrderConfig] = useState<any>({}); // Current Order Request (from upcoming_orders)
@@ -263,7 +268,11 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
         if (isNewClient) {
             setLoading(true);
             // Load lookups but don't load client data
-            loadLookups().then(() => {
+            const loaderPromise = (initialStatuses && initialNavigators && initialVendors && initialMenuItems && initialBoxTypes)
+                ? Promise.resolve()
+                : loadLookups();
+
+            loaderPromise.then(() => {
                 // Initialize with default values
                 const initialStatusId = (initialStatuses || statuses)[0]?.id || '';
                 const defaultNavigatorId = (initialNavigators || navigators).find(n => n.isActive)?.id || '';
@@ -435,7 +444,7 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
         const [appSettings, catData, allClientsData, regularClientsData, mealCatData, mealItemData] = await Promise.all([
             getSettings(),
             getCategories(),
-            getClients(),
+            getClientsLight(), // Optimized: getClientsLight
             getRegularClients(),
             getMealCategories(),
             getMealItems()
@@ -758,7 +767,7 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
             getSettings(),
             getCategories(),
             getEquipment(),
-            getClients(),
+            getClientsLight(), // Optimized: getClientsLight
             getRegularClients(),
             getMealCategories(),
             getMealItems()
@@ -781,19 +790,53 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
         setLoadingOrderDetails(true);
 
         // Load lookups and client data in parallel
+        // Load lookups and client data in parallel
         await Promise.all([
             loadLookups(),
             (async () => {
-                const details = await getClientFullDetails(clientId);
+                const details = await getClientProfileData(clientId);
                 if (details) {
-                    hydrateFromInitialData(details);
+                    // Mock missing history for initial hydration
+                    const fullDetailsInit: any = {
+                        ...details,
+                        history: [],
+                        orderHistory: [],
+                        billingHistory: [],
+                        submissions: []
+                    };
+                    hydrateFromInitialData(fullDetailsInit);
+
+                    // Trigger Lazy Load of History
+                    loadHistoryLazy();
                 }
-                // Legacy loadData logic for dependents is covered by hydrateFromInitialData -> _hydrateFromInitialDataLegacy
             })()
         ]);
 
         setLoading(false);
         setLoadingOrderDetails(false);
+    }
+
+    async function loadHistoryLazy() {
+        if (historyLoaded || loadingHistory) return;
+        setLoadingHistory(true);
+        try {
+            // Fetch in parallel
+            const [h, oh, bh, s] = await Promise.all([
+                getClientHistory(clientId),
+                getOrderHistory(clientId),
+                getBillingHistory(clientId),
+                getClientSubmissions(clientId)
+            ]);
+            setHistory(h || []);
+            setOrderHistory(oh || []);
+            setBillingHistory(bh || []);
+            if (s.success && s.data) setSubmissions(s.data);
+            setHistoryLoaded(true);
+        } catch (e) {
+            console.error("Lazy load history failed", e);
+        } finally {
+            setLoadingHistory(false);
+        }
     }
 
     async function loadDataLegacy() {
@@ -3001,6 +3044,21 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                                                                         </button>
                                                                     )}
                                                                 </div>
+                                                                <div style={{ display: 'flex', gap: '1rem' }}>
+                                                                    <div className={styles.formGroup} style={{ flex: 1 }}>
+                                                                        <label className="label">Box Type</label>
+                                                                        <select
+                                                                            className="input"
+                                                                            value={box.boxTypeId || ''}
+                                                                            onChange={e => handleBoxUpdate(index, 'boxTypeId', e.target.value)}
+                                                                        >
+                                                                            <option value="">Select Box Type...</option>
+                                                                            {boxTypes.filter(bt => bt.isActive).map(bt => (
+                                                                                <option key={bt.id} value={bt.id}>{bt.name}</option>
+                                                                            ))}
+                                                                        </select>
+                                                                    </div>
+                                                                </div>
 
                                                                 <div className={styles.formGroup}>
                                                                     <label className="label">Vendor</label>
@@ -3352,17 +3410,7 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                                                             </button>
                                                         )}
 
-                                                        <div style={{ marginTop: '2rem' }}>
-                                                            <label className={styles.label}>General Order Notes</label>
-                                                            <textarea
-                                                                className="input"
-                                                                placeholder="Add general notes for this order..."
-                                                                value={orderConfig.notes || ''}
-                                                                onChange={(e) => setOrderConfig({ ...orderConfig, notes: e.target.value })}
-                                                                rows={2}
-                                                                style={{ resize: 'vertical', minHeight: '3rem' }}
-                                                            />
-                                                        </div>
+
                                                     </div>
                                                 );
                                             })()
@@ -3533,7 +3581,8 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
 
 
                                     </>
-                                )}
+                                )
+                                }
                             </section>
 
                             {/* Recent Orders Panel */}
@@ -3997,7 +4046,25 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
         }
 
 
-        return await executeSave(0);
+
+        // Perform the save operation (encapsulated for background use)
+        const performSave = async () => {
+            const success = await executeSave(0);
+            if (!success) {
+                // If the background save fails, throw an error so the background handler knows
+                throw new Error("Failed to save client data");
+            }
+        };
+
+        if (onBackgroundSave && !isNewClient && client) {
+            // Background Save Mode: Close immediately and run in background
+            onBackgroundSave(client.id, client.fullName, performSave);
+            if (onClose) onClose();
+            return true; // Indicate effective "success" to caller
+        } else {
+            // Foreground / Blocking Mode (e.g. New Client, or no handler)
+            return await executeSave(0);
+        }
     }
 
     // Helper to prepare cleaned active order (extracted to be reusable)
@@ -4485,6 +4552,20 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
             let updateData: Partial<ClientProfile> = { ...formData };
 
             await recordClientChange(clientId, summary, 'Admin');
+
+            // Log Navigator Action if applicable
+            if (currentUser?.role === 'navigator' && client.statusId !== formData.statusId) {
+                const oldStatusName = (initialStatuses || statuses).find(s => s.id === client.statusId)?.name || 'Unknown';
+                const newStatusName = (initialStatuses || statuses).find(s => s.id === formData.statusId)?.name || 'Unknown';
+
+                await logNavigatorAction({
+                    navigatorId: currentUser.id,
+                    clientId: clientId,
+                    oldStatus: oldStatusName,
+                    newStatus: newStatusName,
+                    unitsAdded: unitsAdded
+                });
+            }
 
             // Sync Current Order Request
             const hasOrderConfigChanges = JSON.stringify(orderConfig) !== JSON.stringify(originalOrderConfig);

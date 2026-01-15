@@ -1076,6 +1076,16 @@ export async function getClients() {
     return data.map(mapClientFromDB);
 }
 
+export async function getClientsLight() {
+    const { data, error } = await supabase.from('clients').select('id, full_name, parent_client_id').order('full_name');
+    if (error) return [];
+    return data.map((c: any) => ({
+        id: c.id,
+        fullName: c.full_name,
+        parentClientId: c.parent_client_id
+    }));
+}
+
 export async function getClient(id: string) {
     const { data, error } = await supabase.from('clients').select('*').eq('id', id).single();
     if (error || !data) return undefined;
@@ -1297,7 +1307,7 @@ export async function updateClient(id: string, data: Partial<ClientProfile>) {
 
     payload.updated_at = new Date().toISOString();
 
-    const { error } = await supabase.from('clients').update(payload).eq('id', id);
+    const { data: updatedData, error } = await supabase.from('clients').update(payload).eq('id', id).select().single();
     handleError(error);
 
     // If activeOrder was updated, sync to upcoming_orders
@@ -1315,6 +1325,8 @@ export async function updateClient(id: string, data: Partial<ClientProfile>) {
 
     revalidatePath('/clients');
     revalidatePath(`/clients/${id}`);
+
+    return updatedData ? mapClientFromDB(updatedData) : null;
 }
 
 export async function deleteClient(id: string) {
@@ -4136,6 +4148,46 @@ export async function getClientFullDetails(clientId: string) {
         return null;
     }
 }
+
+export async function getClientProfileData(clientId: string) {
+    if (!clientId) return null;
+
+    try {
+        const { getClientSubmissions } = await import('./form-actions');
+
+        // Fetch ONLY critical data for initial render
+        // Moved history, billing, ordered history to lazy loading
+        const [
+            client,
+            activeOrder,
+            upcomingOrder,
+            foodOrder,
+            mealOrder,
+            boxOrders
+        ] = await Promise.all([
+            getClient(clientId),
+            getRecentOrdersForClient(clientId),
+            getUpcomingOrderForClient(clientId),
+            getClientFoodOrder(clientId),
+            getClientMealOrder(clientId),
+            getClientBoxOrder(clientId)
+        ]);
+
+        if (!client) return null;
+
+        return {
+            client,
+            activeOrder,
+            upcomingOrder,
+            foodOrder,
+            mealOrder,
+            boxOrders
+        };
+    } catch (error) {
+        console.error('Error fetching client profile data:', error);
+        return null;
+    }
+}
 // --- VENDOR ORDER ACTIONS ---
 
 export async function getOrdersByVendor(vendorId: string) {
@@ -5568,86 +5620,46 @@ export async function getClientFoodOrder(clientId: string): Promise<ClientFoodOr
 export async function saveClientFoodOrder(clientId: string, data: Partial<ClientFoodOrder>) {
     const session = await getSession();
     const updatedBy = session?.userId || null;
-    // Verify session - allow if session is missing (Client Portal access)
-    // if (!session || !session.userId) {
-    //    throw new Error('Unauthorized');
-    // }
 
-    // Use Service Role client to bypass RLS for custom auth or public portal
     const supabaseAdmin = createClient(
         process.env.NEXT_PUBLIC_SUPABASE_URL!,
         process.env.SUPABASE_SERVICE_ROLE_KEY!
     );
 
-    // Ensure existing checks use the admin client or original client? 
-    // getClientFoodOrder likely uses anon client. That's fine for reading (if RLS allows reading).
-    // But for writing we need admin.
+    const payload: any = {
+        client_id: clientId,
+        case_id: data.caseId,
+        delivery_day_orders: data.deliveryDayOrders,
+        notes: data.notes,
+        updated_at: new Date().toISOString(),
+        updated_by: updatedBy
+    };
 
-    const existing = await getClientFoodOrder(clientId);
+    // Check if order exists first
+    const { data: existing } = await supabaseAdmin
+        .from('client_food_orders')
+        .select('id')
+        .eq('client_id', clientId)
+        .single();
 
+    let query;
     if (existing) {
-        const updatePayload: any = {
-            case_id: data.caseId,
-            delivery_day_orders: data.deliveryDayOrders,
-            notes: data.notes,
-            updated_at: new Date().toISOString()
-        };
-        if (updatedBy) updatePayload.updated_by = updatedBy;
-
-        let { data: updated, error } = await supabaseAdmin
+        query = supabaseAdmin
             .from('client_food_orders')
-            .update(updatePayload)
-            .eq('id', existing.id)
-            .select()
-            .single();
-
-        // Retry without updated_by if foreign key violation (likely Admin user constraint)
-        if (error && error.code === '23503') {
-            delete updatePayload.updated_by;
-            const retry = await supabaseAdmin
-                .from('client_food_orders')
-                .update(updatePayload)
-                .eq('id', existing.id)
-                .select()
-                .single();
-            updated = retry.data;
-            error = retry.error;
-        }
-
-        handleError(error);
-        revalidatePath(`/client-portal/${clientId}`);
-        revalidatePath(`/clients/${clientId}`);
-        return updated;
+            .update(payload)
+            .eq('id', existing.id);
     } else {
-        const insertPayload: any = {
-            client_id: clientId,
-            case_id: data.caseId,
-            delivery_day_orders: data.deliveryDayOrders,
-            notes: data.notes
-        };
-        if (updatedBy) insertPayload.updated_by = updatedBy;
-
-        let { data: created, error } = await supabaseAdmin
+        query = supabaseAdmin
             .from('client_food_orders')
-            .insert(insertPayload)
-            .select()
-            .single();
-
-        // Retry without updated_by if foreign key violation
-        if (error && error.code === '23503') {
-            delete insertPayload.updated_by;
-            const retry = await supabaseAdmin
-                .from('client_food_orders')
-                .insert(insertPayload)
-                .select()
-                .single();
-            created = retry.data;
-            error = retry.error;
-        }
-
-        handleError(error);
-        return created;
+            .insert(payload);
     }
+
+    const { data: saved, error } = await query.select().single();
+
+    handleError(error);
+    revalidatePath(`/client-portal/${clientId}`);
+    revalidatePath(`/clients/${clientId}`);
+    return saved;
 }
 
 export async function getClientMealOrder(clientId: string): Promise<ClientMealOrder | null> {
@@ -5678,69 +5690,42 @@ export async function getClientMealOrder(clientId: string): Promise<ClientMealOr
 export async function saveClientMealOrder(clientId: string, data: Partial<ClientMealOrder>) {
     const session = await getSession();
     const updatedBy = session?.userId || null;
-    // if (!session || !session.userId) throw new Error('Unauthorized');
     const supabaseAdmin = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
-    const existing = await getClientMealOrder(clientId);
 
+    const payload: any = {
+        client_id: clientId,
+        case_id: data.caseId,
+        meal_selections: data.mealSelections,
+        notes: data.notes,
+        updated_at: new Date().toISOString(),
+        updated_by: updatedBy
+    };
+
+    // Check for existing order
+    const { data: existing } = await supabaseAdmin
+        .from('client_meal_orders')
+        .select('id')
+        .eq('client_id', clientId)
+        .single();
+
+    let query;
     if (existing) {
-        const updatePayload: any = {
-            case_id: data.caseId,
-            meal_selections: data.mealSelections,
-            notes: data.notes,
-            updated_at: new Date().toISOString()
-        };
-        if (updatedBy) updatePayload.updated_by = updatedBy;
-
-        let { data: updated, error } = await supabaseAdmin
+        query = supabaseAdmin
             .from('client_meal_orders')
-            .update(updatePayload)
-            .eq('id', existing.id)
-            .select()
-            .single();
-
-        if (error && error.code === '23503') {
-            delete updatePayload.updated_by;
-            const retry = await supabaseAdmin
-                .from('client_meal_orders')
-                .update(updatePayload)
-                .eq('id', existing.id)
-                .select()
-                .single();
-            updated = retry.data;
-            error = retry.error;
-        }
-        handleError(error);
-        revalidatePath(`/client-portal/${clientId}`);
-        revalidatePath(`/clients/${clientId}`);
-        return updated;
+            .update(payload)
+            .eq('id', existing.id);
     } else {
-        const insertPayload: any = {
-            client_id: clientId,
-            case_id: data.caseId,
-            meal_selections: data.mealSelections,
-            notes: data.notes
-        };
-        if (updatedBy) insertPayload.updated_by = updatedBy;
-
-        let { data: created, error } = await supabaseAdmin
+        query = supabaseAdmin
             .from('client_meal_orders')
-            .insert(insertPayload)
-            .select()
-            .single();
-
-        if (error && error.code === '23503') {
-            delete insertPayload.updated_by;
-            const retry = await supabaseAdmin
-                .from('client_meal_orders')
-                .insert(insertPayload)
-                .select()
-                .single();
-            created = retry.data;
-            error = retry.error;
-        }
-        handleError(error);
-        return created;
+            .insert(payload);
     }
+
+    const { data: saved, error } = await query.select().single();
+
+    handleError(error);
+    revalidatePath(`/client-portal/${clientId}`);
+    revalidatePath(`/clients/${clientId}`);
+    return saved;
 }
 
 export async function getClientBoxOrder(clientId: string): Promise<ClientBoxOrder[]> {
@@ -5810,7 +5795,8 @@ export async function saveClientBoxOrder(clientId: string, data: Partial<ClientB
             quantity: order.quantity,
             items: order.items,
             item_notes: (order as any).itemNotes, // Save item notes to DB
-            notes: order.notes // Save order-level notes
+
+            // notes: order.notes // Removed per user request
         };
         if (updatedBy) payload.updated_by = updatedBy;
         return payload;
