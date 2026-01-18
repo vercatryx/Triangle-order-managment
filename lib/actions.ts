@@ -235,7 +235,8 @@ export const getMenuItems = cache(async function () {
         quotaValue: i.quota_value,
         minimumOrder: i.minimum_order ?? 0,
         imageUrl: i.image_url || null,
-        sortOrder: i.sort_order ?? 0
+        sortOrder: i.sort_order ?? 0,
+        itemType: 'menu'
     }));
 });
 
@@ -471,7 +472,8 @@ export async function getMealItems() {
         isActive: i.is_active,
         vendorId: i.vendor_id,
         imageUrl: i.image_url || null,
-        sortOrder: i.sort_order ?? 0
+        sortOrder: i.sort_order ?? 0,
+        itemType: 'meal'
     }));
 }
 
@@ -1323,8 +1325,10 @@ export async function updateClient(id: string, data: Partial<ClientProfile>) {
         triggerSyncInBackground();
     }
 
-    revalidatePath('/clients');
-    revalidatePath(`/clients/${id}`);
+    try {
+        revalidatePath('/clients');
+        revalidatePath(`/clients/${id}`);
+    } catch (e) { }
 
     return updatedData ? mapClientFromDB(updatedData) : null;
 }
@@ -2503,7 +2507,12 @@ async function syncSingleOrderForDeliveryDay(
     }
 
     // Get current user from session for updated_by
-    const session = await getSession();
+    let session;
+    try {
+        session = await getSession();
+    } catch (e) {
+        // Ignore error in scripts
+    }
     const currentUserName = session?.name || 'Admin';
     const updatedBy = (orderConfig.updatedBy && orderConfig.updatedBy !== 'Admin') ? orderConfig.updatedBy : currentUserName;
 
@@ -3201,8 +3210,10 @@ export async function syncCurrentOrderToUpcoming(clientId: string, client: Clien
     const { syncLocalDBFromSupabase } = await import('./local-db');
     await syncLocalDBFromSupabase();
 
-    revalidatePath('/clients');
-    revalidatePath(`/client-portal/${clientId}`);
+    try {
+        revalidatePath('/clients');
+        revalidatePath(`/client-portal/${clientId}`);
+    } catch (e) { }
 
 }
 
@@ -3215,8 +3226,17 @@ export async function processUpcomingOrders() {
     today.setHours(0, 0, 0, 0);
     const todayStr = today.toISOString().split('T')[0];
 
+    // Use Service Role if available to bypass RLS
+    let supabaseClient = supabase;
+    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    if (serviceRoleKey) {
+        supabaseClient = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, serviceRoleKey, {
+            auth: { persistSession: false }
+        });
+    }
+
     // Find all upcoming orders where take_effect_date <= today and status is 'scheduled'
-    const { data: upcomingOrders, error: fetchError } = await supabase
+    const { data: upcomingOrders, error: fetchError } = await supabaseClient
         .from('upcoming_orders')
         .select('*')
         .eq('status', 'scheduled')
@@ -3270,7 +3290,7 @@ export async function processUpcomingOrders() {
                 order_number: upcomingOrder.order_number // Preserve the assigned 6-digit number
             };
 
-            const { data: newOrder, error: orderError } = await supabase
+            const { data: newOrder, error: orderError } = await supabaseClient
                 .from('orders')
                 .insert(orderData)
                 .select()
@@ -3285,14 +3305,14 @@ export async function processUpcomingOrders() {
             }
 
             // Copy vendor selections and items (for Food orders)
-            const { data: vendorSelections } = await supabase
+            const { data: vendorSelections } = await supabaseClient
                 .from('upcoming_order_vendor_selections')
                 .select('*')
                 .eq('upcoming_order_id', upcomingOrder.id);
 
             if (vendorSelections) {
                 for (const vs of vendorSelections) {
-                    const { data: newVs, error: vsError } = await supabase
+                    const { data: newVs, error: vsError } = await supabaseClient
                         .from('order_vendor_selections')
                         .insert({
                             order_id: newOrder.id,
@@ -3301,46 +3321,46 @@ export async function processUpcomingOrders() {
                         .select()
                         .single();
 
+                    if (vsError) {
+                        console.error(`[processUpcomingOrders] Error inserting VS (source: ${vs.id}):`, vsError);
+                    }
+
                     if (vsError || !newVs) continue;
 
                     // Copy items
-                    const { data: items } = await supabase
+                    const { data: items } = await supabaseClient
                         .from('upcoming_order_items')
                         .select('*')
                         .eq('vendor_selection_id', vs.id);
 
                     if (items) {
                         for (const item of items) {
-                            await supabase.from('order_items').insert({
+                            const { error: insertError } = await supabaseClient.from('order_items').insert({
                                 order_id: newOrder.id,
                                 vendor_selection_id: newVs.id,
                                 menu_item_id: item.menu_item_id,
+                                meal_item_id: item.meal_item_id, // Ensure this is copied
                                 quantity: item.quantity,
                                 unit_value: item.unit_value,
                                 total_value: item.total_value,
                                 notes: item.notes
                             });
+
+                            if (insertError) {
+                                console.error(`[processUpcomingOrders] Error inserting item ${item.id} (menu: ${item.menu_item_id}):`, insertError);
+                            }
                         }
                     }
                 }
             }
 
             // Copy box selections (for Box orders)
-            const { data: boxSelections } = await supabase
+            const { data: boxSelections } = await supabaseClient
                 .from('upcoming_order_box_selections')
                 .select('*')
                 .eq('upcoming_order_id', upcomingOrder.id);
 
-            console.log('[processUpcomingOrders] Box selections found:', {
-                upcoming_order_id: upcomingOrder.id,
-                order_id: newOrder.id,
-                boxSelectionsCount: boxSelections?.length || 0,
-                boxSelections: boxSelections?.map(bs => ({
-                    vendor_id: bs.vendor_id,
-                    box_type_id: bs.box_type_id,
-                    quantity: bs.quantity
-                }))
-            });
+
 
             if (boxSelections) {
                 for (const bs of boxSelections) {
@@ -3354,20 +3374,18 @@ export async function processUpcomingOrders() {
                         items: bs.items || {}
                     };
 
-                    console.log('[processUpcomingOrders] Inserting box selection:', insertData);
 
-                    const { error: boxInsertError } = await supabase.from('order_box_selections').insert(insertData);
+
+                    const { error: boxInsertError } = await supabaseClient.from('order_box_selections').insert(insertData);
 
                     if (boxInsertError) {
                         console.error('[processUpcomingOrders] Error inserting box selection:', boxInsertError);
-                    } else {
-                        console.log('[processUpcomingOrders] Successfully inserted box selection for order_id:', newOrder.id);
                     }
                 }
             }
 
             // Update upcoming order status
-            await supabase
+            await supabaseClient
                 .from('upcoming_orders')
                 .update({
                     status: 'processed',
@@ -3382,7 +3400,9 @@ export async function processUpcomingOrders() {
         }
     }
 
-    revalidatePath('/clients');
+    try {
+        revalidatePath('/clients');
+    } catch (e) { }
 
     // Trigger local DB sync in background after mutation
     const { triggerSyncInBackground } = await import('./local-db');
@@ -5237,8 +5257,17 @@ export async function getOrdersPaginated(page: number, pageSize: number, filter?
 export async function getOrderById(orderId: string) {
     if (!orderId) return null;
 
+    // Use Service Role if available to bypass RLS
+    let supabaseClient = supabase;
+    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    if (serviceRoleKey) {
+        supabaseClient = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, serviceRoleKey, {
+            auth: { persistSession: false }
+        });
+    }
+
     // Fetch the order
-    const { data: orderData, error: orderError } = await supabase
+    const { data: orderData, error: orderError } = await supabaseClient
         .from('orders')
         .select('*')
         .eq('id', orderId)
@@ -5250,7 +5279,7 @@ export async function getOrderById(orderId: string) {
     }
 
     // Fetch client information
-    const { data: clientData } = await supabase
+    const { data: clientData } = await supabaseClient
         .from('clients')
         .select('id, full_name, address, email, phone_number')
         .eq('id', orderData.client_id)
@@ -5270,7 +5299,7 @@ export async function getOrderById(orderId: string) {
 
     if (orderData.service_type === 'Food' || orderData.service_type === 'Meal') {
         // Fetch vendor selections and items
-        const { data: vendorSelections } = await supabase
+        const { data: vendorSelections } = await supabaseClient
             .from('order_vendor_selections')
             .select('*')
             .eq('order_id', orderId);
@@ -5280,7 +5309,7 @@ export async function getOrderById(orderId: string) {
         if (vendorSelections && vendorSelections.length > 0) {
             const vendorSelectionsWithItems = await Promise.all(
                 vendorSelections.map(async (vs: any) => {
-                    const { data: items } = await supabase
+                    const { data: items } = await supabaseClient
                         .from('order_items')
                         .select('*')
                         .eq('vendor_selection_id', vs.id);
@@ -5294,7 +5323,7 @@ export async function getOrderById(orderId: string) {
                     const itemsWithDetails = (items || []).map((item: any) => {
                         let menuItem: any = menuItems.find(mi => mi.id === item.menu_item_id);
                         if (!menuItem) {
-                            menuItem = mealItems.find(mi => mi.id === item.menu_item_id);
+                            menuItem = mealItems.find(mi => mi.id === item.meal_item_id); // Check meal_item_id
                         }
 
                         if (!menuItem) {
@@ -5341,7 +5370,7 @@ export async function getOrderById(orderId: string) {
         }
     } else if (orderData.service_type === 'Custom') {
         // Handle Custom orders - fetch vendor selections and items
-        const { data: vendorSelections } = await supabase
+        const { data: vendorSelections } = await supabaseClient
             .from('order_vendor_selections')
             .select('*')
             .eq('order_id', orderId);
@@ -5349,7 +5378,7 @@ export async function getOrderById(orderId: string) {
         if (vendorSelections && vendorSelections.length > 0) {
             const vendorSelectionsWithItems = await Promise.all(
                 vendorSelections.map(async (vs: any) => {
-                    const { data: items } = await supabase
+                    const { data: items } = await supabaseClient
                         .from('order_items')
                         .select('*')
                         .eq('vendor_selection_id', vs.id);
@@ -5383,7 +5412,7 @@ export async function getOrderById(orderId: string) {
         }
     } else if (orderData.service_type === 'Boxes') {
         // Fetch box selection
-        const { data: boxSelection } = await supabase
+        const { data: boxSelection } = await supabaseClient
             .from('order_box_selections')
             .select('*')
             .eq('order_id', orderId)

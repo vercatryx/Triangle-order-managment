@@ -2,13 +2,8 @@ import { getSession } from '@/lib/session';
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { getCurrentTime } from '@/lib/time';
-import {
-    getMenuItems,
-    getVendors,
-    getStatuses,
-    getMealItems,
-    getEquipment
-} from '@/lib/actions';
+// Imports removed to prevent RLS issues with anonymous client
+// import { getMenuItems, getVendors... } from '@/lib/actions';
 import {
     getDaysUntilDelivery,
     isWithinCutoff,
@@ -52,17 +47,67 @@ export async function POST(request: NextRequest) {
         today.setHours(0, 0, 0, 0); // Normalized Today (Start of Day)
 
         // Fetch Reference Data
+        // Fetch Reference Data (Directly with Admin Client to bypass RLS)
         const [
-            allVendors,
-            allStatuses,
-            allMenuItems,
-            allMealItems
+            vendorsRes,
+            statusesRes,
+            menuItemsRes,
+            mealItemsRes
         ] = await Promise.all([
-            getVendors(),
-            getStatuses(),
-            getMenuItems(),
-            getMealItems()
+            supabase.from('vendors').select('*'),
+            supabase.from('client_statuses').select('*'),
+            supabase.from('menu_items').select('*'),
+            supabase.from('breakfast_items').select('*')
         ]);
+
+        const allVendors = (vendorsRes.data || []).map((v: any) => ({
+            id: v.id,
+            name: v.name,
+            email: v.email || null,
+            serviceTypes: (v.service_type || '').split(',').map((s: string) => s.trim()).filter(Boolean),
+            deliveryDays: v.delivery_days || [],
+            allowsMultipleDeliveries: v.delivery_frequency === 'Multiple',
+            isActive: v.is_active,
+            minimumMeals: v.minimum_meals ?? 0,
+            cutoffDays: v.cutoff_hours ?? 0
+        }));
+
+        const allStatuses = (statusesRes.data || []).map((s: any) => ({
+            id: s.id,
+            name: s.name,
+            isSystemDefault: s.is_system_default,
+            deliveriesAllowed: s.deliveries_allowed,
+            requiresUnitsOnChange: s.requires_units_on_change ?? false
+        }));
+
+        const allMenuItems = (menuItemsRes.data || []).map((i: any) => ({
+            id: i.id,
+            vendorId: i.vendor_id,
+            name: i.name,
+            value: i.value,
+            priceEach: i.price_each ?? undefined,
+            isActive: i.is_active,
+            categoryId: i.category_id,
+            quotaValue: i.quota_value,
+            minimumOrder: i.minimum_order ?? 0,
+            imageUrl: i.image_url || null,
+            sortOrder: i.sort_order ?? 0,
+            itemType: 'menu'
+        }));
+
+        const allMealItems = (mealItemsRes.data || []).map((i: any) => ({
+            id: i.id,
+            categoryId: i.category_id,
+            name: i.name,
+            value: i.quota_value,
+            quotaValue: i.quota_value,
+            priceEach: i.price_each ?? undefined,
+            isActive: i.is_active,
+            vendorId: i.vendor_id,
+            imageUrl: i.image_url || null,
+            sortOrder: i.sort_order ?? 0,
+            itemType: 'meal'
+        }));
 
         // Get Settings for Report Email
         const { data: settingsData } = await supabase.from('app_settings').select('*').single();
