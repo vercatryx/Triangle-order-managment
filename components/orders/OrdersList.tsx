@@ -3,29 +3,27 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { Search, ChevronRight, Package, ArrowLeft, Loader2 } from 'lucide-react';
-import { getOrdersPaginated } from '@/lib/actions';
+import { Search, ChevronRight, Package, ArrowLeft, Loader2, ArrowUpDown } from 'lucide-react';
+import { getAllOrders } from '@/lib/actions';
 import styles from './OrdersList.module.css';
 
 export function OrdersList() {
     const router = useRouter();
     const [orders, setOrders] = useState<any[]>([]);
     const [search, setSearch] = useState('');
+    const [statusFilter, setStatusFilter] = useState('all');
+    const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'asc' | 'desc' } | null>(null);
     const [isLoading, setIsLoading] = useState(true);
-    const [page, setPage] = useState(1);
-    const [total, setTotal] = useState(0);
-    const PAGE_SIZE = 20;
 
     useEffect(() => {
         loadData();
-    }, [page]);
+    }, []);
 
     async function loadData() {
         setIsLoading(true);
         try {
-            const { orders, total } = await getOrdersPaginated(page, PAGE_SIZE);
-            setOrders(orders);
-            setTotal(total);
+            const data = await getAllOrders();
+            setOrders(data);
         } catch (error) {
             console.error('Failed to load orders:', error);
         } finally {
@@ -33,11 +31,49 @@ export function OrdersList() {
         }
     }
 
-    const filteredOrders = orders.filter(o => {
+    const handleSort = (key: string) => {
+        let direction: 'asc' | 'desc' = 'asc';
+        if (sortConfig && sortConfig.key === key && sortConfig.direction === 'asc') {
+            direction = 'desc';
+        }
+        setSortConfig({ key, direction });
+    };
+
+    const sortedOrders = [...orders].sort((a, b) => {
+        if (!sortConfig) return 0;
+
+        let aValue = a[sortConfig.key];
+        let bValue = b[sortConfig.key];
+
+        // Handle nested or special properties
+        if (sortConfig.key === 'items') {
+            aValue = a.total_items || 0;
+            bValue = b.total_items || 0;
+        } else if (sortConfig.key === 'deliveryDate') {
+            aValue = new Date(a.scheduled_delivery_date || 0).getTime();
+            bValue = new Date(b.scheduled_delivery_date || 0).getTime();
+        } else if (sortConfig.key === 'order_number') {
+            aValue = Number(a.order_number || 0);
+            bValue = Number(b.order_number || 0);
+        }
+
+        if (aValue < bValue) {
+            return sortConfig.direction === 'asc' ? -1 : 1;
+        }
+        if (aValue > bValue) {
+            return sortConfig.direction === 'asc' ? 1 : -1;
+        }
+        return 0;
+    });
+
+    const filteredOrders = sortedOrders.filter(o => {
         const matchesSearch =
             (o.clientName || '').toLowerCase().includes(search.toLowerCase()) ||
             (o.order_number || '').toString().includes(search);
-        return matchesSearch;
+
+        const matchesStatus = statusFilter === 'all' || o.status === statusFilter;
+
+        return matchesSearch && matchesStatus;
     });
 
     const getStatusStyle = (status: string) => {
@@ -57,7 +93,7 @@ export function OrdersList() {
         return status.replace(/_/g, ' ').toUpperCase();
     };
 
-    if (isLoading && page === 1) {
+    if (isLoading) {
         return (
             <div className={styles.container}>
                 <div className={styles.header}>
@@ -122,20 +158,67 @@ export function OrdersList() {
                         onChange={e => setSearch(e.target.value)}
                     />
                 </div>
+
+                <select
+                    className="input"
+                    value={statusFilter}
+                    onChange={(e) => setStatusFilter(e.target.value)}
+                    style={{ width: '200px' }}
+                >
+                    <option value="all">All Statuses</option>
+                    <option value="pending">Pending</option>
+                    <option value="confirmed">Confirmed</option>
+                    <option value="completed">Completed</option>
+                    <option value="cancelled">Cancelled</option>
+                </select>
             </div>
 
             <div className={styles.list}>
                 <div className={styles.listHeader}>
-                    <span style={{ width: '100px' }}>Order #</span>
-                    <span style={{ flex: 2 }}>Client</span>
-                    <span style={{ flex: 1 }}>Service</span>
-                    <span style={{ flex: 1 }}>Items</span>
-                    <span style={{ flex: 1.5 }}>Status</span>
-                    <span style={{ flex: 1.5 }}>Delivery Date</span>
+                    <span
+                        style={{ width: '40px', fontWeight: 'bold' }}
+                    >#</span>
+                    <span
+                        style={{ width: '100px', cursor: 'pointer', display: 'flex', alignItems: 'center' }}
+                        onClick={() => handleSort('order_number')}
+                    >
+                        Order # <ArrowUpDown size={14} style={{ marginLeft: '4px' }} />
+                    </span>
+                    <span
+                        style={{ flex: 2, cursor: 'pointer', display: 'flex', alignItems: 'center' }}
+                        onClick={() => handleSort('clientName')}
+                    >
+                        Client <ArrowUpDown size={14} style={{ marginLeft: '4px' }} />
+                    </span>
+                    <span
+                        style={{ flex: 1, cursor: 'pointer', display: 'flex', alignItems: 'center' }}
+                        onClick={() => handleSort('service_type')}
+                    >
+                        Service <ArrowUpDown size={14} style={{ marginLeft: '4px' }} />
+                    </span>
+                    <span
+                        style={{ flex: 1, cursor: 'pointer', display: 'flex', alignItems: 'center' }}
+                        onClick={() => handleSort('items')}
+                    >
+                        Items <ArrowUpDown size={14} style={{ marginLeft: '4px' }} />
+                    </span>
+                    <span
+                        style={{ flex: 1.5, cursor: 'pointer', display: 'flex', alignItems: 'center' }}
+                        onClick={() => handleSort('status')}
+                    >
+                        Status <ArrowUpDown size={14} style={{ marginLeft: '4px' }} />
+                    </span>
+                    <span
+                        style={{ flex: 1.5, cursor: 'pointer', display: 'flex', alignItems: 'center' }}
+                        onClick={() => handleSort('deliveryDate')}
+                    >
+                        Delivery Date <ArrowUpDown size={14} style={{ marginLeft: '4px' }} />
+                    </span>
                     <span style={{ width: '40px' }}></span>
                 </div>
-                {filteredOrders.map(order => (
+                {filteredOrders.map((order, index) => (
                     <Link key={order.id} href={`/orders/${order.id}`} className={styles.row}>
+                        <span style={{ width: '40px', fontWeight: 'bold', color: 'var(--text-secondary)' }}>{index + 1}</span>
                         <span style={{ width: '100px', fontWeight: 600 }}>{order.order_number || 'N/A'}</span>
                         <span style={{ flex: 2 }}>{order.clientName}</span>
                         <span style={{ flex: 1 }}>{order.service_type}</span>
@@ -158,25 +241,7 @@ export function OrdersList() {
                 )}
             </div>
 
-            {total > PAGE_SIZE && (
-                <div style={{ display: 'flex', justifyContent: 'center', gap: '1rem', marginTop: '2rem' }}>
-                    <button
-                        className="btn btn-secondary"
-                        disabled={page === 1}
-                        onClick={() => setPage(p => p - 1)}
-                    >
-                        Previous
-                    </button>
-                    <span style={{ alignSelf: 'center', fontSize: '0.9rem' }}>Page {page} of {Math.ceil(total / PAGE_SIZE)}</span>
-                    <button
-                        className="btn btn-secondary"
-                        disabled={page * PAGE_SIZE >= total}
-                        onClick={() => setPage(p => p + 1)}
-                    >
-                        Next
-                    </button>
-                </div>
-            )}
+
         </div>
     );
 }

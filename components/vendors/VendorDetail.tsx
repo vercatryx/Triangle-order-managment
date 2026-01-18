@@ -197,14 +197,17 @@ export function VendorDetail({ vendorId, isVendorView, vendor: initialVendor }: 
                         <span style={{ minWidth: '100px', flex: 1 }}>Total</span>
                     </div>
                     {items.map((item: any, index: number) => {
-                        const menuItem = menuItems.find(mi => mi.id === item.menu_item_id);
+                        let menuItem: any = menuItems.find(mi => mi.id === item.menu_item_id);
+                        if (!menuItem) {
+                            menuItem = mealItems.find(mi => mi.id === item.menu_item_id);
+                        }
                         const quantity = parseInt(item.quantity || 0);
                         const itemKey = item.id || `${order.id}-item-${index}`;
 
                         // Calculate unit value: prefer stored unit_value, then menuItem.value
                         const unitValue = item.unit_value
                             ? parseFloat(item.unit_value)
-                            : (menuItem?.value ?? 0);
+                            : (menuItem?.value || menuItem?.defaultValue || 0); // Handle meal items having defaultValue/value naming difference if any
                         // Calculate total: prefer stored total_value, otherwise calculate from unit value * quantity
                         const totalValue = item.total_value
                             ? parseFloat(item.total_value)
@@ -265,7 +268,10 @@ export function VendorDetail({ vendorId, isVendorView, vendor: initialVendor }: 
                         <span style={{ minWidth: '100px', flex: 1 }}>Quantity</span>
                     </div>
                     {validItemEntries.map(([itemId, quantityOrObj]: [string, any]) => {
-                        const menuItem = menuItems.find(mi => mi.id === itemId);
+                        let menuItem: any = menuItems.find(mi => mi.id === itemId);
+                        if (!menuItem) {
+                            menuItem = mealItems.find(mi => mi.id === itemId);
+                        }
 
                         // Handle both formats: { itemId: quantity } or { itemId: { quantity: X, price: Y } }
                         let qty = 0;
@@ -364,7 +370,10 @@ export function VendorDetail({ vendorId, isVendorView, vendor: initialVendor }: 
             const result: { name: string; quantity: number; category?: string; notes?: string }[] = [];
 
             for (const [itemId, quantityOrObj] of itemEntries) {
-                const menuItem = menuItems.find(mi => mi.id === itemId);
+                let menuItem = menuItems.find(mi => mi.id === itemId);
+                if (!menuItem) {
+                    menuItem = mealItems.find(mi => mi.id === itemId) as any;
+                }
                 const itemName = menuItem?.name || 'Unknown Item';
 
                 let qty = 0;

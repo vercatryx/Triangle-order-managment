@@ -4219,15 +4219,25 @@ export async function getOrdersByVendor(vendorId: string) {
         return [];
     }
 
+    // Use Service Role if available to bypass RLS
+    // We already verified the user is authorized (Admin or the specific Vendor)
+    let supabaseClient = supabase;
+    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    if (serviceRoleKey) {
+        supabaseClient = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, serviceRoleKey, {
+            auth: { persistSession: false }
+        });
+    }
+
     try {
         // 1. Fetch completed orders (from orders table)
         // Include Food, Boxes, and Equipment orders
-        const { data: foodOrderIds } = await supabase
+        const { data: foodOrderIds } = await supabaseClient
             .from('order_vendor_selections')
             .select('order_id')
             .eq('vendor_id', vendorId);
 
-        const { data: boxOrderIds } = await supabase
+        const { data: boxOrderIds } = await supabaseClient
             .from('order_box_selections')
             .select('order_id')
             .eq('vendor_id', vendorId);
@@ -4241,7 +4251,7 @@ export async function getOrdersByVendor(vendorId: string) {
 
         let orders: any[] = [];
         if (orderIds.length > 0) {
-            const { data: ordersData } = await supabase
+            const { data: ordersData } = await supabaseClient
                 .from('orders')
                 .select('*')
                 .in('id', orderIds)
@@ -4264,7 +4274,7 @@ export async function getOrdersByVendor(vendorId: string) {
                 });
 
                 orders = await Promise.all(filteredOrders.map(async (order) => {
-                    const processed = await processVendorOrderDetails(order, vendorId, false);
+                    const processed = await processVendorOrderDetails(supabaseClient, order, vendorId, false);
                     return { ...processed, orderType: 'completed' };
                 }));
             }
@@ -4278,7 +4288,7 @@ export async function getOrdersByVendor(vendorId: string) {
     }
 }
 
-async function processVendorOrderDetails(order: any, vendorId: string, isUpcoming: boolean) {
+async function processVendorOrderDetails(supabaseClient: any, order: any, vendorId: string, isUpcoming: boolean) {
     const orderIdField = isUpcoming ? 'upcoming_order_id' : 'order_id';
     const vendorSelectionsTable = isUpcoming ? 'upcoming_order_vendor_selections' : 'order_vendor_selections';
     const itemsTable = isUpcoming ? 'upcoming_order_items' : 'order_items';
@@ -4292,7 +4302,7 @@ async function processVendorOrderDetails(order: any, vendorId: string, isUpcomin
     };
 
     if (order.service_type === 'Food' || order.service_type === 'Meal' || order.service_type === 'Custom') {
-        const { data: vs } = await supabase
+        const { data: vs } = await supabaseClient
             .from(vendorSelectionsTable)
             .select('id')
             .eq(orderIdField, order.id)
@@ -4301,7 +4311,7 @@ async function processVendorOrderDetails(order: any, vendorId: string, isUpcomin
 
         if (vs) {
             // Both upcoming_order_items and order_items use 'vendor_selection_id' field
-            const { data: items } = await supabase
+            const { data: items } = await supabaseClient
                 .from(itemsTable)
                 .select('*')
                 .eq('vendor_selection_id', vs.id);
@@ -4325,7 +4335,7 @@ async function processVendorOrderDetails(order: any, vendorId: string, isUpcomin
             console.error('Error parsing equipment order notes:', e);
         }
     } else if (order.service_type === 'Boxes') {
-        const { data: bs } = await supabase
+        const { data: bs } = await supabaseClient
             .from(boxSelectionsTable)
             .select('*')
             .eq(orderIdField, order.id)
@@ -4338,7 +4348,7 @@ async function processVendorOrderDetails(order: any, vendorId: string, isUpcomin
             // If items field is empty, try to fetch from client's active_order (same source as client profile uses)
             if (!bs.items || Object.keys(bs.items).length === 0) {
                 // Get the client's active_order from clients table (this is where client profile gets box items from)
-                const { data: clientData } = await supabase
+                const { data: clientData } = await supabaseClient
                     .from('clients')
                     .select('active_order')
                     .eq('id', order.client_id)
@@ -4359,7 +4369,7 @@ async function processVendorOrderDetails(order: any, vendorId: string, isUpcomin
                 // If still empty, try to fetch items from order_items table as fallback (for migrated data)
                 if ((!result.boxSelection.items || Object.keys(result.boxSelection.items).length === 0) && bs.vendor_id) {
                     // Find the vendor_selection for the box vendor in this order
-                    const { data: vendorSelection } = await supabase
+                    const { data: vendorSelection } = await supabaseClient
                         .from(vendorSelectionsTable)
                         .select('id')
                         .eq(orderIdField, order.id)
@@ -4368,7 +4378,7 @@ async function processVendorOrderDetails(order: any, vendorId: string, isUpcomin
 
                     if (vendorSelection) {
                         // Fetch box items - both upcoming_order_items and order_items use 'vendor_selection_id' field
-                        const { data: boxItems } = await supabase
+                        const { data: boxItems } = await supabaseClient
                             .from(itemsTable)
                             .select('*')
                             .eq('vendor_selection_id', vendorSelection.id);
@@ -5254,6 +5264,36 @@ export async function getOrdersPaginated(page: number, pageSize: number, filter?
     };
 }
 
+export async function getAllOrders() {
+    // For the Orders tab, show orders from the orders table
+    // Exclude billing_pending orders (those should only show on billing page)
+    // Only show scheduled orders (orders with scheduled_delivery_date)
+    const { data, error } = await supabase
+        .from('orders')
+        .select(`
+            *,
+            clients(
+                full_name
+            )
+        `)
+        .neq('status', 'billing_pending')
+        .not('scheduled_delivery_date', 'is', null)
+        .order('created_at', { ascending: false });
+
+    if (error) {
+        console.error('Error fetching all orders:', error);
+        return [];
+    }
+
+    return (data || []).map((o: any) => ({
+        ...o,
+        clientName: o.clients?.full_name || 'Unknown',
+        // Use actual status from DB
+        status: o.status || 'pending',
+        scheduled_delivery_date: o.scheduled_delivery_date || null
+    }));
+}
+
 export async function getOrderById(orderId: string) {
     if (!orderId) return null;
 
@@ -5323,11 +5363,18 @@ export async function getOrderById(orderId: string) {
                     const itemsWithDetails = (items || []).map((item: any) => {
                         let menuItem: any = menuItems.find(mi => mi.id === item.menu_item_id);
                         if (!menuItem) {
-                            menuItem = mealItems.find(mi => mi.id === item.meal_item_id); // Check meal_item_id
+                            // First try explicit meal_item_id
+                            if (item.meal_item_id) {
+                                menuItem = mealItems.find(mi => mi.id === item.meal_item_id);
+                            }
+                            // Fallback: Check if the ID in menu_item_id is actually a meal item (e.g. data consistency issue)
+                            if (!menuItem && item.menu_item_id) {
+                                menuItem = mealItems.find(mi => mi.id === item.menu_item_id);
+                            }
                         }
 
                         if (!menuItem) {
-                            console.warn(`[getOrderById] Item not found in menu or meal items: ${item.menu_item_id}`);
+                            console.warn(`[getOrderById] Item not found in menu or meal items: ${item.menu_item_id || item.meal_item_id}`);
                         }
 
 

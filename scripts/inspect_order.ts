@@ -23,8 +23,8 @@ async function run() {
 
         console.log('\n--- Direct DB Check ---');
         // Check order items via Vendor Selection ID if available
-        if (orderDetails?.vendorSelections && orderDetails.vendorSelections.length > 0) {
-            const vsId = orderDetails.vendorSelections[0].vendorId; // wait, orderDetails struct has vendorSelections objects which have `vendorId` and `items`. 
+        if (orderDetails && 'vendorSelections' in orderDetails && (orderDetails as any).vendorSelections && (orderDetails as any).vendorSelections.length > 0) {
+            const vsId = (orderDetails as any).vendorSelections[0].vendorId; // wait, orderDetails struct has vendorSelections objects which have `vendorId` and `items`. 
             // Actually getOrderById returns: { serviceType, vendorSelections: [ { vendorId, vendorName, items: [] } ] }
             // It does NOT return the vsID in the output object usually? 
             // Let's query the VS ID directly from DB for this order.
