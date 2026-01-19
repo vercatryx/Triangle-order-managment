@@ -484,6 +484,13 @@ export default function FoodServiceWidget({
                                     {vendors
                                         .filter(v => {
                                             if (!v.serviceTypes.includes('Food') || !v.isActive) return false;
+
+                                            // Feature: Filter by Client Location (if assigned)
+                                            if (client.locationId) {
+                                                const vendorHasLocation = v.locations?.some(l => l.locationId === client.locationId);
+                                                if (!vendorHasLocation) return false;
+                                            }
+
                                             // Feature: Filter out vendors already selected in OTHER blocks
                                             return !selections.some((s: any, idx: number) => s.vendorId === v.id && idx !== index);
                                         })

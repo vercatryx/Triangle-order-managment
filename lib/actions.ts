@@ -88,7 +88,16 @@ export async function updateStatus(id: string, data: Partial<ClientStatus>) { //
 // --- VENDOR ACTIONS ---
 
 export const getVendors = reactCache(async function () {
-    const { data, error } = await supabase.from('vendors').select('*');
+    const { data, error } = await supabase.from('vendors').select(`
+        *,
+        vendor_locations (
+            id,
+            location_id,
+            locations (
+                name
+            )
+        )
+    `);
     if (error) return [];
 
     return data.map((v: any) => ({
@@ -100,7 +109,13 @@ export const getVendors = reactCache(async function () {
         allowsMultipleDeliveries: v.delivery_frequency === 'Multiple',
         isActive: v.is_active,
         minimumMeals: v.minimum_meals ?? 0,
-        cutoffDays: v.cutoff_hours ?? 0
+        cutoffDays: v.cutoff_hours ?? 0,
+        locations: v.vendor_locations?.map((vl: any) => ({
+            id: vl.id,
+            vendorId: v.id,
+            locationId: vl.location_id,
+            name: vl.locations?.name || 'Unknown'
+        })) || []
     }));
 });
 

@@ -1,44 +1,33 @@
 
-import { createClient } from '@supabase/supabase-js';
-import * as fs from 'fs';
-import * as path from 'path';
+import { config } from 'dotenv';
+config({ path: '.env.local' });
 
-// Load .env.local
-const envPath = path.resolve(process.cwd(), '.env.local');
-if (fs.existsSync(envPath)) {
-    const envConfig = fs.readFileSync(envPath, 'utf-8');
-    envConfig.split('\n').forEach(line => {
-        const match = line.match(/^([^=]+)=(.*)$/);
-        if (match) {
-            const key = match[1].trim();
-            const value = match[2].trim().replace(/^['"]|['"]$/g, '');
-            process.env[key] = value;
-        }
-    });
-}
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+async function verifyVendorLocations() {
+    const { getVendors } = await import('@/lib/actions');
+    console.log('Fetching vendors...');
 
-const supabase = createClient(supabaseUrl, supabaseKey);
+    try {
+        const vendors = await getVendors();
+        console.log(`Successfully fetched ${vendors.length} vendors.`);
 
-async function main() {
-    console.log('Verifying vendor_locations table...');
+        let foundLocations = false;
+        vendors.forEach((v: any) => {
+            if (v.locations && v.locations.length > 0) {
+                foundLocations = true;
+                console.log(`Vendor: ${v.name} has ${v.locations.length} locations associated.`);
+                console.log(' - Locations:', v.locations.map((l: any) => l.name).join(', '));
+            }
+        });
 
-    // Check if table exists by selecting from it
-    const { data, error } = await supabase.from('vendor_locations').select('*').limit(1);
-
-    if (error) {
-        console.error('FAIL: Table `vendor_locations` probably does not exist or permission denied.');
-        console.error('Error details:', error.message);
-    } else {
-        console.log('SUCCESS: Table `vendor_locations` exists!');
-        if (data && data.length > 0) {
-            console.log('Columns found:', Object.keys(data[0]));
+        if (!foundLocations) {
+            console.warn('No vendors with locations found. This might be fine if no locations are assigned yet, but double check data.');
         } else {
-            console.log('Table is empty (as expected for new table).');
+            console.log('SUCCESS: Vendors have location data.');
         }
+    } catch (error) {
+        console.error('Error fetching vendors:', error);
     }
 }
 
-main();
+verifyVendorLocations();
