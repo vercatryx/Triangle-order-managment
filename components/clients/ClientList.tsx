@@ -70,6 +70,7 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
     const [screeningFilter, setScreeningFilter] = useState<string | null>(null);
     const [serviceTypeFilter, setServiceTypeFilter] = useState<string | null>(null);
     const [needsVendorFilter, setNeedsVendorFilter] = useState<boolean>(false);
+    const [reasonFilter, setReasonFilter] = useState<string | null>(null);
     const [openFilterMenu, setOpenFilterMenu] = useState<string | null>(null);
 
     // Add Dependent Modal state
@@ -399,14 +400,20 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
                     needsMealVendor = mealTypes.some(type => !mealSelections[type].vendorId);
                 }
             }
-
             matchesNeedsVendorFilter = needsBoxVendor || needsMealVendor;
+        }
+
+        // Filter by Needs Attention Reason
+        let matchesReasonFilter = true;
+        if (reasonFilter && currentView === 'needs-attention') {
+            const reasons = getNeedsAttentionReason(c).split(', ');
+            matchesReasonFilter = reasons.includes(reasonFilter);
         }
 
         // Filter by Dependents visibility
         const matchesDependentsFilter = showDependents || !c.parentClientId;
 
-        return matchesSearch && matchesView && matchesStatusFilter && matchesNavigatorFilter && matchesScreeningFilter && matchesServiceTypeFilter && matchesNeedsVendorFilter && matchesDependentsFilter;
+        return matchesSearch && matchesView && matchesStatusFilter && matchesNavigatorFilter && matchesScreeningFilter && matchesServiceTypeFilter && matchesNeedsVendorFilter && matchesReasonFilter && matchesDependentsFilter;
     });
 
     // Group dependents under their parent clients
@@ -1107,6 +1114,48 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
         return reasons.length > 0 ? reasons.join(', ') : 'No reason specified';
     }
 
+    // Get available reasons for filter
+    const availableReasons = Array.from(new Set(
+        clients
+            .filter(c => {
+                // Re-apply specific needs-attention logic to get the base set of clients
+                // This is a bit duplicative but ensures we get all reasons even when other filters are active
+                // However, usually filters should narrow down options. 
+                // Let's stick to showing ALL reasons present in the "needs-attention" view (ignoring other filters for the list generation if possible, 
+                // but for simplicity and standard UI patterns, usually facets update based on current view.
+                // The user request said: "generate it from all of the reasons that are currently available"
+                // which implies looking at the *current data*.
+                // To be safe and helpful, we'll calculate it from the clients that MATCH the 'needs-attention' view criteria
+                // regardless of the search/status filters, so users can see what's possible.
+
+                // Matches View Logic (Needs Attention)
+                let matchesView = false;
+                const status = statuses.find(s => s.id === c.statusId);
+                const isEligible = status ? status.deliveriesAllowed : false;
+
+                if (isEligible) {
+                    const boxNeedsVendor = c.serviceType === 'Boxes' && (!c.activeOrder || (c.activeOrder.serviceType === 'Boxes' && !c.activeOrder.vendorId && !boxTypes.find(bt => bt.id === c.activeOrder?.boxTypeId)?.vendorId));
+                    // ... (rest of logic) ...
+                    // To avoid duplicating ALL the complex logic above, let's assume if it produces a reason string != "No reason specified"
+                    // AND it is eligible, it's in the list.
+                    // Actually, 'getNeedsAttentionReason' handles the reason generation.
+                    // The view logic also checks eligibility.
+
+                    // Basic eligibility check reused
+                    // We can just rely on 'getNeedsAttentionReason' returning something meaningful?
+                    // No, because getNeedsAttentionReason calculates reasons for ANY client.
+                    // The view only shows ELIGIBLE clients.
+                    return isEligible;
+                }
+                return false;
+            })
+            .flatMap(c => {
+                const r = getNeedsAttentionReason(c);
+                if (r === 'No reason specified') return [];
+                return r.split(', ');
+            })
+    )).sort();
+
     // Helper function to check if a date is in the current week
     function isInCurrentWeek(dateString: string): boolean {
         if (!dateString) return false;
@@ -1250,6 +1299,7 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
                             setScreeningFilter(null);
                             setServiceTypeFilter(null);
                             setNeedsVendorFilter(false);
+                            setReasonFilter(null);
                         }}
                         style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.9rem' }}
                     >
@@ -1589,6 +1639,44 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
                         <>
                             <span style={{ minWidth: '400px', flex: 4, paddingRight: '16px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}>
                                 Reason
+                            </span>
+                            <span style={{ minWidth: '400px', flex: 4, paddingRight: '16px', display: 'flex', alignItems: 'center', gap: '4px', position: 'relative' }} data-filter-dropdown>
+                                Reason
+                                <Filter
+                                    size={14}
+                                    style={{ cursor: 'pointer', opacity: reasonFilter ? 1 : 0.5, color: reasonFilter ? 'var(--color-primary)' : 'inherit', filter: reasonFilter ? 'drop-shadow(0 0 3px var(--color-primary))' : 'none' }}
+                                    onClick={(e) => { e.stopPropagation(); setOpenFilterMenu(openFilterMenu === 'reason' ? null : 'reason'); }}
+                                />
+                                {openFilterMenu === 'reason' && (
+                                    <div style={{
+                                        position: 'absolute', top: '100%', left: 0, marginTop: '4px',
+                                        backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-color)',
+                                        borderRadius: 'var(--radius-md)', boxShadow: 'var(--shadow-lg)',
+                                        zIndex: 1000, minWidth: '250px', maxHeight: '300px', overflowY: 'auto'
+                                    }}>
+                                        <div onClick={() => { setReasonFilter(null); setOpenFilterMenu(null); }}
+                                            style={{
+                                                padding: '8px 12px', cursor: 'pointer',
+                                                backgroundColor: !reasonFilter ? 'var(--bg-surface-hover)' : 'transparent',
+                                                fontWeight: !reasonFilter ? 600 : 400
+                                            }}>
+                                            All Reasons
+                                        </div>
+                                        {availableReasons.map(reason => (
+                                            <div key={reason}
+                                                onClick={() => { setReasonFilter(reason); setOpenFilterMenu(null); }}
+                                                style={{
+                                                    padding: '8px 12px', cursor: 'pointer',
+                                                    backgroundColor: reasonFilter === reason ? 'var(--bg-surface-hover)' : 'transparent',
+                                                    fontWeight: reasonFilter === reason ? 600 : 400,
+                                                    whiteSpace: 'normal',
+                                                    lineHeight: '1.4'
+                                                }}>
+                                                {reason}
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
                             </span>
                             <span style={{ minWidth: '150px', flex: 1.2, paddingRight: '16px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}
                                 onClick={() => handleSort('authorizedAmount')}>
