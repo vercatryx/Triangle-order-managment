@@ -10,7 +10,7 @@ import {
 import { ClientProfile, ClientStatus, Navigator, Submission } from '@/lib/types';
 import { useState, useEffect } from 'react';
 import { addDependent, getDependentsByParentId, updateClient, deleteClient } from '@/lib/actions';
-import { getSingleForm, deleteSubmission } from '@/lib/form-actions';
+import { getSingleForm, deleteSubmission, getClientSubmissions } from '@/lib/form-actions';
 import FormFiller from '@/components/forms/FormFiller';
 import { FormSchema } from '@/lib/form-types';
 import styles from './ClientInfoShelf.module.css';
@@ -75,11 +75,13 @@ export function ClientInfoShelf({
     const [dependentCin, setDependentCin] = useState('');
     const [creatingDependent, setCreatingDependent] = useState(false);
     const [localDependents, setLocalDependents] = useState<ClientProfile[]>([]);
+    const [dependentSubmissions, setDependentSubmissions] = useState<Record<string, Submission[]>>({});
 
     // Screening State
     const [loadingForm, setLoadingForm] = useState(false);
     const [isFillingForm, setIsFillingForm] = useState(false);
     const [formSchema, setFormSchema] = useState<FormSchema | null>(null);
+    const [screeningTargetId, setScreeningTargetId] = useState<string | null>(null);
 
     useEffect(() => {
         if (allClients.length > 0) {
@@ -97,6 +99,28 @@ export function ClientInfoShelf({
             fetchDependents();
         }
     }, [allClients, client.id]);
+
+    // Load dependent submissions whenever dependents change
+    useEffect(() => {
+        const fetchDependentSubmissions = async () => {
+            if (localDependents.length === 0) return;
+
+            const subs: Record<string, Submission[]> = {};
+            await Promise.all(localDependents.map(async (dep) => {
+                try {
+                    const res = await getClientSubmissions(dep.id);
+                    if (res.success && res.data) {
+                        subs[dep.id] = res.data;
+                    }
+                } catch (e) {
+                    console.error(`Error loading submissions for dependent ${dep.id}`, e);
+                }
+            }));
+            setDependentSubmissions(subs);
+        };
+
+        fetchDependentSubmissions();
+    }, [localDependents]);
 
     const status = statuses.find(s => s.id === (isEditing ? editForm.statusId : client.statusId));
     const navigator = navigators.find(n => n.id === (isEditing ? editForm.navigatorId : client.navigatorId));
@@ -229,7 +253,9 @@ export function ClientInfoShelf({
         }
     };
 
-    const handleOpenScreeningForm = async () => {
+    const handleOpenScreeningForm = async (targetId?: string) => {
+        const target = typeof targetId === 'string' ? targetId : client.id;
+        setScreeningTargetId(target);
         setLoadingForm(true);
         try {
             const response = await getSingleForm();
@@ -247,10 +273,24 @@ export function ClientInfoShelf({
         }
     };
 
-    const handleCloseScreeningForm = () => {
+    const handleCloseScreeningForm = async () => {
         setIsFillingForm(false);
         setFormSchema(null);
-        if (onClientUpdated) onClientUpdated();
+        setScreeningTargetId(null);
+        if (onClientUpdated) {
+            onClientUpdated();
+            // Also refresh dependents locally if needed (though onClientUpdated likely re-fetches parent which triggers dependents reload)
+            // But we should refresh dependent submissions explicitly if it was a dependent form
+            if (screeningTargetId && screeningTargetId !== client.id) {
+                const res = await getClientSubmissions(screeningTargetId);
+                if (res.success && res.data) {
+                    setDependentSubmissions(prev => ({ ...prev, [screeningTargetId]: res.data }));
+                }
+                // And refresh dependent list to get updated status
+                const deps = await getDependentsByParentId(client.id);
+                setLocalDependents(deps);
+            }
+        }
     };
 
     const handleDeleteSubmission = async (submissionId: string) => {
@@ -266,6 +306,29 @@ export function ClientInfoShelf({
         } catch (error) {
             console.error('Error deleting submission:', error);
             alert('An error occurred while deleting the submission.');
+        }
+    };
+
+    const handleDeleteDependentSubmission = async (dependentId: string, submissionId: string) => {
+        if (!confirm('Are you sure you want to delete this submission? This action cannot be undone.')) return;
+
+        try {
+            const res = await deleteSubmission(submissionId);
+            if (res.success) {
+                // Refresh dependent submissions
+                const subRes = await getClientSubmissions(dependentId);
+                if (subRes.success && subRes.data) {
+                    setDependentSubmissions(prev => ({ ...prev, [dependentId]: subRes.data }));
+                }
+                // Update dependent status in list
+                const deps = await getDependentsByParentId(client.id);
+                setLocalDependents(deps);
+            } else {
+                alert('Failed to delete submission: ' + res.error);
+            }
+        } catch (error) {
+            console.error('Error deleting dependent submission:', error);
+            alert('An error occurred.');
         }
     };
 
@@ -353,7 +416,7 @@ export function ClientInfoShelf({
                         <FormFiller
                             schema={formSchema}
                             onBack={handleCloseScreeningForm}
-                            clientId={client.id}
+                            clientId={screeningTargetId || client.id}
                         />
                     </div>
                 )}
@@ -667,13 +730,120 @@ export function ClientInfoShelf({
                                         <div
                                             key={dep.id}
                                             className={styles.dependentCard}
-                                            onClick={() => onOpenProfile(dep.id)}
+                                        // onClick={() => onOpenProfile(dep.id)} // Removed global click to avoid conflict with buttons
                                         >
-                                            <div className={styles.depName}>{dep.fullName}</div>
-                                            <div className={styles.depInfo}>
-                                                {dep.dob && <span>DOB: {new Date(dep.dob).toLocaleDateString(undefined, { timeZone: 'UTC' })}</span>}
-                                                {dep.cin && <span> | CIN: {dep.cin}</span>}
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                                                <div onClick={() => onOpenProfile(dep.id)} style={{ cursor: 'pointer', flex: 1 }}>
+                                                    <div className={styles.depName}>{dep.fullName}</div>
+                                                    <div className={styles.depInfo}>
+                                                        {dep.dob && <span>DOB: {new Date(dep.dob).toLocaleDateString(undefined, { timeZone: 'UTC' })}</span>}
+                                                        {dep.cin && <span> | CIN: {dep.cin}</span>}
+                                                    </div>
+                                                </div>
+                                                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '4px' }}>
+                                                    <div style={{
+                                                        fontSize: '0.7rem',
+                                                        fontWeight: 500,
+                                                        color: (() => {
+                                                            const status = dep.screeningStatus || 'not_started';
+                                                            switch (status) {
+                                                                case 'waiting_approval': return '#eab308'; // yellow-500
+                                                                case 'approved': return 'var(--color-success)';
+                                                                case 'rejected': return 'var(--color-danger)';
+                                                                default: return 'var(--text-tertiary)';
+                                                            }
+                                                        })()
+                                                    }}>
+                                                        {(() => {
+                                                            const status = dep.screeningStatus || 'not_started';
+                                                            switch (status) {
+                                                                case 'not_started': return 'Not Started';
+                                                                case 'waiting_approval': return 'Pending';
+                                                                case 'approved': return 'Approved';
+                                                                case 'rejected': return 'Rejected';
+                                                                default: return 'Not Started';
+                                                            }
+                                                        })()}
+                                                    </div>
+                                                    <button
+                                                        className="btn btn-secondary btn-sm"
+                                                        style={{
+                                                            fontSize: '0.7rem',
+                                                            padding: '2px 8px',
+                                                            height: '24px',
+                                                            minHeight: 'unset'
+                                                        }}
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            handleOpenScreeningForm(dep.id);
+                                                        }}
+                                                    >
+                                                        {dep.screeningStatus === 'not_started' ? 'Start Screening' : 'New Form'}
+                                                    </button>
+                                                </div>
                                             </div>
+
+                                            {/* Inline Submissions List */}
+                                            {dependentSubmissions[dep.id] && dependentSubmissions[dep.id].length > 0 && (
+                                                <div style={{ marginTop: '12px', paddingTop: '12px', borderTop: '1px solid var(--border-color)' }}>
+                                                    <div style={{ fontSize: '0.7rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '8px' }}>
+                                                        SUBMISSIONS
+                                                    </div>
+                                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                                                        {dependentSubmissions[dep.id].map(sub => (
+                                                            <div key={sub.id} style={{
+                                                                display: 'flex',
+                                                                justifyContent: 'space-between',
+                                                                alignItems: 'center',
+                                                                backgroundColor: 'var(--bg-surface)',
+                                                                padding: '8px',
+                                                                borderRadius: '4px',
+                                                                fontSize: '0.75rem'
+                                                            }}>
+                                                                <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                                                                    {sub.status === 'accepted' && <CheckCircle size={14} color="#10b981" />}
+                                                                    {sub.status === 'rejected' && <XCircle size={14} color="#ef4444" />}
+                                                                    {sub.status === 'pending' && <Clock size={14} color="#f59e0b" />}
+                                                                    <span>{new Date(sub.created_at).toLocaleDateString()}</span>
+                                                                </div>
+                                                                <div style={{ display: 'flex', gap: '8px' }}>
+                                                                    <a
+                                                                        href={`/verify-order/${sub.token}`}
+                                                                        target="_blank"
+                                                                        rel="noopener noreferrer"
+                                                                        style={{
+                                                                            textDecoration: 'none',
+                                                                            color: 'var(--color-primary)',
+                                                                            display: 'flex',
+                                                                            alignItems: 'center',
+                                                                            gap: '4px'
+                                                                        }}
+                                                                        onClick={e => e.stopPropagation()}
+                                                                    >
+                                                                        <ExternalLink size={12} /> View
+                                                                    </a>
+                                                                    <button
+                                                                        onClick={(e) => {
+                                                                            e.stopPropagation();
+                                                                            handleDeleteDependentSubmission(dep.id, sub.id);
+                                                                        }}
+                                                                        style={{
+                                                                            border: 'none',
+                                                                            background: 'none',
+                                                                            color: 'var(--text-tertiary)',
+                                                                            cursor: 'pointer',
+                                                                            padding: 0
+                                                                        }}
+                                                                        title="Delete"
+                                                                    >
+                                                                        <Trash2 size={12} />
+                                                                    </button>
+                                                                </div>
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                </div>
+                                            )}
                                         </div>
                                     ))}
                                 </div>
@@ -713,7 +883,7 @@ export function ClientInfoShelf({
                             </div>
                             <button
                                 className="btn btn-primary btn-sm"
-                                onClick={handleOpenScreeningForm}
+                                onClick={() => handleOpenScreeningForm(client.id)}
                                 disabled={loadingForm}
                                 style={{ fontSize: '0.75rem' }}
                             >
