@@ -23,6 +23,7 @@ interface DataCacheContextType {
     getStatuses: () => Promise<ClientStatus[]>;
     getNavigators: () => Promise<Navigator[]>;
     getVendors: () => Promise<Vendor[]>;
+    getGlobalLocations: () => Promise<any[]>; // Renamed from getVendorLocations
     getMenuItems: () => Promise<MenuItem[]>;
     getBoxTypes: () => Promise<BoxType[]>;
     getCategories: () => Promise<ItemCategory[]>;
@@ -49,6 +50,7 @@ export function DataCacheProvider({ children }: { children: React.ReactNode }) {
         statuses?: CacheEntry<ClientStatus[]>;
         navigators?: CacheEntry<Navigator[]>;
         vendors?: CacheEntry<Vendor[]>;
+        globalLocations?: CacheEntry<any[]>; // Renamed
         menuItems?: CacheEntry<MenuItem[]>;
         boxTypes?: CacheEntry<BoxType[]>;
         categories?: CacheEntry<ItemCategory[]>;
@@ -98,6 +100,10 @@ export function DataCacheProvider({ children }: { children: React.ReactNode }) {
 
     const getVendors = useCallback(async () => {
         return fetchAndCache('vendors', () => serverActions.getVendors());
+    }, [fetchAndCache]);
+
+    const getGlobalLocations = useCallback(async () => {
+        return fetchAndCache('globalLocations', () => serverActions.getGlobalLocations());
     }, [fetchAndCache]);
 
     const getMenuItems = useCallback(async () => {
@@ -176,6 +182,7 @@ export function DataCacheProvider({ children }: { children: React.ReactNode }) {
             statuses,
             navigators,
             vendors,
+            globalLocations,
             menuItems,
             boxTypes,
             categories,
@@ -184,6 +191,7 @@ export function DataCacheProvider({ children }: { children: React.ReactNode }) {
             serverActions.getStatuses(),
             serverActions.getNavigators(),
             serverActions.getVendors(),
+            serverActions.getGlobalLocations(),
             serverActions.getMenuItems(),
             serverActions.getBoxTypes(),
             serverActions.getCategories(),
@@ -194,6 +202,7 @@ export function DataCacheProvider({ children }: { children: React.ReactNode }) {
             statuses: { data: statuses, timestamp: Date.now() },
             navigators: { data: navigators, timestamp: Date.now() },
             vendors: { data: vendors, timestamp: Date.now() },
+            globalLocations: { data: globalLocations, timestamp: Date.now() },
             menuItems: { data: menuItems, timestamp: Date.now() },
             boxTypes: { data: boxTypes, timestamp: Date.now() },
             categories: { data: categories, timestamp: Date.now() },
@@ -206,11 +215,12 @@ export function DataCacheProvider({ children }: { children: React.ReactNode }) {
     useEffect(() => {
         const interval = setInterval(() => {
             // Refresh stale reference data in background without blocking
-            const keys: (keyof typeof referenceCacheRef.current)[] = ['statuses', 'navigators', 'vendors', 'menuItems', 'boxTypes', 'categories', 'settings'];
+            const keys: (keyof typeof referenceCacheRef.current)[] = ['statuses', 'navigators', 'vendors', 'globalLocations', 'menuItems', 'boxTypes', 'categories', 'settings'];
             const refreshFns: { [key: string]: () => Promise<any> } = {
                 statuses: () => serverActions.getStatuses(),
                 navigators: () => serverActions.getNavigators(),
                 vendors: () => serverActions.getVendors(),
+                globalLocations: () => serverActions.getGlobalLocations(),
                 menuItems: () => serverActions.getMenuItems(),
                 boxTypes: () => serverActions.getBoxTypes(),
                 categories: () => serverActions.getCategories(),
@@ -236,6 +246,7 @@ export function DataCacheProvider({ children }: { children: React.ReactNode }) {
         getStatuses,
         getNavigators,
         getVendors,
+        getGlobalLocations,
         getMenuItems,
         getBoxTypes,
         getCategories,

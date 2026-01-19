@@ -7,7 +7,7 @@ import {
     Users, FileText, CheckCircle, XCircle, Clock, Download,
     MessageSquare, Pencil, Trash2, Check, Save, Trash, Loader2, Plus
 } from 'lucide-react';
-import { ClientProfile, ClientStatus, Navigator, Submission } from '@/lib/types';
+import { ClientProfile, ClientStatus, Navigator, Submission, GlobalLocation } from '@/lib/types';
 import { useState, useEffect } from 'react';
 import { addDependent, getDependentsByParentId, updateClient, deleteClient } from '@/lib/actions';
 import { getSingleForm, deleteSubmission, getClientSubmissions } from '@/lib/form-actions';
@@ -21,6 +21,7 @@ interface ClientInfoShelfProps {
     client: ClientProfile;
     statuses: ClientStatus[];
     navigators: Navigator[];
+    globalLocations?: GlobalLocation[];
     orderSummary: React.ReactNode;
     submissions?: Submission[];
     allClients?: ClientProfile[];
@@ -36,6 +37,7 @@ export function ClientInfoShelf({
     client,
     statuses,
     navigators,
+    globalLocations = [],
     orderSummary,
     submissions = [],
     allClients = [],
@@ -57,6 +59,7 @@ export function ClientInfoShelf({
         fullName: client.fullName,
         statusId: client.statusId,
         navigatorId: client.navigatorId,
+        locationId: client.locationId || '',
         phoneNumber: client.phoneNumber,
         secondaryPhoneNumber: client.secondaryPhoneNumber || '',
         email: client.email || '',
@@ -124,6 +127,7 @@ export function ClientInfoShelf({
 
     const status = statuses.find(s => s.id === (isEditing ? editForm.statusId : client.statusId));
     const navigator = navigators.find(n => n.id === (isEditing ? editForm.navigatorId : client.navigatorId));
+    const location = globalLocations?.find(l => l.id === (isEditing ? editForm.locationId : client.locationId));
 
     const handleSave = async (): Promise<boolean> => {
         // Intercept for Navigator Status Change
@@ -371,6 +375,7 @@ export function ClientInfoShelf({
                                         fullName: client.fullName,
                                         statusId: client.statusId,
                                         navigatorId: client.navigatorId,
+                                        locationId: client.locationId || '',
                                         phoneNumber: client.phoneNumber,
                                         secondaryPhoneNumber: client.secondaryPhoneNumber || '',
                                         email: client.email || '',
@@ -443,20 +448,45 @@ export function ClientInfoShelf({
                                 </div>
                             </div>
                             <div className={styles.infoItem}>
-                                <div className={styles.label}>Status</div>
-                                <div className={styles.value}>
-                                    {isEditing ? (
-                                        <select
-                                            className={styles.editSelect}
-                                            value={editForm.statusId}
-                                            onChange={e => setEditForm({ ...editForm, statusId: e.target.value })}
-                                        >
-                                            <option value="">Select Status</option>
-                                            {statuses.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-                                        </select>
-                                    ) : (
-                                        status?.name || 'Unknown'
-                                    )}
+                                <div style={{ display: 'flex', gap: '12px' }}>
+                                    <div style={{ flex: 1 }}>
+                                        <div className={styles.label}>Status</div>
+                                        <div className={styles.value}>
+                                            {isEditing ? (
+                                                <select
+                                                    className={styles.editSelect}
+                                                    value={editForm.statusId}
+                                                    onChange={e => setEditForm({ ...editForm, statusId: e.target.value })}
+                                                >
+                                                    <option value="">Select Status</option>
+                                                    {statuses.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                                                </select>
+                                            ) : (
+                                                status?.name || 'Unknown'
+                                            )}
+                                        </div>
+                                    </div>
+                                    <div style={{ flex: 1 }}>
+                                        <div className={styles.label}>Location</div>
+                                        <div className={styles.value}>
+                                            {isEditing ? (
+                                                <select
+                                                    className={styles.editSelect}
+                                                    value={editForm.locationId}
+                                                    onChange={e => setEditForm({ ...editForm, locationId: e.target.value })}
+                                                >
+                                                    <option value="">No Location</option>
+                                                    {globalLocations && globalLocations.length > 0 ? (
+                                                        globalLocations.map(l => <option key={l.id} value={l.id}>{l.name}</option>)
+                                                    ) : (
+                                                        <option disabled>No locations found</option>
+                                                    )}
+                                                </select>
+                                            ) : (
+                                                location?.name || 'Unassigned'
+                                            )}
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
                             <div className={styles.infoItem}>

@@ -4,7 +4,7 @@ import { ClientProfileDetail } from './ClientProfile';
 import { ClientInfoShelf } from './ClientInfoShelf';
 
 import { useState, useEffect, useRef } from 'react';
-import { ClientProfile, ClientStatus, Navigator, Vendor, BoxType, ClientFullDetails, MenuItem } from '@/lib/types';
+import { ClientProfile, ClientStatus, Navigator, Vendor, BoxType, ClientFullDetails, MenuItem, GlobalLocation } from '@/lib/types';
 import {
     getClientsPaginated,
     getClientFullDetails,
@@ -22,7 +22,8 @@ import {
     getUpcomingOrderForClient as serverGetUpcomingOrderForClient,
     getCompletedOrdersWithDeliveryProof as serverGetCompletedOrdersWithDeliveryProof,
     getBatchClientDetails,
-    getClient
+    getClient,
+    getGlobalLocations
 } from '@/lib/actions';
 import { invalidateClientData } from '@/lib/cached-data';
 import { Plus, Search, ChevronRight, CheckSquare, Square, StickyNote, Package, ArrowUpDown, ArrowUp, ArrowDown, Filter, Eye, EyeOff, Loader2, AlertCircle, X, RefreshCcw } from 'lucide-react';
@@ -42,6 +43,7 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
     const [boxTypes, setBoxTypes] = useState<BoxType[]>([]);
     const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
     const [allClientsForLookup, setAllClientsForLookup] = useState<ClientProfile[]>([]);
+    const [globalLocations, setGlobalLocations] = useState<GlobalLocation[]>([]);
     const [mealItems, setMealItems] = useState<MenuItem[]>([]);
     const [search, setSearch] = useState('');
     const [isLoading, setIsLoading] = useState(true);
@@ -162,14 +164,15 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
         try {
             // Fetch ALL data in parallel. 
             // Note: getClients now returns ALL clients, not paginated.
-            const [sData, nData, vData, bData, mData, mealData, allClients] = await Promise.all([
+            const [sData, nData, vData, bData, mData, mealData, allClients, gLocs] = await Promise.all([
                 getStatuses(),
                 getNavigators(),
                 getVendors(),
                 getBoxTypes(),
                 getMenuItems(),
                 getMealItems(),
-                getClients()
+                getClients(),
+                getGlobalLocations()
             ]);
 
             setStatuses(sData);
@@ -179,6 +182,7 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
             setMenuItems(mData);
             setMealItems(mealData as any);
             setClients(allClients); // Set ALL clients at once
+            setGlobalLocations(Array.isArray(gLocs) ? gLocs : (gLocs as any).success ? (gLocs as any).data : []);
             // setTotalClients(allClients.length); // Not strictly needed if not paginating
             setAllClientsForLookup(allClients);
         } catch (error) {
@@ -193,14 +197,15 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
         try {
             invalidateClientData();
 
-            const [sData, nData, vData, bData, mData, mealData, allClients] = await Promise.all([
+            const [sData, nData, vData, bData, mData, mealData, allClients, gLocs] = await Promise.all([
                 getStatuses(),
                 getNavigators(),
                 getVendors(),
                 getBoxTypes(),
                 getMenuItems(),
                 getMealItems(),
-                getClients()
+                getClients(),
+                getGlobalLocations()
             ]);
 
             setStatuses(sData);
@@ -210,6 +215,7 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
             setMenuItems(mData);
             setMealItems(mealData as any);
             setClients(allClients);
+            setGlobalLocations(Array.isArray(gLocs) ? gLocs : (gLocs as any).success ? (gLocs as any).data : []);
             setAllClientsForLookup(allClients);
         } catch (error) {
             console.error("Error refreshing data:", error);
@@ -1877,6 +1883,7 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
                         client={detailsCache[infoShelfClientId]?.client || clients.find(c => c.id === infoShelfClientId)!}
                         statuses={statuses}
                         navigators={navigators}
+                        globalLocations={globalLocations}
                         orderSummary={getOrderSummary(detailsCache[infoShelfClientId]?.client || clients.find(c => c.id === infoShelfClientId)!, true)}
                         submissions={detailsCache[infoShelfClientId]?.submissions || []}
                         allClients={allClientsForLookup}

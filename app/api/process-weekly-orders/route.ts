@@ -538,7 +538,7 @@ export async function GET(request: NextRequest) {
 
                     if (vendorSelections) {
                         for (const vs of vendorSelections) {
-                            const vendor = vendors.find(v => v.id === vs.vendor_id);
+                            const vendor = vendors.find((v: any) => v.id === vs.vendor_id);
 
                             // Fetch items for this vendor selection
                             const { data: items } = await supabase
@@ -557,7 +557,7 @@ export async function GET(request: NextRequest) {
 
                             if (items) {
                                 for (const item of items) {
-                                    const menuItem = menuItems.find(m => m.id === item.menu_item_id);
+                                    const menuItem = menuItems.find((m: any) => m.id === item.menu_item_id);
                                     vendorSummary.items.push({
                                         itemId: item.menu_item_id,
                                         itemName: menuItem?.name || 'Unknown Item',
@@ -587,7 +587,7 @@ export async function GET(request: NextRequest) {
 
                     if (boxSelections && boxSelections.length > 0) {
                         for (const bs of boxSelections) {
-                            const vendor = vendors.find(v => v.id === bs.vendor_id);
+                            const vendor = vendors.find((v: any) => v.id === bs.vendor_id);
 
                             orderSummary.vendorDetails.push({
                                 vendorId: bs.vendor_id || null,
@@ -611,7 +611,7 @@ export async function GET(request: NextRequest) {
 
                     if (vendorSelections) {
                         for (const vs of vendorSelections) {
-                            const vendor = vendors.find(v => v.id === vs.vendor_id);
+                            const vendor = vendors.find((v: any) => v.id === vs.vendor_id);
 
                             const vendorSummary: any = {
                                 vendorId: vs.vendor_id,
@@ -987,7 +987,7 @@ export async function GET(request: NextRequest) {
                         for (const vendorDetail of orderSummary.vendorDetails) {
                             if (!vendorDetail.vendorId) continue;
 
-                            const vendor = vendors.find(v => v.id === vendorDetail.vendorId);
+                            const vendor = vendors.find((v: any) => v.id === vendorDetail.vendorId);
                             if (!vendor) continue;
 
                             // Calculate take effect date and scheduled delivery date for this vendor
@@ -1073,7 +1073,7 @@ export async function GET(request: NextRequest) {
                             const vendorId = vendorDetail.vendorId;
                             if (!vendorId) continue;
 
-                            const vendor = vendors.find(v => v.id === vendorId);
+                            const vendor = vendors.find((v: any) => v.id === vendorId);
                             if (!vendor) continue;
 
                             // Calculate take effect date and scheduled delivery date for this vendor
@@ -1089,7 +1089,7 @@ export async function GET(request: NextRequest) {
                             const uniqueCaseId = generateUniqueCaseId();
 
                             // Calculate totals for this vendor's box selection
-                            const boxType = boxTypes.find(b => b.id === vendorDetail.boxTypeId);
+                            const boxType = boxTypes.find((b: any) => b.id === vendorDetail.boxTypeId);
                             const boxValue = boxType?.priceEach || 0;
                             const boxQuantity = vendorDetail.quantity || 0;
                             const totalValue = boxValue * boxQuantity;
@@ -1154,7 +1154,7 @@ export async function GET(request: NextRequest) {
 
                             let deliveryDay = (order as any).delivery_day;
                             if (!deliveryDay) {
-                                const vendor = vendors.find(v => v.id === vendorId);
+                                const vendor = vendors.find((v: any) => v.id === vendorId);
                                 if (vendor && vendor.deliveryDays.length > 0) deliveryDay = vendor.deliveryDays[0];
                             }
 

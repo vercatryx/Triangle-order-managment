@@ -387,6 +387,7 @@ export async function getSubmissionByToken(token: string) {
         // Fetch client info if client_id exists
         let client = null;
         if (submission.client_id) {
+            const { getClient } = await import('./actions');
             client = await getClient(submission.client_id);
         }
 
@@ -506,8 +507,8 @@ export async function getClientSubmissions(clientId: string) {
 // --- EMAIL ACTIONS ---
 
 import { sendEmail } from './email';
-import { getNutritionists } from './actions';
-import { getClient } from './actions';
+// Imports moved to dynamic imports inside functions to avoid circular dependency
+
 
 export async function sendSubmissionToNutritionist(
     nutritionistId: string,
@@ -517,6 +518,7 @@ export async function sendSubmissionToNutritionist(
 ): Promise<{ success: boolean; error?: string }> {
     try {
         // Get nutritionist
+        const { getNutritionists } = await import('./actions');
         const nutritionists = await getNutritionists();
         const nutritionist = nutritionists.find(n => n.id === nutritionistId);
 
@@ -531,6 +533,7 @@ export async function sendSubmissionToNutritionist(
         // Get client info if available
         let clientInfo = '';
         if (clientId) {
+            const { getClient } = await import('./actions');
             const client = await getClient(clientId);
             if (client) {
                 clientInfo = `<p><strong>Client:</strong> ${client.fullName}</p>`;

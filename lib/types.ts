@@ -38,6 +38,9 @@ export interface ClientProfile {
 
   mealOrder?: ClientMealOrder; // Start including linked meal orders for display
 
+  // Location Binding
+  locationId?: string | null;
+
   createdAt: string;
   updatedAt: string;
 }
@@ -178,6 +181,18 @@ export interface ClientStatus {
   requiresUnitsOnChange?: boolean; // If true, navigators will be prompted to add units when switching to this status
 }
 
+export interface GlobalLocation {
+  id: string;
+  name: string;
+}
+
+export interface VendorLocation {
+  id: string; // The ID of the link (vendor_locations primary key)
+  vendorId: string;
+  locationId: string; // Reference to GlobalLocation
+  name: string; // Denormalized name for UI convenience
+}
+
 export interface Vendor {
   id: string;
   name: string;
@@ -189,6 +204,7 @@ export interface Vendor {
   serviceTypes: ServiceType[]; // Vendor can support multiple service types
   minimumMeals?: number; // Minimum meals/value required when ordering from this vendor (default 0, meaning no minimum)
   cutoffDays?: number; // Days before delivery cutoff
+  locations?: VendorLocation[]; // New field for locations
 }
 
 export interface ItemCategory {

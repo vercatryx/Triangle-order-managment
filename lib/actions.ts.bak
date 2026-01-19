@@ -3,7 +3,7 @@
 
 import { getCurrentTime } from './time';
 import { revalidatePath } from 'next/cache';
-import { cache as reactCache } from 'react';
+import { cache } from 'react';
 import { supabase } from './supabase';
 import { ClientStatus, Vendor, MenuItem, BoxType, AppSettings, Navigator, Nutritionist, ClientProfile, DeliveryRecord, ItemCategory, BoxQuota, ServiceType, Equipment, ClientFoodOrder, ClientMealOrder, ClientBoxOrder } from './types';
 import { uploadFile, deleteFile } from './storage';
@@ -22,7 +22,7 @@ function handleError(error: any) {
 
 // --- STATUS ACTIONS ---
 
-export const getStatuses = reactCache(async function () {
+export const getStatuses = cache(async function () {
     const { data, error } = await supabase.from('client_statuses').select('*').order('created_at', { ascending: true });
     if (error) {
         console.error('Error fetching statuses:', error);
@@ -87,7 +87,7 @@ export async function updateStatus(id: string, data: Partial<ClientStatus>) { //
 
 // --- VENDOR ACTIONS ---
 
-export const getVendors = reactCache(async function () {
+export const getVendors = cache(async function () {
     const { data, error } = await supabase.from('vendors').select('*');
     if (error) return [];
 
@@ -375,7 +375,7 @@ export async function uploadMenuItemImage(formData: FormData) {
 
 // --- MENU ACTIONS ---
 
-export const getMenuItems = reactCache(async function () {
+export const getMenuItems = cache(async function () {
     const { data, error } = await supabase.from('menu_items')
         .select('*')
         .order('sort_order', { ascending: true })
@@ -1000,7 +1000,7 @@ export async function deleteBoxQuota(id: string) {
 
 // --- BOX TYPE ACTIONS ---
 
-export const getBoxTypes = reactCache(async function () {
+export const getBoxTypes = cache(async function () {
     const { data, error } = await supabase.from('box_types').select('*');
     if (error) return [];
     return data.map((b: any) => ({
@@ -1247,7 +1247,7 @@ export async function getClientsLight() {
     }));
 }
 
-export const getClient = reactCache(async function (id: string) {
+export const getClient = cache(async function (id: string) {
     const { data, error } = await supabase.from('clients').select('*').eq('id', id).single();
     if (error || !data) return undefined;
     return mapClientFromDB(data);
@@ -2381,7 +2381,7 @@ function calculateTakeEffectDateForDay(deliveryDay: string, vendors: Vendor[], v
 /**
  * Helper function to sync a single order configuration for a specific delivery day
  */
-export async function syncSingleOrderForDeliveryDay(
+async function syncSingleOrderForDeliveryDay(
     clientId: string,
     orderConfig: any,
     deliveryDay: string | null,
@@ -4448,7 +4448,7 @@ export async function getOrdersByVendor(vendorId: string) {
     }
 }
 
-export async function processVendorOrderDetails(supabaseClient: any, order: any, vendorId: string, isUpcoming: boolean) {
+async function processVendorOrderDetails(supabaseClient: any, order: any, vendorId: string, isUpcoming: boolean) {
     const orderIdField = isUpcoming ? 'upcoming_order_id' : 'order_id';
     const vendorSelectionsTable = isUpcoming ? 'upcoming_order_vendor_selections' : 'order_vendor_selections';
     const itemsTable = isUpcoming ? 'upcoming_order_items' : 'order_items';
