@@ -35,6 +35,7 @@ interface Props {
 }
 
 export function ClientPortalInterface({ client: initialClient, statuses, navigators, vendors, menuItems, boxTypes, categories, upcomingOrder, activeOrder, previousOrders, mealCategories, mealItems, foodOrder, mealOrder, boxOrders }: Props) {
+    console.error(">>> [HEARTBEAT] ClientPortalInterface Rendered <<<");
     const router = useRouter();
     const [client, setClient] = useState<ClientProfile>(initialClient);
     const [activeBoxQuotas, setActiveBoxQuotas] = useState<BoxQuota[]>([]);
@@ -107,7 +108,7 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
         const serviceType = client.serviceType;
 
         if (serviceType === 'Food' && foodOrder) {
-            console.log('[ClientPortal] Hydrating from foodOrder:', foodOrder);
+
             let foodOrderForUI = { ...foodOrder } as any;
 
             // Convert deliveryDayOrders from DB back to vendorSelections with itemsByDay for UI
@@ -149,7 +150,7 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
             source = 'foodOrder';
 
         } else if (serviceType === 'Meal' && mealOrder) {
-            console.log('[ClientPortal] Hydrating from mealOrder:', mealOrder);
+
             configToSet = { ...mealOrder, serviceType: 'Meal' };
             if (!configToSet.caseId && client.activeOrder?.caseId) {
                 configToSet.caseId = client.activeOrder.caseId;
@@ -157,7 +158,7 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
             source = 'mealOrder';
 
         } else if (serviceType === 'Boxes' && boxOrders && boxOrders.length > 0) {
-            console.log('[ClientPortal] Hydrating from boxOrders:', boxOrders);
+
             configToSet = {
                 boxOrders,
                 serviceType: 'Boxes',
@@ -244,7 +245,7 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
             }
         }
 
-        console.log(`[ClientPortal] Initialized orderConfig from source: ${source}`);
+
         setOrderConfig(configToSet);
         const deepCopy = JSON.parse(JSON.stringify(configToSet));
         setOriginalOrderConfig(deepCopy);
@@ -309,21 +310,21 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
     // Watch for Vendor Additions
     useEffect(() => {
         const currentVendorCount = orderConfig.vendorSelections ? orderConfig.vendorSelections.length : 0;
-        console.log('[AutoScroll] Vendor Effect: current=', currentVendorCount, 'prev=', prevVendorCountRef.current);
+
 
         if (currentVendorCount > prevVendorCountRef.current) {
             setTimeout(() => {
                 const newIndex = currentVendorCount - 1;
                 const elementId = `vendor-block-${newIndex}`;
                 const element = document.getElementById(elementId);
-                console.log('[AutoScroll] Trying to scroll to Vendor:', elementId, 'Found:', !!element);
+
 
                 if (element) {
                     element.scrollIntoView({ behavior: 'smooth', block: 'center' });
                 } else {
                     setTimeout(() => {
                         const elRetry = document.getElementById(elementId);
-                        console.log('[AutoScroll] Retry scrolling to Vendor:', elementId, 'Found:', !!elRetry);
+
                         if (elRetry) elRetry.scrollIntoView({ behavior: 'smooth', block: 'center' });
                     }, 300);
                 }
@@ -336,24 +337,24 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
     useEffect(() => {
         const currentKeys = Object.keys(orderConfig.mealSelections || {});
         const prevKeys = prevMealKeysRef.current;
-        console.log('[AutoScroll] Meal Effect: current=', currentKeys.length, 'prev=', prevKeys.length);
+
 
         if (currentKeys.length > prevKeys.length) {
             const newKey = currentKeys.find(k => !prevKeys.includes(k));
-            console.log('[AutoScroll] New Meal Key detected:', newKey);
+
 
             if (newKey) {
                 setTimeout(() => {
                     const elementId = `meal-block-${newKey}`;
                     const element = document.getElementById(elementId);
-                    console.log('[AutoScroll] Trying to scroll to Meal:', elementId, 'Found:', !!element);
+
 
                     if (element) {
                         element.scrollIntoView({ behavior: 'smooth', block: 'center' });
                     } else {
                         setTimeout(() => {
                             const elRetry = document.getElementById(elementId);
-                            console.log('[AutoScroll] Retry scrolling to Meal:', elementId, 'Found:', !!elRetry);
+
                             if (elRetry) elRetry.scrollIntoView({ behavior: 'smooth', block: 'center' });
                         }, 300);
                     }
@@ -366,21 +367,21 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
     // Watch for Box Additions
     useEffect(() => {
         const currentBoxCount = orderConfig.boxOrders ? orderConfig.boxOrders.length : 0;
-        console.log('[AutoScroll] Box Effect: current=', currentBoxCount, 'prev=', prevBoxCountRef.current);
+
 
         if (currentBoxCount > prevBoxCountRef.current) {
             setTimeout(() => {
                 const newIndex = currentBoxCount - 1;
                 const elementId = `box-block-${newIndex}`;
                 const element = document.getElementById(elementId);
-                console.log('[AutoScroll] Trying to scroll to Box:', elementId, 'Found:', !!element);
+
 
                 if (element) {
                     element.scrollIntoView({ behavior: 'smooth', block: 'center' });
                 } else {
                     setTimeout(() => {
                         const elRetry = document.getElementById(elementId);
-                        console.log('[AutoScroll] Retry scrolling to Box:', elementId, 'Found:', !!elRetry);
+
                         if (elRetry) elRetry.scrollIntoView({ behavior: 'smooth', block: 'center' });
                     }, 300);
                 }
@@ -398,70 +399,94 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
         error: null as string | null
     });
 
+    // Calculate total meal count for header
+    const totalMealCount = useMemo(() => {
+        let total = 0;
+        const countedItemIdsGlobally = new Set<string>();
+
+        try {
+            if (orderConfig.serviceType === 'Food') {
+                // Vendors
+                if (orderConfig.vendorSelections) {
+                    orderConfig.vendorSelections.forEach((sel: any) => {
+                        // Skip if no vendorId to match validation logic, but let's be careful.
+                        // Actually, header SHOULD match what's visible. If visible but no ID, still count it?
+                        // The user said "Header is 21 (correct)". So let's keep it as is but add logs.
+
+                        if (sel.itemsByDay && sel.selectedDeliveryDays) {
+                            sel.selectedDeliveryDays.forEach((day: string) => {
+                                const items = sel.itemsByDay[day] || {};
+                                Object.entries(items).forEach(([id, qty]) => {
+                                    countedItemIdsGlobally.add(id);
+                                    const item = menuItems.find(i => i.id === id);
+                                    total += (Number(qty) || 0) * (item?.value || 0);
+                                });
+                            });
+                        } else if (sel.items) {
+                            const multiplier = (sel.selectedDeliveryDays?.length || (client as any).delivery_days?.length || 1);
+                            Object.entries(sel.items).forEach(([id, qty]) => {
+                                countedItemIdsGlobally.add(id);
+                                const item = menuItems.find(i => i.id === id);
+                                total += (Number(qty) || 0) * (item?.value || 0) * multiplier;
+                            });
+                        }
+                    });
+                }
+                // Meals
+                if (orderConfig.mealSelections) {
+                    Object.values(orderConfig.mealSelections).forEach((conf: any) => {
+                        if (conf.items) {
+                            Object.entries(conf.items).forEach(([id, qty]) => {
+                                // De-duplicate if already in vendor loop
+                                if (countedItemIdsGlobally.has(id)) return;
+
+                                const item = mealItems.find(i => i.id === id);
+                                total += (Number(qty) || 0) * (item?.value || 0);
+                            });
+                        }
+                    });
+                }
+            } else if (orderConfig.serviceType === 'Meal') {
+                if (orderConfig.mealSelections) {
+                    Object.values(orderConfig.mealSelections).forEach((conf: any) => {
+                        if (conf.items) {
+                            Object.entries(conf.items).forEach(([id, qty]) => {
+                                const item = mealItems.find(i => i.id === id);
+                                total += (Number(qty) || 0) * (item?.value || 0);
+                            });
+                        }
+                    });
+                }
+            }
+        } catch (e) {
+            console.error('[totalMealCount] Calculation Error:', e);
+        }
+        return total;
+    }, [orderConfig, menuItems, mealItems, client]);
+
     // Real-time Validation Effect
     useEffect(() => {
         validateOrder();
-    }, [orderConfig, client.approvedMealsPerWeek, client.serviceType]);
+    }, [orderConfig, client.approvedMealsPerWeek, client.serviceType, totalMealCount, menuItems, mealItems]);
 
     function validateOrder() {
-        if (!client || !orderConfig) return;
-        const serviceType = client.serviceType;
-        let isValid = true;
-        let error: string | null = null;
-        let totalValue = 0;
+        try {
+            if (!client || !orderConfig) {
 
-        // 1. Food Service Validation (Limits & Minimums)
-        if (serviceType === 'Food' && orderConfig.vendorSelections) {
-
-            // Calculate Total Value
-            console.log('--- [VALIDATION TRACE START] ---');
-            for (const selection of orderConfig.vendorSelections) {
-                if (!selection.vendorId) continue;
-
-                console.log(`Processing Vendor: ${selection.vendorId}`);
-
-                if (selection.itemsByDay && selection.selectedDeliveryDays && selection.selectedDeliveryDays.length > 0) {
-                    // Multi-day
-                    const activeDays = selection.selectedDeliveryDays || [];
-                    console.log(`  > Mode: MULTI-DAY. Days: ${activeDays.join(', ')}`);
-
-                    for (const day of activeDays) {
-                        const dayItems = selection.itemsByDay[day] || {};
-                        console.log(`    > Day: ${day}, Items:`, dayItems);
-                        for (const [itemId, qty] of Object.entries(dayItems)) {
-                            const item = menuItems.find(i => i.id === itemId);
-                            const val = (item?.value || 0);
-                            const q = (Number(qty) || 0);
-                            const subtotal = val * q;
-                            totalValue += subtotal;
-                            console.log(`      + Item ${item?.name} (${itemId}): Val ${val} * Qty ${q} = ${subtotal}. (Running Total: ${totalValue})`);
-                        }
-                    }
-                } else if (selection.items) {
-                    // Single/Flat Mode
-                    const daysCount = (selection.selectedDeliveryDays && selection.selectedDeliveryDays.length > 0)
-                        ? selection.selectedDeliveryDays.length
-                        : ((client as any).delivery_days?.length || 1);
-
-                    console.log(`  > Mode: FLAT. Days Count: ${daysCount} (Source: ${selection.selectedDeliveryDays && selection.selectedDeliveryDays.length > 0 ? 'Selection' : 'Client Default'})`);
-                    console.log(`  > Selection Days:`, selection.selectedDeliveryDays);
-                    console.log(`  > Client Days:`, (client as any).delivery_days);
-
-                    for (const [itemId, qty] of Object.entries(selection.items)) {
-                        const item = menuItems.find(i => i.id === itemId);
-                        // Using standardized calculation consistent with display requirements
-                        const val = (item?.value || 0);
-                        const q = (Number(qty) || 0);
-                        const subtotal = val * q * daysCount;
-                        totalValue += subtotal;
-                        console.log(`      + Item ${item?.name} (${itemId}): Val ${val} * Qty ${q} * Days ${daysCount} = ${subtotal}. (Running Total: ${totalValue})`);
-                    }
-                }
+                return;
             }
-            console.log(`--- [VALIDATION TRACE END] Food/Vendor Selection Total: ${totalValue} ---`);
+            const serviceType = client.serviceType;
+            let isValid = true;
+            let error: string | null = null;
+            let totalValue = totalMealCount;
 
-            // Check Vendor Minimums (if generic limit check passed)
-            if (isValid) {
+
+
+            // Detailed Trace to Console
+
+
+            if (serviceType === 'Food' && orderConfig.vendorSelections) {
+                // Check Vendor Minimums
                 for (const selection of orderConfig.vendorSelections) {
                     if (!selection.vendorId) continue;
                     const vendor = vendors.find(v => v.id === selection.vendorId);
@@ -500,166 +525,110 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
                     if (!isValid) break;
                 }
             }
-        }
 
-        // 1.5. Add Meal Selections to Total Value (Independent of serviceType === 'Food' to support 'Meal' service)
-        if (orderConfig.mealSelections) {
-            console.log('--- [VALIDATION TRACE] Adding Meal Selections ---');
-            for (const [mealType, config] of Object.entries(orderConfig.mealSelections) as [string, any][]) {
-                if (config.items) {
-                    for (const [itemId, qty] of Object.entries(config.items)) {
-                        const item = mealItems.find(i => i.id === itemId);
-                        const val = (item?.value || 0);
-                        const q = (Number(qty) || 0);
-                        const subtotal = val * q;
-                        totalValue += subtotal;
-                        console.log(`      + Meal Item ${item?.name} (${itemId}) [${mealType}]: Val ${val} * Qty ${q} = ${subtotal}. (Running Total: ${totalValue})`);
-                    }
-                }
+            // Check Approved Limit
+            const limit = client.approvedMealsPerWeek || 0;
+            if (limit > 0 && isExceedingMaximum(totalValue, limit)) {
+                error = `Total value selected (${totalValue.toFixed(2)}) exceeds approved value per week (${limit}). Please reduce your order.`;
+                isValid = false;
             }
-        }
 
-        // Check Approved Limit
-        const limit = client.approvedMealsPerWeek || 0;
-        if (limit > 0 && isExceedingMaximum(totalValue, limit)) {
-            error = `Total value selected (${totalValue.toFixed(2)}) exceeds approved value per week (${limit}). Please reduce your order.`;
-            isValid = false;
-        }
+            // 2. Meal Service Validation (Exact Targets per Category)
+            if (isValid && orderConfig.mealSelections) {
+                for (const [uniqueKey, config] of Object.entries(orderConfig.mealSelections) as [string, any][]) {
+                    const mealType = config.mealType || uniqueKey.split('_')[0];
+                    const catsForThisType = mealCategories.filter(c => c.mealType === mealType);
 
-        // 2. Meal Service Validation (Exact Targets per Category)
-        if (isValid && orderConfig.mealSelections) {
-            for (const [uniqueKey, config] of Object.entries(orderConfig.mealSelections) as [string, any][]) {
-                const mealType = config.mealType || uniqueKey.split('_')[0];
-                const catsForThisType = mealCategories.filter(c => c.mealType === mealType);
+                    for (const cat of catsForThisType) {
+                        if (cat.setValue !== undefined && cat.setValue !== null) {
+                            let selectedValue = 0;
+                            if (config.items) {
+                                Object.entries(config.items).forEach(([itemId, qty]) => {
+                                    const item = mealItems.find(i => i.id === itemId);
+                                    if (item && item.categoryId === cat.id) {
+                                        selectedValue += (item.value || 0) * (Number(qty) || 0);
+                                    }
+                                });
+                            }
 
-                for (const cat of catsForThisType) {
-                    if (cat.setValue !== undefined && cat.setValue !== null) {
-                        let selectedValue = 0;
-                        if (config.items) {
-                            Object.entries(config.items).forEach(([itemId, qty]) => {
-                                const item = mealItems.find(i => i.id === itemId);
-                                if (item && item.categoryId === cat.id) {
-                                    selectedValue += (item.value || 0) * (Number(qty) || 0);
-                                }
-                            });
-                        }
-
-                        if (!isMeetingExactTarget(selectedValue, cat.setValue)) {
-                            isValid = false;
-                            error = `Please select exactly ${cat.setValue} items for ${mealType} - ${cat.name}. (Current: ${selectedValue})`;
-                            break;
+                            if (!isMeetingExactTarget(selectedValue, cat.setValue)) {
+                                isValid = false;
+                                error = `Please select exactly ${cat.setValue} items for ${mealType} - ${cat.name}. (Current: ${selectedValue})`;
+                                break;
+                            }
                         }
                     }
+                    if (!isValid) break;
                 }
-                if (!isValid) break;
             }
-        }
 
-        // 3. Box Service Validation
-        if (isValid && serviceType === 'Boxes' && orderConfig.boxOrders) {
-            orderConfig.boxOrders.forEach((box: any, boxIdx: number) => {
-                if (!isValid) return;
-
-                categories.forEach(category => {
+            // 3. Box Service Validation
+            if (isValid && serviceType === 'Boxes' && orderConfig.boxOrders) {
+                orderConfig.boxOrders.forEach((box: any, boxIdx: number) => {
                     if (!isValid) return;
 
-                    const selectedItems = box.items || {};
-                    let categoryQuotaValue = 0;
+                    categories.forEach(category => {
+                        if (!isValid) return;
 
-                    Object.entries(selectedItems).forEach(([itemId, qty]) => {
-                        const item = menuItems.find(i => i.id === itemId);
-                        if (item && item.categoryId === category.id) {
-                            const itemQuotaValue = item.quotaValue || 1;
-                            categoryQuotaValue += (qty as number) * itemQuotaValue;
+                        const selectedItems = box.items || {};
+                        let categoryQuotaValue = 0;
+
+                        Object.entries(selectedItems).forEach(([itemId, qty]) => {
+                            const item = menuItems.find(i => i.id === itemId);
+                            if (item && item.categoryId === category.id) {
+                                const itemQuotaValue = item.quotaValue || 1;
+                                categoryQuotaValue += (qty as number) * itemQuotaValue;
+                            }
+                        });
+
+                        let requiredQuotaValue: number | null = null;
+                        if (category.setValue !== undefined && category.setValue !== null) {
+                            requiredQuotaValue = category.setValue;
+                        } else if (box.boxTypeId) {
+                            const quota = activeBoxQuotas.find(q => q.boxTypeId === box.boxTypeId && q.categoryId === category.id);
+                            if (quota) {
+                                requiredQuotaValue = quota.targetValue;
+                            }
+                        }
+
+                        if (requiredQuotaValue !== null && !isMeetingExactTarget(categoryQuotaValue, requiredQuotaValue)) {
+                            error = `Box #${boxIdx + 1} - ${category.name}: Selected ${categoryQuotaValue} pts, but required is ${requiredQuotaValue} pts.`;
+                            isValid = false;
                         }
                     });
-
-                    let requiredQuotaValue: number | null = null;
-                    if (category.setValue !== undefined && category.setValue !== null) {
-                        requiredQuotaValue = category.setValue;
-                    } else if (box.boxTypeId) {
-                        const quota = activeBoxQuotas.find(q => q.boxTypeId === box.boxTypeId && q.categoryId === category.id);
-                        if (quota) {
-                            requiredQuotaValue = quota.targetValue;
-                        }
-                    }
-
-                    if (requiredQuotaValue !== null && !isMeetingExactTarget(categoryQuotaValue, requiredQuotaValue)) {
-                        error = `Box #${boxIdx + 1} - ${category.name}: Selected ${categoryQuotaValue} pts, but required is ${requiredQuotaValue} pts.`;
-                        isValid = false;
-                    }
                 });
-            });
-        }
+            }
 
-        setValidationStatus({ isValid, totalValue, error });
+            setValidationStatus({ isValid, totalValue, error });
+        } catch (err) {
+            console.error("[validateOrder] CRASHED:", err);
+            setValidationStatus(prev => ({ ...prev, isValid: false, error: "Validation system crashed. Check console." }));
+        }
     }
 
     // Manual Save Logic
     const handleSave = async () => {
-        if (!client || !orderConfig) return;
+        if (!client || !orderConfig) {
+            console.error("[handleSave] Component data missing");
+            return;
+        }
+
+        const serviceType = client.serviceType;
+        const caseId = (client as any).caseID;
+
+        window.alert("DEBUG: handleSave Triggered. Current Items Count (Header): " + totalMealCount);
+        console.error("!!! [handleSave] CALLED !!!", { validationStatus, totalMealCount });
 
         // For Food clients, caseId is required. For Boxes, it's optional
-        if (serviceType === 'Food' && !caseId) return;
+        if (serviceType === 'Food' && !caseId) {
+            console.error("[handleSave] Missing caseId for Food client");
+            return;
+        }
 
         // Use Pre-calculated validation status
         if (!validationStatus.isValid) {
             // Trigger the detailed modal when user attempts to save an invalid order
             setValidationError(validationStatus.error);
-
-            // Log details for debugging
-            console.error("SAVE BLOCKED. Validation Status:", validationStatus);
-            console.log("Order Config at blocked save:", orderConfig);
-
-            // RE-RUN LOGGING LOOP MANUALLY TO SHOW USER
-            console.log('--- [MANUAL SAVE VALIDATION TRACE START] ---');
-            let manualTotal = 0;
-            if (serviceType === 'Food' && orderConfig.vendorSelections) {
-                for (const selection of orderConfig.vendorSelections) {
-                    if (!selection.vendorId) continue;
-
-                    console.log(`Processing Vendor: ${selection.vendorId}`);
-
-                    if (selection.itemsByDay && selection.selectedDeliveryDays && selection.selectedDeliveryDays.length > 0) {
-                        // Multi-day
-                        const activeDays = selection.selectedDeliveryDays || [];
-                        console.log(`  > Mode: MULTI-DAY. Days: ${activeDays.join(', ')}`);
-
-                        for (const day of activeDays) {
-                            const dayItems = selection.itemsByDay[day] || {};
-                            console.log(`    > Day: ${day}, Items:`, dayItems);
-                            for (const [itemId, qty] of Object.entries(dayItems)) {
-                                const item = menuItems.find(i => i.id === itemId);
-                                const val = (item?.value || 0);
-                                const q = (Number(qty) || 0);
-                                const subtotal = val * q;
-                                manualTotal += subtotal;
-                                console.log(`      + Item ${item?.name} (${itemId}): Val ${val} * Qty ${q} = ${subtotal}. (Running Total: ${manualTotal})`);
-                            }
-                        }
-                    } else if (selection.items) {
-                        // Single/Flat Mode
-                        const daysCount = (selection.selectedDeliveryDays && selection.selectedDeliveryDays.length > 0)
-                            ? selection.selectedDeliveryDays.length
-                            : ((client as any).delivery_days?.length || 1);
-
-                        console.log(`  > Mode: FLAT. Days Count: ${daysCount} (Source: ${selection.selectedDeliveryDays && selection.selectedDeliveryDays.length > 0 ? 'Selection' : 'Client Default'})`);
-                        console.log(`  > Selection Days:`, selection.selectedDeliveryDays);
-                        console.log(`  > Client Days:`, (client as any).delivery_days);
-
-                        for (const [itemId, qty] of Object.entries(selection.items)) {
-                            const item = menuItems.find(i => i.id === itemId);
-                            const val = (item?.value || 0);
-                            const q = (Number(qty) || 0);
-                            const subtotal = val * q * daysCount;
-                            manualTotal += subtotal;
-                            console.log(`      + Item ${item?.name} (${itemId}): Val ${val} * Qty ${q} * Days ${daysCount} = ${subtotal}. (Running Total: ${manualTotal})`);
-                        }
-                    }
-                }
-            }
-            console.log(`--- [MANUAL SAVE VALIDATION TRACE END] Final Total: ${manualTotal} ---`);
-
             return;
         }
 
@@ -801,7 +770,7 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
                 // Save meal orders if service type is Meal OR if there are meal selections
                 // Note: We intentionally save empty objects {} to clear data if user deleted all meals
                 if (cleanedOrderConfig.mealSelections) {
-                    console.log('DEBUG: Saving Meal Order:', cleanedOrderConfig.mealSelections);
+
                     await saveClientMealOrder(client.id, {
                         caseId: cleanedOrderConfig.caseId,
                         mealSelections: cleanedOrderConfig.mealSelections
@@ -1000,55 +969,6 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
 
     const configChanged = JSON.stringify(orderConfig) !== JSON.stringify(originalOrderConfig);
 
-    // Calculate total meal count for header
-    const totalMealCount = useMemo(() => {
-        let total = 0;
-        if (orderConfig.serviceType === 'Food') {
-            // Vendors
-            if (orderConfig.vendorSelections) {
-                orderConfig.vendorSelections.forEach((sel: any) => {
-                    if (sel.itemsByDay && sel.selectedDeliveryDays) {
-                        sel.selectedDeliveryDays.forEach((day: string) => {
-                            const items = sel.itemsByDay[day] || {};
-                            Object.entries(items).forEach(([id, qty]) => {
-                                const item = menuItems.find(i => i.id === id);
-                                total += (Number(qty) || 0) * (item?.value || 0);
-                            });
-                        });
-                    } else if (sel.items) {
-                        const multiplier = (sel.selectedDeliveryDays?.length || (client as any).delivery_days?.length || 1);
-                        Object.entries(sel.items).forEach(([id, qty]) => {
-                            const item = menuItems.find(i => i.id === id);
-                            total += (Number(qty) || 0) * (item?.value || 0) * multiplier;
-                        });
-                    }
-                });
-            }
-            // Meals
-            if (orderConfig.mealSelections) {
-                Object.values(orderConfig.mealSelections).forEach((conf: any) => {
-                    if (conf.items) {
-                        Object.entries(conf.items).forEach(([id, qty]) => {
-                            const item = mealItems.find(i => i.id === id);
-                            total += (Number(qty) || 0) * (item?.value || 0);
-                        });
-                    }
-                });
-            }
-        } else if (orderConfig.serviceType === 'Meal') {
-            if (orderConfig.mealSelections) {
-                Object.values(orderConfig.mealSelections).forEach((conf: any) => {
-                    if (conf.items) {
-                        Object.entries(conf.items).forEach(([id, qty]) => {
-                            const item = mealItems.find(i => i.id === id);
-                            total += (Number(qty) || 0) * (item?.value || 0);
-                        });
-                    }
-                });
-            }
-        }
-        return total;
-    }, [orderConfig, menuItems, mealItems, client]);
 
 
     // Handlers needed for Header

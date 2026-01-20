@@ -170,6 +170,7 @@ function DuplicateNameConfirmationModal({
 }
 
 export function ClientProfileDetail({ clientId: propClientId, onClose, initialData, statuses: initialStatuses, navigators: initialNavigators, vendors: initialVendors, menuItems: initialMenuItems, boxTypes: initialBoxTypes, currentUser, onBackgroundSave }: Props): ReactNode {
+
     const router = useRouter();
     const params = useParams();
     const propClientIdValue = (params?.id as string) || propClientId;
@@ -476,7 +477,7 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
             let foodOrderForUI = { ...data.foodOrder } as any;
 
             if (foodOrderForUI.deliveryDayOrders && !foodOrderForUI.vendorSelections) {
-                console.log('[LOAD] Converting deliveryDayOrders to vendorSelections with itemsByDay');
+
 
                 // Build a map of vendors across all days
                 const vendorMap = new Map<string, any>();
@@ -510,7 +511,7 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                 }
 
                 foodOrderForUI.vendorSelections = Array.from(vendorMap.values());
-                console.log('[LOAD] Converted to vendorSelections:', foodOrderForUI.vendorSelections);
+
             }
 
             setFoodOrderConfig(foodOrderForUI);
@@ -525,7 +526,7 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
 
                 // CRITICAL: Merge mealSelections from mealOrder if it exists
                 if (data.mealOrder && data.mealOrder.mealSelections) {
-                    console.log('[LOAD] Merging mealSelections into Food orderConfig:', data.mealOrder.mealSelections);
+
                     conf.mealSelections = data.mealOrder.mealSelections;
                 }
 
@@ -542,7 +543,7 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
         if (data.mealOrder) {
             // Meal orders are already in the correct format (mealSelections)
             // No conversion needed - just set directly
-            console.log('[LOAD] Loading mealOrder:', data.mealOrder);
+
 
             setMealOrderConfig(data.mealOrder);
             setOriginalMealOrderConfig(JSON.parse(JSON.stringify(data.mealOrder)));
@@ -597,7 +598,7 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
             }
 
             if (customData && customData.serviceType === 'Custom') {
-                console.log('[LOAD] Hydrating Custom order from upcoming:', customData);
+
                 const conf = {
                     serviceType: 'Custom',
                     caseId: customData.caseId || data.client.activeOrder?.caseId,
@@ -613,7 +614,7 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                 setOriginalOrderConfig(JSON.parse(JSON.stringify(conf)));
             } else if (data.client.activeOrder && data.client.activeOrder.serviceType === 'Custom') {
                 // Fallback to activeOrder from client profile if upcoming not found
-                console.log('[LOAD] Hydrating Custom order from client.activeOrder');
+
                 const conf = { ...data.client.activeOrder };
                 setOrderConfig(conf);
                 setOriginalOrderConfig(JSON.parse(JSON.stringify(conf)));
@@ -893,13 +894,7 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
         // If no upcoming order exists, fall back to active_order from clients table
         // If no active_order exists, initialize with default based on service type
         if (c) {
-            console.log('[ClientProfile] loadData - Debugging Boxes Vendor', {
-                clientId: c.id,
-                serviceType: c.serviceType,
-                upcomingOrderData: JSON.stringify(upcomingOrderData, null, 2),
-                activeOrderData: JSON.stringify(activeOrderData, null, 2),
-                clientActiveOrder: JSON.stringify(c.activeOrder, null, 2)
-            });
+
             let configToSet: any = null;
             if (upcomingOrderData) {
                 // Check if it's the multi-day format (object keyed by delivery day, not deliveryDayOrders)
@@ -964,7 +959,7 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
 
             // Validate Config: If Boxes and missing critical fields, reject it
             if (configToSet && c.serviceType === 'Boxes' && !configToSet.vendorId && !configToSet.boxTypeId) {
-                console.log('[ClientProfile] loadData - Discarding invalid upcoming order config for Boxes', configToSet);
+
                 configToSet = null;
             }
 
@@ -992,10 +987,7 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                 // boxTypes (b) is available in scope from Promise.all
                 const boxType = b.find((bt: any) => bt.id === configToSet.boxTypeId);
                 if (boxType && boxType.vendorId) {
-                    console.log('[ClientProfile] loadData - Recovered missing vendorId from boxType', {
-                        boxTypeId: configToSet.boxTypeId,
-                        recoveredVendorId: boxType.vendorId
-                    });
+
                     configToSet.vendorId = boxType.vendorId;
                 }
             }
@@ -1102,12 +1094,7 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
             }
         }
 
-        // Also check deliveryDayOrders format (for saved data)
-        if (orderConfig.deliveryDayOrders) {
-            for (const day of Object.keys(orderConfig.deliveryDayOrders)) {
-                total += getTotalMealCount(day);
-            }
-        }
+        // REMOVED individual deliveryDayOrders loop as it causes double-counting (it's already in currentSelections)
 
         // Include meal selections (Breakfast, Lunch, etc.)
         if (orderConfig.mealSelections) {
@@ -1130,32 +1117,40 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
         // It consolidates deliveryDayOrders if they exist, or returns vendorSelections.
         const currentSelections = getVendorSelectionsForDay(null);
         let total = 0;
+        const countedItemIdsGlobally = new Set<string>(); // Tracker to prevent double counting across sections
 
         for (const selection of currentSelections || []) {
             if (!selection.vendorId) continue;
 
-            if (selection.itemsByDay && selection.selectedDeliveryDays && selection.selectedDeliveryDays.length > 0) {
+            if (selection.itemsByDay && selection.selectedDeliveryDays) {
                 // Multi-day / Per-vendor delivery days format
-                const activeDays = selection.selectedDeliveryDays;
+                const activeDays = selection.selectedDeliveryDays || [];
+
+
                 for (const day of activeDays) {
                     const dayItems = selection.itemsByDay[day] || {};
                     for (const [itemId, qty] of Object.entries(dayItems)) {
                         const item = menuItems.find(i => i.id === itemId);
                         const itemPrice = item ? (item.value || 0) : 0;
-                        total += itemPrice * (Number(qty) || 0);
+                        const subtotal = itemPrice * (Number(qty) || 0);
+                        total += subtotal;
+                        countedItemIdsGlobally.add(itemId);
+
                     }
                 }
             } else if (selection.items) {
                 // Normal single-day / Flat format
                 // Must multiply by number of days!
-                const daysCount = (selection.selectedDeliveryDays && selection.selectedDeliveryDays.length > 0)
+                const daysCount = (selection.selectedDeliveryDays)
                     ? selection.selectedDeliveryDays.length
                     : ((client as any).delivery_days?.length || 1);
 
                 for (const [itemId, qty] of Object.entries(selection.items)) {
                     const item = menuItems.find(i => i.id === itemId);
                     const itemPrice = item ? (item.value || 0) : 0;
-                    total += itemPrice * (Number(qty) || 0) * daysCount;
+                    const subtotal = itemPrice * (Number(qty) || 0) * daysCount;
+                    total += subtotal;
+                    countedItemIdsGlobally.add(itemId);
                 }
             }
         }
@@ -1166,13 +1161,19 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
 
         // Include meal selections (Breakfast, Lunch, etc.)
         if (orderConfig.mealSelections) {
-            for (const config of Object.values(orderConfig.mealSelections)) {
+            for (const [key, config] of Object.entries(orderConfig.mealSelections)) {
                 const typedConfig = config as { vendorId?: string | null; items: { [itemId: string]: number } };
                 if (typedConfig.items) {
                     for (const [itemId, qty] of Object.entries(typedConfig.items)) {
+                        // CRITICAL: Prevent double counting across formats
+                        if (countedItemIdsGlobally.has(itemId)) {
+                            continue;
+                        }
+
                         const item = mealItems.find(i => i.id === itemId);
                         if (item) {
-                            total += item.quotaValue * (Number(qty) || 0);
+                            const subtotal = (item.quotaValue || 1) * (Number(qty) || 0);
+                            total += subtotal;
                         }
                     }
                 }
@@ -1324,7 +1325,11 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
             // Check total meals (Value - aligned with UI) vs Approved Limit
             const totalValue = getCurrentOrderTotalValueAllDays();
             const approvedMeals = formData.approvedMealsPerWeek || 0;
+
+
+
             if (approvedMeals > 0 && isExceedingMaximum(totalValue, approvedMeals)) {
+
                 setValidationError(`Total value selected (${totalValue.toFixed(2)}) exceeds approved value per week (${approvedMeals}).`);
                 return { isValid: false, messages: [`Total value selected (${totalValue.toFixed(2)}) exceeds approved value per week (${approvedMeals}).`] };
             }
@@ -1813,8 +1818,26 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
 
     // Helper: Get vendor selections for a specific delivery day (or consolidated if day is null)
     function getVendorSelectionsForDay(day: string | null): any[] {
+        // Prioritize vendorSelections as the primary source of truth during an edit session
+        // CRITICAL FIX: Array existence (even if empty) should stop the fallback to stale data.
+        if (Array.isArray(orderConfig.vendorSelections)) {
+            if (day) {
+                // If a specific day is requested, we need to extract from itemsByDay or filter
+                return orderConfig.vendorSelections.map((sel: any) => {
+                    if (sel.itemsByDay && sel.selectedDeliveryDays?.includes(day)) {
+                        return { ...sel, items: sel.itemsByDay[day] || {} };
+                    }
+                    if (sel.items && (!sel.selectedDeliveryDays || sel.selectedDeliveryDays.includes(day))) {
+                        return sel;
+                    }
+                    return null;
+                }).filter(Boolean);
+            }
+            return orderConfig.vendorSelections;
+        }
+
         if (!orderConfig.deliveryDayOrders) {
-            return orderConfig.vendorSelections || [];
+            return [];
         }
 
         if (day) {
@@ -3978,7 +4001,6 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
     );
 
     async function handleSave(): Promise<boolean> {
-
         if (!client && !isNewClient) {
             return false;
         }
@@ -4014,20 +4036,15 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
         // Only show units modal if the new status requires units on change
         // Skip this check for new clients
         if (!isNewClient && client) {
-            console.log('[DEBUG] Checking status change:', {
-                role: currentUser?.role,
-                currentStatusId: client.statusId,
-                newStatusId: formData.statusId,
-                statusesLoaded: statuses.length
-            });
+
 
             if (currentUser?.role === 'navigator' && formData.statusId !== client.statusId) {
                 const newStatus = statuses.find(s => s.id === formData.statusId);
-                console.log('[DEBUG] Status change detected for Navigator. New Status:', newStatus);
+
 
                 // Only show modal if the new status has requiresUnitsOnChange enabled
                 if (newStatus?.requiresUnitsOnChange) {
-                    console.log('[DEBUG] Units required for this status. Triggering modal.');
+
                     try {
                         const oldStatusName = getStatusName(client.statusId);
                         const newStatusName = getStatusName(formData.statusId!);
@@ -4038,7 +4055,7 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                         console.error('[handleSave] Error in status change logic:', e);
                     }
                 } else {
-                    console.log('[DEBUG] Units NOT required for this status.');
+
                 }
             }
         }
@@ -4287,7 +4304,7 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                     };
                 });
             }
-            console.log('[prepareActiveOrder] Box Orders prepared:', JSON.stringify(cleanedOrderConfig.boxOrders, null, 2));
+
         }
 
         return {

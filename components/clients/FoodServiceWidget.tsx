@@ -38,7 +38,7 @@ export default function FoodServiceWidget({
     isClientPortal,
     validationStatus
 }: Props) {
-    console.log('[FoodServiceWidget] RENDER orderConfig:', orderConfig);
+
 
     // --- EFFECTIVE DATE BANNER LOGIC ---
     const renderEffectiveDateBanner = () => {
@@ -171,11 +171,22 @@ export default function FoodServiceWidget({
         }
 
         let total = 0;
+        const countedItemIdsGlobally = new Set<string>();
 
         // If editing in 'vendorSelections' mode (transient state before save)
         if (orderConfig.vendorSelections) {
             for (const selection of orderConfig.vendorSelections) {
-                total += getVendorMealCount(selection.vendorId, selection);
+                const count = getVendorMealCount(selection.vendorId, selection);
+                total += count;
+
+                // Track IDs to prevent overlap with mealSelections
+                if (selection.itemsByDay) {
+                    Object.values(selection.itemsByDay).forEach((dayItems: any) => {
+                        Object.keys(dayItems).forEach(id => countedItemIdsGlobally.add(id));
+                    });
+                } else if (selection.items) {
+                    Object.keys(selection.items).forEach(id => countedItemIdsGlobally.add(id));
+                }
             }
         } else if (orderConfig.deliveryDayOrders) {
             // If in saved/multi-day format
@@ -185,6 +196,7 @@ export default function FoodServiceWidget({
                 for (const sel of daySelections) {
                     const items = sel.items || {};
                     total += Object.entries(items).reduce((sum: number, [itemId, qty]) => {
+                        countedItemIdsGlobally.add(itemId);
                         const item = menuItems.find(i => i.id === itemId);
                         // Use item.value for meal count
                         const multiplier = item ? (item.value || 0) : 0;
@@ -199,6 +211,9 @@ export default function FoodServiceWidget({
             for (const config of Object.values(orderConfig.mealSelections) as any[]) {
                 if (config.items) {
                     for (const [itemId, qty] of Object.entries(config.items)) {
+                        // OMIT if already counted in vendor selections
+                        if (countedItemIdsGlobally.has(itemId)) continue;
+
                         const item = mealItems.find(i => i.id === itemId);
                         const multiplier = item ? (item.value || 0) : 0;
                         total += (Number(qty) || 0) * multiplier;
@@ -338,7 +353,7 @@ export default function FoodServiceWidget({
     }
 
     function handleVendorItemChange(blockIndex: number, itemId: string, qty: number, day?: string, note?: string) {
-        console.log(`[FoodServiceWidget] handleVendorItemChange: index=${blockIndex}, item=${itemId}, qty=${qty}, day=${day}, note=${note}`);
+
         setOrderConfig((prev: any) => {
             const newConfig = { ...prev };
             if (newConfig.vendorSelections && newConfig.vendorSelections[blockIndex]) {
@@ -398,7 +413,7 @@ export default function FoodServiceWidget({
     }
 
     function handleDeliveryDayToggle(blockIndex: number, day: string) {
-        console.log('Toggling delivery day:', day, 'for block:', blockIndex);
+
         setOrderConfig((prev: any) => {
             const newConfig = { ...prev };
             if (newConfig.vendorSelections && newConfig.vendorSelections[blockIndex]) {
@@ -892,7 +907,7 @@ export default function FoodServiceWidget({
         }
         if (Array.from(vendorMap.values()).length > 0) {
             currentSelections = Array.from(vendorMap.values());
-            console.log('[FoodServiceWidget] Multi-day parsing complete. currentSelections:', currentSelections);
+
         }
     }
 
