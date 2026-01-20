@@ -1370,7 +1370,8 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
 
             // Validate Meal Selections (Breakfast, Lunch, Dinner, etc.)
             if (orderConfig.mealSelections) {
-                Object.entries(orderConfig.mealSelections).forEach(([mealType, config]: [string, any]) => {
+                Object.entries(orderConfig.mealSelections).forEach(([key, config]: [string, any]) => {
+                    const mealType = config.mealType || key.split('_')[0];
                     // Get all sub-categories for this meal type (e.g., Hot Breakfast, Cold Breakfast)
                     const subCategories = mealCategories.filter(c => c.mealType === mealType);
 
@@ -2056,22 +2057,26 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
     function handleAddMeal(mealType: string) {
         setOrderConfig((prev: any) => {
             const newConfig = { ...prev };
-            if (!newConfig.mealSelections) newConfig.mealSelections = {};
-            if (!newConfig.mealSelections[mealType]) {
-                newConfig.mealSelections[mealType] = {
-                    vendorId: '', // User can select optional vendor
-                    items: {}
-                };
-            }
+            // Shallow copy mealSelections to allow change detection
+            newConfig.mealSelections = { ...(newConfig.mealSelections || {}) };
+
+            const uniqueKey = `${mealType}_${Date.now()}`;
+            newConfig.mealSelections[uniqueKey] = {
+                mealType,
+                vendorId: '',
+                items: {}
+            };
             return newConfig;
         });
     }
 
-    function handleRemoveMeal(mealType: string) {
+    function handleRemoveMeal(uniqueKey: string) {
         setOrderConfig((prev: any) => {
             const newConfig = { ...prev };
             if (newConfig.mealSelections) {
-                delete newConfig.mealSelections[mealType];
+                const updatedSelections = { ...newConfig.mealSelections };
+                delete updatedSelections[uniqueKey];
+                newConfig.mealSelections = updatedSelections;
                 if (Object.keys(newConfig.mealSelections).length === 0) {
                     delete newConfig.mealSelections;
                 }
@@ -2080,27 +2085,33 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
         });
     }
 
-    function handleMealVendorChange(mealType: string, vendorId: string) {
+    function handleMealVendorChange(uniqueKey: string, vendorId: string) {
         setOrderConfig((prev: any) => {
             const newConfig = { ...prev };
-            if (newConfig.mealSelections && newConfig.mealSelections[mealType]) {
-                newConfig.mealSelections[mealType].vendorId = vendorId;
+            if (newConfig.mealSelections && newConfig.mealSelections[uniqueKey]) {
+                newConfig.mealSelections[uniqueKey] = {
+                    ...newConfig.mealSelections[uniqueKey],
+                    vendorId: vendorId
+                };
             }
             return newConfig;
         });
     }
 
-    function handleMealItemChange(mealType: string, itemId: string, qty: number) {
+    function handleMealItemChange(uniqueKey: string, itemId: string, qty: number) {
         setOrderConfig((prev: any) => {
             const newConfig = { ...prev };
-            if (newConfig.mealSelections && newConfig.mealSelections[mealType]) {
-                const updatedItems = { ...newConfig.mealSelections[mealType].items };
+            if (newConfig.mealSelections && newConfig.mealSelections[uniqueKey]) {
+                const updatedItems = { ...(newConfig.mealSelections[uniqueKey].items || {}) };
                 if (qty > 0) {
                     updatedItems[itemId] = qty;
                 } else {
                     delete updatedItems[itemId];
                 }
-                newConfig.mealSelections[mealType].items = updatedItems;
+                newConfig.mealSelections[uniqueKey] = {
+                    ...newConfig.mealSelections[uniqueKey],
+                    items: updatedItems
+                };
             }
             return newConfig;
         });
@@ -2108,14 +2119,15 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
 
     const renderMealBlocks = () => {
         if (!orderConfig?.mealSelections) return null;
-        return Object.entries(orderConfig.mealSelections).map(([mealType, config]: [string, any]) => {
+        return Object.entries(orderConfig.mealSelections).map(([uniqueKey, config]: [string, any]) => {
+            const mealType = config.mealType || uniqueKey.split('_')[0];
             const category = mealCategories.find(c => c.mealType === mealType);
             let totalSelectedValue = 0;
             if (config.items) {
                 for (const [itemId, qty] of Object.entries(config.items)) {
                     const item = mealItems.find(i => i.id === itemId);
                     if (item) {
-                        totalSelectedValue += (item.quotaValue * (qty as number));
+                        totalSelectedValue += ((item.quotaValue || 1) * (qty as number));
                     }
                 }
             }
@@ -2124,7 +2136,7 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
             const isInvalid = requiredValue !== undefined && requiredValue !== null && totalSelectedValue !== requiredValue;
 
             return (
-                <div key={mealType} className={styles.vendorBlock} style={{
+                <div key={uniqueKey} className={styles.vendorBlock} style={{
                     borderLeft: '4px solid var(--color-primary)',
                     border: isInvalid ? '2px solid #ef4444' : undefined,
                     backgroundColor: isInvalid ? '#fef2f2' : undefined
@@ -2143,7 +2155,7 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                             <select
                                 className="input"
                                 value={config.vendorId || ''}
-                                onChange={(e) => handleMealVendorChange(mealType, e.target.value)}
+                                onChange={(e) => handleMealVendorChange(uniqueKey, e.target.value)}
                                 style={{ width: '200px' }}
                             >
                                 <option value="">Select Vendor (Optional)...</option>
@@ -2151,7 +2163,7 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                                     <option key={v.id} value={v.id}>{v.name}</option>
                                 ))}
                             </select>
-                            <button className={`${styles.iconBtn} ${styles.danger}`} onClick={() => handleRemoveMeal(mealType)}>
+                            <button className={`${styles.iconBtn} ${styles.danger}`} onClick={() => handleRemoveMeal(uniqueKey)}>
                                 <Trash2 size={16} />
                             </button>
                         </div>
@@ -2171,13 +2183,13 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
                                             <span>
                                                 {item.name}
                                                 <span style={{ color: 'var(--text-tertiary)', fontSize: '0.9em', marginLeft: '4px' }}>
-                                                    (Value: {item.quotaValue})
+                                                    (Value: {item.quotaValue || 1})
                                                 </span>
                                             </span>
                                             <div className={styles.quantityControl} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                                <button onClick={() => handleMealItemChange(mealType, item.id, Math.max(0, qty - 1))} className="btn btn-secondary" style={{ padding: '2px 8px' }}>-</button>
+                                                <button onClick={() => handleMealItemChange(uniqueKey, item.id, Math.max(0, qty - 1))} className="btn btn-secondary" style={{ padding: '2px 8px' }}>-</button>
                                                 <span style={{ width: '20px', textAlign: 'center' }}>{qty}</span>
-                                                <button onClick={() => handleMealItemChange(mealType, item.id, qty + 1)} className="btn btn-secondary" style={{ padding: '2px 8px' }}>+</button>
+                                                <button onClick={() => handleMealItemChange(uniqueKey, item.id, qty + 1)} className="btn btn-secondary" style={{ padding: '2px 8px' }}>+</button>
                                             </div>
                                         </label>
                                     </div>

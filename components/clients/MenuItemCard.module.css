@@ -6,6 +6,7 @@
     border-radius: var(--radius-md);
     overflow: hidden;
     transition: all 0.2s ease;
+    height: 100%;
 }
 
 .card:hover {
@@ -20,13 +21,24 @@
 
 .imageContainer {
     width: 100%;
-    height: 140px;
     background-color: var(--bg-surface-hover);
     display: flex;
     align-items: center;
     justify-content: center;
     overflow: hidden;
     position: relative;
+    transition: all 0.2s ease;
+}
+
+.hasImage {
+    height: 140px;
+    flex: 0 0 auto;
+}
+
+.noImage {
+    height: 0;
+    flex: 1 1 0;
+    min-height: 0;
 }
 
 .image {
@@ -42,6 +54,14 @@
     align-items: center;
     gap: 8px;
     font-size: 0.9rem;
+    position: absolute;
+    opacity: 0;
+    transition: opacity 0.2s;
+}
+
+.noImage .placeholder,
+.fallbackActive .placeholder {
+    opacity: 1;
 }
 
 .content {
@@ -49,7 +69,7 @@
     display: flex;
     flex-direction: column;
     gap: 8px;
-    flex: 1;
+    flex: 0 0 auto;
 }
 
 .header {
@@ -343,7 +363,7 @@
 }
 
 @media (max-width: 640px) {
-    .imageContainer {
+    .hasImage {
         height: 120px;
     }
 

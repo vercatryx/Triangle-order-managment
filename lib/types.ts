@@ -226,6 +226,8 @@ export interface MenuItem {
   minimumOrder?: number; // Minimum order quantity required for this product (default 0, meaning no minimum)
   imageUrl?: string | null;
   sortOrder?: number;
+  notesEnabled?: boolean;
+  deliveryDays?: string[] | null;
 }
 
 export interface MealCategory {
@@ -247,6 +249,7 @@ export interface MealItem {
   vendorId?: string; // Optional as legacy items might not have it yet
   imageUrl?: string | null;
   sortOrder?: number;
+  notesEnabled?: boolean;
 }
 
 export interface BoxQuota {

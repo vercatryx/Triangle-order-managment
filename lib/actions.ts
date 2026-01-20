@@ -408,6 +408,8 @@ export const getMenuItems = reactCache(async function () {
         minimumOrder: i.minimum_order ?? 0,
         imageUrl: i.image_url || null,
         sortOrder: i.sort_order ?? 0,
+        notesEnabled: i.notes_enabled ?? false,
+        deliveryDays: i.delivery_days || null,
         itemType: 'menu'
     }));
 });
@@ -423,7 +425,9 @@ export async function addMenuItem(data: Omit<MenuItem, 'id'>) {
         minimum_order: data.minimumOrder ?? 0,
         price_each: data.priceEach, // Mandatory
         image_url: data.imageUrl || null,
-        sort_order: data.sortOrder ?? 0
+        sort_order: data.sortOrder ?? 0,
+        notes_enabled: data.notesEnabled ?? false,
+        delivery_days: data.deliveryDays || null
     };
 
     if (!data.priceEach || data.priceEach <= 0) {
@@ -449,6 +453,8 @@ export async function updateMenuItem(id: string, data: Partial<MenuItem>) {
     if (data.minimumOrder !== undefined) payload.minimum_order = data.minimumOrder;
     if (data.imageUrl !== undefined) payload.image_url = data.imageUrl;
     if (data.sortOrder !== undefined) payload.sort_order = data.sortOrder;
+    if (data.notesEnabled !== undefined) payload.notes_enabled = data.notesEnabled;
+    if (data.deliveryDays !== undefined) payload.delivery_days = data.deliveryDays;
 
     if (data.vendorId !== undefined) payload.vendor_id = data.vendorId || null;
 
@@ -645,18 +651,20 @@ export async function getMealItems() {
         vendorId: i.vendor_id,
         imageUrl: i.image_url || null,
         sortOrder: i.sort_order ?? 0,
+        notesEnabled: i.notes_enabled ?? false,
         itemType: 'meal'
     }));
 }
 
-export async function addMealItem(data: { categoryId: string, name: string, quotaValue: number, priceEach?: number, isActive: boolean, imageUrl?: string | null, sortOrder?: number }) {
+export async function addMealItem(data: { categoryId: string, name: string, quotaValue: number, priceEach?: number, isActive: boolean, imageUrl?: string | null, sortOrder?: number, notesEnabled?: boolean }) {
     const payload: any = {
         category_id: data.categoryId,
         name: data.name,
         quota_value: data.quotaValue,
         is_active: data.isActive,
         image_url: data.imageUrl || null,
-        sort_order: data.sortOrder ?? 0
+        sort_order: data.sortOrder ?? 0,
+        notes_enabled: data.notesEnabled ?? false
     };
     if (data.priceEach !== undefined) {
         payload.price_each = data.priceEach;
@@ -669,7 +677,7 @@ export async function addMealItem(data: { categoryId: string, name: string, quot
     return { ...data, id: res.id };
 }
 
-export async function updateMealItem(id: string, data: Partial<{ name: string, quotaValue: number, priceEach?: number, isActive: boolean, imageUrl?: string | null, sortOrder?: number }>) {
+export async function updateMealItem(id: string, data: Partial<{ name: string, quotaValue: number, priceEach?: number, isActive: boolean, imageUrl?: string | null, sortOrder?: number, notesEnabled?: boolean }>) {
     const payload: any = {};
     if (data.name) payload.name = data.name;
     if (data.quotaValue !== undefined) payload.quota_value = data.quotaValue;
@@ -677,6 +685,7 @@ export async function updateMealItem(id: string, data: Partial<{ name: string, q
     if (data.isActive !== undefined) payload.is_active = data.isActive;
     if (data.imageUrl !== undefined) payload.image_url = data.imageUrl;
     if (data.sortOrder !== undefined) payload.sort_order = data.sortOrder;
+    if (data.notesEnabled !== undefined) payload.notes_enabled = data.notesEnabled;
 
     // R2 Cleanup: If image is being updated/removed, delete the old one
     if (data.imageUrl !== undefined) {
@@ -5795,6 +5804,77 @@ export async function getOrderById(orderId: string) {
         orderDetails: orderDetails
     };
 };
+
+export async function deleteOrder(orderId: string) {
+    if (!orderId) {
+        return { success: false, message: 'Order ID is required' };
+    }
+
+    try {
+        // Use Service Role to bypass RLS
+        const supabaseAdmin = createClient(
+            process.env.NEXT_PUBLIC_SUPABASE_URL!,
+            process.env.SUPABASE_SERVICE_ROLE_KEY!,
+            { auth: { persistSession: false } }
+        );
+
+        // 1. Get vendor selections to find related items
+        const { data: vendorSelections } = await supabaseAdmin
+            .from('order_vendor_selections')
+            .select('id')
+            .eq('order_id', orderId);
+
+        if (vendorSelections && vendorSelections.length > 0) {
+            const vsIds = vendorSelections.map(vs => vs.id);
+
+            // 2. Delete order items
+            const { error: itemsError } = await supabaseAdmin
+                .from('order_items')
+                .delete()
+                .in('vendor_selection_id', vsIds);
+
+            if (itemsError) throw itemsError;
+
+            // 3. Delete vendor selections
+            const { error: vsError } = await supabaseAdmin
+                .from('order_vendor_selections')
+                .delete()
+                .eq('order_id', orderId);
+
+            if (vsError) throw vsError;
+        }
+
+        // 4. Delete box selections
+        const { error: boxError } = await supabaseAdmin
+            .from('order_box_selections')
+            .delete()
+            .eq('order_id', orderId);
+
+        if (boxError) throw boxError;
+
+        // 5. Delete the order itself
+        const { error: orderError } = await supabaseAdmin
+            .from('orders')
+            .delete()
+            .eq('id', orderId);
+
+        if (orderError) throw orderError;
+
+        // Revalidate paths
+        revalidatePath('/orders');
+        revalidatePath(`/orders/${orderId}`);
+        revalidatePath('/billing'); // Orders might affect billing view
+
+        // Trigger local DB sync in background
+        const { triggerSyncInBackground } = await import('./local-db');
+        triggerSyncInBackground();
+
+        return { success: true };
+    } catch (error: any) {
+        console.error('Error deleting order:', error);
+        return { success: false, message: error.message || 'An unknown error occurred' };
+    }
+}
 
 /**
  * Efficiently fetch full details for a batch of clients

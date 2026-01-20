@@ -460,30 +460,6 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
             }
             console.log(`--- [VALIDATION TRACE END] Food/Vendor Selection Total: ${totalValue} ---`);
 
-            // 1.5. Add Meal Selections to Total Value (Critical Fix for Total Count)
-            if (orderConfig.mealSelections) {
-                console.log('--- [VALIDATION TRACE] Adding Meal Selections ---');
-                for (const [mealType, config] of Object.entries(orderConfig.mealSelections) as [string, any][]) {
-                    if (config.items) {
-                        for (const [itemId, qty] of Object.entries(config.items)) {
-                            const item = mealItems.find(i => i.id === itemId);
-                            const val = (item?.value || 0);
-                            const q = (Number(qty) || 0);
-                            const subtotal = val * q;
-                            totalValue += subtotal;
-                            console.log(`      + Meal Item ${item?.name} (${itemId}) [${mealType}]: Val ${val} * Qty ${q} = ${subtotal}. (Running Total: ${totalValue})`);
-                        }
-                    }
-                }
-            }
-
-            // Check Approved Limit
-            const limit = client.approvedMealsPerWeek || 0;
-            if (limit > 0 && isExceedingMaximum(totalValue, limit)) {
-                error = `Total value selected (${totalValue.toFixed(2)}) exceeds approved value per week (${limit}). Please reduce your order.`;
-                isValid = false;
-            }
-
             // Check Vendor Minimums (if generic limit check passed)
             if (isValid) {
                 for (const selection of orderConfig.vendorSelections) {
@@ -526,25 +502,51 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
             }
         }
 
-        // 2. Meal Service Validation
-        if (isValid && orderConfig.mealSelections) {
+        // 1.5. Add Meal Selections to Total Value (Independent of serviceType === 'Food' to support 'Meal' service)
+        if (orderConfig.mealSelections) {
+            console.log('--- [VALIDATION TRACE] Adding Meal Selections ---');
             for (const [mealType, config] of Object.entries(orderConfig.mealSelections) as [string, any][]) {
-                const subCategories = mealCategories.filter(c => c.mealType === mealType);
-                for (const subCat of subCategories) {
-                    if (subCat.setValue !== undefined && subCat.setValue !== null) {
-                        let totalSelectedValue = 0;
+                if (config.items) {
+                    for (const [itemId, qty] of Object.entries(config.items)) {
+                        const item = mealItems.find(i => i.id === itemId);
+                        const val = (item?.value || 0);
+                        const q = (Number(qty) || 0);
+                        const subtotal = val * q;
+                        totalValue += subtotal;
+                        console.log(`      + Meal Item ${item?.name} (${itemId}) [${mealType}]: Val ${val} * Qty ${q} = ${subtotal}. (Running Total: ${totalValue})`);
+                    }
+                }
+            }
+        }
+
+        // Check Approved Limit
+        const limit = client.approvedMealsPerWeek || 0;
+        if (limit > 0 && isExceedingMaximum(totalValue, limit)) {
+            error = `Total value selected (${totalValue.toFixed(2)}) exceeds approved value per week (${limit}). Please reduce your order.`;
+            isValid = false;
+        }
+
+        // 2. Meal Service Validation (Exact Targets per Category)
+        if (isValid && orderConfig.mealSelections) {
+            for (const [uniqueKey, config] of Object.entries(orderConfig.mealSelections) as [string, any][]) {
+                const mealType = config.mealType || uniqueKey.split('_')[0];
+                const catsForThisType = mealCategories.filter(c => c.mealType === mealType);
+
+                for (const cat of catsForThisType) {
+                    if (cat.setValue !== undefined && cat.setValue !== null) {
+                        let selectedValue = 0;
                         if (config.items) {
-                            const catItems = mealItems.filter(i => i.categoryId === subCat.id);
-                            for (const [itemId, qty] of Object.entries(config.items)) {
-                                const item = catItems.find(i => i.id === itemId);
-                                if (item) {
-                                    totalSelectedValue += ((item.value || 0) * (qty as number));
+                            Object.entries(config.items).forEach(([itemId, qty]) => {
+                                const item = mealItems.find(i => i.id === itemId);
+                                if (item && item.categoryId === cat.id) {
+                                    selectedValue += (item.value || 0) * (Number(qty) || 0);
                                 }
-                            }
+                            });
                         }
-                        if (!isMeetingExactTarget(totalSelectedValue, subCat.setValue)) {
-                            error = `${subCat.name}: Selected ${totalSelectedValue}, but required is ${subCat.setValue}.`;
+
+                        if (!isMeetingExactTarget(selectedValue, cat.setValue)) {
                             isValid = false;
+                            error = `Please select exactly ${cat.setValue} items for ${mealType} - ${cat.name}. (Current: ${selectedValue})`;
                             break;
                         }
                     }
@@ -552,6 +554,7 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
                 if (!isValid) break;
             }
         }
+
         // 3. Box Service Validation
         if (isValid && serviceType === 'Boxes' && orderConfig.boxOrders) {
             orderConfig.boxOrders.forEach((box: any, boxIdx: number) => {
@@ -590,9 +593,7 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
         }
 
         setValidationStatus({ isValid, totalValue, error });
-        // Removed setValidationError(error) to prevent automatic modal appearance during editing
     }
-
 
     // Manual Save Logic
     const handleSave = async () => {
@@ -1034,6 +1035,17 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
                     }
                 });
             }
+        } else if (orderConfig.serviceType === 'Meal') {
+            if (orderConfig.mealSelections) {
+                Object.values(orderConfig.mealSelections).forEach((conf: any) => {
+                    if (conf.items) {
+                        Object.entries(conf.items).forEach(([id, qty]) => {
+                            const item = mealItems.find(i => i.id === id);
+                            total += (Number(qty) || 0) * (item?.value || 0);
+                        });
+                    }
+                });
+            }
         }
         return total;
     }, [orderConfig, menuItems, mealItems, client]);
@@ -1058,12 +1070,12 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
             // Shallow copy mealSelections to allow change detection
             newConfig.mealSelections = { ...(newConfig.mealSelections || {}) };
 
-            if (!newConfig.mealSelections[mealType]) {
-                newConfig.mealSelections[mealType] = {
-                    vendorId: '',
-                    items: {}
-                };
-            }
+            const uniqueKey = `${mealType}_${Date.now()}`;
+            newConfig.mealSelections[uniqueKey] = {
+                mealType,
+                vendorId: '',
+                items: {}
+            };
             return newConfig;
         });
     };
@@ -1153,44 +1165,6 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
 
                                 if (client.serviceType === 'Food') {
                                     // Banner removed - moved to Header
-                                    /*
-                                    const uniqueVendorIds = new Set<string>();
- 
-                                    // Collect vendors from either format
-                                    if (orderConfig.deliveryDayOrders) {
-                                        Object.values(orderConfig.deliveryDayOrders).forEach((dayOrder: any) => {
-                                            if (dayOrder.vendorSelections) {
-                                                dayOrder.vendorSelections.forEach((s: any) => s.vendorId && uniqueVendorIds.add(s.vendorId));
-                                            }
-                                        });
-                                    } else if (orderConfig.vendorSelections) {
-                                        orderConfig.vendorSelections.forEach((s: any) => s.vendorId && uniqueVendorIds.add(s.vendorId));
-                                    }
- 
-                                    const messages: React.ReactNode[] = [];
-                                    uniqueVendorIds.forEach(vId => {
-                                        const v = vendors.find(vend => vend.id === vId);
-                                        if (v) {
-                                            const cutoff = v.cutoffHours || 0;
-                                            const effectiveDate = calculateVendorEffectiveDate(cutoff);
-                                            const dateString = effectiveDate.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', timeZone: 'UTC' });
-                                            // messages.push(`Orders for ${v.name} must be placed ${cutoff} hours before delivery.`); // Legacy message
-                                            messages.push(
-                                                <div key={v.id}>
-                                                    Changes for <strong>{v.name}</strong> will take effect from <strong>{dateString}</strong>.
-                                                </div>
-                                            );
-                                        }
-                                    });
- 
-                                    if (messages.length > 0) {
-                                        return (
-                                            <div style={{ marginTop: '0.5rem', fontSize: '0.9rem', fontWeight: 500 }}>
-                                                {messages}
-                                            </div>
-                                        );
-                                    }
-                                    */
                                 }
 
                                 return null;
@@ -1244,9 +1218,6 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
                                                         </button>
                                                     )}
                                                 </div>
-
-
-
 
                                                 {/* Box Content Selection Reuse */}
                                                 <div style={{ marginTop: '1rem', borderTop: '1px solid var(--border-color)', paddingTop: '1rem' }}>
@@ -1374,66 +1345,70 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
                 mealItems={mealItems}
             />
 
-            {(configChanged || saving) && (
-                <>
-                    <style>{`
-                        @media (max-width: 768px) {
-                            .save-bar-container { padding: 0.75rem 1rem !important; }
-                            .save-bar-content { flex-direction: column !important; gap: 0.75rem !important; }
-                        }
-                    `}</style>
-                    <div className="save-bar-container" style={{
-                        position: 'fixed', bottom: 0, left: 0, right: 0,
-                        backgroundColor: saving ? '#d1fae5' : '#fef3c7',
-                        borderTop: saving ? '4px solid #10b981' : '4px solid #f59e0b',
-                        boxShadow: saving ? '0 -10px 30px -5px rgba(16, 185, 129, 0.4)' : '0 -10px 30px -5px rgba(245, 158, 11, 0.4)',
-                        zIndex: 1000, backdropFilter: 'blur(10px)',
-                        display: 'flex', flexDirection: 'column'
-                    }}>
-                        <div className="save-bar-content" style={{ maxWidth: '1200px', width: '100%', margin: '0 auto', display: 'flex', alignItems: 'center', padding: '12px 24px' }}>
-                            <div style={{ flex: 1, fontWeight: 600, color: saving ? '#065f46' : '#92400e' }}>
-                                {saving ? 'SAVING CHANGES...' : 'UNSAVED CHANGES'}
+            {
+                (configChanged || saving) && (
+                    <>
+                        <style>{`
+                            @media (max-width: 768px) {
+                                .save-bar-container { padding: 0.75rem 1rem !important; }
+                                .save-bar-content { flex-direction: column !important; gap: 0.75rem !important; }
+                            }
+                        `}</style>
+                        <div className="save-bar-container" style={{
+                            position: 'fixed', bottom: 0, left: 0, right: 0,
+                            backgroundColor: saving ? '#d1fae5' : '#fef3c7',
+                            borderTop: saving ? '4px solid #10b981' : '4px solid #f59e0b',
+                            boxShadow: saving ? '0 -10px 30px -5px rgba(16, 185, 129, 0.4)' : '0 -10px 30px -5px rgba(245, 158, 11, 0.4)',
+                            zIndex: 1000, backdropFilter: 'blur(10px)',
+                            display: 'flex', flexDirection: 'column'
+                        }}>
+                            <div className="save-bar-content" style={{ maxWidth: '1200px', width: '100%', margin: '0 auto', display: 'flex', alignItems: 'center', padding: '12px 24px' }}>
+                                <div style={{ flex: 1, fontWeight: 600, color: saving ? '#065f46' : '#92400e' }}>
+                                    {saving ? 'SAVING CHANGES...' : 'UNSAVED CHANGES'}
+                                </div>
+                                <div style={{ display: 'flex', gap: '12px' }}>
+                                    <button onClick={handleDiscard} className="btn btn-secondary" disabled={saving} style={{ padding: '8px 16px', borderRadius: '6px' }}>Discard</button>
+                                    <button onClick={handleSave} className="btn btn-primary" disabled={saving} style={{ padding: '8px 16px', borderRadius: '6px', background: 'var(--color-primary)', color: 'white', border: 'none' }}>{saving ? 'Saving...' : 'Save Changes'}</button>
+                                </div>
                             </div>
-                            <div style={{ display: 'flex', gap: '12px' }}>
-                                <button onClick={handleDiscard} className="btn btn-secondary" disabled={saving} style={{ padding: '8px 16px', borderRadius: '6px' }}>Discard</button>
-                                <button onClick={handleSave} className="btn btn-primary" disabled={saving} style={{ padding: '8px 16px', borderRadius: '6px', background: 'var(--color-primary)', color: 'white', border: 'none' }}>{saving ? 'Saving...' : 'Save Changes'}</button>
-                            </div>
+
+                            {/* Inline Error Banner */}
+                            {!validationStatus.isValid && validationStatus.error && (
+                                <div style={{
+                                    backgroundColor: '#fee2e2',
+                                    color: '#991b1b',
+                                    padding: '8px 24px',
+                                    fontSize: '0.85rem',
+                                    fontWeight: 500,
+                                    borderTop: '1px solid #fecaca',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '8px'
+                                }}>
+                                    <AlertTriangle size={14} />
+                                    <span>{validationStatus.error}</span>
+                                </div>
+                            )}
                         </div>
+                    </>
+                )
+            }
 
-                        {/* Inline Error Banner */}
-                        {!validationStatus.isValid && validationStatus.error && (
-                            <div style={{
-                                backgroundColor: '#fee2e2',
-                                color: '#991b1b',
-                                padding: '8px 24px',
-                                fontSize: '0.85rem',
-                                fontWeight: 500,
-                                borderTop: '1px solid #fecaca',
-                                display: 'flex',
-                                alignItems: 'center',
-                                gap: '8px'
-                            }}>
-                                <AlertTriangle size={14} />
-                                <span>{validationStatus.error}</span>
-                            </div>
-                        )}
+            {
+                validationError && (
+                    <div style={{
+                        position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+                        backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 2000,
+                        display: 'flex', alignItems: 'center', justifyContent: 'center'
+                    }}>
+                        <div style={{ background: 'white', padding: '24px', borderRadius: '8px', maxWidth: '400px' }}>
+                            <h3>Order Issue</h3>
+                            <p>{validationError}</p>
+                            <button onClick={() => setValidationError(null)} className="btn btn-primary">I Understand</button>
+                        </div>
                     </div>
-                </>
-            )}
-
-            {validationError && (
-                <div style={{
-                    position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
-                    backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 2000,
-                    display: 'flex', alignItems: 'center', justifyContent: 'center'
-                }}>
-                    <div style={{ background: 'white', padding: '24px', borderRadius: '8px', maxWidth: '400px' }}>
-                        <h3>Order Issue</h3>
-                        <p>{validationError}</p>
-                        <button onClick={() => setValidationError(null)} className="btn btn-primary">I Understand</button>
-                    </div>
-                </div>
-            )}
-        </div >
+                )
+            }
+        </div>
     );
-}
+};

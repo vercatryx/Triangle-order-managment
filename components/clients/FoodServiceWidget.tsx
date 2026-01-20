@@ -216,45 +216,53 @@ export default function FoodServiceWidget({
         setOrderConfig((prev: any) => {
             const newConfig = { ...prev };
             if (!newConfig.mealSelections) newConfig.mealSelections = {};
-            if (!newConfig.mealSelections[mealType]) {
-                newConfig.mealSelections[mealType] = {
-                    vendorId: '', // User can select optional vendor
-                    items: {}
-                };
-            }
+
+            // Create a unique key for this meal selection instance
+            const uniqueKey = `${mealType}_${Date.now()}`;
+
+            newConfig.mealSelections[uniqueKey] = {
+                mealType, // Store the original meal type for filtering/labels
+                vendorId: '', // User can select optional vendor
+                items: {}
+            };
             return newConfig;
         });
     }
 
-    function handleRemoveMeal(mealType: string) {
+    function handleRemoveMeal(uniqueKey: string) {
         setOrderConfig((prev: any) => {
             const newConfig = { ...prev };
             if (newConfig.mealSelections) {
-                delete newConfig.mealSelections[mealType];
+                delete newConfig.mealSelections[uniqueKey];
                 if (Object.keys(newConfig.mealSelections).length === 0) {
-                    newConfig.mealSelections = {}; // FIX: Keep empty object so save detects deletion
+                    newConfig.mealSelections = {};
                 }
             }
             return newConfig;
         });
     }
 
-    function handleMealVendorChange(mealType: string, vendorId: string) {
+    function handleMealVendorChange(uniqueKey: string, vendorId: string) {
         setOrderConfig((prev: any) => {
             const newConfig = { ...prev };
-            if (newConfig.mealSelections && newConfig.mealSelections[mealType]) {
-                newConfig.mealSelections[mealType].vendorId = vendorId;
+            if (newConfig.mealSelections && newConfig.mealSelections[uniqueKey]) {
+                const newSelections = { ...newConfig.mealSelections };
+                newSelections[uniqueKey] = {
+                    ...newSelections[uniqueKey],
+                    vendorId
+                };
+                newConfig.mealSelections = newSelections;
             }
             return newConfig;
         });
     }
 
-    function handleMealItemChange(mealType: string, itemId: string, qty: number, note?: string) {
+    function handleMealItemChange(uniqueKey: string, itemId: string, qty: number, note?: string) {
         setOrderConfig((prev: any) => {
             const newConfig = { ...prev };
-            if (newConfig.mealSelections && newConfig.mealSelections[mealType]) {
-                const updatedItems = { ...newConfig.mealSelections[mealType].items };
-                const updatedNotes = { ...newConfig.mealSelections[mealType].itemNotes };
+            if (newConfig.mealSelections && newConfig.mealSelections[uniqueKey]) {
+                const updatedItems = { ...newConfig.mealSelections[uniqueKey].items };
+                const updatedNotes = { ...newConfig.mealSelections[uniqueKey].itemNotes };
 
                 if (qty > 0) {
                     updatedItems[itemId] = qty;
@@ -265,8 +273,14 @@ export default function FoodServiceWidget({
                     delete updatedItems[itemId];
                     delete updatedNotes[itemId];
                 }
-                newConfig.mealSelections[mealType].items = updatedItems;
-                newConfig.mealSelections[mealType].itemNotes = updatedNotes;
+
+                const newSelections = { ...newConfig.mealSelections };
+                newSelections[uniqueKey] = {
+                    ...newSelections[uniqueKey],
+                    items: updatedItems,
+                    itemNotes: updatedNotes
+                };
+                newConfig.mealSelections = newSelections;
             }
             return newConfig;
         });
@@ -565,6 +579,11 @@ export default function FoodServiceWidget({
                                         ) : selectedDays.length > 0 ? (
                                             // Multi-day view - show STACKED menu blocks for each selected day
                                             selectedDays.map((day: string) => {
+                                                const visibleItems = vendorItems.filter(item => {
+                                                    if (!item.deliveryDays || item.deliveryDays.length === 0) return true;
+                                                    return item.deliveryDays.includes(day);
+                                                });
+
                                                 return (
                                                     <div key={day} className="animate-in fade-in slide-in-from-top-1 duration-200" style={{
                                                         border: '1px solid var(--border-color)',
@@ -606,7 +625,7 @@ export default function FoodServiceWidget({
                                                         </div>
 
                                                         <div className={styles.menuItemsGrid} style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '10px' }}>
-                                                            {vendorItems.map(item => {
+                                                            {visibleItems.map(item => {
                                                                 const dayItems = selection.itemsByDay?.[day] || {};
                                                                 const qty = dayItems[item.id] || 0;
                                                                 const dayNotes = selection.itemNotesByDay?.[day] || {};
@@ -623,7 +642,7 @@ export default function FoodServiceWidget({
                                                                     />
                                                                 );
                                                             })}
-                                                            {vendorItems.length === 0 && <span className={styles.hint}>No items available for this vendor.</span>}
+                                                            {visibleItems.length === 0 && <span className={styles.hint}>No items available for this day.</span>}
                                                         </div>
                                                     </div>
                                                 );
@@ -650,21 +669,43 @@ export default function FoodServiceWidget({
                                                     </div>
                                                 )}
                                                 <div className={styles.menuItemsGrid} style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '16px' }}>
-                                                    {vendorItems.map(item => {
-                                                        const qty = selection.items?.[item.id] || 0;
-                                                        const note = selection.itemNotes?.[item.id] || '';
-                                                        return (
-                                                            <MenuItemCard
-                                                                key={item.id}
-                                                                item={item}
-                                                                quantity={qty}
-                                                                note={note}
-                                                                onQuantityChange={(newQty) => handleVendorItemChange(index, item.id, newQty)}
-                                                                onNoteChange={(newNote) => handleVendorItemChange(index, item.id, qty, undefined, newNote)}
-                                                            />
-                                                        );
-                                                    })}
-                                                    {vendorItems.length === 0 && <span className={styles.hint}>No items available for this vendor.</span>}
+                                                    {(() => {
+                                                        // Filter for Flat View
+                                                        // Determine implied days (Vendor's single day OR Client's default days)
+                                                        let impliedDays: string[] = [];
+                                                        if (vendorDeliveryDays.length === 1) {
+                                                            impliedDays = vendorDeliveryDays;
+                                                        } else if ((client as any).delivery_days && (client as any).delivery_days.length > 0) {
+                                                            impliedDays = (client as any).delivery_days;
+                                                        }
+
+                                                        const visibleItems = vendorItems.filter(item => {
+                                                            if (!item.deliveryDays || item.deliveryDays.length === 0) return true;
+                                                            // If we have implied days, item must be valid for ALL of them
+                                                            if (impliedDays.length > 0) {
+                                                                return impliedDays.every(day => item.deliveryDays!.includes(day));
+                                                            }
+                                                            // If we don't know the days, hide restricted items to be safe
+                                                            return false;
+                                                        });
+
+                                                        if (visibleItems.length === 0) return <span className={styles.hint}>No items available.</span>;
+
+                                                        return visibleItems.map(item => {
+                                                            const qty = selection.items?.[item.id] || 0;
+                                                            const note = selection.itemNotes?.[item.id] || '';
+                                                            return (
+                                                                <MenuItemCard
+                                                                    key={item.id}
+                                                                    item={item}
+                                                                    quantity={qty}
+                                                                    note={note}
+                                                                    onQuantityChange={(newQty) => handleVendorItemChange(index, item.id, newQty)}
+                                                                    onNoteChange={(newNote) => handleVendorItemChange(index, item.id, qty, undefined, newNote)}
+                                                                />
+                                                            );
+                                                        });
+                                                    })()}
                                                 </div>
                                             </>
                                         )}
@@ -680,7 +721,8 @@ export default function FoodServiceWidget({
 
     const renderMealBlocks = () => {
         if (!orderConfig?.mealSelections) return null;
-        return Object.entries(orderConfig.mealSelections).map(([mealType, config]: [string, any]) => {
+        return Object.entries(orderConfig.mealSelections).map(([uniqueKey, config]: [string, any]) => {
+            const mealType = config.mealType || uniqueKey.split('_')[0];
 
             // Get categories for this meal type
             const subCategories = mealCategories
@@ -688,7 +730,7 @@ export default function FoodServiceWidget({
                 .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
 
             return (
-                <div key={mealType} id={`meal-block-${mealType}`} className={styles.vendorBlock} style={{
+                <div key={uniqueKey} id={`meal-block-${uniqueKey}`} className={styles.vendorBlock} style={{
                     borderLeft: '4px solid var(--color-primary)'
                 }}>
                     {/* Header */}
@@ -700,14 +742,7 @@ export default function FoodServiceWidget({
                                     className="input"
                                     style={{ padding: '4px 8px', fontSize: '0.9rem', maxWidth: '200px' }}
                                     value={config.vendorId || ''}
-                                    onChange={(e) => {
-                                        const newSelections = { ...orderConfig.mealSelections };
-                                        newSelections[mealType] = {
-                                            ...newSelections[mealType],
-                                            vendorId: e.target.value || null
-                                        };
-                                        setOrderConfig({ ...orderConfig, mealSelections: newSelections });
-                                    }}
+                                    onChange={(e) => handleMealVendorChange(uniqueKey, e.target.value)}
                                 >
                                     <option value="">Select Vendor (Optional)</option>
                                     {vendors
@@ -718,19 +753,13 @@ export default function FoodServiceWidget({
                                 </select>
                             )}
                             {isClientPortal && config.vendorId && (
-                                // Optionally show selected vendor name or nothing. User said "hide the select".
-                                // If a vendor IS selected (by admin), maybe we should show it as read-only text?
-                                // "Hide the select vendor so that only Admins can actually select the vendor"
-                                // Showing the name seems helpful context, but I will default to hiding the control.
-                                // If I hide it completely, they won't know whence it comes.
-                                // I'll show a small text label if a vendor IS selected.
                                 <span style={{ fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
                                     {vendors.find(v => v.id === config.vendorId)?.name}
                                 </span>
                             )}
                         </div>
                         <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                            <button className={`${styles.iconBtn} ${styles.danger}`} onClick={() => handleRemoveMeal(mealType)}>
+                            <button className={`${styles.iconBtn} ${styles.danger}`} onClick={() => handleRemoveMeal(uniqueKey)}>
                                 <Trash2 size={16} />
                             </button>
                         </div>
@@ -801,8 +830,8 @@ export default function FoodServiceWidget({
                                                     item={item}
                                                     quantity={qty}
                                                     note={config.itemNotes?.[item.id] || ''}
-                                                    onQuantityChange={(newQty) => handleMealItemChange(mealType, item.id, newQty)}
-                                                    onNoteChange={(newNote) => handleMealItemChange(mealType, item.id, qty, newNote)}
+                                                    onQuantityChange={(newQty) => handleMealItemChange(uniqueKey, item.id, newQty)}
+                                                    onNoteChange={(newNote) => handleMealItemChange(uniqueKey, item.id, qty, newNote)}
                                                     contextLabel={mealType}
                                                 />
                                             );
@@ -956,28 +985,27 @@ export default function FoodServiceWidget({
                         )}
                         {/* Add Meal Buttons */}
                         {(() => {
-                            const existingMealTypes = Object.keys(orderConfig?.mealSelections || {});
                             const availableMealTypes = mealCategories
                                 .map(c => c.mealType)
-                                .filter((val, idx, arr) => arr.indexOf(val) === idx)
-                                .filter(type => !existingMealTypes.includes(type));
+                                .filter((val, idx, arr) => arr.indexOf(val) === idx);
 
                             return availableMealTypes.map(type => (
                                 <button
                                     key={type}
                                     type="button"
                                     onClick={() => handleAddMeal(type)}
-                                    className="btn btn-outline"
+                                    className="btn"
                                     style={{
                                         display: 'flex',
                                         alignItems: 'center',
                                         gap: '8px',
-                                        borderColor: '#fbbf24',
-                                        color: '#fbbf24',
+                                        backgroundColor: '#fbbf24',
+                                        border: 'none',
+                                        color: 'black',
                                         fontWeight: 600,
                                         padding: '8px 16px',
                                         borderRadius: '8px',
-                                        backgroundColor: 'transparent',
+                                        boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
                                         fontSize: '0.9rem'
                                     }}
                                 >

@@ -26,6 +26,34 @@
 
 .header {
     margin-bottom: 2rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+}
+
+.deleteBtn {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 1rem;
+    background: rgba(220, 38, 38, 0.1);
+    border: 1px solid var(--color-danger);
+    border-radius: 0.5rem;
+    color: var(--color-danger);
+    cursor: pointer;
+    font-size: 0.9rem;
+    font-weight: 500;
+    transition: all 0.2s;
+}
+
+.deleteBtn:hover {
+    background: var(--color-danger);
+    color: white;
+}
+
+.deleteBtn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
 }
 
 .title {
@@ -289,4 +317,3 @@
     color: var(--text-primary);
     font-size: 1rem;
 }
-

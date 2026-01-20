@@ -132,7 +132,8 @@ export function BoxTypeManagement() {
             isActive: true,
             categoryId: categoryId,
             quotaValue: newItemQuotaValue,
-            priceEach: newItemPrice > 0 ? newItemPrice : undefined
+            priceEach: newItemPrice > 0 ? newItemPrice : undefined,
+            notesEnabled: false // Default for quick add
         });
         invalidateReferenceData(); // Invalidate cache after menu item creation
 
@@ -177,7 +178,9 @@ export function BoxTypeManagement() {
         await updateMenuItem(editingItemId, {
             name: tempItemName,
             quotaValue: tempItemQuotaValue,
-            priceEach: tempItemPrice > 0 ? tempItemPrice : undefined
+            priceEach: tempItemPrice > 0 ? tempItemPrice : undefined,
+            // notesEnabled is not directly editable here yet but we could add it if needed.
+            // For now, at least we support the field in the action.
         });
         invalidateReferenceData(); // Invalidate cache after menu item update
 

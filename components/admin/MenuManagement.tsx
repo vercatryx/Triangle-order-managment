@@ -42,7 +42,9 @@ export function MenuManagement() {
         value: 0,
         priceEach: 0,
         isActive: true,
-        imageUrl: null
+        imageUrl: null,
+        notesEnabled: false,
+        deliveryDays: null
     });
 
     // Image Upload State
@@ -95,6 +97,8 @@ export function MenuManagement() {
 
     const filteredItems = menuItems.filter(item => item.vendorId === selectedVendorId)
         .sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
+
+    const selectedVendor = vendors.find(v => v.id === selectedVendorId);
 
     // Dnd Sensors
     const sensors = useSensors(
@@ -151,7 +155,9 @@ export function MenuManagement() {
             quotaValue: 1,
             categoryId: '',
             imageUrl: null,
-            sortOrder: 0
+            sortOrder: 0,
+            notesEnabled: false,
+            deliveryDays: null
         });
         setIsCreating(false);
         setEditingId(null);
@@ -496,16 +502,60 @@ export function MenuManagement() {
                             </div>
                         </div>
 
-                        <div className={styles.formGroup}>
-                            <label className={styles.checkboxLabel}>
-                                <input
-                                    type="checkbox"
-                                    checked={formData.isActive}
-                                    onChange={e => setFormData({ ...formData, isActive: e.target.checked })}
-                                />
-                                Active
-                            </label>
+                        <div className={styles.row} style={{ marginTop: '1rem', borderTop: '1px solid var(--border-color)', paddingTop: '1rem' }}>
+                            <div className={styles.formGroup} style={{ marginBottom: 0 }}>
+                                <label className={styles.checkboxLabel}>
+                                    <input
+                                        type="checkbox"
+                                        checked={formData.isActive}
+                                        onChange={e => setFormData({ ...formData, isActive: e.target.checked })}
+                                    />
+                                    <strong>Active</strong>
+                                </label>
+                            </div>
+                            <div className={styles.formGroup} style={{ marginBottom: 0 }}>
+                                <label className={styles.checkboxLabel} style={{ color: 'var(--color-primary)' }}>
+                                    <input
+                                        type="checkbox"
+                                        checked={formData.notesEnabled}
+                                        onChange={e => setFormData({ ...formData, notesEnabled: e.target.checked })}
+                                    />
+                                    <strong>Enable Notes</strong>
+                                </label>
+                            </div>
                         </div>
+
+                        {/* Delivery Days Restriction */}
+                        {selectedVendor?.deliveryDays && selectedVendor.deliveryDays.length > 0 && (
+                            <div className={styles.row} style={{ marginTop: '1rem', borderTop: '1px solid var(--border-color)', paddingTop: '1rem' }}>
+                                <div className={styles.formGroup} style={{ flex: 1 }}>
+                                    <label className="label">Restrict to Specific Days (Leave unchecked for all)</label>
+                                    <div style={{ display: 'flex', gap: '15px', flexWrap: 'wrap' }}>
+                                        {selectedVendor.deliveryDays.map(day => (
+                                            <label key={day} className={styles.checkboxLabel} style={{ fontWeight: 'normal' }}>
+                                                <input
+                                                    type="checkbox"
+                                                    checked={formData.deliveryDays?.includes(day) || false}
+                                                    onChange={e => {
+                                                        const currentDays = formData.deliveryDays || [];
+                                                        let newDays;
+                                                        if (e.target.checked) {
+                                                            newDays = [...currentDays, day];
+                                                        } else {
+                                                            newDays = currentDays.filter(d => d !== day);
+                                                        }
+                                                        // Ensure uniqueness just in case
+                                                        newDays = Array.from(new Set(newDays));
+                                                        setFormData({ ...formData, deliveryDays: newDays });
+                                                    }}
+                                                />
+                                                {day}
+                                            </label>
+                                        ))}
+                                    </div>
+                                </div>
+                            </div>
+                        )}
 
                         <div className={styles.formActions}>
                             <button className="btn btn-primary" onClick={handleSubmit}>
@@ -577,32 +627,32 @@ function SortableMenuItem({ item, onEdit, onDelete }: { item: MenuItem, onEdit: 
         border: isDragging ? '1px dashed #ccc' : 'none',
         display: 'flex',
         alignItems: 'center',
-        padding: '12px 16px',
+        padding: '24px 20px',
         borderBottom: '1px solid #eee',
         backgroundColor: 'white'
     };
 
     return (
         <div ref={setNodeRef} style={style}>
-            <div {...attributes} {...listeners} style={{ width: '40px', cursor: 'grab', display: 'flex', alignItems: 'center', color: '#aaa', paddingRight: '10px' }}>
-                <GripVertical size={20} />
+            <div {...attributes} {...listeners} style={{ width: '40px', cursor: 'grab', display: 'flex', alignItems: 'center', color: '#aaa', paddingRight: '15px' }}>
+                <GripVertical size={24} />
             </div>
-            <div style={{ width: '60px', height: '40px', display: 'flex', alignItems: 'center', justifyContent: 'center', marginRight: '10px' }}>
+            <div style={{ width: '80px', height: '60px', display: 'flex', alignItems: 'center', justifyContent: 'center', marginRight: '15px' }}>
                 {item.imageUrl ? (
                     <img
                         src={item.imageUrl}
                         alt={item.name}
-                        style={{ width: '40px', height: '40px', objectFit: 'cover', borderRadius: '4px' }}
+                        style={{ width: '60px', height: '60px', objectFit: 'cover', borderRadius: '6px' }}
                     />
                 ) : (
-                    <div style={{ width: '40px', height: '40px', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#f5f5f5', borderRadius: '4px' }}>
-                        <Utensils size={18} color="#ccc" />
+                    <div style={{ width: '60px', height: '60px', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#f5f5f5', borderRadius: '6px' }}>
+                        <Utensils size={24} color="#ccc" />
                     </div>
                 )}
             </div>
-            <span style={{ flex: 3, fontWeight: 500, fontSize: '1.1rem' }}>{item.name}</span>
-            <span style={{ flex: 1, fontSize: '1rem' }}>{item.value}</span>
-            <span style={{ flex: 1, fontSize: '1rem' }}>{item.priceEach ?? '-'}</span>
+            <span style={{ flex: 3, fontWeight: 500, fontSize: '1.25rem' }}>{item.name}</span>
+            <span style={{ flex: 1, fontSize: '1.1rem' }}>{item.value}</span>
+            <span style={{ flex: 1, fontSize: '1.1rem' }}>{item.priceEach ?? '-'}</span>
             <span style={{ flex: 1 }}>
                 {item.isActive ? <span className="badge" style={{ color: 'var(--color-success)', background: 'rgba(34, 197, 94, 0.1)', fontSize: '0.9rem', padding: '4px 12px' }}>Active</span> : <span className="badge" style={{ fontSize: '0.9rem', padding: '4px 12px' }}>Inactive</span>}
             </span>

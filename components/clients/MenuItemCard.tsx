@@ -41,7 +41,7 @@ export default function MenuItemCard({
     return (
         <div className={`${styles.card} ${quantity > 0 ? styles.selected : ''}`} onClick={toggleModal}>
             {/* Image Section */}
-            <div className={styles.imageContainer}>
+            <div className={`${styles.imageContainer} ${item.imageUrl ? styles.hasImage : styles.noImage}`}>
                 {item.imageUrl ? (
                     <img
                         src={item.imageUrl}
@@ -50,7 +50,8 @@ export default function MenuItemCard({
                         onError={(e) => {
                             // Fallback to placeholder if image fails
                             e.currentTarget.style.display = 'none';
-                            e.currentTarget.parentElement?.classList.add('fallback-active');
+                            e.currentTarget.parentElement?.classList.add(styles.fallbackActive);
+                            e.currentTarget.parentElement?.classList.replace(styles.hasImage, styles.noImage);
                         }}
                     />
                 ) : (
@@ -75,8 +76,8 @@ export default function MenuItemCard({
                     </div>
                 )}
 
-                {/* Note Input (only if selected) */}
-                {quantity > 0 && (
+                {/* Note Input (only if selected and enabled) */}
+                {quantity > 0 && item.notesEnabled && (
                     <TextareaAutosize
                         className={styles.noteInput}
                         minRows={1}
@@ -134,16 +135,18 @@ export default function MenuItemCard({
 
                             {contextLabel && <div className={styles.modalContext}>{contextLabel}</div>}
 
-                            <div className={styles.modalNoteSection}>
-                                <label className={styles.modalLabel}>Special Instructions</label>
-                                <TextareaAutosize
-                                    className={styles.modalNoteInput}
-                                    minRows={3}
-                                    placeholder="Add any specific requirements or preferences..."
-                                    value={note}
-                                    onChange={(e) => onNoteChange(e.target.value)}
-                                />
-                            </div>
+                            {item.notesEnabled && (
+                                <div className={styles.modalNoteSection}>
+                                    <label className={styles.modalLabel}>Special Instructions</label>
+                                    <TextareaAutosize
+                                        className={styles.modalNoteInput}
+                                        minRows={3}
+                                        placeholder="Add any specific requirements or preferences..."
+                                        value={note}
+                                        onChange={(e) => onNoteChange(e.target.value)}
+                                    />
+                                </div>
+                            )}
 
                             <div className={styles.modalControls}>
                                 <div className={styles.modalQtyGroup}>

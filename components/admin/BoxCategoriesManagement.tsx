@@ -38,7 +38,8 @@ export function BoxCategoriesManagement() {
         quotaValue: 1,
         priceEach: 0,
         imageUrl: null,
-        sortOrder: 0
+        sortOrder: 0,
+        notesEnabled: false
     });
 
     // Image Upload State
@@ -113,7 +114,7 @@ export function BoxCategoriesManagement() {
     function openAddItem(categoryId: string) {
         setActiveCategoryId(categoryId);
         setEditingItemId(null);
-        setItemForm({ name: '', quotaValue: 1, priceEach: 0, imageUrl: null, sortOrder: 0 });
+        setItemForm({ name: '', quotaValue: 1, priceEach: 0, imageUrl: null, sortOrder: 0, notesEnabled: false });
         setIsEditingItem(true);
         setImageSrc(null);
         setCompletedCrop(null);
@@ -137,7 +138,8 @@ export function BoxCategoriesManagement() {
                 quotaValue: itemForm.quotaValue,
                 priceEach: (itemForm.priceEach || 0) > 0 ? itemForm.priceEach : undefined,
                 imageUrl: itemForm.imageUrl,
-                sortOrder: itemForm.sortOrder
+                sortOrder: itemForm.sortOrder,
+                notesEnabled: itemForm.notesEnabled
             });
         } else {
             await addMenuItem({
@@ -149,7 +151,8 @@ export function BoxCategoriesManagement() {
                 quotaValue: itemForm.quotaValue || 1,
                 priceEach: (itemForm.priceEach || 0) > 0 ? itemForm.priceEach : undefined,
                 imageUrl: itemForm.imageUrl,
-                sortOrder: itemForm.sortOrder
+                sortOrder: itemForm.sortOrder,
+                notesEnabled: itemForm.notesEnabled
             });
         }
         invalidateReferenceData();
@@ -407,7 +410,7 @@ export function BoxCategoriesManagement() {
             transition,
             opacity: isDragging ? 0.5 : 1,
             zIndex: isDragging ? 101 : 'auto',
-            display: 'flex', alignItems: 'center', gap: '0.5rem', background: 'var(--bg-surface)', padding: '4px 10px', borderRadius: '4px', border: '1px solid var(--border-color)', fontSize: '0.85rem'
+            display: 'flex', alignItems: 'center', gap: '0.75rem', background: 'var(--bg-surface)', padding: '12px 16px', borderRadius: '6px', border: '1px solid var(--border-color)', fontSize: '1.1rem'
         };
 
         return (
@@ -416,7 +419,7 @@ export function BoxCategoriesManagement() {
                     <GripVertical size={14} />
                 </div>
                 {item.imageUrl && (
-                    <img src={item.imageUrl} alt="" style={{ width: '24px', height: '24px', borderRadius: '4px', objectFit: 'cover' }} />
+                    <img src={item.imageUrl} alt="" style={{ width: '40px', height: '40px', borderRadius: '4px', objectFit: 'cover' }} />
                 )}
                 <span>{item.name}</span>
                 <span style={{ color: 'var(--text-tertiary)' }}>(x{typeof item.quotaValue === 'number' && item.quotaValue % 1 !== 0 ? item.quotaValue.toFixed(2) : (item.quotaValue || 1)})</span>
@@ -532,6 +535,16 @@ export function BoxCategoriesManagement() {
                             <div>
                                 <label className="label">Sort Order</label>
                                 <input type="number" className="input" value={itemForm.sortOrder} onChange={e => setItemForm({ ...itemForm, sortOrder: Number(e.target.value) })} />
+                            </div>
+
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                <input
+                                    type="checkbox"
+                                    id="notesEnabled"
+                                    checked={itemForm.notesEnabled}
+                                    onChange={e => setItemForm({ ...itemForm, notesEnabled: e.target.checked })}
+                                />
+                                <label htmlFor="notesEnabled" className="label" style={{ marginBottom: 0, cursor: 'pointer' }}>Enable Notes</label>
                             </div>
 
                             {/* IMAGE UPLOADER */}

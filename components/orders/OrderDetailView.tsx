@@ -1,8 +1,10 @@
 'use client';
 
+import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { ArrowLeft, Package, ShoppingCart, User, Calendar, CreditCard, FileText } from 'lucide-react';
+import { ArrowLeft, Package, ShoppingCart, User, Calendar, CreditCard, FileText, Trash2, Loader2 } from 'lucide-react';
 import styles from './OrderDetailView.module.css';
+import { deleteOrder } from '@/lib/actions';
 
 interface OrderDetailViewProps {
     order: {
@@ -31,6 +33,28 @@ interface OrderDetailViewProps {
 
 export function OrderDetailView({ order }: OrderDetailViewProps) {
     const router = useRouter();
+    const [isDeleting, setIsDeleting] = useState(false);
+
+    const handleDelete = async () => {
+        if (!window.confirm('Are you sure you want to delete this order? This action cannot be undone.')) {
+            return;
+        }
+
+        setIsDeleting(true);
+        try {
+            const result = await deleteOrder(order.id);
+            if (result.success) {
+                router.push('/orders');
+            } else {
+                alert(`Failed to delete order: ${result.message}`);
+            }
+        } catch (error) {
+            console.error('Delete error:', error);
+            alert('An error occurred while deleting the order.');
+        } finally {
+            setIsDeleting(false);
+        }
+    };
 
     const formatStatus = (status: string) => {
         if (!status) return 'UNKNOWN';
@@ -186,6 +210,17 @@ export function OrderDetailView({ order }: OrderDetailViewProps) {
                         </span>
                     </div>
                 </div>
+                <button
+                    className={styles.deleteBtn}
+                    onClick={handleDelete}
+                    disabled={isDeleting}
+                >
+                    {isDeleting ? (
+                        <><Loader2 size={18} className="animate-spin" /> Deleting...</>
+                    ) : (
+                        <><Trash2 size={18} /> Delete Order</>
+                    )}
+                </button>
             </div>
 
             <div className={styles.content}>
