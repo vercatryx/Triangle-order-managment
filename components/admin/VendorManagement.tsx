@@ -382,6 +382,33 @@ export function VendorManagement() {
                         </div>
                     </div>
 
+                    <div className={styles.row}>
+                        <div className={styles.formGroup} style={{ flex: 1 }}>
+                            <label className="label">Cutoff Days</label>
+                            <input
+                                className="input"
+                                type="number"
+                                min="0"
+                                max="14"
+                                value={formData.cutoffDays ?? 0}
+                                onChange={e => setFormData({ ...formData, cutoffDays: parseInt(e.target.value) || 0 })}
+                                placeholder="0"
+                            />
+                            <p className={styles.hint} style={{ marginTop: '0.25rem' }}>Days before delivery to close orders.</p>
+                        </div>
+                        <div className={styles.formGroup} style={{ flex: 1 }}>
+                            <label className="label">Min. Meals</label>
+                            <input
+                                className="input"
+                                type="number"
+                                min="0"
+                                value={formData.minimumMeals ?? 0}
+                                onChange={e => setFormData({ ...formData, minimumMeals: parseInt(e.target.value) || 0 })}
+                                placeholder="0"
+                            />
+                        </div>
+                    </div>
+
                     <div className={styles.formGroup}>
                         <label className="label">Delivery Days</label>
                         <div className={styles.daysGrid}>
@@ -455,6 +482,7 @@ export function VendorManagement() {
                             <th>Services</th>
                             <th>Status</th>
                             <th>Days</th>
+                            <th>Cutoff</th>
                             <th>Frequency</th>
                             <th style={{ textAlign: 'right' }}>Actions</th>
                         </tr>
@@ -466,6 +494,7 @@ export function VendorManagement() {
                                 <td>{vendor.serviceTypes.join(', ')}</td>
                                 <td>{vendor.isActive ? 'Active' : 'Inactive'}</td>
                                 <td>{vendor.deliveryDays.join(', ')}</td>
+                                <td>{vendor.cutoffDays || 0} days</td>
                                 <td>{vendor.allowsMultipleDeliveries ? 'Multiple' : 'Once'}</td>
                                 <td style={{ textAlign: 'right' }}>
                                     <div className={styles.actions}>
@@ -485,7 +514,7 @@ export function VendorManagement() {
             {/* Global Locations Management Table */}
             <div className={styles.header} style={{ marginTop: '3rem' }}>
                 <div>
-                    <h2 className={styles.title}>Global Locations</h2>
+                    <h2 className={styles.title}>Locations</h2>
                     <p className={styles.subtitle}>Manage the master list of delivery locations.</p>
                 </div>
             </div>
