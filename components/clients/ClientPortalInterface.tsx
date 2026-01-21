@@ -616,7 +616,6 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
         const serviceType = client.serviceType;
         const caseId = (client as any).caseID;
 
-        window.alert("DEBUG: handleSave Triggered. Current Items Count (Header): " + totalMealCount);
         console.error("!!! [handleSave] CALLED !!!", { validationStatus, totalMealCount });
 
         // For Food clients, caseId is required. For Boxes, it's optional
