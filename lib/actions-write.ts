@@ -978,9 +978,9 @@ export async function addClient(data: Omit<ClientProfile, 'id' | 'createdAt' | '
 
     revalidatePath('/clients');
 
-    // Trigger local DB sync in background after mutation
-    const { triggerSyncInBackground } = await import('./local-db');
-    triggerSyncInBackground();
+    // Targeted local DB sync for this client
+    const { updateClientInLocalDB } = await import('./local-db');
+    updateClientInLocalDB(newClient.id);
 
     return newClient;
 }
@@ -1031,9 +1031,9 @@ export async function addDependent(name: string, parentClientId: string, dob?: s
 
     revalidatePath('/clients');
 
-    // Trigger local DB sync in background after mutation
-    const { triggerSyncInBackground } = await import('./local-db');
-    triggerSyncInBackground();
+    // Targeted local DB sync for this client
+    const { updateClientInLocalDB } = await import('./local-db');
+    updateClientInLocalDB(res.id);
 
     return newDependent;
 }
@@ -1077,10 +1077,9 @@ export async function updateClient(id: string, data: Partial<ClientProfile>) {
             await syncCurrentOrderToUpcoming(id, mapClientFromDB(updatedData), true);
         }
     } else {
-        // Trigger local DB sync in background even if activeOrder wasn't updated
-        // (other changes might affect orders indirectly)
-        const { triggerSyncInBackground } = await import('./local-db');
-        triggerSyncInBackground();
+        // Targeted local DB sync for this client
+        const { updateClientInLocalDB } = await import('./local-db');
+        updateClientInLocalDB(id);
     }
 
     try {
@@ -1164,9 +1163,9 @@ export async function deleteClient(id: string) {
     handleError(error);
     revalidatePath('/clients');
 
-    // Trigger local DB sync in background to remove deleted client data from cache
-    const { triggerSyncInBackground } = await import('./local-db');
-    triggerSyncInBackground();
+    // Targeted local DB sync to remove deleted client data from cache
+    const { updateClientInLocalDB } = await import('./local-db');
+    updateClientInLocalDB(id, true);
 }
 
 export async function generateDeliveriesForDate(dateStr: string) {
@@ -1575,9 +1574,9 @@ export async function syncCurrentOrderToUpcoming(clientId: string, client: Clien
         }
     }
 
-    // Force synchronous local DB sync to ensure data is fresh for immediate re-fetch
-    const { syncLocalDBFromSupabase } = await import('./local-db');
-    await syncLocalDBFromSupabase();
+    // Targeted local DB sync for this client to avoid full blocking sync
+    const { updateClientInLocalDB } = await import('./local-db');
+    await updateClientInLocalDB(clientId);
 
     try {
         revalidatePath('/clients');
@@ -1773,9 +1772,12 @@ export async function processUpcomingOrders() {
         revalidatePath('/clients');
     } catch (e) { }
 
-    // Trigger local DB sync in background after mutation
-    const { triggerSyncInBackground } = await import('./local-db');
-    triggerSyncInBackground();
+    // Targeted local DB sync for all affected clients
+    const clientIds = [...new Set(upcomingOrders.map(uo => uo.client_id))];
+    if (clientIds.length > 0) {
+        const { syncClientsInLocalDB } = await import('./local-db');
+        syncClientsInLocalDB(clientIds).catch(e => console.error('Bulk sync error:', e));
+    }
 
 
     return { processed: processedCount, errors };

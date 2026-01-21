@@ -35,6 +35,13 @@ interface Props {
     vendors?: Vendor[];
     menuItems?: MenuItem[];
     boxTypes?: BoxType[];
+    settings?: AppSettings | null;
+    categories?: ItemCategory[];
+    mealCategories?: MealCategory[];
+    mealItems?: MealItem[];
+    equipment?: Equipment[];
+    allClients?: any[];
+    regularClients?: any[];
     currentUser?: { role: string; id: string } | null;
     onBackgroundSave?: (clientId: string, clientName: string, saveAction: () => Promise<void>) => void;
 }
@@ -169,7 +176,25 @@ function DuplicateNameConfirmationModal({
     );
 }
 
-export function ClientProfileDetail({ clientId: propClientId, onClose, initialData, statuses: initialStatuses, navigators: initialNavigators, vendors: initialVendors, menuItems: initialMenuItems, boxTypes: initialBoxTypes, currentUser, onBackgroundSave }: Props): ReactNode {
+export function ClientProfileDetail({
+    clientId: propClientId,
+    onClose,
+    initialData,
+    statuses: initialStatuses,
+    navigators: initialNavigators,
+    vendors: initialVendors,
+    menuItems: initialMenuItems,
+    boxTypes: initialBoxTypes,
+    settings: initialSettings,
+    categories: initialCategories,
+    mealCategories: initialMealCategories,
+    mealItems: initialMealItems,
+    equipment: initialEquipment,
+    allClients: initialAllClients,
+    regularClients: initialRegularClients,
+    currentUser,
+    onBackgroundSave
+}: Props): ReactNode {
 
     const router = useRouter();
     const params = useParams();
@@ -189,24 +214,24 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
     const [vendors, setVendors] = useState<Vendor[]>(initialVendors || []);
     const [menuItems, setMenuItems] = useState<MenuItem[]>(initialMenuItems || []);
     const [boxTypes, setBoxTypes] = useState<BoxType[]>(initialBoxTypes || []);
-    const [categories, setCategories] = useState<ItemCategory[]>([]);
-    const [mealCategories, setMealCategories] = useState<MealCategory[]>([]);
-    const [mealItems, setMealItems] = useState<MealItem[]>([]);
+    const [categories, setCategories] = useState<ItemCategory[]>(initialCategories || []);
+    const [mealCategories, setMealCategories] = useState<MealCategory[]>(initialMealCategories || []);
+    const [mealItems, setMealItems] = useState<MealItem[]>(initialMealItems || []);
     const [boxQuotas, setBoxQuotas] = useState<BoxQuota[]>([]);
-    const [equipment, setEquipment] = useState<any[]>([]);
+    const [equipment, setEquipment] = useState<any[]>(initialEquipment || []);
     const [showEquipmentOrder, setShowEquipmentOrder] = useState(false);
     const [equipmentOrder, setEquipmentOrder] = useState<{ vendorId: string; equipmentId: string; caseId: string } | null>(null);
     const [submittingEquipmentOrder, setSubmittingEquipmentOrder] = useState(false);
 
 
-    const [settings, setSettings] = useState<AppSettings | null>(null);
+    const [settings, setSettings] = useState<AppSettings | null>(initialSettings || null);
     const [history, setHistory] = useState<DeliveryRecord[]>([]);
     const [orderHistory, setOrderHistory] = useState<any[]>([]);
     const [billingHistory, setBillingHistory] = useState<any[]>([]);
     const [activeHistoryTab, setActiveHistoryTab] = useState<'deliveries' | 'audit' | 'billing'>('deliveries');
-    const [allClients, setAllClients] = useState<any[]>([]); // optimization: lightweight list
+    const [allClients, setAllClients] = useState<any[]>(initialAllClients || []); // optimization: lightweight list
     const [expandedBillingRows, setExpandedBillingRows] = useState<Set<string>>(new Set());
-    const [regularClients, setRegularClients] = useState<any[]>([]); // optimization: lightweight list
+    const [regularClients, setRegularClients] = useState<any[]>(initialRegularClients || []); // optimization: lightweight list
     const [parentClientSearch, setParentClientSearch] = useState('');
     const [dependents, setDependents] = useState<ClientProfile[]>([]);
 
@@ -759,19 +784,21 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
     }
 
     async function loadLookups() {
-        const [s, n, v, m, b, appSettings, catData, eData, allClientsData, regularClientsData, mealCatData, mealItemData] = await Promise.all([
-            getStatuses(),
-            getNavigators(),
-            getVendors(),
-            getMenuItems(),
-            getBoxTypes(),
-            getSettings(),
-            getCategories(),
-            getEquipment(),
-            getClientsLight(), // Optimized: getClientsLight
-            getRegularClients(),
-            getMealCategories(),
-            getMealItems()
+        const [
+            s, n, v, m, b, appSettings, catData, eData, allClientsData, regularClientsData, mealCatData, mealItemData
+        ] = await Promise.all([
+            initialStatuses ? Promise.resolve(initialStatuses) : getStatuses(),
+            initialNavigators ? Promise.resolve(initialNavigators) : getNavigators(),
+            initialVendors ? Promise.resolve(initialVendors) : getVendors(),
+            initialMenuItems ? Promise.resolve(initialMenuItems) : getMenuItems(),
+            initialBoxTypes ? Promise.resolve(initialBoxTypes) : getBoxTypes(),
+            initialSettings ? Promise.resolve(initialSettings) : getSettings(),
+            initialCategories ? Promise.resolve(initialCategories) : getCategories(),
+            initialEquipment ? Promise.resolve(initialEquipment) : getEquipment(),
+            initialAllClients ? Promise.resolve(initialAllClients) : getClientsLight(),
+            initialRegularClients ? Promise.resolve(initialRegularClients) : getRegularClients(),
+            initialMealCategories ? Promise.resolve(initialMealCategories) : getMealCategories(),
+            initialMealItems ? Promise.resolve(initialMealItems) : getMealItems()
         ]);
         setStatuses(s);
         setNavigators(n);

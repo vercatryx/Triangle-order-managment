@@ -614,13 +614,14 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
         }
 
         const serviceType = client.serviceType;
-        const caseId = (client as any).caseID;
+        const caseId = orderConfig?.caseId || (client as any).caseID || (client.activeOrder as any)?.caseId;
 
         console.error("!!! [handleSave] CALLED !!!", { validationStatus, totalMealCount });
 
         // For Food clients, caseId is required. For Boxes, it's optional
         if (serviceType === 'Food' && !caseId) {
             console.error("[handleSave] Missing caseId for Food client");
+            setValidationError("Missing Case ID. Please contact support.");
             return;
         }
 
