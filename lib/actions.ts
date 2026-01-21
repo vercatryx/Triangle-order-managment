@@ -1,7 +1,7 @@
 'use server';
 // HMR trigger
 
-import { getCurrentTime } from './time';
+import { getCurrentTime, getTodaysDateInTimezone } from './time';
 import { revalidatePath } from 'next/cache';
 import { cache as reactCache } from 'react';
 import { supabase } from './supabase';
@@ -4391,6 +4391,115 @@ export async function getClientProfileData(clientId: string) {
         console.error('Error fetching client profile data:', error);
         return null;
     }
+}
+
+export async function getVendorsWithTodaysDeliveries(): Promise<Vendor[]> {
+    const today = getTodaysDateInTimezone('America/New_York');
+
+    // Use Service Role if available to bypass RLS
+    let supabaseClient = supabase;
+    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    if (serviceRoleKey) {
+        supabaseClient = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, serviceRoleKey, {
+            auth: { persistSession: false }
+        });
+    }
+
+    // 1. Get orders scheduled for today
+    const { data: orders, error: ordersError } = await supabaseClient
+        .from('orders')
+        .select('id, service_type, notes')
+        .eq('scheduled_delivery_date', today);
+
+    handleError(ordersError);
+
+    if (!orders || orders.length === 0) {
+        return [];
+    }
+
+    const orderIds = orders.map(o => o.id);
+    const vendorIds = new Set<string>();
+
+    // 2. Get vendor IDs from order_vendor_selections (Food, Custom)
+    const { data: vendorSelections } = await supabaseClient
+        .from('order_vendor_selections')
+        .select('vendor_id')
+        .in('order_id', orderIds);
+
+    if (vendorSelections) {
+        vendorSelections.forEach(vs => {
+            if (vs.vendor_id) {
+                vendorIds.add(vs.vendor_id);
+            }
+        });
+    }
+
+    // 3. Get vendor IDs from order_box_selections (Boxes)
+    const { data: boxSelections } = await supabaseClient
+        .from('order_box_selections')
+        .select('vendor_id')
+        .in('order_id', orderIds);
+
+    if (boxSelections) {
+        boxSelections.forEach(bs => {
+            if (bs.vendor_id) {
+                vendorIds.add(bs.vendor_id);
+            }
+        });
+    }
+
+    // 4. Get vendor IDs from notes for Equipment orders
+    orders.forEach(order => {
+        if (order.service_type === 'Equipment' && order.notes) {
+            try {
+                const notes = JSON.parse(order.notes);
+                if (notes.vendorId) {
+                    vendorIds.add(notes.vendorId);
+                }
+            } catch (e) {
+                // Ignore parsing errors
+            }
+        }
+    });
+
+    if (vendorIds.size === 0) {
+        return [];
+    }
+
+    // 5. Fetch vendor details
+    const { data: vendors, error: vendorsError } = await supabaseClient
+        .from('vendors')
+        .select(`
+            *,
+            vendor_locations (
+                id,
+                location_id,
+                locations (
+                    name
+                )
+            )
+        `)
+        .in('id', Array.from(vendorIds));
+
+    handleError(vendorsError);
+
+    return vendors.map((v: Vendor) => ({
+        id: v.id,
+        name: v.name,
+        email: v.email || null,
+        serviceTypes: (v.serviceTypes || []).join(',').split(',').map((s: string) => s.trim()).filter(Boolean) as ServiceType[],
+        deliveryDays: v.deliveryDays || [],
+        allowsMultipleDeliveries: v.allowsMultipleDeliveries,
+        isActive: v.isActive,
+        minimumMeals: v.minimumMeals ?? 0,
+        cutoffDays: v.cutoffDays ?? 0,
+        locations: v.locations?.map((vl) => ({
+            id: vl.id,
+            vendorId: v.id,
+            locationId: vl.locationId,
+            name: vl.name || 'Unknown'
+        })) || []
+    }));
 }
 // --- VENDOR ORDER ACTIONS ---
 

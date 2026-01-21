@@ -25,3 +25,19 @@ export async function getCurrentTime(): Promise<Date> {
 
     return new Date();
 }
+
+export function getTodaysDateInTimezone(timezone: string): string {
+  const now = new Date();
+  const options: Intl.DateTimeFormatOptions = {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    timeZone: timezone,
+  };
+  const parts = new Intl.DateTimeFormat('en-US', options).formatToParts(now);
+  const year = parts.find(p => p.type === 'year')?.value;
+  const month = parts.find(p => p.type === 'month')?.value;
+  const day = parts.find(p => p.type === 'day')?.value;
+
+  return `${year}-${month}-${day}`;
+}
