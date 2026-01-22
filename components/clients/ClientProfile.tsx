@@ -3,7 +3,7 @@
 import { useState, useEffect, Fragment, useMemo, useRef, ReactNode } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import Link from 'next/link';
-import { ClientProfile, ClientStatus, Navigator, Vendor, MenuItem, BoxType, ServiceType, AppSettings, DeliveryRecord, ItemCategory, ClientFullDetails, BoxQuota, MealCategory, MealItem, ClientFoodOrder, ClientMealOrder, ClientBoxOrder } from '@/lib/types';
+import { ClientProfile, ClientStatus, Navigator, Vendor, MenuItem, BoxType, ServiceType, AppSettings, DeliveryRecord, ItemCategory, ClientFullDetails, BoxQuota, MealCategory, MealItem, ClientFoodOrder, ClientMealOrder, ClientBoxOrder, Equipment } from '@/lib/types';
 import { updateClient, addClient, deleteClient, updateDeliveryProof, recordClientChange, syncCurrentOrderToUpcoming, logNavigatorAction, getBoxQuotas, saveEquipmentOrder, getRegularClients, getDependentsByParentId, addDependent, checkClientNameExists, getClientFullDetails, saveClientFoodOrder, saveClientMealOrder, saveClientBoxOrder, saveClientCustomOrder, getEquipment, getClientProfileData } from '@/lib/actions';
 import { getSingleForm, getClientSubmissions } from '@/lib/form-actions';
 import { getClient, getStatuses, getNavigators, getVendors, getMenuItems, getBoxTypes, getSettings, getCategories, getClients, invalidateClientData, invalidateReferenceData, getActiveOrderForClient, getUpcomingOrderForClient, getOrderHistory, getClientHistory, getBillingHistory, invalidateOrderData, getMealCategories, getMealItems, getRecentOrdersForClient, getClientsLight } from '@/lib/cached-data';
@@ -35,6 +35,13 @@ interface Props {
     vendors?: Vendor[];
     menuItems?: MenuItem[];
     boxTypes?: BoxType[];
+    settings?: AppSettings | null;
+    categories?: ItemCategory[];
+    mealCategories?: MealCategory[];
+    mealItems?: MealItem[];
+    equipment?: Equipment[];
+    allClients?: any[];
+    regularClients?: any[];
     currentUser?: { role: string; id: string } | null;
     onBackgroundSave?: (clientId: string, clientName: string, saveAction: () => Promise<void>) => void;
 }
@@ -169,7 +176,25 @@ function DuplicateNameConfirmationModal({
     );
 }
 
-export function ClientProfileDetail({ clientId: propClientId, onClose, initialData, statuses: initialStatuses, navigators: initialNavigators, vendors: initialVendors, menuItems: initialMenuItems, boxTypes: initialBoxTypes, currentUser, onBackgroundSave }: Props): ReactNode {
+export function ClientProfileDetail({
+    clientId: propClientId,
+    onClose,
+    initialData,
+    statuses: initialStatuses,
+    navigators: initialNavigators,
+    vendors: initialVendors,
+    menuItems: initialMenuItems,
+    boxTypes: initialBoxTypes,
+    settings: initialSettings,
+    categories: initialCategories,
+    mealCategories: initialMealCategories,
+    mealItems: initialMealItems,
+    equipment: initialEquipment,
+    allClients: initialAllClients,
+    regularClients: initialRegularClients,
+    currentUser,
+    onBackgroundSave
+}: Props): ReactNode {
 
     const router = useRouter();
     const params = useParams();
@@ -189,24 +214,24 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
     const [vendors, setVendors] = useState<Vendor[]>(initialVendors || []);
     const [menuItems, setMenuItems] = useState<MenuItem[]>(initialMenuItems || []);
     const [boxTypes, setBoxTypes] = useState<BoxType[]>(initialBoxTypes || []);
-    const [categories, setCategories] = useState<ItemCategory[]>([]);
-    const [mealCategories, setMealCategories] = useState<MealCategory[]>([]);
-    const [mealItems, setMealItems] = useState<MealItem[]>([]);
+    const [categories, setCategories] = useState<ItemCategory[]>(initialCategories || []);
+    const [mealCategories, setMealCategories] = useState<MealCategory[]>(initialMealCategories || []);
+    const [mealItems, setMealItems] = useState<MealItem[]>(initialMealItems || []);
     const [boxQuotas, setBoxQuotas] = useState<BoxQuota[]>([]);
-    const [equipment, setEquipment] = useState<any[]>([]);
+    const [equipment, setEquipment] = useState<any[]>(initialEquipment || []);
     const [showEquipmentOrder, setShowEquipmentOrder] = useState(false);
     const [equipmentOrder, setEquipmentOrder] = useState<{ vendorId: string; equipmentId: string; caseId: string } | null>(null);
     const [submittingEquipmentOrder, setSubmittingEquipmentOrder] = useState(false);
 
 
-    const [settings, setSettings] = useState<AppSettings | null>(null);
+    const [settings, setSettings] = useState<AppSettings | null>(initialSettings || null);
     const [history, setHistory] = useState<DeliveryRecord[]>([]);
     const [orderHistory, setOrderHistory] = useState<any[]>([]);
     const [billingHistory, setBillingHistory] = useState<any[]>([]);
     const [activeHistoryTab, setActiveHistoryTab] = useState<'deliveries' | 'audit' | 'billing'>('deliveries');
-    const [allClients, setAllClients] = useState<any[]>([]); // optimization: lightweight list
+    const [allClients, setAllClients] = useState<any[]>(initialAllClients || []); // optimization: lightweight list
     const [expandedBillingRows, setExpandedBillingRows] = useState<Set<string>>(new Set());
-    const [regularClients, setRegularClients] = useState<any[]>([]); // optimization: lightweight list
+    const [regularClients, setRegularClients] = useState<any[]>(initialRegularClients || []); // optimization: lightweight list
     const [parentClientSearch, setParentClientSearch] = useState('');
     const [dependents, setDependents] = useState<ClientProfile[]>([]);
 
@@ -759,19 +784,21 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
     }
 
     async function loadLookups() {
-        const [s, n, v, m, b, appSettings, catData, eData, allClientsData, regularClientsData, mealCatData, mealItemData] = await Promise.all([
-            getStatuses(),
-            getNavigators(),
-            getVendors(),
-            getMenuItems(),
-            getBoxTypes(),
-            getSettings(),
-            getCategories(),
-            getEquipment(),
-            getClientsLight(), // Optimized: getClientsLight
-            getRegularClients(),
-            getMealCategories(),
-            getMealItems()
+        const [
+            s, n, v, m, b, appSettings, catData, eData, allClientsData, regularClientsData, mealCatData, mealItemData
+        ] = await Promise.all([
+            initialStatuses ? Promise.resolve(initialStatuses) : getStatuses(),
+            initialNavigators ? Promise.resolve(initialNavigators) : getNavigators(),
+            initialVendors ? Promise.resolve(initialVendors) : getVendors(),
+            initialMenuItems ? Promise.resolve(initialMenuItems) : getMenuItems(),
+            initialBoxTypes ? Promise.resolve(initialBoxTypes) : getBoxTypes(),
+            initialSettings ? Promise.resolve(initialSettings) : getSettings(),
+            initialCategories ? Promise.resolve(initialCategories) : getCategories(),
+            initialEquipment ? Promise.resolve(initialEquipment) : getEquipment(),
+            initialAllClients ? Promise.resolve(initialAllClients) : getClientsLight(),
+            initialRegularClients ? Promise.resolve(initialRegularClients) : getRegularClients(),
+            initialMealCategories ? Promise.resolve(initialMealCategories) : getMealCategories(),
+            initialMealItems ? Promise.resolve(initialMealItems) : getMealItems()
         ]);
         setStatuses(s);
         setNavigators(n);
@@ -4607,18 +4634,22 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
 
             // Sync to new independent tables if there's order data
             // Sync to new independent tables if there's order data OR if we need to clear data
+            // PERFORMANCE: Parallelize all save operations since they're independent
             if (updateData.activeOrder && updateData.activeOrder.caseId) {
                 const serviceType = formData.serviceType;
+                const savePromises: Promise<any>[] = [];
 
                 if (serviceType === 'Custom') {
                     if (updateData.activeOrder.custom_name && updateData.activeOrder.custom_price && updateData.activeOrder.vendorId && updateData.activeOrder.deliveryDay) {
-                        await saveClientCustomOrder(
-                            clientId,
-                            updateData.activeOrder.vendorId,
-                            updateData.activeOrder.custom_name,
-                            Number(updateData.activeOrder.custom_price),
-                            updateData.activeOrder.deliveryDay,
-                            updateData.activeOrder.caseId
+                        savePromises.push(
+                            saveClientCustomOrder(
+                                clientId,
+                                updateData.activeOrder.vendorId,
+                                updateData.activeOrder.custom_name,
+                                Number(updateData.activeOrder.custom_price),
+                                updateData.activeOrder.deliveryDay,
+                                updateData.activeOrder.caseId
+                            )
                         );
                     }
                 }
@@ -4628,36 +4659,39 @@ export function ClientProfileDetail({ clientId: propClientId, onClose, initialDa
 
                 // Save food orders: ALWAYS if service type is Food, to allow clearing
                 if (serviceType === 'Food') {
-
-                    await saveClientFoodOrder(clientId, {
-                        caseId: updateData.activeOrder.caseId,
-                        deliveryDayOrders: updateData.activeOrder.deliveryDayOrders || {}
-                    });
+                    savePromises.push(
+                        saveClientFoodOrder(clientId, {
+                            caseId: updateData.activeOrder.caseId,
+                            deliveryDayOrders: updateData.activeOrder.deliveryDayOrders || {}
+                        })
+                    );
                 }
-
-                // Also handle the case where we might have food orders but currently not Food service? 
-                // No, only save to Food table if type is Food.
 
                 // Save meal orders if mealSelections exists OR if service type is Meal OR if service type is Food (to allow clearing)
                 if (updateData.activeOrder.mealSelections || serviceType === 'Meal' || serviceType === 'Food') {
-                    await saveClientMealOrder(clientId, {
-                        caseId: updateData.activeOrder.caseId,
-                        mealSelections: updateData.activeOrder.mealSelections || {}
-                    });
+                    savePromises.push(
+                        saveClientMealOrder(clientId, {
+                            caseId: updateData.activeOrder.caseId,
+                            mealSelections: updateData.activeOrder.mealSelections || {}
+                        })
+                    );
                 }
 
                 // Save box orders if it's a Boxes service
                 if (serviceType === 'Boxes') {
-
                     const boxesToSave = updateData.activeOrder?.boxOrders || [];
-                    await saveClientBoxOrder(clientId, boxesToSave.map((box: any) => ({
-                        ...box,
-                        caseId: updateData.activeOrder?.caseId
-                    })));
+                    savePromises.push(
+                        saveClientBoxOrder(clientId, boxesToSave.map((box: any) => ({
+                            ...box,
+                            caseId: updateData.activeOrder?.caseId
+                        })))
+                    );
                 }
+
+                // Execute all save operations in parallel
+                await Promise.all(savePromises);
             }
-            // Still call legacy sync for backward compatibility during migration
-            await syncCurrentOrderToUpcoming(clientId, { ...client, ...updateData } as ClientProfile, true);
+            // REMOVED: Duplicate syncCurrentOrderToUpcoming call - updateClient already handles this
 
             // Reload upcoming order if we had order changes
             // COMMENTED OUT: We rely on updatedClient.activeOrder which we just loaded above (line 3475).

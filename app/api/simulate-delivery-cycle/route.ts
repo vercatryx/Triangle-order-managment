@@ -26,38 +26,34 @@ export async function POST(request: NextRequest) {
     // --- 0. Setup Reporting ---
     const report = {
         totalCreated: 0,
-        breakdown: {
-            Food: 0,
-            Meal: 0,
-            Boxes: 0,
-            Custom: 0
-        },
+        breakdown: { Food: 0, Meal: 0, Boxes: 0, Custom: 0 },
         unexpectedFailures: [] as { clientName: string, orderType: string, date: string, reason: string }[]
     };
 
     function logUnexpected(clientName: string, type: string, date: string, reason: string) {
-        console.error(`[Unexpected Failure] ${clientName} | ${type} | ${reason}`);
+        // Reduced log noise - only log full errors if needed really
+        // console.error(`[Unexpected Failure] ${clientName} | ${type} | ${reason}`);
         report.unexpectedFailures.push({ clientName, orderType: type, date, reason });
     }
 
     try {
-        // --- 1. Load Global Context ---
-        const currentTime = await getCurrentTime(); // Source of truth for time
+        // --- 1. Load Global Context (Optimized) ---
+        const currentTime = await getCurrentTime();
         const today = new Date(currentTime);
-        today.setHours(0, 0, 0, 0); // Normalized Today (Start of Day)
+        today.setHours(0, 0, 0, 0);
 
-        // Fetch Reference Data
-        // Fetch Reference Data (Directly with Admin Client to bypass RLS)
+        // Fetch Reference Data (Optimized Selects)
         const [
             vendorsRes,
             statusesRes,
             menuItemsRes,
             mealItemsRes
         ] = await Promise.all([
-            supabase.from('vendors').select('*'),
-            supabase.from('client_statuses').select('*'),
-            supabase.from('menu_items').select('*'),
-            supabase.from('breakfast_items').select('*')
+            supabase.from('vendors').select('id, name, email, service_type, delivery_days, delivery_frequency, is_active, minimum_meals, cutoff_hours'),
+            supabase.from('client_statuses').select('id, name, is_system_default, deliveries_allowed'),
+            // Only fetch fields needed for pricing/validation
+            supabase.from('menu_items').select('id, vendor_id, name, value, price_each, is_active, category_id, minimum_order, image_url, sort_order'),
+            supabase.from('breakfast_items').select('id, category_id, name, quota_value, price_each, is_active, vendor_id, image_url, sort_order')
         ]);
 
         const allVendors = (vendorsRes.data || []).map((v: any) => ({
@@ -76,8 +72,7 @@ export async function POST(request: NextRequest) {
             id: s.id,
             name: s.name,
             isSystemDefault: s.is_system_default,
-            deliveriesAllowed: s.deliveries_allowed,
-            requiresUnitsOnChange: s.requires_units_on_change ?? false
+            deliveriesAllowed: s.deliveries_allowed
         }));
 
         const allMenuItems = (menuItemsRes.data || []).map((i: any) => ({
@@ -88,10 +83,8 @@ export async function POST(request: NextRequest) {
             priceEach: i.price_each ?? undefined,
             isActive: i.is_active,
             categoryId: i.category_id,
-            quotaValue: i.quota_value,
             minimumOrder: i.minimum_order ?? 0,
             imageUrl: i.image_url || null,
-            sortOrder: i.sort_order ?? 0,
             itemType: 'menu'
         }));
 
@@ -105,29 +98,28 @@ export async function POST(request: NextRequest) {
             isActive: i.is_active,
             vendorId: i.vendor_id,
             imageUrl: i.image_url || null,
-            sortOrder: i.sort_order ?? 0,
             itemType: 'meal'
         }));
 
-        // Get Settings for Report Email
         const { data: settingsData } = await supabase.from('app_settings').select('*').single();
         const settings = settingsData as any;
-        const reportEmail = settings?.report_email || 'admin@example.com'; // Fallback if not set
+        const reportEmail = settings?.report_email || 'admin@example.com';
 
-        // Map Helpers
+        // Optimized Maps for O(1) Lookup
         const statusMap = new Map(allStatuses.map(s => [s.id, s]));
         const vendorMap = new Map(allVendors.map(v => [v.id, v]));
+        const menuItemMap = new Map(allMenuItems.map(i => [i.id, i]));
+        const mealItemMap = new Map(allMealItems.map(i => [i.id, i]));
 
-        // Fetch All Clients (for status check)
+        // Fetch Clients (Optimized Select)
         const { data: clients, error: clientsError } = await supabase
             .from('clients')
             .select('id, full_name, status_id, service_type');
 
         if (clientsError) throw new Error(`Failed to fetch clients: ${clientsError.message}`);
-
         const clientMap = new Map(clients.map(c => [c.id, c]));
 
-        // Get Max Order Number for ID generation
+        // Get Max Order Number
         const { data: maxOrderData } = await supabase
             .from('orders')
             .select('order_number')
@@ -156,23 +148,21 @@ export async function POST(request: NextRequest) {
             totalValue: number,
             totalItems: number,
             notes: string | null,
-            caseId?: string
+            caseId: string | undefined, // Fixed type
+            assignedOrderNumber: number // Must pass valid number!
         ) {
             try {
-                // Formatting Date
                 const deliveryDateStr = deliveryDate.toISOString().split('T')[0];
-
-                // Insert Order
                 const { data: newOrder, error: orderErr } = await supabase
                     .from('orders')
                     .insert({
                         client_id: clientId,
                         service_type: serviceType,
-                        status: 'scheduled', // Initial status
+                        status: 'scheduled',
                         scheduled_delivery_date: deliveryDateStr,
                         total_value: totalValue,
                         total_items: totalItems,
-                        order_number: nextOrderNumber,
+                        order_number: assignedOrderNumber,
                         created_at: currentTime.toISOString(),
                         last_updated: currentTime.toISOString(),
                         notes: notes,
@@ -183,14 +173,12 @@ export async function POST(request: NextRequest) {
 
                 if (orderErr) throw orderErr;
 
-                nextOrderNumber++; // Increment locally
-
                 // Track Stats
                 report.totalCreated++;
                 if (serviceType === 'Food') report.breakdown.Food++;
-                if (serviceType === 'Meal') report.breakdown.Meal++;
-                if (serviceType === 'Boxes') report.breakdown.Boxes++;
-                if (serviceType === 'Custom') report.breakdown.Custom++;
+                else if (serviceType === 'Meal') report.breakdown.Meal++;
+                else if (serviceType === 'Boxes') report.breakdown.Boxes++;
+                else if (serviceType === 'Custom') report.breakdown.Custom++;
 
                 return newOrder;
             } catch (err: any) {
@@ -200,64 +188,52 @@ export async function POST(request: NextRequest) {
             }
         }
 
+        // Batch Processing Helper
+        async function processBatch<T>(items: T[], fn: (item: T) => Promise<void>, batchSize = 15) {
+            for (let i = 0; i < items.length; i += batchSize) {
+                const chunk = items.slice(i, i + batchSize);
+                await Promise.all(chunk.map(fn));
+            }
+        }
+
         // --- 3. Process FOOD Orders ---
-        // "Strict Single-Day Window"
+        // --- 3. Process FOOD Orders (Parallelized) ---
         const { data: foodOrders } = await supabase.from('client_food_orders').select('*');
         if (foodOrders) {
-            for (const fo of foodOrders) {
-                if (!isClientEligible(fo.client_id)) continue; // Expected Skip
+            await processBatch(foodOrders, async (fo) => {
+                if (!isClientEligible(fo.client_id)) return;
                 const client = clientMap.get(fo.client_id);
-                if (client?.service_type !== 'Food') continue; // Enforce Order Type
+                if (client?.service_type !== 'Food') return;
 
                 const dayOrders = typeof fo.delivery_day_orders === 'string'
                     ? JSON.parse(fo.delivery_day_orders)
                     : fo.delivery_day_orders;
 
-                if (!dayOrders) continue;
+                if (!dayOrders) return;
 
                 for (const dayName of Object.keys(dayOrders)) {
-                    // Check Logic: For this configured day "Monday", finds the specific Date D.
-                    // But wait, the date D logic depends on the VENDOR cutoff.
-                    // The spec says: "For each delivery date D... created ONLY if days_until == cutoff".
-                    // But D is derived from "Weekday" + "Vendor".
-
-                    // So first, we identify the potential Delivery Date for this configuration.
-                    // Since specific day is configured (e.g. Wednesday), we check if the UPCOMING Wednesday matches the cutoff.
-
                     const vendorSelections = dayOrders[dayName].vendorSelections || [];
                     for (const sel of vendorSelections) {
                         if (!sel.vendorId) continue;
                         const vendor = vendorMap.get(sel.vendorId);
                         if (!vendor) continue;
 
-                        // 1. Calculate Target Delivery Date
-                        // We use the helper to find the NEXT valid date for this day.
-                        // However, we must ensure we don't accidentally "jump" a week if we are looking for "Today" or "Tomorrow" depending on cutoff.
-                        // Actually, we iterate through reasonable upcoming dates?
-                        // No. The spec says "For each delivery date D...".
-                        // A recurrence means D occurs every week.
-                        // We basically check: Is the *Next Occurrence* of DayName at exactly Cutoff distance?
-
-                        // We need the date that is 'cutoffDays' away from today.
-                        // If Today+Cutoff is a Monday, and Client configured Monday -> Match.
-
                         const cutoff = vendor.cutoffDays || 0;
                         const targetDate = new Date(today);
                         targetDate.setDate(today.getDate() + cutoff);
                         const targetDayName = targetDate.toLocaleDateString('en-US', { weekday: 'long' });
 
-                        // Does client have an order configured for this Target Day?
-                        if (targetDayName !== dayName) continue; // Not the day we are processing loop-wise, but wait.
-                        // The loop iterates configured days. 
-                        // If configured day is "Wednesday", and Today+Cutoff is "Wednesday", we proceed.
+                        if (targetDayName !== dayName) continue; // Not today's target
 
-                        // Calculate specific date D
-                        const deliveryDate = targetDate; // This IS the date D
+                        const deliveryDate = targetDate;
 
-                        // STRICT RULE: days_until == cutoff.
-                        // By definition, deliveryDate is Today + Cutoff. So this is satisfied.
+                        // Check for duplicates
+                        // NOTE: In parallel processing, strictly relying on DB state for 'exists' check is race-prone 
+                        // if multiple threads target the SAME client+date.
+                        // However, we are iterating unique Client configurations. 
+                        // A single client is processed in one thread (one item in foodOrders array).
+                        // So no race condition for the same client.
 
-                        // Duplication Check (Strict Client + Vendor + Date)
                         const { count } = await supabase
                             .from('orders')
                             .select('*', { count: 'exact', head: true })
@@ -265,14 +241,8 @@ export async function POST(request: NextRequest) {
                             .eq('scheduled_delivery_date', deliveryDate.toISOString().split('T')[0])
                             .eq('service_type', 'Food');
 
-                        // Wait, spec says "Client + Vendor + Delivery Date". 
-                        // Existing 'orders' check above is only Client + Date + Type.
-                        // Existing logic checks vendor selections inside.
-                        // We need to check order_vendor_selections.
-
                         let isDuplicate = false;
                         if (count && count > 0) {
-                            // Fetch the actual orders to check vendor
                             const { data: existingOrders } = await supabase
                                 .from('orders')
                                 .select('id')
@@ -291,10 +261,9 @@ export async function POST(request: NextRequest) {
                             }
                         }
 
-                        if (isDuplicate) continue; // Expected Skip (Duplicate)
+                        if (isDuplicate) continue;
 
-                        // --- Create Food Order ---
-                        // Prepare Items
+                        // Create Food Order
                         let itemsTotal = 0;
                         let valueTotal = 0;
                         const itemsList = [];
@@ -303,7 +272,8 @@ export async function POST(request: NextRequest) {
                             for (const [itemId, qty] of Object.entries(sel.items)) {
                                 const q = Number(qty);
                                 if (q > 0) {
-                                    const mItem = allMenuItems.find(i => i.id === itemId) || allMealItems.find(i => i.id === itemId);
+                                    // Map Optimization
+                                    const mItem = menuItemMap.get(itemId) || mealItemMap.get(itemId);
                                     if (mItem) {
                                         const price = mItem.priceEach || mItem.value || 0;
                                         itemsTotal += q;
@@ -320,7 +290,10 @@ export async function POST(request: NextRequest) {
                             }
                         }
 
-                        if (itemsList.length === 0) continue; // Skip empty
+                        if (itemsList.length === 0) continue;
+
+                        // Atomic Order Number
+                        const assignedId = nextOrderNumber++;
 
                         const newOrder = await createOrder(
                             fo.client_id,
@@ -331,18 +304,17 @@ export async function POST(request: NextRequest) {
                             valueTotal,
                             itemsTotal,
                             (fo as any).notes || null,
-                            fo.case_id
+                            fo.case_id,
+                            assignedId
                         );
 
                         if (newOrder) {
-                            // Add Vendor Selection
                             const { data: vs } = await supabase.from('order_vendor_selections').insert({
                                 order_id: newOrder.id,
                                 vendor_id: sel.vendorId
                             }).select().single();
 
                             if (vs) {
-                                // Add Items
                                 const itemsPayload = itemsList.map(i => ({
                                     ...i,
                                     vendor_selection_id: vs.id,
@@ -353,7 +325,7 @@ export async function POST(request: NextRequest) {
                         }
                     }
                 }
-            }
+            });
         }
 
         // --- 4. Process MEAL / BOX Orders ---
@@ -624,45 +596,27 @@ export async function POST(request: NextRequest) {
             }
         }
 
-        // Execute Meal/Box Processing
+        // Execute Meal/Box Processing (Batched)
         const { data: mealOrders } = await supabase.from('client_meal_orders').select('*');
         if (mealOrders) {
-            for (const mo of mealOrders) {
-                await processPeriodicOrder(mo, 'Meal', (t) => null);
-            }
+            await processBatch(mealOrders, (mo) => processPeriodicOrder(mo, 'Meal', (t) => null));
         }
 
         const { data: boxOrders } = await supabase.from('client_box_orders').select('*');
         if (boxOrders) {
-            for (const bo of boxOrders) {
-                await processPeriodicOrder(bo, 'Boxes', (t) => ({ vendorId: t.vendor_id }));
-            }
+            await processBatch(boxOrders, (bo) => processPeriodicOrder(bo, 'Boxes', (t) => ({ vendorId: t.vendor_id })));
         }
 
-        // --- 5. Process CUSTOM Orders ---
-        // "Created ONLY on the exact cutoff day"
-        // "One per week... First valid wins"
-        console.log('[Unified Scheduling] Starting Custom Order Processing...');
+        // --- 5. Process CUSTOM Orders (Parallelized) ---
+        // console.log('[Unified Scheduling] Starting Custom Order Processing...'); 
         const { data: customOrders } = await supabase.from('upcoming_orders').select('*').eq('service_type', 'Custom');
 
         if (customOrders) {
-            console.log(`[Custom Debug] Found ${customOrders.length} custom order candidates.`);
-            for (const co of customOrders) {
-                console.log(`[Custom Debug] Processing candidate ${co.id} for client ${co.client_id}`);
+            await processBatch(customOrders, async (co) => {
+                if (!isClientEligible(co.client_id)) return;
 
-                if (!isClientEligible(co.client_id)) {
-                    console.log(`[Custom Debug] Client ${co.client_id} is not eligible. Skipping.`);
-                    continue;
-                }
+                if (!co.delivery_day) return;
 
-                // Validate Delivery Day Config
-                if (!co.delivery_day) {
-                    logUnexpected(clientMap.get(co.client_id)?.full_name || co.client_id, 'Custom', 'N/A', 'Missing delivery_day configuration');
-                    console.log(`[Custom Debug] Missing delivery_day for ${co.id}. Skipping.`);
-                    continue;
-                }
-
-                // Identify Cutoff
                 const { data: vs } = await supabase
                     .from('upcoming_order_vendor_selections')
                     .select('id, vendor_id')
@@ -670,28 +624,17 @@ export async function POST(request: NextRequest) {
                     .single();
 
                 const vendorId = vs?.vendor_id;
-                if (!vendorId) {
-                    // No vendor = cannot determine cutoff. Spec says "Custom orders have: A vendor".
-                    console.log(`[Custom Debug] No vendor found for ${co.id}. Skipping.`);
-                    continue;
-                }
+                if (!vendorId) return;
+
                 const vendor = vendorMap.get(vendorId);
                 const cutoff = vendor?.cutoffDays || 0;
-                console.log(`[Custom Debug] Vendor ${vendorId} found. Cutoff: ${cutoff} days.`);
 
-                // Target Date Calc:
                 const targetDate = new Date(today);
                 targetDate.setDate(today.getDate() + cutoff);
                 const targetDayName = targetDate.toLocaleDateString('en-US', { weekday: 'long' });
 
-                console.log(`[Custom Debug] Target Day for Cutoff is ${targetDayName} (${targetDate.toISOString().split('T')[0]}). Configured Day: ${co.delivery_day}`);
+                if (targetDayName !== co.delivery_day) return;
 
-                if (targetDayName !== co.delivery_day) {
-                    console.log(`[Custom Debug] Day mismatch. Skipping.`);
-                    continue; // Not the cutoff day
-                }
-
-                // EXACT MATCH -> Proceed
                 const deliveryDate = targetDate;
 
                 // Weekly Limit Check
@@ -710,14 +653,9 @@ export async function POST(request: NextRequest) {
                     .gte('scheduled_delivery_date', weekStart.toISOString().split('T')[0])
                     .lte('scheduled_delivery_date', weekEnd.toISOString().split('T')[0]);
 
-                if (count && count > 0) {
-                    console.log(`[Custom Debug] Weekly limit reached for client ${co.client_id}. Skipping.`);
-                    continue; // Blocked (Limit Reached)
-                }
+                if (count && count > 0) return;
 
-                console.log(`[Custom Debug] Creating order for client ${co.client_id} on ${deliveryDate.toISOString()}`);
-
-                // Create Custom Order
+                const assignedId = nextOrderNumber++;
                 const newOrder = await createOrder(
                     co.client_id,
                     'Custom',
@@ -727,36 +665,26 @@ export async function POST(request: NextRequest) {
                     co.total_value,
                     1,
                     co.notes,
-                    co.case_id
+                    co.case_id,
+                    assignedId
                 );
 
                 if (newOrder) {
-                    console.log(`[Custom Debug] Order ${newOrder.id} created successfully.`);
-
-                    // Link Vendor
                     const { data: newVs } = await supabase.from('order_vendor_selections').insert({
                         order_id: newOrder.id,
                         vendor_id: vendorId
                     }).select().single();
 
                     if (newVs) {
-                        console.log(`[Custom Debug] Vendor selection ${newVs.id} created.`);
-
-                        const upcomingVsId = vs?.id; // 'vs' is from line 623
-
+                        const upcomingVsId = vs?.id;
                         if (upcomingVsId) {
                             const { data: upcomingItems } = await supabase
                                 .from('upcoming_order_items')
                                 .select('*')
                                 .eq('upcoming_order_vendor_selection_id', upcomingVsId);
 
-                            console.log(`[Custom Debug] Found ${upcomingItems?.length || 0} items in upcoming_order_items for VS ${upcomingVsId}`);
-
                             if (upcomingItems && upcomingItems.length > 0) {
                                 for (const uItem of upcomingItems) {
-                                    // Use custom_name if available, else usage notes as name?
-                                    // Often custom order item name is just the note.
-
                                     const itemName = uItem.custom_name || uItem.notes || 'Custom Item';
                                     const itemPrice = uItem.custom_price || uItem.total_value || 0;
 
@@ -769,16 +697,11 @@ export async function POST(request: NextRequest) {
                                         quantity: uItem.quantity || 1,
                                         unit_value: itemPrice,
                                         total_value: (itemPrice * (uItem.quantity || 1)),
-                                        notes: uItem.notes // Keep note in notes too
+                                        notes: uItem.notes
                                     });
                                 }
-                                console.log(`[Custom Debug] Items transferred.`);
                             } else {
-                                console.log(`[Custom Debug] No items found, creating fallback item from order details.`);
-                                // Use co.notes as name if available, as that's where the user text is
                                 const rawItemName = co.custom_name || co.notes || 'Custom Item';
-
-                                // Split by comma to support multiple items
                                 const itemNames = rawItemName.split(',').map((s: string) => s.trim()).filter((s: string) => s.length > 0);
 
                                 if (itemNames.length > 0) {
@@ -795,11 +718,10 @@ export async function POST(request: NextRequest) {
                                             quantity: 1,
                                             unit_value: pricePerItem,
                                             total_value: pricePerItem,
-                                            notes: null // Don't duplicate the full list into the notes of each item
+                                            notes: null
                                         });
                                     }
                                 } else {
-                                    // Fallback if split results in empty (shouldn't happen with default)
                                     await supabase.from('order_items').insert({
                                         order_id: newOrder.id,
                                         vendor_selection_id: newVs.id,
@@ -814,15 +736,11 @@ export async function POST(request: NextRequest) {
                                 }
                             }
                         }
-                    } else {
-                        console.error(`[Custom Debug] Failed to create order_vendor_selections for order ${newOrder.id}`);
                     }
-                } else {
-                    console.error(`[Custom Debug] Failed to create order shell.`);
                 }
-            }
+            });
         } else {
-            console.log('[Custom Debug] No custom orders passed filter.');
+            // console.log('[Custom Debug] No custom orders passed filter.');
         }
 
         // --- 6. Send Report ---

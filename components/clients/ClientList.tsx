@@ -23,7 +23,11 @@ import {
     getCompletedOrdersWithDeliveryProof as serverGetCompletedOrdersWithDeliveryProof,
     getBatchClientDetails,
     getClient,
-    getGlobalLocations
+    getGlobalLocations,
+    getSettings,
+    getCategories,
+    getEquipment,
+    getMealCategories
 } from '@/lib/actions';
 import { invalidateClientData } from '@/lib/cached-data';
 import { Plus, Search, ChevronRight, CheckSquare, Square, StickyNote, Package, ArrowUpDown, ArrowUp, ArrowDown, Filter, Eye, EyeOff, Loader2, AlertCircle, X, RefreshCcw } from 'lucide-react';
@@ -45,6 +49,11 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
     const [allClientsForLookup, setAllClientsForLookup] = useState<ClientProfile[]>([]);
     const [globalLocations, setGlobalLocations] = useState<GlobalLocation[]>([]);
     const [mealItems, setMealItems] = useState<MenuItem[]>([]);
+    const [settings, setSettings] = useState<any>(null);
+    const [categories, setCategories] = useState<any[]>([]);
+    const [equipment, setEquipment] = useState<any[]>([]);
+    const [mealCategories, setMealCategories] = useState<any[]>([]);
+    const [regularClients, setRegularClients] = useState<any[]>([]);
     const [search, setSearch] = useState('');
     const [isLoading, setIsLoading] = useState(true);
     const [isRefreshing, setIsRefreshing] = useState(false);
@@ -81,7 +90,6 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
     const [dependentDob, setDependentDob] = useState('');
     const [dependentCin, setDependentCin] = useState('');
     const [selectedParentClientId, setSelectedParentClientId] = useState<string>('');
-    const [regularClients, setRegularClients] = useState<ClientProfile[]>([]);
     const [parentClientSearch, setParentClientSearch] = useState('');
     const [editingDependentId, setEditingDependentId] = useState<string | null>(null);
 
@@ -111,37 +119,12 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
     // PREVIOUS: Progressive Loading Effect (Removed)
     // We now load all clients in one go, so no need for fetchMoreClients logic.
 
-    // Background Prefetching Effect - Re-enabled with Batch Fetching
-    useEffect(() => {
-        if (isLoading || clients.length === 0) return;
-
-        // Prefetch visible clients (e.g., current page)
-        // Since we have all clients loaded progressively, let's just grab the ones that are likely visible
-        // based on scroll or just checking cache.
-        // For simplicity and efficiency, let's check the first 20 clients that are missing form cache.
-        // This is much better than one-by-one.
-
-        const missingCache = clients
-            .filter(c => !detailsCache[c.id] && !pendingPrefetches.current.has(c.id))
-            .slice(0, 20); // Batch size of 20
-
-        if (missingCache.length > 0) {
-            const idsToFetch = missingCache.map(c => c.id);
-            // Mark as pending
-            idsToFetch.forEach(id => pendingPrefetches.current.add(id));
-
-            console.log(`[Prefetch] Batch fetching ${idsToFetch.length} clients...`);
-
-            getBatchClientDetails(idsToFetch).then(results => {
-                setDetailsCache(prev => ({ ...prev, ...results }));
-                // Cleanup pending
-                idsToFetch.forEach(id => pendingPrefetches.current.delete(id));
-            }).catch(err => {
-                console.error('[Prefetch] Batch fetch failed:', err);
-                idsToFetch.forEach(id => pendingPrefetches.current.delete(id));
-            });
-        }
-    }, [clients, detailsCache, isLoading]);
+    // DISABLED: Background Prefetching - Using bulk loading instead
+    // Prefetching is disabled to avoid unnecessary API calls
+    // useEffect(() => {
+    //     if (isLoading || clients.length === 0) return;
+    //     // ... prefetching code removed
+    // }, [clients, detailsCache, isLoading]);
 
     // Click-outside-to-close filter menus
     useEffect(() => {
@@ -164,7 +147,7 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
         try {
             // Fetch ALL data in parallel. 
             // Note: getClients now returns ALL clients, not paginated.
-            const [sData, nData, vData, bData, mData, mealData, allClients, gLocs] = await Promise.all([
+            const [sData, nData, vData, bData, mData, mealData, allClients, gLocs, appSettings, catData, eData, mealCatData, regClients] = await Promise.all([
                 getStatuses(),
                 getNavigators(),
                 getVendors(),
@@ -172,7 +155,12 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
                 getMenuItems(),
                 getMealItems(),
                 getClients(),
-                getGlobalLocations()
+                getGlobalLocations(),
+                getSettings(),
+                getCategories(),
+                getEquipment(),
+                getMealCategories(),
+                getRegularClients()
             ]);
 
             setStatuses(sData);
@@ -182,9 +170,13 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
             setMenuItems(mData);
             setMealItems(mealData as any);
             setClients(allClients); // Set ALL clients at once
-            setGlobalLocations(Array.isArray(gLocs) ? gLocs : (gLocs as any).success ? (gLocs as any).data : []);
-            // setTotalClients(allClients.length); // Not strictly needed if not paginating
             setAllClientsForLookup(allClients);
+            setGlobalLocations(Array.isArray(gLocs) ? gLocs : (gLocs as any).success ? (gLocs as any).data : []);
+            setSettings(appSettings);
+            setCategories(catData);
+            setEquipment(eData);
+            setMealCategories(mealCatData);
+            setRegularClients(regClients);
         } catch (error) {
             console.error("Error loading initial data:", error);
         } finally {
@@ -197,7 +189,7 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
         try {
             invalidateClientData();
 
-            const [sData, nData, vData, bData, mData, mealData, allClients, gLocs] = await Promise.all([
+            const [sData, nData, vData, bData, mData, mealData, allClients, gLocs, appSettings, catData, eData, mealCatData, regClients] = await Promise.all([
                 getStatuses(),
                 getNavigators(),
                 getVendors(),
@@ -205,7 +197,12 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
                 getMenuItems(),
                 getMealItems(),
                 getClients(),
-                getGlobalLocations()
+                getGlobalLocations(),
+                getSettings(),
+                getCategories(),
+                getEquipment(),
+                getMealCategories(),
+                getRegularClients()
             ]);
 
             setStatuses(sData);
@@ -215,8 +212,13 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
             setMenuItems(mData);
             setMealItems(mealData as any);
             setClients(allClients);
-            setGlobalLocations(Array.isArray(gLocs) ? gLocs : (gLocs as any).success ? (gLocs as any).data : []);
             setAllClientsForLookup(allClients);
+            setGlobalLocations(Array.isArray(gLocs) ? gLocs : (gLocs as any).success ? (gLocs as any).data : []);
+            setSettings(appSettings);
+            setCategories(catData);
+            setEquipment(eData);
+            setMealCategories(mealCatData);
+            setRegularClients(regClients);
         } catch (error) {
             console.error("Error refreshing data:", error);
         } finally {
@@ -1845,6 +1847,13 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
                                 vendors={vendors}
                                 menuItems={menuItems}
                                 boxTypes={boxTypes}
+                                settings={settings}
+                                categories={categories}
+                                mealCategories={mealCategories}
+                                mealItems={mealItems as any}
+                                equipment={equipment}
+                                allClients={allClientsForLookup}
+                                regularClients={regularClients}
                                 currentUser={currentUser}
                                 onClose={() => {
                                     const closedClientId = selectedClientId;

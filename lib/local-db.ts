@@ -15,10 +15,21 @@ interface LocalOrdersDB {
     upcomingOrderVendorSelections: any[];
     upcomingOrderItems: any[];
     upcomingOrderBoxSelections: any[];
+    clientFoodOrders: any[];
+    clientMealOrders: any[];
+    clientBoxOrders: any[];
     lastSynced: string;
 }
 
 const DB_PATH = path.join(process.cwd(), 'data', 'local-orders-db.json');
+
+// Global lock to prevent multiple concurrent syncs
+let isSyncing = false;
+
+// In-memory cache for the database to avoid redundant file reads
+let cachedDB: LocalOrdersDB | null = null;
+let lastReadTime = 0;
+const CACHE_TTL = 5000; // 5 seconds
 
 // Ensure data directory exists and initialize DB file if it doesn't exist
 async function ensureDBFile(): Promise<boolean> {
@@ -50,6 +61,9 @@ async function ensureDBFile(): Promise<boolean> {
             upcomingOrderVendorSelections: [],
             upcomingOrderItems: [],
             upcomingOrderBoxSelections: [],
+            clientFoodOrders: [],
+            clientMealOrders: [],
+            clientBoxOrders: [],
             lastSynced: new Date().toISOString()
         };
         try {
@@ -79,12 +93,29 @@ export async function readLocalDB(): Promise<LocalOrdersDB> {
             upcomingOrderVendorSelections: [],
             upcomingOrderItems: [],
             upcomingOrderBoxSelections: [],
+            clientFoodOrders: [],
+            clientMealOrders: [],
+            clientBoxOrders: [],
             lastSynced: new Date().toISOString()
         };
     }
+    // Check cache first
+    const now = Date.now();
+    if (cachedDB && (now - lastReadTime < CACHE_TTL)) {
+        // console.log(`[LocalDB] Returning cached DB (${now - lastReadTime}ms old)`);
+        return cachedDB;
+    }
+
+    const start = Date.now();
     try {
         const content = await fs.readFile(DB_PATH, 'utf-8');
-        return JSON.parse(content);
+        const data = JSON.parse(content);
+
+        // Update cache
+        cachedDB = data;
+        lastReadTime = now;
+
+        return data;
     } catch (error) {
         // Return empty DB if read fails
         return {
@@ -96,6 +127,9 @@ export async function readLocalDB(): Promise<LocalOrdersDB> {
             upcomingOrderVendorSelections: [],
             upcomingOrderItems: [],
             upcomingOrderBoxSelections: [],
+            clientFoodOrders: [],
+            clientMealOrders: [],
+            clientBoxOrders: [],
             lastSynced: new Date().toISOString()
         };
     }
@@ -124,17 +158,13 @@ async function writeLocalDB(db: LocalOrdersDB): Promise<void> {
 
 // Check if local DB needs sync (if it's empty or stale > 2 minutes)
 async function needsSync(): Promise<boolean> {
+    if (isSyncing) return false; // Already syncing, don't trigger another
+
     try {
         const db = await readLocalDB();
-        // Always sync if DB is completely empty
-        if (db.orders.length === 0 && db.upcomingOrders.length === 0) {
-            return true; // Empty DB needs sync
-        }
-        // Check if last sync was more than 2 minutes ago
-        const lastSynced = new Date(db.lastSynced);
-        const now = new Date();
-        const diffMinutes = (now.getTime() - lastSynced.getTime()) / (1000 * 60);
-        return diffMinutes > 2; // Sync if older than 2 minutes for better freshness
+        // Only sync if DB is completely empty (initial setup)
+        // We no longer do periodic full syncs to save bandwidth
+        return db.orders.length === 0 && db.upcomingOrders.length === 0;
     } catch {
         return true; // Error reading DB, needs sync
     }
@@ -142,6 +172,8 @@ async function needsSync(): Promise<boolean> {
 
 // Trigger sync in background (non-blocking)
 export async function triggerSyncInBackground(): Promise<void> {
+    if (isSyncing) return; // Prevent multiple background syncs
+
     // Use setImmediate or setTimeout to run in background
     // This function returns immediately, sync runs asynchronously
     if (typeof setImmediate !== 'undefined') {
@@ -161,6 +193,10 @@ export async function triggerSyncInBackground(): Promise<void> {
 
 // Sync all orders and upcoming orders from Supabase to local DB
 export async function syncLocalDBFromSupabase(): Promise<void> {
+    if (isSyncing) return;
+    isSyncing = true;
+    console.log('[LocalDB] Starting full sync...');
+
     try {
         let supabaseClient = supabase;
         const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -261,7 +297,21 @@ export async function syncLocalDBFromSupabase(): Promise<void> {
                 .in('upcoming_order_id', upcomingOrderIds);
 
             upcomingOrderBoxSelections = uboxData || [];
+            upcomingOrderBoxSelections = uboxData || [];
         }
+
+        // Fetch independent order tables
+        const { data: foodOrders } = await supabaseClient
+            .from('client_food_orders')
+            .select('*');
+
+        const { data: mealOrders } = await supabaseClient
+            .from('client_meal_orders')
+            .select('*');
+
+        const { data: boxOrders } = await supabaseClient
+            .from('client_box_orders')
+            .select('*');
 
         // Update local database
         const localDB: LocalOrdersDB = {
@@ -273,6 +323,9 @@ export async function syncLocalDBFromSupabase(): Promise<void> {
             upcomingOrderVendorSelections,
             upcomingOrderItems,
             upcomingOrderBoxSelections,
+            clientFoodOrders: foodOrders || [],
+            clientMealOrders: mealOrders || [],
+            clientBoxOrders: boxOrders || [],
             lastSynced: new Date().toISOString()
         };
 
@@ -288,7 +341,151 @@ export async function syncLocalDBFromSupabase(): Promise<void> {
         }
         // Log other errors (e.g., Supabase query errors) but don't fail the operation
         console.warn('Error syncing local DB:', error);
+    } finally {
+        isSyncing = false;
+        console.log('[LocalDB] Full sync complete.');
     }
+}
+
+/**
+ * Partial update for a specific client to avoid full DB fetch
+ * If isDeletion is true, the client's data is removed from local DB
+ */
+export async function updateClientInLocalDB(clientId: string, isDeletion: boolean = false): Promise<void> {
+    if (!clientId) return;
+    console.log(`[LocalDB] Partial update starting for client: ${clientId} (isDeletion: ${isDeletion})...`);
+
+    try {
+        // Load current DB
+        const db = await readLocalDB();
+
+        // 1. Always remove old data for this client
+        const orderIdsToRemove = db.orders.filter(o => o.client_id === clientId).map(o => o.id);
+        const upcomingOrderIdsToRemove = db.upcomingOrders.filter(o => o.client_id === clientId).map(o => o.id);
+
+        db.orders = db.orders.filter(o => o.client_id !== clientId);
+        db.upcomingOrders = db.upcomingOrders.filter(o => o.client_id !== clientId);
+        db.clientFoodOrders = db.clientFoodOrders?.filter(o => o.client_id !== clientId) || [];
+        db.clientMealOrders = db.clientMealOrders?.filter(o => o.client_id !== clientId) || [];
+        db.clientBoxOrders = db.clientBoxOrders?.filter(o => o.client_id !== clientId) || [];
+
+        // Collect all vendor selection IDs associated with the orders/upcoming orders being removed
+        const vsIdsToRemove = [
+            ...db.orderVendorSelections.filter(vs => orderIdsToRemove.includes(vs.order_id)).map(vs => vs.id),
+            ...db.upcomingOrderVendorSelections.filter(vs => upcomingOrderIdsToRemove.includes(vs.upcoming_order_id)).map(vs => vs.id)
+        ];
+
+        if (orderIdsToRemove.length > 0) {
+            db.orderVendorSelections = db.orderVendorSelections.filter(vs => !orderIdsToRemove.includes(vs.order_id));
+            db.orderBoxSelections = db.orderBoxSelections.filter(bs => !orderIdsToRemove.includes(bs.order_id));
+        }
+        if (upcomingOrderIdsToRemove.length > 0) {
+            db.upcomingOrderVendorSelections = db.upcomingOrderVendorSelections.filter(vs => !upcomingOrderIdsToRemove.includes(vs.upcoming_order_id));
+            db.upcomingOrderBoxSelections = db.upcomingOrderBoxSelections.filter(bs => !upcomingOrderIdsToRemove.includes(bs.upcoming_order_id));
+        }
+        if (vsIdsToRemove.length > 0) {
+            db.orderItems = db.orderItems.filter(item => !vsIdsToRemove.includes(item.vendor_selection_id));
+            db.upcomingOrderItems = db.upcomingOrderItems.filter(item => !vsIdsToRemove.includes(item.vendor_selection_id));
+        }
+
+        // 2. If it's a deletion, we are done
+        if (isDeletion) {
+            await writeLocalDB(db);
+            console.log(`[LocalDB] Deletion complete for client: ${clientId}.`);
+            return;
+        }
+
+        // 3. Otherwise, fetch new data
+        let supabaseClient = supabase;
+        const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+        if (serviceRoleKey) {
+            supabaseClient = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, serviceRoleKey, {
+                auth: { persistSession: false }
+            });
+        }
+
+        // Fetch this client's orders and upcoming orders
+        const [
+            { data: orders },
+            { data: upcomingOrders },
+            { data: foodOrders },
+            { data: mealOrders },
+            { data: boxOrders }
+        ] = await Promise.all([
+            supabaseClient.from('orders').select('*').eq('client_id', clientId).in('status', ['pending', 'confirmed', 'processing']),
+            supabaseClient.from('upcoming_orders').select('*').eq('client_id', clientId).eq('status', 'scheduled'),
+            supabaseClient.from('client_food_orders').select('*').eq('client_id', clientId),
+            supabaseClient.from('client_meal_orders').select('*').eq('client_id', clientId),
+            supabaseClient.from('client_box_orders').select('*').eq('client_id', clientId)
+        ]);
+
+        const newOrderIds = (orders || []).map(o => o.id);
+        const newUpcomingOrderIds = (upcomingOrders || []).map(o => o.id);
+
+        // Fetch related data
+        const [
+            { data: vsData },
+            { data: boxData },
+            { data: uvsData },
+            { data: uboxData }
+        ] = await Promise.all([
+            newOrderIds.length > 0 ? supabaseClient.from('order_vendor_selections').select('*').in('order_id', newOrderIds) : Promise.resolve({ data: [] }),
+            newOrderIds.length > 0 ? supabaseClient.from('order_box_selections').select('*').in('order_id', newOrderIds) : Promise.resolve({ data: [] }),
+            newUpcomingOrderIds.length > 0 ? supabaseClient.from('upcoming_order_vendor_selections').select('*').in('upcoming_order_id', newUpcomingOrderIds) : Promise.resolve({ data: [] }),
+            newUpcomingOrderIds.length > 0 ? supabaseClient.from('upcoming_order_box_selections').select('*').in('upcoming_order_id', newUpcomingOrderIds) : Promise.resolve({ data: [] })
+        ]);
+
+        const newVsIds = (vsData || []).map(vs => vs.id);
+        const newUvsIds = (uvsData || []).map(vs => vs.id);
+
+        const [
+            { data: itemsData },
+            { data: uitemsData }
+        ] = await Promise.all([
+            newVsIds.length > 0 ? supabaseClient.from('order_items').select('*').in('vendor_selection_id', newVsIds) : Promise.resolve({ data: [] }),
+            newUvsIds.length > 0 ? supabaseClient.from('upcoming_order_items').select('*').in('vendor_selection_id', newUvsIds) : Promise.resolve({ data: [] })
+        ]);
+
+        // 4. Add new data
+        if (orders) db.orders.push(...orders);
+        if (upcomingOrders) db.upcomingOrders.push(...upcomingOrders);
+        if (foodOrders) db.clientFoodOrders.push(...foodOrders);
+        if (mealOrders) db.clientMealOrders.push(...mealOrders);
+        if (boxOrders) db.clientBoxOrders.push(...boxOrders);
+        if (vsData) db.orderVendorSelections.push(...vsData);
+        if (boxData) db.orderBoxSelections.push(...boxData);
+        if (itemsData) db.orderItems.push(...itemsData);
+        if (uvsData) db.upcomingOrderVendorSelections.push(...uvsData);
+        if (uboxData) db.upcomingOrderBoxSelections.push(...uboxData);
+        if (uitemsData) db.upcomingOrderItems.push(...uitemsData);
+
+        await writeLocalDB(db);
+        console.log(`[LocalDB] Partial update complete for client: ${clientId}.`);
+    } catch (error: any) {
+        console.error(`[LocalDB] Error in partial update for client ${clientId}:`, error);
+        // Fallback to background full sync if partial update fails
+        triggerSyncInBackground();
+    }
+}
+
+/**
+ * Bulk sync for multiple clients (e.g., after processUpcomingOrders)
+ */
+export async function syncClientsInLocalDB(clientIds: string[]): Promise<void> {
+    if (!clientIds || clientIds.length === 0) return;
+    const uniqueIds = [...new Set(clientIds)];
+    console.log(`[LocalDB] Starting bulk sync for ${uniqueIds.length} clients...`);
+
+    // For now, simpler implementation: just run partial update for each sequentiallly
+    // In future, a more optimized batch SQL query would be better
+    for (const id of uniqueIds) {
+        try {
+            await updateClientInLocalDB(id);
+        } catch (e) {
+            console.error(`[LocalDB] Failed to sync client ${id} in bulk:`, e);
+        }
+    }
+    console.log(`[LocalDB] Bulk sync complete.`);
 }
 
 // Get active order for client from local DB
@@ -794,3 +991,72 @@ export async function getUpcomingOrderForClientLocal(clientId: string) {
     }
 }
 
+
+// Get active food order for client from local DB
+export async function getClientFoodOrderLocal(clientId: string) {
+    if (!clientId) return null;
+    if (await needsSync()) {
+        triggerSyncInBackground();
+    }
+    const db = await readLocalDB();
+    const order = db.clientFoodOrders?.find(o => o.client_id === clientId);
+    if (!order) return null;
+
+    return {
+        id: order.id,
+        clientId: order.client_id,
+        caseId: order.case_id,
+        deliveryDayOrders: order.delivery_day_orders,
+        notes: order.notes,
+        created_at: order.created_at,
+        updated_at: order.updated_at,
+        updated_by: order.updated_by
+    };
+}
+
+// Get active meal order for client from local DB
+export async function getClientMealOrderLocal(clientId: string) {
+    if (!clientId) return null;
+    if (await needsSync()) {
+        triggerSyncInBackground();
+    }
+    const db = await readLocalDB();
+    const order = db.clientMealOrders?.find(o => o.client_id === clientId);
+    if (!order) return null;
+
+    return {
+        id: order.id,
+        clientId: order.client_id,
+        caseId: order.case_id,
+        mealSelections: order.meal_selections,
+        notes: order.notes,
+        created_at: order.created_at,
+        updated_at: order.updated_at,
+        updated_by: order.updated_by
+    };
+}
+
+// Get active box order for client from local DB
+export async function getClientBoxOrderLocal(clientId: string) {
+    if (!clientId) return null;
+    if (await needsSync()) {
+        triggerSyncInBackground();
+    }
+    const db = await readLocalDB();
+    const orders = db.clientBoxOrders?.filter(o => o.client_id === clientId) || [];
+
+    // Map to expected return format (ActiveBoxOrder[])
+    return orders.map(order => ({
+        id: order.id,
+        clientId: order.client_id,
+        caseId: order.case_id,
+        boxTypeId: order.box_type_id,
+        vendorId: order.vendor_id,
+        quantity: order.box_quantity,
+        items: order.items,
+        notes: order.notes,
+        created_at: order.created_at,
+        updated_at: order.updated_at,
+        updated_by: order.updated_by
+    }));
+}
