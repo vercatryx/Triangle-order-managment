@@ -14,42 +14,7 @@ import { roundCurrency } from './utils';
 import { mapClientFromDB, handleError } from './actions-shared';
 import { processVendorOrderDetails } from './actions';
 
-export const getStatuses = cacheFn(async function () {
-    const { data, error } = await supabase.from('client_statuses').select('*').order('created_at', { ascending: true });
-    if (error) {
-        console.error('Error fetching statuses:', error);
-        return [];
-    }
-    return data.map((s: any) => ({
-        id: s.id,
-        name: s.name,
-        isSystemDefault: s.is_system_default,
-        deliveriesAllowed: s.deliveries_allowed,
-        requiresUnitsOnChange: s.requires_units_on_change ?? false
-    }));
-});
-
-export const getVendors = cacheFn(async function () {
-    const { data, error } = await supabase.from('vendors').select('*');
-    if (error) return [];
-
-    return data.map((v: any) => ({
-        id: v.id,
-        name: v.name,
-        email: v.email || null,
-        serviceTypes: (v.service_type || '').split(',').map((s: string) => s.trim()).filter(Boolean) as ServiceType[],
-        deliveryDays: v.delivery_days || [],
-        allowsMultipleDeliveries: v.delivery_frequency === 'Multiple',
-        isActive: v.is_active,
-        minimumMeals: v.minimum_meals ?? 0,
-        cutoffDays: v.cutoff_hours ?? 0
-    }));
-});
-
-export async function getVendor(id: string) {
-    const { data: v, error } = await supabase.from('vendors').select('*').eq('id', id).single();
-    if (error || !v) return null;
-
+function mapVendorRow(v: { id: string; name: string; email: string | null; service_type: string; delivery_days: string[]; delivery_frequency: string; is_active: boolean; minimum_meals: number | null; cutoff_hours: number | null }) {
     return {
         id: v.id,
         name: v.name,
@@ -61,6 +26,85 @@ export async function getVendor(id: string) {
         minimumMeals: v.minimum_meals ?? 0,
         cutoffDays: v.cutoff_hours ?? 0
     };
+}
+
+export const getStatuses = cacheFn(async function () {
+    try {
+        const { data, error } = await supabase
+            .from('client_statuses')
+            .select('*')
+            .order('created_at', { ascending: true });
+        
+        if (error) throw error;
+        if (!data) return [];
+        
+        return data.map((s: any) => ({
+            id: s.id,
+            name: s.name,
+            isSystemDefault: s.is_system_default ?? false,
+            deliveriesAllowed: s.deliveries_allowed ?? true,
+            requiresUnitsOnChange: s.requires_units_on_change ?? false
+        }));
+    } catch (e) {
+        console.error('Error fetching statuses:', e);
+        return [];
+    }
+});
+
+export const getVendors = cacheFn(async function () {
+    try {
+        const { data: vendors, error: vendorsError } = await supabase
+            .from('vendors')
+            .select('*');
+        
+        if (vendorsError) throw vendorsError;
+        if (!vendors) return [];
+        
+        // Fetch vendor locations in batch (SPEED OPTIMIZATION)
+        const { data: vendorLocations, error: vlError } = await supabase
+            .from('vendor_locations')
+            .select('*, locations(*)');
+        
+        if (vlError) throw vlError;
+        
+        // Create a map of vendor locations
+        const locationMap = new Map<string, any[]>();
+        (vendorLocations || []).forEach((vl: any) => {
+            if (!locationMap.has(vl.vendor_id)) {
+                locationMap.set(vl.vendor_id, []);
+            }
+            locationMap.get(vl.vendor_id)!.push({
+                id: vl.id,
+                vendorId: vl.vendor_id,
+                locationId: vl.location_id,
+                name: vl.locations?.name ?? 'Unknown'
+            });
+        });
+        
+        return vendors.map((v: any) => ({
+            ...mapVendorRow(v),
+            locations: locationMap.get(v.id) || []
+        }));
+    } catch (e) {
+        console.error('Error fetching vendors:', e);
+        return [];
+    }
+});
+
+export async function getVendor(id: string) {
+    try {
+        const { data, error } = await supabase
+            .from('vendors')
+            .select('*')
+            .eq('id', id)
+            .single();
+        
+        if (error || !data) return null;
+        return mapVendorRow(data);
+    } catch (e) {
+        console.error('Error fetching vendor:', e);
+        return null;
+    }
 }
 
 export async function getGlobalLocations() {

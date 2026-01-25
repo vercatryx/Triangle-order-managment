@@ -155,14 +155,14 @@ export function GlobalSettings() {
                 <div className={styles.formGroup} style={{ marginBottom: 'var(--spacing-lg)' }}>
                     <label className="label">Report Email Address</label>
                     <input
-                        type="email"
+                        type="text"
                         className="input"
-                        placeholder="email@example.com"
+                        placeholder="email@example.com, another@example.com"
                         value={settings.reportEmail || ''}
                         onChange={e => setSettings({ ...settings, reportEmail: e.target.value })}
                     />
                     <p style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)', marginTop: '0.5rem' }}>
-                        Email address to receive delivery simulation reports for skipped orders.
+                        Email address(es) to receive delivery simulation reports for skipped orders. Separate multiple addresses with commas.
                     </p>
                 </div>
 

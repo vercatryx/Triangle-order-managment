@@ -16,11 +16,16 @@ import nodemailer from 'nodemailer';
  * - GMAIL_BACKUP_PASS (Gmail app password)
  */
 
-interface EmailOptions {
-    to: string;
+export interface EmailOptions {
+    to: string; // Single email address or comma-separated list of email addresses
     subject: string;
     html: string;
     text?: string;
+    attachments?: {
+        filename: string;
+        content: Buffer | string;
+        contentType?: string;
+    }[];
 }
 
 async function sendWithTransporter(
@@ -33,7 +38,8 @@ async function sendWithTransporter(
         to: options.to,
         subject: options.subject,
         html: options.html,
-        text: options.text || options.html.replace(/<[^>]*>/g, '') // Strip HTML for text version
+        text: options.text || options.html.replace(/<[^>]*>/g, ''), // Strip HTML for text version
+        attachments: options.attachments
     });
 }
 

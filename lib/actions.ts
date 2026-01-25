@@ -23,18 +23,26 @@ function handleError(error: any) {
 // --- STATUS ACTIONS ---
 
 export const getStatuses = reactCache(async function () {
-    const { data, error } = await supabase.from('client_statuses').select('*').order('created_at', { ascending: true });
-    if (error) {
+    try {
+        const { data, error } = await supabase
+            .from('client_statuses')
+            .select('*')
+            .order('created_at', { ascending: true });
+        
+        if (error) throw error;
+        if (!data) return [];
+        
+        return data.map((s: any) => ({
+            id: s.id,
+            name: s.name,
+            isSystemDefault: s.is_system_default ?? false,
+            deliveriesAllowed: s.deliveries_allowed ?? true,
+            requiresUnitsOnChange: s.requires_units_on_change ?? false
+        }));
+    } catch (error) {
         console.error('Error fetching statuses:', error);
         return [];
     }
-    return data.map((s: any) => ({
-        id: s.id,
-        name: s.name,
-        isSystemDefault: s.is_system_default,
-        deliveriesAllowed: s.deliveries_allowed,
-        requiresUnitsOnChange: s.requires_units_on_change ?? false
-    }));
 });
 
 export async function addStatus(name: string) {
@@ -2803,8 +2811,8 @@ export async function syncSingleOrderForDeliveryDay(
 
         // First, batch insert all vendor selections
         const vendorSelectionsToInsert = orderConfig.vendorSelections
-            .filter(selection => selection.vendorId && selection.items)
-            .map(selection => ({
+            .filter((selection: any) => selection.vendorId && selection.items)
+            .map((selection: any) => ({
                 upcoming_order_id: upcomingOrderId,
                 vendor_id: selection.vendorId
             }));
@@ -3017,7 +3025,7 @@ export async function syncSingleOrderForDeliveryDay(
 
         // PERFORMANCE: Process boxes in parallel if multiple
         if (boxOrders.length > 0) {
-            await Promise.all(boxOrders.map(box => processBox(box)));
+            await Promise.all(boxOrders.map((box: any) => processBox(box)));
         } else {
             // Fallback for legacy format
             await processBox({

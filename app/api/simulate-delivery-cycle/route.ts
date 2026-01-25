@@ -12,6 +12,7 @@ import {
 } from '@/lib/order-dates';
 import { sendSchedulingReport } from '@/lib/email-report';
 import { AppSettings, Vendor } from '@/lib/types';
+import * as XLSX from 'xlsx';
 
 // Initialize Supabase Admin Client to bypass RLS
 const supabase = createClient(
@@ -29,6 +30,32 @@ export async function POST(request: NextRequest) {
         breakdown: { Food: 0, Meal: 0, Boxes: 0, Custom: 0 },
         unexpectedFailures: [] as { clientName: string, orderType: string, date: string, reason: string }[]
     };
+
+    const clientStatusMap = new Map<string, {
+        clientName: string,
+        foodStatus: string,
+        mealStatus: string,
+        boxStatus: string,
+        customStatus: string,
+        summary: string
+    }>();
+
+    function setClientStatus(clientId: string, type: 'food' | 'meal' | 'box' | 'custom', status: string) {
+        const entry = clientStatusMap.get(clientId);
+        if (entry) {
+            if (type === 'food') entry.foodStatus = status;
+            else if (type === 'meal') entry.mealStatus = status;
+            else if (type === 'box') entry.boxStatus = status;
+            else if (type === 'custom') entry.customStatus = status;
+        }
+    }
+
+    function appendClientSummary(clientId: string, text: string) {
+        const entry = clientStatusMap.get(clientId);
+        if (entry) {
+            entry.summary = entry.summary ? `${entry.summary}; ${text}` : text;
+        }
+    }
 
     function logUnexpected(clientName: string, type: string, date: string, reason: string) {
         // Reduced log noise - only log full errors if needed really
@@ -105,11 +132,19 @@ export async function POST(request: NextRequest) {
         const settings = settingsData as any;
         const reportEmail = settings?.report_email || 'admin@example.com';
 
+        // Fetch box types for summary
+        const { data: boxTypesRes } = await supabase.from('box_types').select('id, name');
+        const allBoxTypes = (boxTypesRes || []).map((bt: any) => ({
+            id: bt.id,
+            name: bt.name
+        }));
+
         // Optimized Maps for O(1) Lookup
         const statusMap = new Map(allStatuses.map(s => [s.id, s]));
         const vendorMap = new Map(allVendors.map(v => [v.id, v]));
         const menuItemMap = new Map(allMenuItems.map(i => [i.id, i]));
         const mealItemMap = new Map(allMealItems.map(i => [i.id, i]));
+        const boxTypeMap = new Map(allBoxTypes.map(bt => [bt.id, bt.name]));
 
         // Fetch Clients (Optimized Select)
         const { data: clients, error: clientsError } = await supabase
@@ -118,6 +153,322 @@ export async function POST(request: NextRequest) {
 
         if (clientsError) throw new Error(`Failed to fetch clients: ${clientsError.message}`);
         const clientMap = new Map(clients.map(c => [c.id, c]));
+
+        // Initialize clientStatusMap for Excel report with detailed reasons
+        for (const client of clients) {
+            const status = statusMap.get(client.status_id);
+            const deliveriesAllowed = status?.deliveriesAllowed ?? false;
+            const statusName = status?.name || 'Unknown Status';
+            
+            // Build detailed reason for deliveries not allowed
+            const noDeliveryReason = !deliveriesAllowed 
+                ? `Status "${statusName}" does not allow deliveries` 
+                : null;
+            
+            // More descriptive initial statuses
+            const getFoodStatus = () => {
+                if (noDeliveryReason) return noDeliveryReason;
+                if (client.service_type !== 'Food') return `Client type is ${client.service_type}, not Food`;
+                return 'No upcoming food orders scheduled';
+            };
+            
+            const getMealStatus = () => {
+                if (noDeliveryReason) return noDeliveryReason;
+                if (client.service_type !== 'Food' && client.service_type !== 'Meal') return `Client type is ${client.service_type}, not Meal`;
+                return 'No upcoming meal orders scheduled';
+            };
+            
+            const getBoxStatus = () => {
+                if (noDeliveryReason) return noDeliveryReason;
+                if (client.service_type !== 'Boxes') return `Client type is ${client.service_type}, not Boxes`;
+                return 'No upcoming box orders scheduled';
+            };
+            
+            const getCustomStatus = () => {
+                if (noDeliveryReason) return noDeliveryReason;
+                if (client.service_type !== 'Custom') return `Client type is ${client.service_type}, not Custom`;
+                return 'No upcoming custom orders scheduled';
+            };
+            
+            clientStatusMap.set(client.id, {
+                clientName: client.full_name,
+                foodStatus: getFoodStatus(),
+                mealStatus: getMealStatus(),
+                boxStatus: getBoxStatus(),
+                customStatus: getCustomStatus(),
+                summary: ''
+            });
+        }
+
+        // Build summary from the same data sources that order creation uses
+        // 1. Fetch client_food_orders, client_meal_orders, client_box_orders
+        const { data: foodOrdersForSummary } = await supabase.from('client_food_orders').select('*');
+        const { data: mealOrdersForSummary } = await supabase.from('client_meal_orders').select('*');
+        const { data: boxOrdersForSummary } = await supabase.from('client_box_orders').select('*');
+        const { data: allUpcomingOrders } = await supabase
+            .from('upcoming_orders')
+            .select('*')
+            .eq('service_type', 'Custom');
+        
+        // Process Food Orders for summary
+        if (foodOrdersForSummary && foodOrdersForSummary.length > 0) {
+            for (const fo of foodOrdersForSummary) {
+                const entry = clientStatusMap.get(fo.client_id);
+                if (!entry) continue;
+                
+                const dayOrders = typeof fo.delivery_day_orders === 'string'
+                    ? JSON.parse(fo.delivery_day_orders)
+                    : fo.delivery_day_orders;
+                
+                if (!dayOrders) continue;
+                
+                const summaries: string[] = [];
+                for (const dayName of Object.keys(dayOrders)) {
+                    const vendorSelections = dayOrders[dayName].vendorSelections || [];
+                    for (const sel of vendorSelections) {
+                        if (!sel.vendorId) continue;
+                        const vendor = vendorMap.get(sel.vendorId);
+                        if (!vendor) continue;
+                        const vendorName = vendor.name;
+                        
+                        const itemDetails: string[] = [];
+                        if (sel.items) {
+                            for (const [itemId, qty] of Object.entries(sel.items)) {
+                                const q = Number(qty);
+                                if (q > 0) {
+                                    const mItem = menuItemMap.get(itemId) || mealItemMap.get(itemId);
+                                    if (mItem) {
+                                        const price = mItem.priceEach || mItem.value || 0;
+                                        itemDetails.push(`${q}x ${mItem.name} ($${(price * q).toFixed(2)})`);
+                                    }
+                                }
+                            }
+                        }
+                        
+                        if (itemDetails.length > 0) {
+                            summaries.push(`Food - ${vendorName}: ${itemDetails.join(', ')} (${dayName})`);
+                        } else {
+                            summaries.push(`Food - ${vendorName}: No items specified (${dayName})`);
+                        }
+                    }
+                }
+                
+                if (summaries.length > 0) {
+                    entry.summary = summaries.join(' | ');
+                }
+            }
+        }
+        
+        // Process Meal Orders for summary
+        if (mealOrdersForSummary && mealOrdersForSummary.length > 0) {
+            for (const mo of mealOrdersForSummary) {
+                const entry = clientStatusMap.get(mo.client_id);
+                if (!entry) continue;
+                
+                const rawSelections = typeof mo.meal_selections === 'string'
+                    ? JSON.parse(mo.meal_selections)
+                    : mo.meal_selections;
+                
+                if (!rawSelections) continue;
+                
+                const summaries: string[] = [];
+                for (const [mealType, group] of Object.entries(rawSelections)) {
+                    const groupData = group as any;
+                    if (!groupData.vendorId) continue;
+                    const vendor = vendorMap.get(groupData.vendorId);
+                    if (!vendor) continue;
+                    const vendorName = vendor.name;
+                    
+                    const itemDetails: string[] = [];
+                    if (groupData.items) {
+                        for (const [itemId, qty] of Object.entries(groupData.items)) {
+                            const q = Number(qty);
+                            if (q > 0) {
+                                const mItem = mealItemMap.get(itemId) || menuItemMap.get(itemId);
+                                if (mItem) {
+                                    const price = mItem.priceEach || mItem.value || 0;
+                                    itemDetails.push(`${q}x ${mItem.name} ($${(price * q).toFixed(2)})`);
+                                }
+                            }
+                        }
+                    }
+                    
+                    if (itemDetails.length > 0) {
+                        summaries.push(`Meal (${mealType}) - ${vendorName}: ${itemDetails.join(', ')}`);
+                    } else {
+                        summaries.push(`Meal (${mealType}) - ${vendorName}: No items specified`);
+                    }
+                }
+                
+                if (summaries.length > 0) {
+                    entry.summary = entry.summary ? `${entry.summary} | ${summaries.join(' | ')}` : summaries.join(' | ');
+                }
+            }
+        }
+        
+        // Process Box Orders for summary
+        if (boxOrdersForSummary && boxOrdersForSummary.length > 0) {
+            for (const bo of boxOrdersForSummary) {
+                const entry = clientStatusMap.get(bo.client_id);
+                if (!entry) continue;
+                
+                const vendor = vendorMap.get(bo.vendor_id);
+                if (!vendor) continue;
+                const vendorName = vendor.name;
+                
+                const boxType = boxTypeMap.get(bo.box_type_id) || 'Standard Box';
+                const qty = bo.quantity || 1;
+                
+                let boxValue = 0;
+                if (bo.items) {
+                    const itemsObj = typeof bo.items === 'string' ? JSON.parse(bo.items) : bo.items;
+                    for (const [id, qty] of Object.entries(itemsObj)) {
+                        const m = allMenuItems.find(x => x.id === id);
+                        if (m) boxValue += (m.priceEach || m.value || 0) * Number(qty);
+                    }
+                }
+                const totalBoxValue = boxValue * qty;
+                
+                const boxSummary = `Boxes - ${vendorName}: ${qty}x ${boxType} ($${totalBoxValue.toFixed(2)})`;
+                entry.summary = entry.summary ? `${entry.summary} | ${boxSummary}` : boxSummary;
+            }
+        }
+        
+        // Process Custom Orders (from upcoming_orders)
+        if (allUpcomingOrders && allUpcomingOrders.length > 0) {
+            // Fetch vendor selections for upcoming orders
+            const upcomingOrderIds = allUpcomingOrders.map((uo: any) => uo.id);
+            const { data: upcomingVendorSelections } = await supabase
+                .from('upcoming_order_vendor_selections')
+                .select('*')
+                .in('upcoming_order_id', upcomingOrderIds);
+            
+            // Fetch items for upcoming orders
+            const vendorSelectionIds = (upcomingVendorSelections || []).map((vs: any) => vs.id);
+            const { data: upcomingItems } = vendorSelectionIds.length > 0
+                ? await supabase
+                    .from('upcoming_order_items')
+                    .select('*')
+                    .in('upcoming_order_vendor_selection_id', vendorSelectionIds)
+                : { data: [] };
+            
+            // Fetch box selections for upcoming orders
+            const { data: upcomingBoxSelections } = await supabase
+                .from('upcoming_order_box_selections')
+                .select('*')
+                .in('upcoming_order_id', upcomingOrderIds);
+            
+            // Fetch menu items and meal items for item names
+            const menuItemIds = (upcomingItems || [])
+                .filter((item: any) => item.menu_item_id)
+                .map((item: any) => item.menu_item_id);
+            const mealItemIds = (upcomingItems || [])
+                .filter((item: any) => item.meal_item_id)
+                .map((item: any) => item.meal_item_id);
+            
+            const { data: menuItemsForSummary } = menuItemIds.length > 0
+                ? await supabase.from('menu_items').select('id, name').in('id', menuItemIds)
+                : { data: [] };
+            const { data: mealItemsForSummary } = mealItemIds.length > 0
+                ? await supabase.from('breakfast_items').select('id, name').in('id', mealItemIds)
+                : { data: [] };
+            
+            const menuItemMap = new Map((menuItemsForSummary || []).map((mi: any) => [mi.id, mi.name]));
+            const mealItemMap = new Map((mealItemsForSummary || []).map((mi: any) => [mi.id, mi.name]));
+            
+            // Note: boxTypeMap is already defined earlier in the code
+            
+            // Build summary for each client
+            for (const upcomingOrder of allUpcomingOrders) {
+                const clientId = upcomingOrder.client_id;
+                const entry = clientStatusMap.get(clientId);
+                if (!entry) continue;
+                
+                const summaries: string[] = [];
+                
+                // Get vendor selections for this order
+                const orderVendorSelections = (upcomingVendorSelections || []).filter(
+                    (vs: any) => vs.upcoming_order_id === upcomingOrder.id
+                );
+                
+                // Get box selections for this order
+                const orderBoxSelections = (upcomingBoxSelections || []).filter(
+                    (bs: any) => bs.upcoming_order_id === upcomingOrder.id
+                );
+                
+                // Process vendor-based orders (Food/Meal)
+                if (orderVendorSelections.length > 0) {
+                    for (const vs of orderVendorSelections) {
+                        const vendor = vendorMap.get(vs.vendor_id);
+                        const vendorName = vendor?.name || 'Unknown Vendor';
+                        const orderItems = (upcomingItems || []).filter(
+                            (item: any) => item.upcoming_order_vendor_selection_id === vs.id
+                        );
+                        
+                        const itemDetails: string[] = [];
+                        for (const item of orderItems) {
+                            let itemName = item.custom_name || 'Custom Item';
+                            if (item.menu_item_id) {
+                                itemName = menuItemMap.get(item.menu_item_id) || itemName;
+                            } else if (item.meal_item_id) {
+                                itemName = mealItemMap.get(item.meal_item_id) || itemName;
+                            }
+                            const qty = item.quantity || 1;
+                            const price = item.total_value || item.unit_value || 0;
+                            itemDetails.push(`${qty}x ${itemName} ($${price.toFixed(2)})`);
+                        }
+                        
+                        if (itemDetails.length > 0) {
+                            summaries.push(`${upcomingOrder.service_type} - ${vendorName}: ${itemDetails.join(', ')}`);
+                        } else {
+                            summaries.push(`${upcomingOrder.service_type} - ${vendorName}: No items specified`);
+                        }
+                    }
+                }
+                
+                // Process box orders
+                if (orderBoxSelections.length > 0) {
+                    for (const bs of orderBoxSelections) {
+                        const vendor = vendorMap.get(bs.vendor_id);
+                        const vendorName = vendor?.name || 'Unknown Vendor';
+                        const boxTypeName = boxTypeMap.get(bs.box_type_id) || 'Standard Box';
+                        const qty = bs.quantity || 1;
+                        const totalValue = bs.total_value || 0;
+                        summaries.push(`Boxes - ${vendorName}: ${qty}x ${boxTypeName} ($${totalValue.toFixed(2)})`);
+                    }
+                }
+                
+                // Process custom orders
+                if (upcomingOrder.service_type === 'Custom' && orderVendorSelections.length > 0) {
+                    const vs = orderVendorSelections[0];
+                    const vendor = vendorMap.get(vs.vendor_id);
+                    const vendorName = vendor?.name || 'Unknown Vendor';
+                    const customItems = (upcomingItems || []).filter(
+                        (item: any) => item.upcoming_order_vendor_selection_id === vs.id
+                    );
+                    
+                    const customDetails: string[] = [];
+                    for (const item of customItems) {
+                        const itemName = item.custom_name || item.notes || 'Custom Item';
+                        const qty = item.quantity || 1;
+                        const price = item.total_value || item.unit_value || 0;
+                        customDetails.push(`${qty}x ${itemName} ($${price.toFixed(2)})`);
+                    }
+                    
+                    const deliveryDayText = upcomingOrder.delivery_day ? ` (${upcomingOrder.delivery_day})` : '';
+                    if (customDetails.length > 0) {
+                        summaries.push(`Custom - ${vendorName}: ${customDetails.join(', ')}${deliveryDayText}`);
+                    } else if (upcomingOrder.notes) {
+                        summaries.push(`Custom - ${vendorName}: ${upcomingOrder.notes}${deliveryDayText}`);
+                    }
+                }
+                
+                // Update summary - combine all order details
+                if (summaries.length > 0) {
+                    entry.summary = entry.summary ? `${entry.summary} | ${summaries.join(' | ')}` : summaries.join(' | ');
+                }
+            }
+        }
 
         // Get Max Order Number
         const { data: maxOrderData } = await supabase
@@ -223,7 +574,10 @@ export async function POST(request: NextRequest) {
                         targetDate.setDate(today.getDate() + cutoff);
                         const targetDayName = targetDate.toLocaleDateString('en-US', { weekday: 'long' });
 
-                        if (targetDayName !== dayName) continue; // Not today's target
+                        if (targetDayName !== dayName) {
+                            setClientStatus(fo.client_id, 'food', `Not today's target (Next delivery: ${dayName})`);
+                            continue; // Not today's target
+                        }
 
                         const deliveryDate = targetDate;
 
@@ -261,7 +615,10 @@ export async function POST(request: NextRequest) {
                             }
                         }
 
-                        if (isDuplicate) continue;
+                        if (isDuplicate) {
+                            setClientStatus(fo.client_id, 'food', `Duplicate order already exists for ${deliveryDate.toISOString().split('T')[0]}`);
+                            continue;
+                        }
 
                         // Create Food Order
                         let itemsTotal = 0;
@@ -309,6 +666,9 @@ export async function POST(request: NextRequest) {
                         );
 
                         if (newOrder) {
+                            // Update status to show order was created
+                            setClientStatus(fo.client_id, 'food', `Order created for ${vendor.name} on ${deliveryDate.toISOString().split('T')[0]}`);
+                            
                             const { data: vs } = await supabase.from('order_vendor_selections').insert({
                                 order_id: newOrder.id,
                                 vendor_id: sel.vendorId
@@ -425,7 +785,10 @@ export async function POST(request: NextRequest) {
                 .gte('scheduled_delivery_date', startStr)
                 .lte('scheduled_delivery_date', endStr);
 
-            if (count && count > 0) return; // Expected Skip (Weekly Limit)
+            if (count && count > 0) {
+                setClientStatus(template.client_id, type.toLowerCase() as 'meal' | 'box', `Weekly limit reached - order already exists for this week`);
+                return; // Expected Skip (Weekly Limit)
+            }
 
             // Special Check: Is TODAY the correct day to generate this?
             // "Meal orders are evaluated EVERY time." 
@@ -476,10 +839,15 @@ export async function POST(request: NextRequest) {
                     totalBoxValue,
                     template.quantity || 1,
                     (template as any).notes || null,
-                    template.case_id
+                    template.case_id,
+                    nextOrderNumber++
                 );
 
                 if (newOrder) {
+                    // Update status
+                    const vendor = vendorMap.get(targetVendorId);
+                    setClientStatus(template.client_id, 'box', `Order created for ${vendor?.name || 'vendor'} on ${candidateDate.toISOString().split('T')[0]}`);
+                    
                     // Box Selection
                     // Ensure box_type_id is null if it's an empty string or undefined
                     const boxTypeId = template.box_type_id && template.box_type_id !== '' ? template.box_type_id : null;
@@ -518,10 +886,14 @@ export async function POST(request: NextRequest) {
                     0, // Value calc later
                     0, // Items calc later
                     (template as any).notes || null,
-                    template.case_id
+                    template.case_id,
+                    nextOrderNumber++
                 );
 
                 if (newOrder) {
+                    // Update status
+                    setClientStatus(template.client_id, 'meal', `Order created on ${candidateDate.toISOString().split('T')[0]}`);
+                    
                     let orderTotalValue = 0;
                     let orderTotalItems = 0;
 
@@ -653,7 +1025,10 @@ export async function POST(request: NextRequest) {
                     .gte('scheduled_delivery_date', weekStart.toISOString().split('T')[0])
                     .lte('scheduled_delivery_date', weekEnd.toISOString().split('T')[0]);
 
-                if (count && count > 0) return;
+                if (count && count > 0) {
+                    setClientStatus(co.client_id, 'custom', `Weekly limit reached - custom order already exists for this week`);
+                    return;
+                }
 
                 const assignedId = nextOrderNumber++;
                 const newOrder = await createOrder(
@@ -670,6 +1045,9 @@ export async function POST(request: NextRequest) {
                 );
 
                 if (newOrder) {
+                    // Update status
+                    setClientStatus(co.client_id, 'custom', `Order created for ${vendor?.name || 'vendor'} on ${deliveryDate.toISOString().split('T')[0]}`);
+                    
                     const { data: newVs } = await supabase.from('order_vendor_selections').insert({
                         order_id: newOrder.id,
                         vendor_id: vendorId
@@ -743,9 +1121,43 @@ export async function POST(request: NextRequest) {
             // console.log('[Custom Debug] No custom orders passed filter.');
         }
 
-        // --- 6. Send Report ---
-        console.log('[Unified Scheduling] Complete. Sending report...');
-        const emailResult = await sendSchedulingReport(report, reportEmail);
+        // --- 6. Generate Excel Report and Send Email ---
+        console.log('[Unified Scheduling] Complete. Generating Excel and sending report...');
+
+        // Generate Excel Report
+        const excelReportData = Array.from(clientStatusMap.values()).map(entry => ({
+            'Customer Name': entry.clientName,
+            'Summary': entry.summary || 'No upcoming orders',
+            'Food Orders': entry.foodStatus,
+            'Meal Orders': entry.mealStatus,
+            'Box Orders': entry.boxStatus,
+            'Custom Orders': entry.customStatus || 'No upcoming custom orders scheduled'
+        }));
+
+        const worksheet = XLSX.utils.json_to_sheet(excelReportData);
+        const workbook = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(workbook, worksheet, 'Order Statuses');
+
+        // Set column widths for better readability
+        const wscols = [
+            { wch: 30 }, // Customer Name
+            { wch: 80 }, // Summary (wider for vendor/item details)
+            { wch: 40 }, // Food Orders
+            { wch: 40 }, // Meal Orders
+            { wch: 40 }, // Box Orders
+            { wch: 40 }  // Custom Orders
+        ];
+        worksheet['!cols'] = wscols;
+
+        const excelBuffer = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' });
+
+        const excelAttachment = {
+            filename: `Order_Scheduling_Report_${currentTime.toISOString().split('T')[0]}.xlsx`,
+            content: excelBuffer,
+            contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        };
+
+        const emailResult = await sendSchedulingReport(report, reportEmail, [excelAttachment]);
 
         // --- 7. Return Result ---
         return NextResponse.json({

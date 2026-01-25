@@ -1,4 +1,4 @@
-import { sendEmail } from './email';
+import { sendEmail, EmailOptions } from './email';
 
 interface SimulationReport {
     totalCreated: number;
@@ -20,11 +20,23 @@ interface SimulationReport {
  * Sends the mandatory email report after order scheduling runs.
  * 
  * @param report The collected report data
- * @param recipient The email address to send to
+ * @param recipient The email address(es) to send to (comma-separated for multiple addresses)
  */
-export async function sendSchedulingReport(report: SimulationReport, recipient: string) {
+export async function sendSchedulingReport(report: SimulationReport, recipient: string, attachments?: EmailOptions['attachments']) {
     if (!recipient) {
         console.warn('No report email recipient defined. Skipping email.');
+        return;
+    }
+
+    // Normalize recipient: trim whitespace and remove empty entries
+    const recipients = recipient
+        .split(',')
+        .map(email => email.trim())
+        .filter(email => email.length > 0)
+        .join(', ');
+
+    if (!recipients) {
+        console.warn('No valid report email recipients found. Skipping email.');
         return;
     }
 
@@ -84,9 +96,10 @@ export async function sendSchedulingReport(report: SimulationReport, recipient: 
     `;
 
     const result = await sendEmail({
-        to: recipient,
+        to: recipients,
         subject,
-        html
+        html,
+        attachments
     });
 
     if (!result.success) {
