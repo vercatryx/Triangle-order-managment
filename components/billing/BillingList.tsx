@@ -12,7 +12,7 @@ export function BillingList() {
     const router = useRouter();
     const [billingRequests, setBillingRequests] = useState<BillingRequest[]>([]);
     const [search, setSearch] = useState('');
-    const [statusFilter, setStatusFilter] = useState<'all' | 'billing_pending' | 'billing_successful'>('all');
+    const [statusFilter, setStatusFilter] = useState<'all' | 'ready' | 'completed'>('all');
     const [selectedWeek, setSelectedWeek] = useState<Date | null>(null);
     const [expandedRequest, setExpandedRequest] = useState<string | null>(null);
     const [isLoading, setIsLoading] = useState(true);
@@ -47,7 +47,12 @@ export function BillingList() {
 
     const filteredRequests = billingRequests.filter(req => {
         const matchesSearch = (req.clientName || '').toLowerCase().includes(search.toLowerCase());
-        const matchesStatus = statusFilter === 'all' || req.billingStatus === statusFilter;
+        let matchesStatus = true;
+        if (statusFilter === 'ready') {
+            matchesStatus = req.readyForBilling && !req.billingCompleted;
+        } else if (statusFilter === 'completed') {
+            matchesStatus = req.billingCompleted;
+        }
         return matchesSearch && matchesStatus;
     });
 
@@ -162,9 +167,9 @@ export function BillingList() {
                         value={statusFilter}
                         onChange={(e) => setStatusFilter(e.target.value as any)}
                     >
-                        <option value="all">All Statuses</option>
-                        <option value="billing_pending">Billing Pending</option>
-                        <option value="billing_successful">Billing Successful</option>
+                        <option value="all">All</option>
+                        <option value="ready">Ready for Billing</option>
+                        <option value="completed">Billing Completed</option>
                     </select>
                 </div>
             </div>
@@ -181,8 +186,20 @@ export function BillingList() {
                 {filteredRequests.map(request => {
                     const requestKey = getRequestKey(request);
                     const isExpanded = expandedRequest === requestKey;
-                    const statusLabel = request.billingStatus === 'billing_successful' ? 'Billing Successful' : 'Billing Pending';
-                    const statusClass = request.billingStatus === 'billing_successful' ? styles.statusSuccess : styles.statusPending;
+                    
+                    // Determine status label and class
+                    let statusLabel: string;
+                    let statusClass: string;
+                    if (request.billingCompleted) {
+                        statusLabel = 'Billing Completed';
+                        statusClass = styles.statusSuccess;
+                    } else if (request.readyForBilling) {
+                        statusLabel = 'Ready for Billing';
+                        statusClass = styles.statusReady;
+                    } else {
+                        statusLabel = 'Waiting for Proof';
+                        statusClass = styles.statusPending;
+                    }
 
                     return (
                         <div key={requestKey}>
@@ -217,9 +234,11 @@ export function BillingList() {
                                             <span style={{ flex: 1 }}>Service</span>
                                             <span style={{ flex: 1 }}>Amount</span>
                                             <span style={{ flex: 1.5 }}>Delivery Date</span>
+                                            <span style={{ flex: 1 }}>Status</span>
                                             <span style={{ flex: 1 }}>Proof of Delivery</span>
                                             <span style={{ width: '40px' }}></span>
                                         </div>
+                                        {/* Show ALL orders for this client/week - both with and without proof */}
                                         {request.orders.map(order => {
                                             const deliveryDate = order.actual_delivery_date
                                                 ? new Date(order.actual_delivery_date).toLocaleDateString('en-US', { timeZone: 'UTC' })
@@ -228,6 +247,26 @@ export function BillingList() {
                                                     : '-';
 
                                             const proofUrl = order.proof_of_delivery_image || order.delivery_proof_url || null;
+                                            
+                                            // Format order status
+                                            const formatOrderStatus = (status: string) => {
+                                                const statusMap: { [key: string]: string } = {
+                                                    'pending': 'Pending',
+                                                    'confirmed': 'Confirmed',
+                                                    'completed': 'Completed',
+                                                    'waiting_for_proof': 'Waiting for Proof',
+                                                    'billing_pending': 'Billing Pending',
+                                                    'cancelled': 'Cancelled'
+                                                };
+                                                return statusMap[status] || status;
+                                            };
+                                            
+                                            const orderStatus = formatOrderStatus(order.status || 'pending');
+                                            const orderStatusClass = order.status === 'billing_pending' || order.status === 'completed' 
+                                                ? styles.statusSuccess 
+                                                : order.status === 'waiting_for_proof' 
+                                                    ? styles.statusPending 
+                                                    : styles.statusNeutral;
 
                                             return (
                                                 <div key={order.id} className={styles.orderRow}>
@@ -259,6 +298,11 @@ export function BillingList() {
                                                     >
                                                         {deliveryDate}
                                                     </Link>
+                                                    <span style={{ flex: 1 }}>
+                                                        <span className={orderStatusClass} style={{ fontSize: '0.85rem' }}>
+                                                            {orderStatus.toUpperCase()}
+                                                        </span>
+                                                    </span>
                                                     <span style={{ flex: 1, display: 'flex', alignItems: 'center', gap: '8px' }}>
                                                         {proofUrl ? (
                                                             <a

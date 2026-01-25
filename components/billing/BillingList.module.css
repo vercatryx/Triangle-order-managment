@@ -226,6 +226,16 @@
     font-weight: 600;
 }
 
+.statusReady {
+    color: var(--color-primary);
+    font-weight: 600;
+}
+
+.statusNeutral {
+    color: var(--text-secondary);
+    font-weight: 500;
+}
+
 .empty {
     padding: var(--spacing-xl);
     text-align: center;
