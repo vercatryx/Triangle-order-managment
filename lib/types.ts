@@ -1,5 +1,5 @@
 
-export type OrderStatus = 'pending' | 'confirmed' | 'completed' | 'waiting_for_proof' | 'billing_pending' | 'cancelled';
+export type OrderStatus = 'pending' | 'confirmed' | 'completed' | 'waiting_for_proof' | 'billing_pending' | 'billing_successful' | 'billing_failed' | 'cancelled';
 
 export type ServiceType = 'Food' | 'Boxes' | 'Equipment' | 'Meal' | 'Custom';
 

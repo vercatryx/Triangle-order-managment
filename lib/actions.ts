@@ -2369,7 +2369,7 @@ export async function getBillingRequestsByWeek(weekStartDate?: Date): Promise<Bi
     }
 
     // Convert to array and sort by week (most recent first), then by client name
-    const billingRequests = Array.from(billingRequestsMap.values()).sort((a, b) => {
+    let billingRequests = Array.from(billingRequestsMap.values()).sort((a, b) => {
         const dateA = new Date(a.weekStart).getTime();
         const dateB = new Date(b.weekStart).getTime();
         if (dateB !== dateA) {
@@ -2377,6 +2377,15 @@ export async function getBillingRequestsByWeek(weekStartDate?: Date): Promise<Bi
         }
         return a.clientName.localeCompare(b.clientName); // Then by client name
     });
+
+    // If a specific week was selected, filter to only show billing requests for that week
+    if (weekStartDate) {
+        const selectedWeekStart = getWeekStart(weekStartDate);
+        billingRequests = billingRequests.filter(request => {
+            const requestWeekStart = getWeekStart(new Date(request.weekStart));
+            return requestWeekStart.getTime() === selectedWeekStart.getTime();
+        });
+    }
 
     return billingRequests;
 }

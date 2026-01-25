@@ -175,44 +175,55 @@ export function BillingList() {
             </div>
 
             <div className={styles.list}>
-                <div className={styles.listHeader}>
-                    <span style={{ flex: 2 }}>Client Name</span>
-                    <span style={{ flex: 1.5 }}>Week Range</span>
-                    <span style={{ flex: 1 }}>Orders</span>
-                    <span style={{ flex: 1 }}>Total Amount</span>
-                    <span style={{ flex: 1.5 }}>Status</span>
-                    <span style={{ width: '40px' }}></span>
-                </div>
-                {filteredRequests.map(request => {
-                    const requestKey = getRequestKey(request);
-                    const isExpanded = expandedRequest === requestKey;
-                    
-                    // Determine status label and class
-                    let statusLabel: string;
-                    let statusClass: string;
-                    if (request.billingCompleted) {
-                        statusLabel = 'Billing Completed';
-                        statusClass = styles.statusSuccess;
-                    } else if (request.readyForBilling) {
-                        statusLabel = 'Ready for Billing';
-                        statusClass = styles.statusReady;
-                    } else {
-                        statusLabel = 'Waiting for Proof';
-                        statusClass = styles.statusPending;
-                    }
-
+                {(() => {
+                    const grandTotal = filteredRequests.reduce((sum, req) => sum + req.totalAmount, 0);
                     return (
-                        <div key={requestKey}>
-                            <div
-                                className={styles.requestRow}
-                                onClick={() => toggleRequest(requestKey)}
-                            >
-                                <span style={{ flex: 2, fontWeight: 600 }}>{request.clientName || 'Unknown'}</span>
-                                <span style={{ flex: 1.5, fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
-                                    {request.weekRange}
+                        <>
+                            <div className={styles.listHeader}>
+                                <span style={{ flex: 2 }}>Client Name</span>
+                                <span style={{ flex: 1.5 }}>Week Range</span>
+                                <span style={{ flex: 1 }}>Orders</span>
+                                <span style={{ flex: 1 }}>
+                                    Total Amount <span style={{ color: 'var(--text-tertiary)', fontWeight: 400, fontSize: '0.875rem' }}>(${grandTotal.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })})</span>
                                 </span>
-                                <span style={{ flex: 1 }}>{request.orderCount}</span>
-                                <span style={{ flex: 1, fontWeight: 600 }}>${request.totalAmount.toFixed(2)}</span>
+                                <span style={{ flex: 1.5 }}>Status</span>
+                                <span style={{ width: '40px' }}></span>
+                            </div>
+                            {filteredRequests.map(request => {
+                        const requestKey = getRequestKey(request);
+                        const isExpanded = expandedRequest === requestKey;
+                        
+                        // Determine status label and class
+                        let statusLabel: string;
+                        let statusClass: string;
+                        if (request.billingCompleted) {
+                            statusLabel = 'Billing Completed';
+                            statusClass = styles.statusSuccess;
+                        } else if (request.readyForBilling) {
+                            statusLabel = 'Ready for Billing';
+                            statusClass = styles.statusReady;
+                        } else {
+                            statusLabel = 'Waiting for Proof';
+                            statusClass = styles.statusPending;
+                        }
+
+                        return (
+                            <div key={requestKey}>
+                                <div
+                                    className={styles.requestRow}
+                                    onClick={() => toggleRequest(requestKey)}
+                                >
+                                    <span style={{ flex: 2, fontWeight: 600, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                        <span style={{ color: 'var(--text-tertiary)', fontSize: '0.875rem', fontWeight: 500 }}>
+                                            {filteredRequests.indexOf(request) + 1}.
+                                        </span>
+                                        {request.clientName || 'Unknown'}
+                                    </span>
+                                    <span style={{ flex: 1.5, fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
+                                        {request.weekRange}
+                                    </span>
+                                    <span style={{ flex: 1 }}>{request.orderCount}</span>
+                                    <span style={{ flex: 1, fontWeight: 600 }}>${request.totalAmount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                                 <span style={{ flex: 1.5 }}>
                                     <span className={statusClass}>
                                         {statusLabel.toUpperCase()}
@@ -289,7 +300,7 @@ export function BillingList() {
                                                         style={{ flex: 1, textDecoration: 'none', color: 'inherit' }}
                                                         onClick={(e) => e.stopPropagation()}
                                                     >
-                                                        ${(order.amount || 0).toFixed(2)}
+                                                        ${(order.amount || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                                                     </Link>
                                                     <Link
                                                         href={`/orders/${order.id}`}
@@ -337,7 +348,10 @@ export function BillingList() {
                             )}
                         </div>
                     );
-                })}
+                    })}
+                        </>
+                    );
+                })()}
                 {filteredRequests.length === 0 && !isLoading && (
                     <div className={styles.empty}>
                         {selectedWeek
