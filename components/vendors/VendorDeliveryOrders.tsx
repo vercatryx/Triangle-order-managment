@@ -455,6 +455,11 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate, isVendorView }: P
     }
 
     async function exportLabelsPDF() {
+        if (orders.length === 0) {
+            alert('No orders to export');
+            return;
+        }
+
         await generateLabelsPDF({
             orders,
             getClientName,

@@ -37,7 +37,10 @@ export async function POST(request: NextRequest) {
         mealStatus: string,
         boxStatus: string,
         customStatus: string,
-        summary: string
+        summary: string,
+        vendor: string,
+        orderCreated: boolean,
+        createdDate: string | null
     }>();
 
     function setClientStatus(clientId: string, type: 'food' | 'meal' | 'box' | 'custom', status: string) {
@@ -146,10 +149,11 @@ export async function POST(request: NextRequest) {
         const mealItemMap = new Map(allMealItems.map(i => [i.id, i]));
         const boxTypeMap = new Map(allBoxTypes.map(bt => [bt.id, bt.name]));
 
-        // Fetch Clients (Optimized Select)
+        // Fetch Clients (Optimized Select) - Exclude dependents
         const { data: clients, error: clientsError } = await supabase
             .from('clients')
-            .select('id, full_name, status_id, service_type');
+            .select('id, full_name, status_id, service_type, parent_client_id')
+            .is('parent_client_id', null); // Exclude dependents
 
         if (clientsError) throw new Error(`Failed to fetch clients: ${clientsError.message}`);
         const clientMap = new Map(clients.map(c => [c.id, c]));
@@ -196,7 +200,10 @@ export async function POST(request: NextRequest) {
                 mealStatus: getMealStatus(),
                 boxStatus: getBoxStatus(),
                 customStatus: getCustomStatus(),
-                summary: ''
+                summary: '',
+                vendor: 'no vendor set',
+                orderCreated: false,
+                createdDate: null
             });
         }
 
@@ -245,10 +252,16 @@ export async function POST(request: NextRequest) {
                             }
                         }
                         
+                        // Track vendor (use first vendor found)
+                        const entry = clientStatusMap.get(fo.client_id);
+                        if (entry && entry.vendor === 'no vendor set') {
+                            entry.vendor = vendorName;
+                        }
+                        
                         if (itemDetails.length > 0) {
-                            summaries.push(`Food - ${vendorName}: ${itemDetails.join(', ')} (${dayName})`);
+                            summaries.push(`Food: ${itemDetails.join(', ')} (${dayName})`);
                         } else {
-                            summaries.push(`Food - ${vendorName}: No items specified (${dayName})`);
+                            summaries.push(`Food: No items specified (${dayName})`);
                         }
                     }
                 }
@@ -293,10 +306,16 @@ export async function POST(request: NextRequest) {
                         }
                     }
                     
+                    // Track vendor (use first vendor found)
+                    const entry = clientStatusMap.get(mo.client_id);
+                    if (entry && entry.vendor === 'no vendor set') {
+                        entry.vendor = vendorName;
+                    }
+                    
                     if (itemDetails.length > 0) {
-                        summaries.push(`Meal (${mealType}) - ${vendorName}: ${itemDetails.join(', ')}`);
+                        summaries.push(`Meal (${mealType}): ${itemDetails.join(', ')}`);
                     } else {
-                        summaries.push(`Meal (${mealType}) - ${vendorName}: No items specified`);
+                        summaries.push(`Meal (${mealType}): No items specified`);
                     }
                 }
                 
@@ -329,7 +348,12 @@ export async function POST(request: NextRequest) {
                 }
                 const totalBoxValue = boxValue * qty;
                 
-                const boxSummary = `Boxes - ${vendorName}: ${qty}x ${boxType} ($${totalBoxValue.toFixed(2)})`;
+                // Track vendor
+                if (entry.vendor === 'no vendor set') {
+                    entry.vendor = vendorName;
+                }
+                
+                const boxSummary = `Boxes: ${qty}x ${boxType} ($${totalBoxValue.toFixed(2)})`;
                 entry.summary = entry.summary ? `${entry.summary} | ${boxSummary}` : boxSummary;
             }
         }
@@ -434,7 +458,12 @@ export async function POST(request: NextRequest) {
                         const boxTypeName = boxTypeMap.get(bs.box_type_id) || 'Standard Box';
                         const qty = bs.quantity || 1;
                         const totalValue = bs.total_value || 0;
-                        summaries.push(`Boxes - ${vendorName}: ${qty}x ${boxTypeName} ($${totalValue.toFixed(2)})`);
+                        // Track vendor
+                        if (entry && entry.vendor === 'no vendor set') {
+                            entry.vendor = vendorName;
+                        }
+                        
+                        summaries.push(`Boxes: ${qty}x ${boxTypeName} ($${totalValue.toFixed(2)})`);
                     }
                 }
                 
@@ -455,11 +484,16 @@ export async function POST(request: NextRequest) {
                         customDetails.push(`${qty}x ${itemName} ($${price.toFixed(2)})`);
                     }
                     
+                    // Track vendor
+                    if (entry && entry.vendor === 'no vendor set') {
+                        entry.vendor = vendorName;
+                    }
+                    
                     const deliveryDayText = upcomingOrder.delivery_day ? ` (${upcomingOrder.delivery_day})` : '';
                     if (customDetails.length > 0) {
-                        summaries.push(`Custom - ${vendorName}: ${customDetails.join(', ')}${deliveryDayText}`);
+                        summaries.push(`Custom: ${customDetails.join(', ')}${deliveryDayText}`);
                     } else if (upcomingOrder.notes) {
-                        summaries.push(`Custom - ${vendorName}: ${upcomingOrder.notes}${deliveryDayText}`);
+                        summaries.push(`Custom: ${upcomingOrder.notes}${deliveryDayText}`);
                     }
                 }
                 
@@ -669,6 +703,14 @@ export async function POST(request: NextRequest) {
                             // Update status to show order was created
                             setClientStatus(fo.client_id, 'food', `Order created for ${vendor.name} on ${deliveryDate.toISOString().split('T')[0]}`);
                             
+                            // Track vendor and order creation info
+                            const entry = clientStatusMap.get(fo.client_id);
+                            if (entry) {
+                                entry.vendor = vendor.name;
+                                entry.orderCreated = true;
+                                entry.createdDate = newOrder.created_at || currentTime.toISOString();
+                            }
+                            
                             const { data: vs } = await supabase.from('order_vendor_selections').insert({
                                 order_id: newOrder.id,
                                 vendor_id: sel.vendorId
@@ -848,6 +890,16 @@ export async function POST(request: NextRequest) {
                     const vendor = vendorMap.get(targetVendorId);
                     setClientStatus(template.client_id, 'box', `Order created for ${vendor?.name || 'vendor'} on ${candidateDate.toISOString().split('T')[0]}`);
                     
+                    // Track vendor and order creation info
+                    const entry = clientStatusMap.get(template.client_id);
+                    if (entry && vendor) {
+                        if (entry.vendor === 'no vendor set') {
+                            entry.vendor = vendor.name;
+                        }
+                        entry.orderCreated = true;
+                        entry.createdDate = newOrder.created_at || currentTime.toISOString();
+                    }
+                    
                     // Box Selection
                     // Ensure box_type_id is null if it's an empty string or undefined
                     const boxTypeId = template.box_type_id && template.box_type_id !== '' ? template.box_type_id : null;
@@ -893,6 +945,19 @@ export async function POST(request: NextRequest) {
                 if (newOrder) {
                     // Update status
                     setClientStatus(template.client_id, 'meal', `Order created on ${candidateDate.toISOString().split('T')[0]}`);
+                    
+                    // Track vendor and order creation info
+                    const entry = clientStatusMap.get(template.client_id);
+                    if (entry && targetVendorId) {
+                        const vendor = vendorMap.get(targetVendorId);
+                        if (vendor) {
+                            if (entry.vendor === 'no vendor set') {
+                                entry.vendor = vendor.name;
+                            }
+                        }
+                        entry.orderCreated = true;
+                        entry.createdDate = newOrder.created_at || currentTime.toISOString();
+                    }
                     
                     let orderTotalValue = 0;
                     let orderTotalItems = 0;
@@ -1048,6 +1113,16 @@ export async function POST(request: NextRequest) {
                     // Update status
                     setClientStatus(co.client_id, 'custom', `Order created for ${vendor?.name || 'vendor'} on ${deliveryDate.toISOString().split('T')[0]}`);
                     
+                    // Track vendor and order creation info
+                    const entry = clientStatusMap.get(co.client_id);
+                    if (entry && vendor) {
+                        if (entry.vendor === 'no vendor set') {
+                            entry.vendor = vendor.name;
+                        }
+                        entry.orderCreated = true;
+                        entry.createdDate = newOrder.created_at || currentTime.toISOString();
+                    }
+                    
                     const { data: newVs } = await supabase.from('order_vendor_selections').insert({
                         order_id: newOrder.id,
                         vendor_id: vendorId
@@ -1127,6 +1202,9 @@ export async function POST(request: NextRequest) {
         // Generate Excel Report
         const excelReportData = Array.from(clientStatusMap.values()).map(entry => ({
             'Customer Name': entry.clientName,
+            'Order Created': entry.orderCreated ? 'Yes' : 'No',
+            'Created Date': entry.createdDate ? new Date(entry.createdDate).toLocaleDateString('en-US', { year: 'numeric', month: '2-digit', day: '2-digit' }) : '-',
+            'Vendor': entry.vendor,
             'Summary': entry.summary || 'No upcoming orders',
             'Food Orders': entry.foodStatus,
             'Meal Orders': entry.mealStatus,
@@ -1141,6 +1219,9 @@ export async function POST(request: NextRequest) {
         // Set column widths for better readability
         const wscols = [
             { wch: 30 }, // Customer Name
+            { wch: 12 }, // Order Created
+            { wch: 15 }, // Created Date
+            { wch: 20 }, // Vendor
             { wch: 80 }, // Summary (wider for vendor/item details)
             { wch: 40 }, // Food Orders
             { wch: 40 }, // Meal Orders
