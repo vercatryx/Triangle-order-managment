@@ -2244,6 +2244,7 @@ export interface BillingRequest {
     orderCount: number;
     readyForBilling: boolean; // All orders have proof of delivery
     billingCompleted: boolean; // All orders have successful billing records
+    billingStatus: 'success' | 'failed' | 'pending'; // Overall billing status based on all orders
 }
 
 export async function getBillingRequestsByWeek(weekStartDate?: Date): Promise<BillingRequest[]> {
@@ -2280,19 +2281,24 @@ export async function getBillingRequestsByWeek(weekStartDate?: Date): Promise<Bi
     const successfulOrderIds = new Set((billingRecords || []).map((br: any) => br.order_id).filter(Boolean));
 
     // Map orders with client info and check billing status
-    // Include ALL orders regardless of proof status or billing status
-    const allOrders = (allOrdersData || []).map((o: any) => {
-        const hasProof = !!(o.proof_of_delivery_image || o.delivery_proof_url);
-        const isBilled = successfulOrderIds.has(o.id);
-        
-        return {
-            ...o,
-            clientName: o.clients?.full_name || 'Unknown',
-            amount: o.total_value || 0,
-            hasProof,
-            isBilled
-        };
-    });
+    // Exclude orders with billing_successful or billing_failed status
+    const allOrders = (allOrdersData || [])
+        .filter((o: any) => {
+            // Exclude orders that have been marked as billing_successful or billing_failed
+            return o.status !== 'billing_successful' && o.status !== 'billing_failed';
+        })
+        .map((o: any) => {
+            const hasProof = !!(o.proof_of_delivery_image || o.delivery_proof_url);
+            const isBilled = successfulOrderIds.has(o.id);
+            
+            return {
+                ...o,
+                clientName: o.clients?.full_name || 'Unknown',
+                amount: o.total_value || 0,
+                hasProof,
+                isBilled
+            };
+        });
 
     // Filter orders to only those in the specified week if provided
     // Include billing_pending orders regardless of delivery date to ensure they show up
@@ -2349,7 +2355,8 @@ export async function getBillingRequestsByWeek(weekStartDate?: Date): Promise<Bi
                 totalAmount: 0,
                 orderCount: 0,
                 readyForBilling: true, // Will be recalculated
-                billingCompleted: true // Will be recalculated
+                billingCompleted: true, // Will be recalculated
+                billingStatus: 'pending' as const // Will be recalculated
             });
         }
 
@@ -2359,13 +2366,29 @@ export async function getBillingRequestsByWeek(weekStartDate?: Date): Promise<Bi
         request.orderCount += 1;
     }
 
-    // Calculate readyForBilling and billingCompleted for each request
+    // Calculate readyForBilling, billingCompleted, and billingStatus for each request
     for (const request of billingRequestsMap.values()) {
         // Ready for billing: all orders have proof of delivery
         request.readyForBilling = request.orders.every(o => o.hasProof);
         
         // Billing completed: all orders have successful billing records
         request.billingCompleted = request.orders.length > 0 && request.orders.every(o => o.isBilled);
+        
+        // Determine overall billing status based on order statuses
+        // Check if all orders have billing_successful status
+        const allSuccessful = request.orders.length > 0 && 
+            request.orders.every(o => o.status === 'billing_successful');
+        
+        // Check if any order has billing_failed status
+        const hasFailed = request.orders.some(o => o.status === 'billing_failed');
+        
+        if (allSuccessful) {
+            request.billingStatus = 'success';
+        } else if (hasFailed) {
+            request.billingStatus = 'failed';
+        } else {
+            request.billingStatus = 'pending';
+        }
     }
 
     // Convert to array and sort by week (most recent first), then by client name

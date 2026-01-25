@@ -196,7 +196,15 @@ export function BillingList() {
                         // Determine status label and class
                         let statusLabel: string;
                         let statusClass: string;
-                        if (request.billingCompleted) {
+                        
+                        // Check billing status first (based on all orders)
+                        if (request.billingStatus === 'success') {
+                            statusLabel = 'Billing Success';
+                            statusClass = styles.statusSuccess;
+                        } else if (request.billingStatus === 'failed') {
+                            statusLabel = 'Billing Failed';
+                            statusClass = styles.statusFailed;
+                        } else if (request.billingCompleted) {
                             statusLabel = 'Billing Completed';
                             statusClass = styles.statusSuccess;
                         } else if (request.readyForBilling) {
