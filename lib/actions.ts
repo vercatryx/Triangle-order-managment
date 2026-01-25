@@ -10,7 +10,7 @@ import { uploadFile, deleteFile } from './storage';
 import { randomUUID } from 'crypto';
 import { getSession } from './session';
 import { createClient } from '@supabase/supabase-js';
-import { roundCurrency } from './utils';
+import { roundCurrency, getWeekStart, getWeekEnd, getWeekRangeString, isDateInWeek } from './utils';
 
 // --- HELPERS ---
 function handleError(error: any) {
@@ -2231,6 +2231,157 @@ export async function getBillingOrders() {
         const dateB = new Date(b.created_at || 0).getTime();
         return dateB - dateA;
     });
+}
+
+export interface BillingRequest {
+    clientId: string;
+    clientName: string;
+    weekStart: string; // ISO date string for Sunday of the week
+    weekEnd: string; // ISO date string for Saturday of the week
+    weekRange: string; // Display string like "Jan 5 - Jan 11, 2025"
+    orders: any[];
+    totalAmount: number;
+    orderCount: number;
+    billingStatus: 'billing_pending' | 'billing_successful';
+}
+
+export async function getBillingRequestsByWeek(weekStartDate?: Date): Promise<BillingRequest[]> {
+    
+    // Get all billing pending orders
+    const { data: pendingOrders, error: pendingError } = await supabase
+        .from('orders')
+        .select(`
+            *,
+            clients (
+                full_name
+            )
+        `)
+        .eq('status', 'billing_pending')
+        .order('created_at', { ascending: false });
+
+    if (pendingError) {
+        console.error('Error fetching billing pending orders:', pendingError);
+    }
+
+    // Get billing records with status "success" and their associated orders
+    const { data: billingRecords, error: billingError } = await supabase
+        .from('billing_records')
+        .select(`
+            order_id,
+            status
+        `)
+        .eq('status', 'success');
+
+    if (billingError) {
+        console.error('Error fetching billing records:', billingError);
+    }
+
+    const successfulOrderIds = new Set((billingRecords || []).map((br: any) => br.order_id).filter(Boolean));
+
+    // Get orders that have successful billing records
+    let successfulOrders: any[] = [];
+    if (successfulOrderIds.size > 0) {
+        const { data: orders, error: successError } = await supabase
+            .from('orders')
+            .select(`
+                *,
+                clients (
+                    full_name
+                )
+            `)
+            .in('id', Array.from(successfulOrderIds))
+            .order('created_at', { ascending: false });
+
+        if (!successError && orders) {
+            successfulOrders = orders;
+        }
+    }
+
+    // Combine and map orders
+    const allOrders = [
+        ...((pendingOrders || []).map((o: any) => ({
+            ...o,
+            clientName: o.clients?.full_name || 'Unknown',
+            amount: o.total_value || 0,
+            billingStatus: 'billing_pending' as const
+        }))),
+        ...(successfulOrders.map((o: any) => ({
+            ...o,
+            clientName: o.clients?.full_name || 'Unknown',
+            amount: o.total_value || 0,
+            billingStatus: 'billing_successful' as const
+        })))
+    ];
+
+    // Remove duplicates (prioritize successful)
+    const orderMap = new Map();
+    for (const order of allOrders) {
+        if (!orderMap.has(order.id) || order.billingStatus === 'billing_successful') {
+            orderMap.set(order.id, order);
+        }
+    }
+
+    const uniqueOrders = Array.from(orderMap.values());
+
+    // Group orders by client and week
+    const billingRequestsMap = new Map<string, BillingRequest>();
+
+    for (const order of uniqueOrders) {
+        // Use actual_delivery_date if available, otherwise scheduled_delivery_date
+        const deliveryDateStr = order.actual_delivery_date || order.scheduled_delivery_date;
+        if (!deliveryDateStr) continue; // Skip orders without delivery dates
+
+        const deliveryDate = new Date(deliveryDateStr);
+        const weekStart = getWeekStart(deliveryDate);
+        const weekEnd = getWeekEnd(deliveryDate);
+
+        // If a specific week is requested, filter to that week
+        if (weekStartDate) {
+            const requestedWeekStart = getWeekStart(weekStartDate);
+            if (!isDateInWeek(deliveryDate, requestedWeekStart)) {
+                continue;
+            }
+        }
+
+        const weekKey = `${order.client_id}-${weekStart.toISOString()}`;
+        const weekRange = getWeekRangeString(deliveryDate);
+
+        if (!billingRequestsMap.has(weekKey)) {
+            billingRequestsMap.set(weekKey, {
+                clientId: order.client_id,
+                clientName: order.clientName,
+                weekStart: weekStart.toISOString(),
+                weekEnd: weekEnd.toISOString(),
+                weekRange,
+                orders: [],
+                totalAmount: 0,
+                orderCount: 0,
+                billingStatus: order.billingStatus
+            });
+        }
+
+        const request = billingRequestsMap.get(weekKey)!;
+        request.orders.push(order);
+        request.totalAmount += order.amount || 0;
+        request.orderCount += 1;
+
+        // If any order is successful, mark the whole request as successful
+        if (order.billingStatus === 'billing_successful') {
+            request.billingStatus = 'billing_successful';
+        }
+    }
+
+    // Convert to array and sort by week (most recent first), then by client name
+    const billingRequests = Array.from(billingRequestsMap.values()).sort((a, b) => {
+        const dateA = new Date(a.weekStart).getTime();
+        const dateB = new Date(b.weekStart).getTime();
+        if (dateB !== dateA) {
+            return dateB - dateA; // Most recent week first
+        }
+        return a.clientName.localeCompare(b.clientName); // Then by client name
+    });
+
+    return billingRequests;
 }
 
 export async function getAllBillingRecords() {

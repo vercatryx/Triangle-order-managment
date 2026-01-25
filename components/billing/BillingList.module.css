@@ -89,7 +89,7 @@
     font-weight: 600;
     color: var(--text-secondary);
     font-size: 0.875rem;
-    min-width: 1400px;
+    min-width: 1000px;
 }
 
 .row {
@@ -109,6 +109,110 @@
 
 .row:hover {
     background: var(--bg-surface-hover);
+}
+
+.requestRow {
+    display: flex;
+    align-items: center;
+    padding: var(--spacing-md) var(--spacing-lg);
+    border-bottom: 1px solid var(--border-color);
+    cursor: pointer;
+    transition: background 0.2s;
+    min-width: 1000px;
+    background: var(--bg-surface);
+}
+
+.requestRow:hover {
+    background: var(--bg-surface-hover);
+}
+
+.ordersDetail {
+    background: var(--bg-surface-hover);
+    border-bottom: 1px solid var(--border-color);
+    padding: var(--spacing-lg);
+}
+
+.ordersDetailHeader {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: var(--spacing-md);
+    padding-bottom: var(--spacing-sm);
+    border-bottom: 1px solid var(--border-color);
+}
+
+.ordersDetailHeader h3 {
+    font-size: 1rem;
+    font-weight: 600;
+    margin: 0;
+    color: var(--text-primary);
+}
+
+.ordersCount {
+    font-size: 0.875rem;
+    color: var(--text-secondary);
+}
+
+.ordersList {
+    background: var(--bg-surface);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    overflow: hidden;
+}
+
+.ordersListHeader {
+    display: flex;
+    padding: var(--spacing-sm) var(--spacing-md);
+    background: var(--bg-surface-hover);
+    border-bottom: 1px solid var(--border-color);
+    font-weight: 600;
+    color: var(--text-secondary);
+    font-size: 0.8rem;
+    min-width: 800px;
+}
+
+.orderRow {
+    display: flex;
+    align-items: center;
+    padding: var(--spacing-sm) var(--spacing-md);
+    border-bottom: 1px solid var(--border-color);
+    transition: background 0.2s;
+    min-width: 1000px;
+}
+
+.orderRow:last-child {
+    border-bottom: none;
+}
+
+.orderRow:hover {
+    background: var(--bg-surface-hover);
+}
+
+.orderRowLink {
+    display: flex;
+    align-items: center;
+    flex: 1;
+    text-decoration: none;
+    color: inherit;
+    min-width: 0;
+}
+
+.proofLink {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--color-primary);
+    text-decoration: none;
+    font-size: 0.875rem;
+    padding: 4px 8px;
+    border-radius: var(--radius-sm);
+    transition: all 0.2s;
+}
+
+.proofLink:hover {
+    background: var(--bg-surface-hover);
+    color: var(--color-primary);
+    text-decoration: underline;
 }
 
 .statusSuccess {

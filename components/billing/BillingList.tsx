@@ -3,36 +3,61 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { Search, ChevronRight, FileText, Download } from 'lucide-react';
-import { getBillingOrders } from '@/lib/actions';
+import { Search, ChevronRight, Download, ChevronDown, ChevronUp, ExternalLink, Image } from 'lucide-react';
+import { getBillingRequestsByWeek, type BillingRequest } from '@/lib/actions';
+import { getWeekStart, getWeekOptions, getWeekRangeString } from '@/lib/utils';
 import styles from './BillingList.module.css';
 
 export function BillingList() {
     const router = useRouter();
-    const [orders, setOrders] = useState<any[]>([]);
+    const [billingRequests, setBillingRequests] = useState<BillingRequest[]>([]);
     const [search, setSearch] = useState('');
     const [statusFilter, setStatusFilter] = useState<'all' | 'billing_pending' | 'billing_successful'>('all');
+    const [selectedWeek, setSelectedWeek] = useState<Date | null>(null);
+    const [expandedRequest, setExpandedRequest] = useState<string | null>(null);
     const [isLoading, setIsLoading] = useState(true);
+    const [weekOptions, setWeekOptions] = useState<Date[]>([]);
 
     useEffect(() => {
-        loadData();
+        // Initialize week options
+        const options = getWeekOptions(8, 2);
+        setWeekOptions(options);
+        // Set default to current week
+        setSelectedWeek(getWeekStart(new Date()));
     }, []);
 
+    useEffect(() => {
+        if (selectedWeek) {
+            loadData();
+        }
+    }, [selectedWeek]);
+
     async function loadData() {
+        if (!selectedWeek) return;
         setIsLoading(true);
-        const data = await getBillingOrders();
-        setOrders(data);
-        setIsLoading(false);
+        try {
+            const data = await getBillingRequestsByWeek(selectedWeek);
+            setBillingRequests(data);
+        } catch (error) {
+            console.error('Error loading billing requests:', error);
+        } finally {
+            setIsLoading(false);
+        }
     }
 
-    const filteredOrders = orders.filter(o => {
-        const matchesSearch = (o.clientName || '').toLowerCase().includes(search.toLowerCase()) ||
-            (o.order_number || '').toString().includes(search);
-        const matchesStatus = statusFilter === 'all' || o.billingStatus === statusFilter;
+    const filteredRequests = billingRequests.filter(req => {
+        const matchesSearch = (req.clientName || '').toLowerCase().includes(search.toLowerCase());
+        const matchesStatus = statusFilter === 'all' || req.billingStatus === statusFilter;
         return matchesSearch && matchesStatus;
     });
 
-    if (isLoading) {
+    const toggleRequest = (requestKey: string) => {
+        setExpandedRequest(expandedRequest === requestKey ? null : requestKey);
+    };
+
+    const getRequestKey = (req: BillingRequest) => `${req.clientId}-${req.weekStart}`;
+
+    if (isLoading && !selectedWeek) {
         return (
             <div className={styles.container}>
                 <div className={styles.header}>
@@ -100,11 +125,34 @@ export function BillingList() {
                     <Search size={18} className={styles.searchIcon} />
                     <input
                         className="input"
-                        placeholder="Search by client or order #..."
+                        placeholder="Search by client name..."
                         style={{ paddingLeft: '2.5rem', width: '400px' }}
                         value={search}
                         onChange={e => setSearch(e.target.value)}
                     />
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                    <label className="label" style={{ marginBottom: 0, whiteSpace: 'nowrap' }}>Week:</label>
+                    <select
+                        className="input"
+                        style={{ width: '250px' }}
+                        value={selectedWeek ? selectedWeek.toISOString() : ''}
+                        onChange={(e) => {
+                            if (e.target.value) {
+                                setSelectedWeek(new Date(e.target.value));
+                            }
+                        }}
+                    >
+                        {weekOptions.map((week, idx) => {
+                            const weekStr = getWeekRangeString(week);
+                            const isCurrentWeek = getWeekStart(new Date()).getTime() === week.getTime();
+                            return (
+                                <option key={idx} value={week.toISOString()}>
+                                    {weekStr} {isCurrentWeek ? '(Current)' : ''}
+                                </option>
+                            );
+                        })}
+                    </select>
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                     <label className="label" style={{ marginBottom: 0, whiteSpace: 'nowrap' }}>Filter Status:</label>
@@ -123,43 +171,127 @@ export function BillingList() {
 
             <div className={styles.list}>
                 <div className={styles.listHeader}>
-                    <span style={{ width: '100px' }}>Order #</span>
                     <span style={{ flex: 2 }}>Client Name</span>
-                    <span style={{ flex: 1 }}>Service</span>
-                    <span style={{ flex: 1 }}>Amount</span>
+                    <span style={{ flex: 1.5 }}>Week Range</span>
+                    <span style={{ flex: 1 }}>Orders</span>
+                    <span style={{ flex: 1 }}>Total Amount</span>
                     <span style={{ flex: 1.5 }}>Status</span>
-                    <span style={{ flex: 1.5 }}>Delivery Date</span>
                     <span style={{ width: '40px' }}></span>
                 </div>
-                {filteredOrders.map(order => {
-                    const billingStatus = order.billingStatus || 'billing_pending';
-                    const statusLabel = billingStatus === 'billing_successful' ? 'Billing Successful' : 'Billing Pending';
-                    const statusClass = billingStatus === 'billing_successful' ? styles.statusSuccess : styles.statusPending;
+                {filteredRequests.map(request => {
+                    const requestKey = getRequestKey(request);
+                    const isExpanded = expandedRequest === requestKey;
+                    const statusLabel = request.billingStatus === 'billing_successful' ? 'Billing Successful' : 'Billing Pending';
+                    const statusClass = request.billingStatus === 'billing_successful' ? styles.statusSuccess : styles.statusPending;
 
                     return (
-                        <Link key={order.id} href={`/orders/${order.id}`} className={styles.row}>
-                            <span style={{ width: '100px', fontWeight: 600 }}>{order.order_number || 'N/A'}</span>
-                            <span style={{ flex: 2, fontWeight: 600 }}>{order.clientName || 'Unknown'}</span>
-                            <span style={{ flex: 1 }}>{order.service_type}</span>
-                            <span style={{ flex: 1 }}>${(order.amount || 0).toFixed(2)}</span>
-                            <span style={{ flex: 1.5 }}>
-                                <span className={statusClass}>
-                                    {statusLabel.toUpperCase()}
+                        <div key={requestKey}>
+                            <div
+                                className={styles.requestRow}
+                                onClick={() => toggleRequest(requestKey)}
+                            >
+                                <span style={{ flex: 2, fontWeight: 600 }}>{request.clientName || 'Unknown'}</span>
+                                <span style={{ flex: 1.5, fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
+                                    {request.weekRange}
                                 </span>
-                            </span>
-                            <span style={{ flex: 1.5, fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                                {order.actual_delivery_date
-                                    ? new Date(order.actual_delivery_date).toLocaleDateString('en-US', { timeZone: 'UTC' })
-                                    : order.scheduled_delivery_date
-                                        ? new Date(order.scheduled_delivery_date).toLocaleDateString('en-US', { timeZone: 'UTC' })
-                                        : '-'}
-                            </span>
-                            <span style={{ width: '40px' }}><ChevronRight size={16} /></span>
-                        </Link>
+                                <span style={{ flex: 1 }}>{request.orderCount}</span>
+                                <span style={{ flex: 1, fontWeight: 600 }}>${request.totalAmount.toFixed(2)}</span>
+                                <span style={{ flex: 1.5 }}>
+                                    <span className={statusClass}>
+                                        {statusLabel.toUpperCase()}
+                                    </span>
+                                </span>
+                                <span style={{ width: '40px', display: 'flex', justifyContent: 'center' }}>
+                                    {isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                                </span>
+                            </div>
+                            {isExpanded && (
+                                <div className={styles.ordersDetail}>
+                                    <div className={styles.ordersDetailHeader}>
+                                        <h3>Orders in this billing request</h3>
+                                        <span className={styles.ordersCount}>{request.orders.length} order{request.orders.length !== 1 ? 's' : ''}</span>
+                                    </div>
+                                    <div className={styles.ordersList}>
+                                        <div className={styles.ordersListHeader}>
+                                            <span style={{ width: '100px' }}>Order #</span>
+                                            <span style={{ flex: 1 }}>Service</span>
+                                            <span style={{ flex: 1 }}>Amount</span>
+                                            <span style={{ flex: 1.5 }}>Delivery Date</span>
+                                            <span style={{ flex: 1 }}>Proof of Delivery</span>
+                                            <span style={{ width: '40px' }}></span>
+                                        </div>
+                                        {request.orders.map(order => {
+                                            const deliveryDate = order.actual_delivery_date
+                                                ? new Date(order.actual_delivery_date).toLocaleDateString('en-US', { timeZone: 'UTC' })
+                                                : order.scheduled_delivery_date
+                                                    ? new Date(order.scheduled_delivery_date).toLocaleDateString('en-US', { timeZone: 'UTC' })
+                                                    : '-';
+
+                                            const proofUrl = order.proof_of_delivery_image || order.delivery_proof_url || null;
+
+                                            return (
+                                                <div key={order.id} className={styles.orderRow}>
+                                                    <Link
+                                                        href={`/orders/${order.id}`}
+                                                        className={styles.orderRowLink}
+                                                        onClick={(e) => e.stopPropagation()}
+                                                    >
+                                                        <span style={{ width: '100px', fontWeight: 600 }}>
+                                                            {order.order_number || 'N/A'}
+                                                        </span>
+                                                        <span style={{ flex: 1 }}>{order.service_type}</span>
+                                                        <span style={{ flex: 1 }}>${(order.amount || 0).toFixed(2)}</span>
+                                                        <span style={{ flex: 1.5, fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                                                            {deliveryDate}
+                                                        </span>
+                                                    </Link>
+                                                    <span style={{ flex: 1, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                                        {proofUrl ? (
+                                                            <a
+                                                                href={proofUrl}
+                                                                target="_blank"
+                                                                rel="noopener noreferrer"
+                                                                className={styles.proofLink}
+                                                                onClick={(e) => e.stopPropagation()}
+                                                                title="View proof of delivery"
+                                                            >
+                                                                <Image size={14} />
+                                                                <span>View Proof</span>
+                                                            </a>
+                                                        ) : (
+                                                            <span style={{ fontSize: '0.85rem', color: 'var(--text-tertiary)' }}>
+                                                                No proof
+                                                            </span>
+                                                        )}
+                                                    </span>
+                                                    <Link
+                                                        href={`/orders/${order.id}`}
+                                                        style={{ width: '40px', display: 'flex', justifyContent: 'center' }}
+                                                        onClick={(e) => e.stopPropagation()}
+                                                    >
+                                                        <ChevronRight size={14} />
+                                                    </Link>
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                </div>
+                            )}
+                        </div>
                     );
                 })}
-                {filteredOrders.length === 0 && (
-                    <div className={styles.empty}>No billing orders found.</div>
+                {filteredRequests.length === 0 && !isLoading && (
+                    <div className={styles.empty}>
+                        {selectedWeek
+                            ? `No billing requests found for ${getWeekRangeString(selectedWeek)}.`
+                            : 'No billing requests found.'}
+                    </div>
+                )}
+                {isLoading && selectedWeek && (
+                    <div className={styles.loadingContainer}>
+                        <div className="spinner"></div>
+                        <p>Loading billing requests...</p>
+                    </div>
                 )}
             </div>
         </div>
