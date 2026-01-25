@@ -40,7 +40,7 @@ export async function POST(request: NextRequest) {
         summary: string,
         vendor: string,
         orderCreated: boolean,
-        createdDate: string | null
+        scheduledDeliveryDate: string | null
     }>();
 
     function setClientStatus(clientId: string, type: 'food' | 'meal' | 'box' | 'custom', status: string) {
@@ -203,7 +203,7 @@ export async function POST(request: NextRequest) {
                 summary: '',
                 vendor: 'no vendor set',
                 orderCreated: false,
-                createdDate: null
+                scheduledDeliveryDate: null
             });
         }
 
@@ -708,7 +708,7 @@ export async function POST(request: NextRequest) {
                             if (entry) {
                                 entry.vendor = vendor.name;
                                 entry.orderCreated = true;
-                                entry.createdDate = newOrder.created_at || currentTime.toISOString();
+                                entry.scheduledDeliveryDate = newOrder.scheduled_delivery_date || deliveryDate.toISOString().split('T')[0];
                             }
                             
                             const { data: vs } = await supabase.from('order_vendor_selections').insert({
@@ -897,7 +897,7 @@ export async function POST(request: NextRequest) {
                             entry.vendor = vendor.name;
                         }
                         entry.orderCreated = true;
-                        entry.createdDate = newOrder.created_at || currentTime.toISOString();
+                        entry.scheduledDeliveryDate = newOrder.scheduled_delivery_date || candidateDate.toISOString().split('T')[0];
                     }
                     
                     // Box Selection
@@ -956,7 +956,7 @@ export async function POST(request: NextRequest) {
                             }
                         }
                         entry.orderCreated = true;
-                        entry.createdDate = newOrder.created_at || currentTime.toISOString();
+                        entry.scheduledDeliveryDate = newOrder.scheduled_delivery_date || candidateDate.toISOString().split('T')[0];
                     }
                     
                     let orderTotalValue = 0;
@@ -1120,7 +1120,7 @@ export async function POST(request: NextRequest) {
                             entry.vendor = vendor.name;
                         }
                         entry.orderCreated = true;
-                        entry.createdDate = newOrder.created_at || currentTime.toISOString();
+                        entry.scheduledDeliveryDate = newOrder.scheduled_delivery_date || deliveryDate.toISOString().split('T')[0];
                     }
                     
                     const { data: newVs } = await supabase.from('order_vendor_selections').insert({
@@ -1203,7 +1203,7 @@ export async function POST(request: NextRequest) {
         const excelReportData = Array.from(clientStatusMap.values()).map(entry => ({
             'Customer Name': entry.clientName,
             'Order Created': entry.orderCreated ? 'Yes' : 'No',
-            'Created Date': entry.createdDate ? new Date(entry.createdDate).toLocaleDateString('en-US', { year: 'numeric', month: '2-digit', day: '2-digit' }) : '-',
+            'Scheduled Delivery Date': entry.scheduledDeliveryDate ? new Date(entry.scheduledDeliveryDate).toLocaleDateString('en-US', { year: 'numeric', month: '2-digit', day: '2-digit' }) : '-',
             'Vendor': entry.vendor,
             'Summary': entry.summary || 'No upcoming orders',
             'Food Orders': entry.foodStatus,
