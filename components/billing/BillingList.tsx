@@ -233,17 +233,31 @@ export function BillingList() {
                                                 <div key={order.id} className={styles.orderRow}>
                                                     <Link
                                                         href={`/orders/${order.id}`}
-                                                        className={styles.orderRowLink}
+                                                        style={{ width: '100px', fontWeight: 600, textDecoration: 'none', color: 'inherit' }}
                                                         onClick={(e) => e.stopPropagation()}
                                                     >
-                                                        <span style={{ width: '100px', fontWeight: 600 }}>
-                                                            {order.order_number || 'N/A'}
-                                                        </span>
-                                                        <span style={{ flex: 1 }}>{order.service_type}</span>
-                                                        <span style={{ flex: 1 }}>${(order.amount || 0).toFixed(2)}</span>
-                                                        <span style={{ flex: 1.5, fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                                                            {deliveryDate}
-                                                        </span>
+                                                        {order.order_number || 'N/A'}
+                                                    </Link>
+                                                    <Link
+                                                        href={`/orders/${order.id}`}
+                                                        style={{ flex: 1, textDecoration: 'none', color: 'inherit' }}
+                                                        onClick={(e) => e.stopPropagation()}
+                                                    >
+                                                        {order.service_type}
+                                                    </Link>
+                                                    <Link
+                                                        href={`/orders/${order.id}`}
+                                                        style={{ flex: 1, textDecoration: 'none', color: 'inherit' }}
+                                                        onClick={(e) => e.stopPropagation()}
+                                                    >
+                                                        ${(order.amount || 0).toFixed(2)}
+                                                    </Link>
+                                                    <Link
+                                                        href={`/orders/${order.id}`}
+                                                        style={{ flex: 1.5, fontSize: '0.85rem', color: 'var(--text-secondary)', textDecoration: 'none' }}
+                                                        onClick={(e) => e.stopPropagation()}
+                                                    >
+                                                        {deliveryDate}
                                                     </Link>
                                                     <span style={{ flex: 1, display: 'flex', alignItems: 'center', gap: '8px' }}>
                                                         {proofUrl ? (
@@ -266,7 +280,7 @@ export function BillingList() {
                                                     </span>
                                                     <Link
                                                         href={`/orders/${order.id}`}
-                                                        style={{ width: '40px', display: 'flex', justifyContent: 'center' }}
+                                                        style={{ width: '40px', display: 'flex', justifyContent: 'center', textDecoration: 'none', color: 'inherit' }}
                                                         onClick={(e) => e.stopPropagation()}
                                                     >
                                                         <ChevronRight size={14} />

@@ -188,13 +188,9 @@
     background: var(--bg-surface-hover);
 }
 
-.orderRowLink {
+.orderRow > a {
     display: flex;
     align-items: center;
-    flex: 1;
-    text-decoration: none;
-    color: inherit;
-    min-width: 0;
 }
 
 .proofLink {
