@@ -258,11 +258,12 @@ export function BillingList() {
                                             marginTop: '2px',
                                             fontStyle: 'italic'
                                         }}>
-                                            {request.orders
-                                                .filter(o => o.billing_notes)
-                                                .map(o => o.billing_notes)
-                                                .filter(Boolean)
-                                                .join(' | ')}
+                                            {Array.from(new Set(
+                                                request.orders
+                                                    .filter(o => o.billing_notes)
+                                                    .map(o => o.billing_notes)
+                                                    .filter(Boolean)
+                                            )).join(' | ')}
                                         </div>
                                     )}
                                     {/* Status dropdown */}
