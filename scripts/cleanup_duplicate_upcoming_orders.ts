@@ -174,20 +174,20 @@ async function cleanupDuplicateUpcomingOrders() {
             if (itemsResult.error) {
                 console.error(`      ✗ Error deleting items: ${itemsResult.error.message}`);
                 totalErrors++;
-            } else if (itemsResult.data) {
-                relatedDataDeleted += itemsResult.data.length || 0;
+            } else if (itemsResult.data && Array.isArray(itemsResult.data)) {
+                relatedDataDeleted += (itemsResult.data as unknown[]).length || 0;
             }
             if (vendorSelectionsResult.error) {
                 console.error(`      ✗ Error deleting vendor selections: ${vendorSelectionsResult.error.message}`);
                 totalErrors++;
-            } else if (vendorSelectionsResult.data) {
-                relatedDataDeleted += vendorSelectionsResult.data.length || 0;
+            } else if (vendorSelectionsResult.data && Array.isArray(vendorSelectionsResult.data)) {
+                relatedDataDeleted += (vendorSelectionsResult.data as unknown[]).length || 0;
             }
             if (boxSelectionsResult.error) {
                 console.error(`      ✗ Error deleting box selections: ${boxSelectionsResult.error.message}`);
                 totalErrors++;
-            } else if (boxSelectionsResult.data) {
-                relatedDataDeleted += boxSelectionsResult.data.length || 0;
+            } else if (boxSelectionsResult.data && Array.isArray(boxSelectionsResult.data)) {
+                relatedDataDeleted += (boxSelectionsResult.data as unknown[]).length || 0;
             }
 
             if (relatedDataDeleted > 0) {
