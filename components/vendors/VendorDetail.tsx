@@ -626,7 +626,7 @@ export function VendorDetail({ vendorId, isVendorView, vendor: initialVendor }: 
         /* --- Sheet 2: Detailed Items per Client --- */
         const detailsData: any[][] = [];
 
-        orders.forEach(order => {
+        dateOrders.forEach(order => {
             const clientName = getClientName(order.client_id);
             const items = getParsedOrderItems(order);
 
@@ -657,7 +657,7 @@ export function VendorDetail({ vendorId, isVendorView, vendor: initialVendor }: 
         /* --- Sheet 3: Cooking List (Aggregated) --- */
         const aggregation: Record<string, { name: string; quantity: number; notes: string }> = {};
 
-        orders.forEach(order => {
+        dateOrders.forEach(order => {
             const items = getParsedOrderItems(order);
             items.forEach(item => {
                 const noteKey = item.notes ? item.notes.trim().toLowerCase() : '';
