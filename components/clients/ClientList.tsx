@@ -334,13 +334,29 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
                 // 1. Check if client with boxes doesn't have vendor assigned
                 let boxesNeedsVendor = false;
                 if (c.serviceType === 'Boxes') {
-                    if (c.activeOrder && c.activeOrder.serviceType === 'Boxes') {
-                        const box = boxTypes.find(b => b.id === c.activeOrder?.boxTypeId);
-                        const vendorId = c.activeOrder.vendorId || box?.vendorId;
-                        boxesNeedsVendor = !vendorId;
-                    } else {
-                        boxesNeedsVendor = true; // No active order means needs vendor
+                    // Check actual box orders from client_box_orders table
+                    const clientDetails = detailsCache[c.id];
+                    
+                    // Only check if we have cached details (to avoid false positives)
+                    if (clientDetails) {
+                        const boxOrders = clientDetails.boxOrders || [];
+                        
+                        if (boxOrders.length === 0) {
+                            boxesNeedsVendor = true; // No box orders means needs vendor
+                        } else {
+                            // Check if any box order is missing a vendor
+                            boxesNeedsVendor = boxOrders.some(boxOrder => {
+                                // Check vendorId on the box order itself, or fall back to box type's vendor
+                                if (boxOrder.vendorId) {
+                                    return false; // Has vendor
+                                }
+                                // Fall back to box type's vendor if box order doesn't have one
+                                const box = boxTypes.find(b => b.id === boxOrder.boxTypeId);
+                                return !box?.vendorId; // Missing vendor if box type also doesn't have one
+                            });
+                        }
                     }
+                    // If cache entry doesn't exist, we can't determine vendor status, so skip this check
                 }
 
                 // 2. Check if expiration date is within current month
@@ -391,13 +407,29 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
 
             // Check Boxes
             if (c.serviceType === 'Boxes') {
-                if (c.activeOrder && c.activeOrder.serviceType === 'Boxes') {
-                    const box = boxTypes.find(b => b.id === c.activeOrder?.boxTypeId);
-                    const vendorId = c.activeOrder.vendorId || box?.vendorId;
-                    needsBoxVendor = !vendorId;
-                } else {
-                    needsBoxVendor = true;
+                // Check actual box orders from client_box_orders table
+                const clientDetails = detailsCache[c.id];
+                
+                // Only check if we have cached details (to avoid false positives)
+                if (clientDetails) {
+                    const boxOrders = clientDetails.boxOrders || [];
+                    
+                    if (boxOrders.length === 0) {
+                        needsBoxVendor = true; // No box orders means needs vendor
+                    } else {
+                        // Check if any box order is missing a vendor
+                        needsBoxVendor = boxOrders.some(boxOrder => {
+                            // Check vendorId on the box order itself, or fall back to box type's vendor
+                            if (boxOrder.vendorId) {
+                                return false; // Has vendor
+                            }
+                            // Fall back to box type's vendor if box order doesn't have one
+                            const box = boxTypes.find(b => b.id === boxOrder.boxTypeId);
+                            return !box?.vendorId; // Missing vendor if box type also doesn't have one
+                        });
+                    }
                 }
+                // If cache entry doesn't exist, we can't determine vendor status, so skip this check
             }
 
             // Check Meals
@@ -1070,15 +1102,34 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
 
         // 1. Check if client with boxes doesn't have vendor assigned
         if (client.serviceType === 'Boxes') {
-            if (client.activeOrder && client.activeOrder.serviceType === 'Boxes') {
-                const box = boxTypes.find(b => b.id === client.activeOrder?.boxTypeId);
-                const vendorId = client.activeOrder.vendorId || box?.vendorId;
-                if (!vendorId) {
+            // Check actual box orders from client_box_orders table
+            const clientDetails = detailsCache[client.id];
+            
+            // Only check if we have cached details (to avoid false positives)
+            if (clientDetails) {
+                const boxOrders = clientDetails.boxOrders || [];
+                
+                if (boxOrders.length === 0) {
+                    // No box orders means needs vendor
                     reasons.push('Boxes: No vendor assigned');
+                } else {
+                    // Check if any box order is missing a vendor
+                    const hasMissingVendor = boxOrders.some(boxOrder => {
+                        // Check vendorId on the box order itself, or fall back to box type's vendor
+                        if (boxOrder.vendorId) {
+                            return false; // Has vendor
+                        }
+                        // Fall back to box type's vendor if box order doesn't have one
+                        const box = boxTypes.find(b => b.id === boxOrder.boxTypeId);
+                        return !box?.vendorId; // Missing vendor if box type also doesn't have one
+                    });
+                    
+                    if (hasMissingVendor) {
+                        reasons.push('Boxes: No vendor assigned');
+                    }
                 }
-            } else {
-                reasons.push('Boxes: No vendor assigned');
             }
+            // If cache entry doesn't exist, we can't determine vendor status, so skip this check
         }
 
         // 2. Check if expiration date is within current month
