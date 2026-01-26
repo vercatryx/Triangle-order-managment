@@ -8,7 +8,12 @@ export async function GET(request: NextRequest) {
         const allBillingRequests = await getBillingRequestsByWeek();
 
         // Filter to only include requests that are ready for billing (all orders have proof)
-        const billingRequests = allBillingRequests.filter(req => req.readyForBilling);
+        // Also exclude requests with billing_successful or billing_failed status (these are already completed)
+        const billingRequests = allBillingRequests.filter(req => {
+            return req.readyForBilling && 
+                   req.billingStatus !== 'success' && 
+                   req.billingStatus !== 'failed';
+        });
 
         // Format the response
         const formattedRequests = await Promise.all(

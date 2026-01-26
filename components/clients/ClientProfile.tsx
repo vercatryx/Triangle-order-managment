@@ -1598,36 +1598,38 @@ export function ClientProfileDetail({
                                 cleanedOrderConfig.deliveryDay,
                                 cleanedOrderConfig.caseId
                             );
+                            // Skip syncCurrentOrderToUpcoming for Custom - saveClientCustomOrder already handles it
                         }
-                    }
-
-                    if (serviceType === 'Food') {
-                        // ALWAYS save food orders if service type is Food, even if empty (to handle deletions/clearing)
-                        await saveClientFoodOrder(newClient.id, {
-                            caseId: cleanedOrderConfig.caseId,
-                            deliveryDayOrders: cleanedOrderConfig.deliveryDayOrders || {}
-                        });
-                    }
-
-                    if (serviceType === 'Meal' || (cleanedOrderConfig.mealSelections && Object.keys(cleanedOrderConfig.mealSelections).length > 0)) {
-                        // Save meal orders if service type is Meal OR if there are meal selections (e.g. Breakfast for Food clients)
-                        if (cleanedOrderConfig.mealSelections) {
-                            await saveClientMealOrder(newClient.id, {
+                    } else {
+                        // Only sync for non-Custom service types
+                        if (serviceType === 'Food') {
+                            // ALWAYS save food orders if service type is Food, even if empty (to handle deletions/clearing)
+                            await saveClientFoodOrder(newClient.id, {
                                 caseId: cleanedOrderConfig.caseId,
-                                mealSelections: cleanedOrderConfig.mealSelections
+                                deliveryDayOrders: cleanedOrderConfig.deliveryDayOrders || {}
                             });
                         }
-                    }
 
-                    if (serviceType === 'Boxes') {
-                        await saveClientBoxOrder(newClient.id, (cleanedOrderConfig.boxOrders || []).map((box: any) => ({
-                            ...box,
-                            caseId: cleanedOrderConfig.caseId
-                        })));
-                    }
+                        if (serviceType === 'Meal' || (cleanedOrderConfig.mealSelections && Object.keys(cleanedOrderConfig.mealSelections).length > 0)) {
+                            // Save meal orders if service type is Meal OR if there are meal selections (e.g. Breakfast for Food clients)
+                            if (cleanedOrderConfig.mealSelections) {
+                                await saveClientMealOrder(newClient.id, {
+                                    caseId: cleanedOrderConfig.caseId,
+                                    mealSelections: cleanedOrderConfig.mealSelections
+                                });
+                            }
+                        }
 
-                    // Legacy sync for backward compatibility
-                    await syncCurrentOrderToUpcoming(newClient.id, { ...newClient, activeOrder: cleanedOrderConfig }, true);
+                        if (serviceType === 'Boxes') {
+                            await saveClientBoxOrder(newClient.id, (cleanedOrderConfig.boxOrders || []).map((box: any) => ({
+                                ...box,
+                                caseId: cleanedOrderConfig.caseId
+                            })));
+                        }
+
+                        // Legacy sync for backward compatibility
+                        await syncCurrentOrderToUpcoming(newClient.id, { ...newClient, activeOrder: cleanedOrderConfig }, true);
+                    }
                 }
             }
 
@@ -4490,30 +4492,31 @@ export function ClientProfileDetail({
                                 updatedClient.activeOrder.deliveryDay,
                                 updatedClient.activeOrder.caseId
                             );
+                            // Skip syncCurrentOrderToUpcoming for Custom - saveClientCustomOrder already handles it
                         }
-                    }
+                    } else {
+                        // Save to appropriate independent table based on service type
+                        if (serviceType === 'Food' && foodOrderConfig) {
+                            await saveClientFoodOrder(updatedClient.id, {
+                                caseId: updatedClient.activeOrder.caseId,
+                                deliveryDayOrders: foodOrderConfig.deliveryDayOrders || updatedClient.activeOrder.deliveryDayOrders
+                            });
+                        } else if (serviceType === 'Meal' && mealOrderConfig) {
+                            await saveClientMealOrder(updatedClient.id, {
+                                caseId: updatedClient.activeOrder.caseId,
+                                mealSelections: mealOrderConfig.mealSelections || updatedClient.activeOrder.mealSelections
+                            });
+                        } else if (serviceType === 'Boxes' && (boxOrderConfig || updatedClient.activeOrder?.boxOrders)) {
+                            const boxesToSave = boxOrderConfig || updatedClient.activeOrder?.boxOrders || [];
+                            await saveClientBoxOrder(updatedClient.id, boxesToSave.map((box: any) => ({
+                                ...box,
+                                caseId: updatedClient.activeOrder?.caseId
+                            })));
+                        }
 
-                    // Save to appropriate independent table based on service type
-                    if (serviceType === 'Food' && foodOrderConfig) {
-                        await saveClientFoodOrder(updatedClient.id, {
-                            caseId: updatedClient.activeOrder.caseId,
-                            deliveryDayOrders: foodOrderConfig.deliveryDayOrders || updatedClient.activeOrder.deliveryDayOrders
-                        });
-                    } else if (serviceType === 'Meal' && mealOrderConfig) {
-                        await saveClientMealOrder(updatedClient.id, {
-                            caseId: updatedClient.activeOrder.caseId,
-                            mealSelections: mealOrderConfig.mealSelections || updatedClient.activeOrder.mealSelections
-                        });
-                    } else if (serviceType === 'Boxes' && (boxOrderConfig || updatedClient.activeOrder?.boxOrders)) {
-                        const boxesToSave = boxOrderConfig || updatedClient.activeOrder?.boxOrders || [];
-                        await saveClientBoxOrder(updatedClient.id, boxesToSave.map((box: any) => ({
-                            ...box,
-                            caseId: updatedClient.activeOrder?.caseId
-                        })));
+                        // Still call legacy sync for backward compatibility during migration
+                        await syncCurrentOrderToUpcoming(updatedClient.id, updatedClient, true);
                     }
-
-                    // Still call legacy sync for backward compatibility during migration
-                    await syncCurrentOrderToUpcoming(updatedClient.id, updatedClient, true);
                 }
 
                 // IMPORTANT: Set saving to false and return true BEFORE any state updates that might trigger re-renders

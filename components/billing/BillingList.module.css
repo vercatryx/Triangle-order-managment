@@ -250,3 +250,18 @@
     padding: 100px 0;
     color: var(--text-secondary);
 }
+
+.statusDropdown {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    background: var(--bg-surface);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    padding: var(--spacing-md);
+    margin-top: var(--spacing-xs);
+    box-shadow: var(--shadow-lg);
+    z-index: 100;
+    min-width: 200px;
+}

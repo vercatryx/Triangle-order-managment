@@ -1509,9 +1509,14 @@ export async function updateClient(id: string, data: Partial<ClientProfile>) {
 
     // PERFORMANCE: Only sync if activeOrder actually changed (not just profile fields)
     // If activeOrder was updated, sync to upcoming_orders
+    // BUT: Skip sync for Custom service type - saveClientCustomOrder already handles it
     if (data.activeOrder) {
         if (updatedData) {
-            await syncCurrentOrderToUpcoming(id, mapClientFromDB(updatedData), true);
+            const mappedClient = mapClientFromDB(updatedData);
+            // Don't sync if service type is Custom - saveClientCustomOrder handles it
+            if (mappedClient.serviceType !== 'Custom') {
+                await syncCurrentOrderToUpcoming(id, mappedClient, true);
+            }
         }
     } else {
         // Targeted local DB sync for this client (non-blocking for better performance)
@@ -2281,24 +2286,20 @@ export async function getBillingRequestsByWeek(weekStartDate?: Date): Promise<Bi
     const successfulOrderIds = new Set((billingRecords || []).map((br: any) => br.order_id).filter(Boolean));
 
     // Map orders with client info and check billing status
-    // Exclude orders with billing_successful or billing_failed status
-    const allOrders = (allOrdersData || [])
-        .filter((o: any) => {
-            // Exclude orders that have been marked as billing_successful or billing_failed
-            return o.status !== 'billing_successful' && o.status !== 'billing_failed';
-        })
-        .map((o: any) => {
-            const hasProof = !!(o.proof_of_delivery_image || o.delivery_proof_url);
-            const isBilled = successfulOrderIds.has(o.id);
-            
-            return {
-                ...o,
-                clientName: o.clients?.full_name || 'Unknown',
-                amount: o.total_value || 0,
-                hasProof,
-                isBilled
-            };
-        });
+    // Note: We include all orders here (including billing_successful/billing_failed) for UI display
+    // The API route will filter them out separately
+    const allOrders = (allOrdersData || []).map((o: any) => {
+        const hasProof = !!(o.proof_of_delivery_image || o.delivery_proof_url);
+        const isBilled = successfulOrderIds.has(o.id);
+        
+        return {
+            ...o,
+            clientName: o.clients?.full_name || 'Unknown',
+            amount: o.total_value || 0,
+            hasProof,
+            isBilled
+        };
+    });
 
     // Filter orders to only those in the specified week if provided
     // Include billing_pending orders regardless of delivery date to ensure they show up
@@ -2332,16 +2333,25 @@ export async function getBillingRequestsByWeek(weekStartDate?: Date): Promise<Bi
             } else if (order.created_at) {
                 deliveryDate = new Date(order.created_at);
             } else {
-                continue; // Skip orders without any date information
+                // If no date at all, skip this order (can't determine which week it belongs to)
+                console.warn(`Order ${order.id} has no delivery date or created_at, skipping from billing requests`);
+                continue;
             }
         } else {
             deliveryDate = new Date(deliveryDateStr);
         }
+        
+        // Normalize the date to avoid timezone issues when comparing weeks
+        deliveryDate.setHours(12, 0, 0, 0); // Set to noon to avoid DST issues
 
         const weekStart = getWeekStart(deliveryDate);
+        weekStart.setHours(0, 0, 0, 0); // Normalize week start to midnight for consistent grouping
+        
         const weekEnd = getWeekEnd(deliveryDate);
 
-        const weekKey = `${order.client_id}-${weekStart.toISOString()}`;
+        // Use date string (YYYY-MM-DD) instead of ISO string for consistent grouping across timezones
+        const weekStartDateStr = weekStart.toISOString().split('T')[0];
+        const weekKey = `${order.client_id}-${weekStartDateStr}`;
         const weekRange = getWeekRangeString(deliveryDate);
 
         if (!billingRequestsMap.has(weekKey)) {
@@ -6466,63 +6476,58 @@ export async function saveClientCustomOrder(clientId: string, vendorId: string, 
     const session = await getSession();
     const currentUserName = session?.name || 'Admin';
 
-    // 1. Check or Create Upcoming Order
-    let { data: upcomingOrder, error: upcomingError } = await supabase
+    // 1. Get ALL upcoming orders for this client (not just one)
+    const { data: allUpcomingOrders, error: upcomingError } = await supabase
         .from('upcoming_orders')
-        .select('*')
+        .select('id')
         .eq('client_id', clientId)
-        .neq('status', 'processed')
-        .maybeSingle();
+        .neq('status', 'processed');
 
     if (upcomingError) throw new Error(upcomingError.message);
 
-    if (upcomingOrder) {
-        // Update existing
-        const { error: updateError } = await supabase
+    // 2. Delete ALL Food/Box/Meal upcoming orders and their related data
+    // This ensures we remove any existing Food or Box orders when creating a Custom order
+    if (allUpcomingOrders && allUpcomingOrders.length > 0) {
+        const orderIds = allUpcomingOrders.map(o => o.id);
+        
+        // Delete related items/selections first (to avoid FK constraints)
+        await Promise.all([
+            supabase.from('upcoming_order_items').delete().in('upcoming_order_id', orderIds),
+            supabase.from('upcoming_order_vendor_selections').delete().in('upcoming_order_id', orderIds),
+            supabase.from('upcoming_order_box_selections').delete().in('upcoming_order_id', orderIds)
+        ]);
+
+        // Delete all upcoming orders (Food, Box, Meal, and any existing Custom)
+        const { error: deleteError } = await supabase
             .from('upcoming_orders')
-            .update({
-                service_type: 'Custom', // Switch to Custom
-                case_id: caseId || null,
-                notes: `Custom Order: ${itemDescription}`,
-                total_value: price,
-                total_items: 1,
-                updated_by: currentUserName,
-                last_updated: (await getCurrentTime()).toISOString(),
-                delivery_day: deliveryDay // Save the delivery day on the order itself for simple custom orders
-            })
-            .eq('id', upcomingOrder.id);
-        if (updateError) throw new Error(updateError.message);
-    } else {
-        // Create new
-        const { data: newUpcoming, error: createError } = await supabase
-            .from('upcoming_orders')
-            .insert({
-                client_id: clientId,
-                service_type: 'Custom',
-                case_id: caseId || null,
-                status: 'pending',
-                notes: `Custom Order: ${itemDescription}`,
-                total_value: price,
-                total_items: 1,
-                updated_by: currentUserName,
-                last_updated: (await getCurrentTime()).toISOString(),
-                delivery_day: deliveryDay
-            })
-            .select()
-            .single();
-        if (createError) throw new Error(createError.message);
-        upcomingOrder = newUpcoming;
+            .delete()
+            .in('id', orderIds);
+        
+        if (deleteError) throw new Error(deleteError.message);
     }
 
-    // 2. Clear existing items/selections for this upcoming order (since we're overwriting with a single custom order)
-    // Delete items first to avoid FK issues
-    await supabase.from('upcoming_order_items').delete().eq('upcoming_order_id', upcomingOrder.id);
-    await supabase.from('upcoming_order_vendor_selections').delete().eq('upcoming_order_id', upcomingOrder.id);
-    // Also clear box selections if any existed
-    await supabase.from('upcoming_order_box_selections').delete().eq('upcoming_order_id', upcomingOrder.id);
+    // 3. Create new Custom upcoming order
+    const { data: newUpcoming, error: createError } = await supabase
+        .from('upcoming_orders')
+        .insert({
+            client_id: clientId,
+            service_type: 'Custom',
+            case_id: caseId || null,
+            status: 'pending',
+            notes: `Custom Order: ${itemDescription}`,
+            total_value: price,
+            total_items: 1,
+            updated_by: currentUserName,
+            last_updated: (await getCurrentTime()).toISOString(),
+            delivery_day: deliveryDay
+        })
+        .select()
+        .single();
+    
+    if (createError) throw new Error(createError.message);
+    const upcomingOrder = newUpcoming;
 
-
-    // 3. Create Vendor Selection
+    // 4. Create Vendor Selection
     const { data: vendorSelection, error: vsError } = await supabase
         .from('upcoming_order_vendor_selections')
         .insert({
@@ -6534,7 +6539,7 @@ export async function saveClientCustomOrder(clientId: string, vendorId: string, 
 
     if (vsError || !vendorSelection) throw new Error(vsError?.message || 'Failed to create vendor selection');
 
-    // 4. Create Item
+    // 5. Create Item
     // We use the new columns: custom_name, custom_price. menu_item_id is null.
     const { error: itemError } = await supabase
         .from('upcoming_order_items')

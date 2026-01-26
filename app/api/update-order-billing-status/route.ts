@@ -32,10 +32,10 @@ export async function POST(request: NextRequest) {
             }, { status: 400 });
         }
 
-        if (!status || (status !== 'billing_successful' && status !== 'billing_failed')) {
+        if (!status || (status !== 'billing_successful' && status !== 'billing_failed' && status !== 'billing_pending')) {
             return NextResponse.json({
                 success: false,
-                error: 'status is required and must be either "billing_successful" or "billing_failed"'
+                error: 'status is required and must be either "billing_successful", "billing_failed", or "billing_pending"'
             }, { status: 400 });
         }
 

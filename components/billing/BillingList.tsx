@@ -12,11 +12,12 @@ export function BillingList() {
     const router = useRouter();
     const [billingRequests, setBillingRequests] = useState<BillingRequest[]>([]);
     const [search, setSearch] = useState('');
-    const [statusFilter, setStatusFilter] = useState<'all' | 'ready' | 'completed'>('all');
+    const [statusFilter, setStatusFilter] = useState<'all' | 'ready' | 'completed' | 'success' | 'failed'>('all');
     const [selectedWeek, setSelectedWeek] = useState<Date | null>(null);
     const [expandedRequest, setExpandedRequest] = useState<string | null>(null);
     const [isLoading, setIsLoading] = useState(true);
     const [weekOptions, setWeekOptions] = useState<Date[]>([]);
+    const [statusDropdownOpen, setStatusDropdownOpen] = useState<string | null>(null);
 
     useEffect(() => {
         // Initialize week options
@@ -52,6 +53,10 @@ export function BillingList() {
             matchesStatus = req.readyForBilling && !req.billingCompleted;
         } else if (statusFilter === 'completed') {
             matchesStatus = req.billingCompleted;
+        } else if (statusFilter === 'success') {
+            matchesStatus = req.billingStatus === 'success';
+        } else if (statusFilter === 'failed') {
+            matchesStatus = req.billingStatus === 'failed';
         }
         return matchesSearch && matchesStatus;
     });
@@ -170,6 +175,8 @@ export function BillingList() {
                         <option value="all">All</option>
                         <option value="ready">Ready for Billing</option>
                         <option value="completed">Billing Completed</option>
+                        <option value="success">Billing Success</option>
+                        <option value="failed">Billing Failed</option>
                     </select>
                 </div>
             </div>
@@ -232,10 +239,93 @@ export function BillingList() {
                                     </span>
                                     <span style={{ flex: 1 }}>{request.orderCount}</span>
                                     <span style={{ flex: 1, fontWeight: 600 }}>${request.totalAmount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                                <span style={{ flex: 1.5 }}>
-                                    <span className={statusClass}>
+                                <span style={{ flex: 1.5, position: 'relative' }}>
+                                    <span 
+                                        className={statusClass}
+                                        style={{ cursor: 'pointer', display: 'inline-block' }}
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            setStatusDropdownOpen(statusDropdownOpen === requestKey ? null : requestKey);
+                                        }}
+                                    >
                                         {statusLabel.toUpperCase()}
                                     </span>
+                                    {/* Show billing notes if available */}
+                                    {request.orders.some(o => o.billing_notes) && (
+                                        <div style={{ 
+                                            fontSize: '0.75rem', 
+                                            color: 'var(--text-tertiary)', 
+                                            marginTop: '2px',
+                                            fontStyle: 'italic'
+                                        }}>
+                                            {request.orders
+                                                .filter(o => o.billing_notes)
+                                                .map(o => o.billing_notes)
+                                                .filter(Boolean)
+                                                .join(' | ')}
+                                        </div>
+                                    )}
+                                    {/* Status dropdown */}
+                                    {statusDropdownOpen === requestKey && (
+                                        <div 
+                                            className={styles.statusDropdown}
+                                            onClick={(e) => e.stopPropagation()}
+                                        >
+                                            <select
+                                                className="input"
+                                                style={{ width: '100%', marginBottom: '0.5rem' }}
+                                                value={(() => {
+                                                    // Determine current status from orders
+                                                    const allSuccessful = request.orders.every(o => o.status === 'billing_successful');
+                                                    const hasFailed = request.orders.some(o => o.status === 'billing_failed');
+                                                    if (allSuccessful) return 'billing_successful';
+                                                    if (hasFailed) return 'billing_failed';
+                                                    return 'billing_pending';
+                                                })()}
+                                                onChange={async (e) => {
+                                                    const newStatus = e.target.value;
+                                                    try {
+                                                        const orderIds = request.orders.map(o => o.id);
+                                                        
+                                                        const response = await fetch('/api/update-order-billing-status', {
+                                                            method: 'POST',
+                                                            headers: { 'Content-Type': 'application/json' },
+                                                            body: JSON.stringify({
+                                                                orderIds,
+                                                                status: newStatus
+                                                            })
+                                                        });
+                                                        
+                                                        const result = await response.json();
+                                                        
+                                                        if (result.success) {
+                                                            setStatusDropdownOpen(null);
+                                                            // Reload data
+                                                            if (selectedWeek) {
+                                                                loadData();
+                                                            }
+                                                        } else {
+                                                            alert(`Failed to update status: ${result.error || 'Unknown error'}`);
+                                                        }
+                                                    } catch (error: any) {
+                                                        console.error('Error updating status:', error);
+                                                        alert(`Error: ${error.message || 'Failed to update status'}`);
+                                                    }
+                                                }}
+                                            >
+                                                <option value="billing_pending">Billing Pending</option>
+                                                <option value="billing_successful">Billing Successful</option>
+                                                <option value="billing_failed">Billing Failed</option>
+                                            </select>
+                                            <button
+                                                className="btn btn-secondary"
+                                                style={{ width: '100%', fontSize: '0.875rem' }}
+                                                onClick={() => setStatusDropdownOpen(null)}
+                                            >
+                                                Close
+                                            </button>
+                                        </div>
+                                    )}
                                 </span>
                                 <span style={{ width: '40px', display: 'flex', justifyContent: 'center' }}>
                                     {isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
@@ -374,6 +464,7 @@ export function BillingList() {
                     </div>
                 )}
             </div>
+            
         </div>
     );
 }
