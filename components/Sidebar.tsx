@@ -6,7 +6,7 @@ import Image from 'next/image';
 import { Users, Truck, Utensils, Box as BoxIcon, Settings, LayoutDashboard, ChevronLeft, ChevronRight, LogOut, Store, History, PlayCircle, AlertCircle, RefreshCw, Mail, ChevronDown, ChevronUp } from 'lucide-react';
 import styles from './Sidebar.module.css';
 import { logout } from '@/lib/auth-actions';
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useDataCache } from '@/lib/data-cache';
 import { AppSettings } from '@/lib/types';
 import { getNavigatorLogs } from '@/lib/actions';
@@ -412,6 +412,9 @@ function SimulationButton() {
 function TimeWidget() {
     const { currentTime, isFakeTime, setFakeTime } = useTime();
     const [isEditing, setIsEditing] = useState(false);
+    const editFormRef = useRef<HTMLDivElement>(null);
+    const wasEditingRef = useRef(false);
+    const inputValueRef = useRef<string>('');
 
     // Format for datetime-local: YYYY-MM-DDThh:mm
     const formatForInput = (date: Date) => {
@@ -422,6 +425,11 @@ function TimeWidget() {
 
     const [inputValue, setInputValue] = useState(formatForInput(currentTime));
 
+    // Keep ref in sync with state
+    useEffect(() => {
+        inputValueRef.current = inputValue;
+    }, [inputValue]);
+
     // Sync input when not editing or when time changes naturally (if real time)
     useEffect(() => {
         if (!isEditing) {
@@ -429,35 +437,94 @@ function TimeWidget() {
         }
     }, [currentTime, isEditing]);
 
-    const handleSave = () => {
+    // Track when we enter edit mode
+    useEffect(() => {
+        if (isEditing) {
+            wasEditingRef.current = true;
+        }
+    }, [isEditing]);
+
+    // Save when exiting edit mode if we were in edit mode
+    useEffect(() => {
+        // When isEditing changes from true to false, save if we were editing
+        if (!isEditing && wasEditingRef.current) {
+            const date = new Date(inputValueRef.current);
+            if (!isNaN(date.getTime())) {
+                setFakeTime(date);
+            }
+            wasEditingRef.current = false;
+        }
+    }, [isEditing, setFakeTime]);
+
+    // Wrapper to close editing (save is handled by useEffect above)
+    const closeEditing = useCallback(() => {
+        setIsEditing(false);
+    }, []);
+
+    const handleSave = useCallback(() => {
         const date = new Date(inputValue);
         if (!isNaN(date.getTime())) {
             setFakeTime(date);
+            wasEditingRef.current = false;
             setIsEditing(false);
+            return true;
         }
-    };
+        return false;
+    }, [inputValue, setFakeTime]);
 
-    const handleClear = () => {
+    const handleClear = useCallback(() => {
         setFakeTime(null);
+        wasEditingRef.current = false;
         setIsEditing(false);
-    };
+    }, [setFakeTime]);
+
+    const handleClose = useCallback(() => {
+        // Close editing - the useEffect will handle saving
+        closeEditing();
+    }, [closeEditing]);
+
+    // Handle click away - close editing (save will happen via useEffect)
+    useEffect(() => {
+        if (!isEditing || !wasEditingRef.current) return;
+
+        function handleClickOutside(event: MouseEvent) {
+            const target = event.target as Node;
+            // Only close if we clicked outside the edit form
+            if (editFormRef.current && !editFormRef.current.contains(target)) {
+                // Close editing - the useEffect will handle saving
+                closeEditing();
+            }
+        }
+
+        // Add event listener after a short delay to avoid immediate trigger
+        const timeoutId = setTimeout(() => {
+            document.addEventListener('mousedown', handleClickOutside, true);
+        }, 100);
+
+        return () => {
+            clearTimeout(timeoutId);
+            document.removeEventListener('mousedown', handleClickOutside, true);
+        };
+    }, [isEditing, closeEditing]);
 
     if (isEditing) {
         return (
-            <div style={{
-                backgroundColor: 'var(--bg-panel)',
-                border: '1px solid var(--color-primary)',
-                borderRadius: '0.5rem',
-                padding: '0.75rem',
-                fontSize: '0.85rem',
-                color: 'var(--text-primary)',
-                display: 'flex',
-                flexDirection: 'column',
-                gap: '0.5rem'
-            }}>
+            <div 
+                ref={editFormRef}
+                style={{
+                    backgroundColor: 'var(--bg-panel)',
+                    border: '1px solid var(--color-primary)',
+                    borderRadius: '0.5rem',
+                    padding: '0.75rem',
+                    fontSize: '0.85rem',
+                    color: 'var(--text-primary)',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '0.5rem'
+                }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
                     <span style={{ fontWeight: 600, color: 'var(--color-primary)' }}>Set System Time</span>
-                    <button onClick={() => setIsEditing(false)} style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer' }}>
+                    <button onClick={handleClose} style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer' }}>
                         <X size={14} />
                     </button>
                 </div>
