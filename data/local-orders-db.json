@@ -11958,6 +11958,25 @@
       "delivery_day": "Monday",
       "order_number": 104610,
       "meal_type": "Triangle Breakfast/Lunch (12 Meals)_1769100360681"
+    },
+    {
+      "id": "c3b78380-1b3c-4906-bb8d-83bf3a2331f3",
+      "client_id": "CLIENT-594",
+      "service_type": "Boxes",
+      "case_id": "123",
+      "status": "scheduled",
+      "last_updated": "2026-01-21T18:09:18.305+00:00",
+      "updated_by": "Avraham ",
+      "created_at": "2026-01-26T17:25:31.943865+00:00",
+      "take_effect_date": null,
+      "total_value": 0,
+      "total_items": 1,
+      "notes": null,
+      "processed_order_id": null,
+      "processed_at": null,
+      "delivery_day": null,
+      "order_number": 106777,
+      "meal_type": "Lunch"
     }
   ],
   "orderVendorSelections": [],
@@ -19700,7 +19719,20 @@
       "updated_at": "2026-01-21T18:59:30.111717+00:00",
       "updated_by": "38bcee49-99fc-4dcf-94d5-b1a7045cd3a4",
       "item_notes": {}
+    },
+    {
+      "id": "ca762aba-a4fc-4f6f-849c-9f8a6fbdc86c",
+      "client_id": "CLIENT-594",
+      "case_id": "123",
+      "box_type_id": "",
+      "vendor_id": "",
+      "quantity": 1,
+      "items": {},
+      "created_at": "2026-01-21T18:09:27.626858+00:00",
+      "updated_at": "2026-01-21T18:09:27.626858+00:00",
+      "updated_by": "1c3850c2-e331-4bc6-a217-3a146149c132",
+      "item_notes": {}
     }
   ],
-  "lastSynced": "2026-01-22T16:46:44.438Z"
+  "lastSynced": "2026-01-26T17:25:32.764Z"
 }

@@ -882,7 +882,7 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
 
     function handleAddBox() {
         const currentBoxes = orderConfig.boxOrders || [];
-        const limit = client.authorizedAmount;
+        const limit = client.approvedMealsPerWeek;
         if (limit && currentBoxes.length >= limit) return;
 
         const firstActiveBoxType = boxTypes.find(bt => bt.isActive);
@@ -1236,7 +1236,7 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
                                             </div>
                                         ))}
 
-                                        {(!client.authorizedAmount || currentBoxes.length < client.authorizedAmount) && (
+                                        {(!client.approvedMealsPerWeek || currentBoxes.length < client.approvedMealsPerWeek) && (
                                             <button
                                                 type="button"
                                                 className="btn btn-outline"

@@ -103,7 +103,7 @@ export default function ClientPortalSidebar({ client }: Props) {
                             ) : (
                                 <div style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', display: 'flex', gap: '8px', alignItems: 'center' }}>
                                     <CreditCard size={14} />
-                                    <span>Authorized: <strong>{client.authorizedAmount || 'Standard'}</strong> boxes</span>
+                                    <span>Authorized: <strong>{client.approvedMealsPerWeek || 'Standard'}</strong> boxes</span>
                                 </div>
                             )}
                         </div>

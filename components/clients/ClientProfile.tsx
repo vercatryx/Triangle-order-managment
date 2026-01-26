@@ -1709,7 +1709,7 @@ export function ClientProfileDetail({
 
         const updatedFormData = { ...formData, serviceType: type };
         if (type === 'Boxes') {
-            updatedFormData.authorizedAmount = 1;
+            updatedFormData.approvedMealsPerWeek = 1;
         }
         setFormData(updatedFormData);
         // Reset order config for new type completely, ensuring caseId is reset too
@@ -1736,7 +1736,7 @@ export function ClientProfileDetail({
 
     function handleAddBox() {
         const currentBoxes = orderConfig.boxOrders || [];
-        const limit = formData.authorizedAmount;
+        const limit = formData.approvedMealsPerWeek;
         if (limit && currentBoxes.length >= limit) return;
 
         const firstActiveBoxType = boxTypes.find(bt => bt.isActive);
@@ -2868,8 +2868,8 @@ export function ClientProfileDetail({
                                                     <input
                                                         type="number"
                                                         className="input"
-                                                        value={formData.authorizedAmount ?? ''}
-                                                        onChange={e => setFormData({ ...formData, authorizedAmount: e.target.value ? parseFloat(e.target.value) : null })}
+                                                        value={formData.approvedMealsPerWeek ?? ''}
+                                                        onChange={e => setFormData({ ...formData, approvedMealsPerWeek: e.target.value ? parseInt(e.target.value) : undefined })}
                                                         min={1}
                                                         placeholder="1"
                                                     />
