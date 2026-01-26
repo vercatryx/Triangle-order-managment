@@ -313,8 +313,16 @@ export function ClientProfileDetail({
 
 
     useEffect(() => {
+        console.log(`[ClientProfile] useEffect triggered for clientId: ${clientId}`, {
+            isNewClient,
+            hasInitialData: !!initialData,
+            initialDataClientId: initialData?.client?.id,
+            matchesClientId: initialData?.client?.id === clientId
+        });
+        
         // Handle new client case - initialize with defaults
         if (isNewClient) {
+            console.log(`[ClientProfile] Initializing new client`);
             setLoading(true);
             // Load lookups but don't load client data
             const loaderPromise = (initialStatuses && initialNavigators && initialVendors && initialMenuItems && initialBoxTypes)
@@ -356,7 +364,7 @@ export function ClientProfileDetail({
 
         // If we just created this client, skip reloading to preserve the orderConfig we just set
         if (justCreatedClientRef.current) {
-
+            console.log(`[ClientProfile] Skipping reload for just-created client: ${clientId}`);
             justCreatedClientRef.current = false; // Reset the flag
             return;
         }
@@ -368,7 +376,7 @@ export function ClientProfileDetail({
         // Generally, ClientList passes everything.
 
         if (initialData && initialData.client.id === clientId) {
-
+            console.log(`[ClientProfile] Using initialData for ${clientId}`);
             hydrateFromInitialData(initialData);
             // If props were passed, we don't need to fetch standard lookups, but we might still need settings/categories/allClients
             // For simplicity, let's just fetch everything missing in background but show content immediately if we have the basics.
@@ -376,15 +384,18 @@ export function ClientProfileDetail({
 
             if (!initialStatuses || !initialVendors) {
                 // Should hopefully not happen in ClientList usage, but handle it
+                console.log(`[ClientProfile] Missing lookups, loading them for ${clientId}`);
                 setLoading(true);
                 loadLookups().then(() => setLoading(false));
             } else {
                 // Still fetch auxiliary data that might not be in props (settings, categories, allClients)
                 // But do NOT block UI
+                console.log(`[ClientProfile] Setting loading to false and loading auxiliary data for ${clientId}`);
                 setLoading(false);
                 loadAuxiliaryData(initialData.client);
             }
         } else {
+            console.log(`[ClientProfile] No initialData or mismatch, calling loadData() for ${clientId}`);
             setLoading(true);
             loadData().then(() => setLoading(false));
         }
@@ -514,27 +525,62 @@ export function ClientProfileDetail({
     }
 
     function hydrateFromInitialData(data: ClientFullDetails) {
+        console.log(`[ClientProfile] hydrateFromInitialData() called for clientId: ${data.client?.id}`, {
+            hasClient: !!data.client,
+            hasActiveOrder: !!data.activeOrder,
+            hasUpcomingOrder: !!data.upcomingOrder,
+            hasFoodOrder: !!data.foodOrder,
+            hasMealOrder: !!data.mealOrder,
+            hasBoxOrders: !!data.boxOrders,
+            boxOrdersCount: data.boxOrders?.length || 0,
+            serviceType: data.client?.serviceType,
+            upcomingOrderType: typeof data.upcomingOrder,
+            upcomingOrderKeys: data.upcomingOrder ? Object.keys(data.upcomingOrder) : []
+        });
         // 1. Run legacy logic first to handle basic hydration and backward compatibility
         _hydrateFromInitialDataLegacy(data);
 
         // 2. Apply Independent Order Overrides
 
         // Food
+        console.log(`[ClientProfile] Processing food order for ${data.client?.id}:`, {
+            hasFoodOrder: !!data.foodOrder,
+            foodOrderSize: data.foodOrder ? JSON.stringify(data.foodOrder).length : 0
+        });
         if (data.foodOrder) {
             // Convert deliveryDayOrders format from DB back to vendorSelections with itemsByDay for UI
             let foodOrderForUI = { ...data.foodOrder } as any;
+            
+            console.log(`[ClientProfile] Food order structure for ${data.client?.id}:`, {
+                hasDeliveryDayOrders: !!foodOrderForUI.deliveryDayOrders,
+                hasVendorSelections: !!foodOrderForUI.vendorSelections,
+                deliveryDayOrdersKeys: foodOrderForUI.deliveryDayOrders ? Object.keys(foodOrderForUI.deliveryDayOrders) : [],
+                vendorSelectionsCount: foodOrderForUI.vendorSelections?.length || 0,
+                deliveryDayOrdersType: typeof foodOrderForUI.deliveryDayOrders,
+                vendorSelectionsType: typeof foodOrderForUI.vendorSelections,
+                foodOrderKeys: Object.keys(foodOrderForUI)
+            });
 
-            if (foodOrderForUI.deliveryDayOrders && !foodOrderForUI.vendorSelections) {
-
-
+            // Convert if we have deliveryDayOrders and either no vendorSelections or empty vendorSelections
+            if (foodOrderForUI.deliveryDayOrders && (!foodOrderForUI.vendorSelections || (Array.isArray(foodOrderForUI.vendorSelections) && foodOrderForUI.vendorSelections.length === 0))) {
+                console.log(`[ClientProfile] Converting deliveryDayOrders to vendorSelections for ${data.client?.id}`);
+                
                 // Build a map of vendors across all days
                 const vendorMap = new Map<string, any>();
 
                 for (const [day, dayData] of Object.entries(foodOrderForUI.deliveryDayOrders)) {
                     const vendorSelections = (dayData as any).vendorSelections || [];
+                    console.log(`[ClientProfile] Processing day ${day} for ${data.client?.id}:`, {
+                        vendorSelectionsCount: vendorSelections.length,
+                        dayDataType: typeof dayData,
+                        dayDataKeys: dayData ? Object.keys(dayData) : []
+                    });
 
                     for (const selection of vendorSelections) {
-                        if (!selection.vendorId) continue;
+                        if (!selection.vendorId) {
+                            console.log(`[ClientProfile] Skipping selection without vendorId for ${data.client?.id} on day ${day}`);
+                            continue;
+                        }
 
                         if (!vendorMap.has(selection.vendorId)) {
                             vendorMap.set(selection.vendorId, {
@@ -558,15 +604,28 @@ export function ClientProfileDetail({
                     }
                 }
 
+                console.log(`[ClientProfile] Vendor map created for ${data.client?.id}:`, {
+                    vendorCount: vendorMap.size,
+                    vendorIds: Array.from(vendorMap.keys())
+                });
                 foodOrderForUI.vendorSelections = Array.from(vendorMap.values());
-
+            } else {
+                console.log(`[ClientProfile] Skipping conversion for ${data.client?.id}:`, {
+                    hasDeliveryDayOrders: !!foodOrderForUI.deliveryDayOrders,
+                    hasVendorSelections: !!foodOrderForUI.vendorSelections
+                });
             }
 
+            console.log(`[ClientProfile] Setting food order config for ${data.client?.id}:`, {
+                vendorSelectionsCount: foodOrderForUI.vendorSelections?.length || 0,
+                serviceType: data.client.serviceType
+            });
             setFoodOrderConfig(foodOrderForUI);
             setOriginalFoodOrderConfig(JSON.parse(JSON.stringify(foodOrderForUI)));
 
             // If current service type is Food, force this config (override legacy)
             if (data.client.serviceType === 'Food') {
+                console.log(`[ClientProfile] Setting orderConfig to Food for ${data.client?.id}`);
                 const conf: any = { ...foodOrderForUI, serviceType: 'Food' };
                 if (!conf.caseId && data.client.activeOrder?.caseId) {
                     conf.caseId = data.client.activeOrder.caseId;
@@ -580,14 +639,20 @@ export function ClientProfileDetail({
 
                 setOrderConfig(conf);
                 setOriginalOrderConfig(JSON.parse(JSON.stringify(conf)));
+                console.log(`[ClientProfile] OrderConfig set for Food service ${data.client?.id}`);
             }
         } else {
+            console.log(`[ClientProfile] No food order for ${data.client?.id}`);
             setFoodOrderConfig(null);
             setOriginalFoodOrderConfig(null);
         }
 
 
         // Meal
+        console.log(`[ClientProfile] Processing meal order for ${data.client?.id}:`, {
+            hasMealOrder: !!data.mealOrder,
+            serviceType: data.client.serviceType
+        });
         if (data.mealOrder) {
             // Meal orders are already in the correct format (mealSelections)
             // No conversion needed - just set directly
@@ -611,11 +676,18 @@ export function ClientProfileDetail({
 
 
         // Boxes
+        console.log(`[ClientProfile] Processing box orders for ${data.client?.id}:`, {
+            hasBoxOrders: !!data.boxOrders,
+            boxOrdersCount: data.boxOrders?.length || 0,
+            serviceType: data.client.serviceType
+        });
         if (data.boxOrders && data.boxOrders.length > 0) {
+            console.log(`[ClientProfile] Setting box order config for ${data.client?.id} with ${data.boxOrders.length} boxes`);
             setBoxOrderConfig(data.boxOrders);
             setOriginalBoxOrderConfig(JSON.parse(JSON.stringify(data.boxOrders)));
 
             if (data.client.serviceType === 'Boxes') {
+                console.log(`[ClientProfile] Setting orderConfig to Boxes for ${data.client?.id}`);
                 const conf: any = {
                     boxOrders: data.boxOrders,
                     serviceType: 'Boxes',
@@ -623,13 +695,19 @@ export function ClientProfileDetail({
                 };
                 setOrderConfig(conf);
                 setOriginalOrderConfig(JSON.parse(JSON.stringify(conf)));
+                console.log(`[ClientProfile] OrderConfig set for Boxes service ${data.client?.id}`);
             }
         } else {
+            console.log(`[ClientProfile] No box orders for ${data.client?.id}`);
             setBoxOrderConfig(null);
             setOriginalBoxOrderConfig(null);
         }
 
         // Custom
+        console.log(`[ClientProfile] Processing custom order for ${data.client?.id}:`, {
+            serviceType: data.client.serviceType,
+            isCustom: data.client.serviceType === 'Custom'
+        });
         // Check if the client has a Custom active order or if the loaded upcoming order is Custom
         if (data.client.serviceType === 'Custom') {
             // Try to find custom order data in upcomingOrder first (most recent)
@@ -671,6 +749,7 @@ export function ClientProfileDetail({
     }
 
     function _hydrateFromInitialDataLegacy(data: ClientFullDetails) {
+        console.log(`[ClientProfile] _hydrateFromInitialDataLegacy() called for clientId: ${data.client?.id}`);
         setClient(data.client);
         setFormData(data.client);
 
@@ -680,9 +759,22 @@ export function ClientProfileDetail({
         setOrderHistory(data.orderHistory || []);
         setBillingHistory(data.billingHistory || []);
         setLoadingOrderDetails(false);
+        console.log(`[ClientProfile] Basic data set for ${data.client?.id}:`, {
+            activeOrder: !!data.activeOrder,
+            historyCount: data.history?.length || 0,
+            orderHistoryCount: data.orderHistory?.length || 0,
+            billingHistoryCount: data.billingHistory?.length || 0
+        });
 
         // Handle upcoming order logic (reused from loadData)
         const upcomingOrderData = data.upcomingOrder;
+        console.log(`[ClientProfile] Processing upcoming order for ${data.client?.id}:`, {
+            hasUpcomingOrder: !!upcomingOrderData,
+            upcomingOrderType: typeof upcomingOrderData,
+            isObject: upcomingOrderData && typeof upcomingOrderData === 'object',
+            keys: upcomingOrderData && typeof upcomingOrderData === 'object' ? Object.keys(upcomingOrderData) : [],
+            serviceType: (upcomingOrderData as any)?.serviceType
+        });
 
         if (upcomingOrderData) {
             // Check if it's the multi-day format (object keyed by delivery day, not deliveryDayOrders)
@@ -695,6 +787,9 @@ export function ClientProfileDetail({
                 });
 
             if (isMultiDayFormat) {
+                console.log(`[ClientProfile] Processing multi-day format for ${data.client?.id}`, {
+                    dayCount: Object.keys(upcomingOrderData).length
+                });
                 // Convert to deliveryDayOrders format
                 const deliveryDayOrders: any = {};
                 const aggregatedMealSelections: any = {};
@@ -721,8 +816,10 @@ export function ClientProfileDetail({
                 const firstDayOrder = (upcomingOrderData as any)[firstDayKey];
 
                 if (firstDayOrder?.serviceType === 'Boxes') {
+                    console.log(`[ClientProfile] Setting Boxes order config from multi-day for ${data.client?.id}`);
                     setOrderConfig(firstDayOrder);
                 } else {
+                    console.log(`[ClientProfile] Setting multi-day order config for ${data.client?.id}`);
                     setOrderConfig({
                         serviceType: firstDayOrder?.serviceType || data.client.serviceType,
                         caseId: firstDayOrder?.caseId,
@@ -731,6 +828,7 @@ export function ClientProfileDetail({
                     });
                 }
             } else if (upcomingOrderData.serviceType === 'Food' && !upcomingOrderData.vendorSelections && !upcomingOrderData.deliveryDayOrders) {
+                console.log(`[ClientProfile] Migrating old Food order format for ${data.client?.id}`);
                 if (upcomingOrderData.vendorId) {
                     upcomingOrderData.vendorSelections = [{ vendorId: upcomingOrderData.vendorId, items: upcomingOrderData.menuSelections || {} }];
                 } else {
@@ -738,6 +836,11 @@ export function ClientProfileDetail({
                 }
                 setOrderConfig(upcomingOrderData);
             } else {
+                console.log(`[ClientProfile] Setting order config directly for ${data.client?.id}:`, {
+                    serviceType: upcomingOrderData.serviceType,
+                    hasVendorSelections: !!upcomingOrderData.vendorSelections,
+                    hasDeliveryDayOrders: !!upcomingOrderData.deliveryDayOrders
+                });
                 setOrderConfig(upcomingOrderData);
             }
         } else if (data.client.activeOrder) {
@@ -838,6 +941,7 @@ export function ClientProfileDetail({
     }
 
     async function loadData() {
+        console.log(`[ClientProfile] loadData() called for clientId: ${clientId}`);
         setLoadingOrderDetails(true);
 
         // Load lookups and client data in parallel
@@ -845,32 +949,60 @@ export function ClientProfileDetail({
         await Promise.all([
             loadLookups(),
             (async () => {
-                const details = await getClientProfileData(clientId);
-                if (details) {
-                    // Mock missing history for initial hydration
-                    const fullDetailsInit: any = {
-                        ...details,
-                        history: [],
-                        orderHistory: [],
-                        billingHistory: [],
-                        submissions: []
-                    };
-                    hydrateFromInitialData(fullDetailsInit);
+                try {
+                    console.log(`[ClientProfile] Fetching client profile data for: ${clientId}`);
+                    const startTime = Date.now();
+                    const details = await getClientProfileData(clientId);
+                    const fetchTime = Date.now() - startTime;
+                    console.log(`[ClientProfile] getClientProfileData completed in ${fetchTime}ms for ${clientId}`, {
+                        hasDetails: !!details,
+                        hasClient: !!details?.client,
+                        hasActiveOrder: !!details?.activeOrder,
+                        hasUpcomingOrder: !!details?.upcomingOrder,
+                        hasFoodOrder: !!details?.foodOrder,
+                        hasMealOrder: !!details?.mealOrder,
+                        hasBoxOrders: !!details?.boxOrders,
+                        boxOrdersCount: details?.boxOrders?.length || 0
+                    });
+                    
+                    if (details) {
+                        // Mock missing history for initial hydration
+                        const fullDetailsInit: any = {
+                            ...details,
+                            history: [],
+                            orderHistory: [],
+                            billingHistory: [],
+                            submissions: []
+                        };
+                        console.log(`[ClientProfile] Hydrating initial data for ${clientId}`);
+                        hydrateFromInitialData(fullDetailsInit);
 
-                    // Trigger Lazy Load of History
-                    loadHistoryLazy();
+                        // Trigger Lazy Load of History
+                        console.log(`[ClientProfile] Triggering lazy load of history for ${clientId}`);
+                        loadHistoryLazy();
+                    } else {
+                        console.warn(`[ClientProfile] No details returned for clientId: ${clientId}`);
+                    }
+                } catch (error) {
+                    console.error(`[ClientProfile] Error in loadData for ${clientId}:`, error);
                 }
             })()
         ]);
 
         setLoading(false);
         setLoadingOrderDetails(false);
+        console.log(`[ClientProfile] loadData() completed for clientId: ${clientId}`);
     }
 
     async function loadHistoryLazy() {
-        if (historyLoaded || loadingHistory) return;
+        if (historyLoaded || loadingHistory) {
+            console.log(`[ClientProfile] loadHistoryLazy() skipped for ${clientId} - historyLoaded: ${historyLoaded}, loadingHistory: ${loadingHistory}`);
+            return;
+        }
+        console.log(`[ClientProfile] loadHistoryLazy() starting for ${clientId}`);
         setLoadingHistory(true);
         try {
+            const startTime = Date.now();
             // Fetch in parallel
             const [h, oh, bh, s] = await Promise.all([
                 getClientHistory(clientId),
@@ -878,13 +1010,21 @@ export function ClientProfileDetail({
                 getBillingHistory(clientId),
                 getClientSubmissions(clientId)
             ]);
+            const fetchTime = Date.now() - startTime;
+            console.log(`[ClientProfile] History data fetched in ${fetchTime}ms for ${clientId}:`, {
+                historyCount: h?.length || 0,
+                orderHistoryCount: oh?.length || 0,
+                billingHistoryCount: bh?.length || 0,
+                submissionsCount: s?.success ? (s.data?.length || 0) : 0
+            });
             setHistory(h || []);
             setOrderHistory(oh || []);
             setBillingHistory(bh || []);
             if (s.success && s.data) setSubmissions(s.data);
             setHistoryLoaded(true);
+            console.log(`[ClientProfile] loadHistoryLazy() completed for ${clientId}`);
         } catch (e) {
-            console.error("Lazy load history failed", e);
+            console.error(`[ClientProfile] Lazy load history failed for ${clientId}:`, e);
         } finally {
             setLoadingHistory(false);
         }
