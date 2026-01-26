@@ -16,7 +16,7 @@ import {
     formatDeliveryDate
 } from '@/lib/order-dates';
 import { isMeetingMinimum, isExceedingMaximum, isMeetingExactTarget } from '@/lib/utils';
-import { Save, ArrowLeft, Truck, Package, AlertTriangle, Upload, Trash2, Plus, Check, ClipboardList, History, CreditCard, Calendar, ChevronDown, ChevronUp, ShoppingCart, Loader2, FileText, Square, CheckSquare, Wrench, Info, Construction } from 'lucide-react';
+import { Save, ArrowLeft, Truck, Package, AlertTriangle, Upload, Trash2, Plus, Check, ClipboardList, History, CreditCard, Calendar, ChevronDown, ChevronUp, ShoppingCart, Loader2, FileText, Square, CheckSquare, Wrench, Info, Construction, ChevronRight } from 'lucide-react';
 import FormFiller from '@/components/forms/FormFiller';
 import { FormSchema } from '@/lib/form-types';
 import TextareaAutosize from 'react-textarea-autosize';
@@ -222,6 +222,29 @@ export function ClientProfileDetail({
     const [showEquipmentOrder, setShowEquipmentOrder] = useState(false);
     const [equipmentOrder, setEquipmentOrder] = useState<{ vendorId: string; equipmentId: string; caseId: string } | null>(null);
     const [submittingEquipmentOrder, setSubmittingEquipmentOrder] = useState(false);
+    
+    // State to track which category shelf is open (format: "boxIndex-categoryId")
+    const [openCategoryShelf, setOpenCategoryShelf] = useState<string | null>(null);
+    
+    // Helper to generate category shelf ID
+    const getCategoryShelfId = (boxIndex: number, categoryId: string) => `box-${boxIndex}-cat-${categoryId}`;
+    
+    // Helper to check if a category shelf is open
+    const isCategoryShelfOpen = (boxIndex: number, categoryId: string) => {
+        return openCategoryShelf === getCategoryShelfId(boxIndex, categoryId);
+    };
+    
+    // Helper to toggle category shelf (only one can be open per box)
+    const toggleCategoryShelf = (boxIndex: number, categoryId: string) => {
+        const shelfId = getCategoryShelfId(boxIndex, categoryId);
+        // If clicking the same shelf, close it. Otherwise, open the new one (automatically closes any other in this box)
+        if (openCategoryShelf === shelfId) {
+            setOpenCategoryShelf(null);
+        } else {
+            // Open this shelf (this automatically closes any other shelf since only one can be open)
+            setOpenCategoryShelf(shelfId);
+        }
+    };
 
 
     const [settings, setSettings] = useState<AppSettings | null>(initialSettings || null);
@@ -3232,48 +3255,139 @@ export function ClientProfileDetail({
                                                                                 }
 
                                                                                 const meetsQuota = requiredQuotaValue !== null ? isMeetingExactTarget(categoryQuotaValue, requiredQuotaValue) : true;
+                                                                                
+                                                                                // Get selected items for this category to show in summary
+                                                                                const selectedItemsForCategory = availableItems.filter(item => {
+                                                                                    const qty = Number(selectedItems[item.id] || 0);
+                                                                                    return qty > 0;
+                                                                                }).map(item => {
+                                                                                    const qty = Number(selectedItems[item.id] || 0);
+                                                                                    return { item, qty };
+                                                                                });
+                                                                                
+                                                                                const shelfId = getCategoryShelfId(index, category.id);
+                                                                                const isOpen = isCategoryShelfOpen(index, category.id);
 
                                                                                 return (
-                                                                                    <div key={category.id} style={{ marginBottom: '1rem', background: 'var(--bg-surface-hover)', padding: '0.75rem', borderRadius: '6px', border: requiredQuotaValue !== null && !meetsQuota ? '2px solid var(--color-danger)' : '1px solid var(--border-color)' }}>
-                                                                                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem', fontSize: '0.85rem' }}>
-                                                                                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                                                                                                <span style={{ fontWeight: 600 }}>{category.name}</span>
-                                                                                            </div>
-                                                                                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                                                                    <div key={category.id} style={{ 
+                                                                                        marginBottom: '1rem', 
+                                                                                        background: 'var(--bg-surface)', 
+                                                                                        borderRadius: '8px', 
+                                                                                        border: requiredQuotaValue !== null && !meetsQuota ? '2px solid var(--color-danger)' : '1px solid var(--border-color)',
+                                                                                        overflow: 'hidden',
+                                                                                        transition: 'all 0.2s ease'
+                                                                                    }}>
+                                                                                        {/* Shelf Header - Always Visible */}
+                                                                                        <div 
+                                                                                            onClick={() => toggleCategoryShelf(index, category.id)}
+                                                                                            style={{
+                                                                                                display: 'flex',
+                                                                                                justifyContent: 'space-between',
+                                                                                                alignItems: 'center',
+                                                                                                padding: '12px 16px',
+                                                                                                backgroundColor: isOpen ? 'var(--bg-surface-hover)' : 'var(--bg-surface)',
+                                                                                                cursor: 'pointer',
+                                                                                                borderBottom: isOpen ? '1px solid var(--border-color)' : 'none',
+                                                                                                transition: 'background-color 0.2s ease'
+                                                                                            }}
+                                                                                        >
+                                                                                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flex: 1, flexWrap: 'wrap' }}>
+                                                                                                <span style={{ fontWeight: 600, fontSize: '1rem', color: 'var(--text-primary)' }}>
+                                                                                                    {category.name}
+                                                                                                </span>
                                                                                                 {requiredQuotaValue !== null && (
                                                                                                     <span style={{
                                                                                                         color: meetsQuota ? 'var(--color-success)' : 'var(--color-danger)',
-                                                                                                        fontSize: '0.8rem',
+                                                                                                        fontSize: '0.85rem',
+                                                                                                        padding: '2px 8px',
+                                                                                                        backgroundColor: meetsQuota ? '#d1fae5' : '#fee2e2',
+                                                                                                        borderRadius: '4px',
                                                                                                         fontWeight: 500
                                                                                                     }}>
-                                                                                                        Quota: {categoryQuotaValue} / {requiredQuotaValue}
+                                                                                                        {categoryQuotaValue} / {requiredQuotaValue}
                                                                                                     </span>
                                                                                                 )}
                                                                                                 {categoryQuotaValue > 0 && requiredQuotaValue === null && (
-                                                                                                    <span style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>
+                                                                                                    <span style={{ 
+                                                                                                        color: 'var(--text-secondary)', 
+                                                                                                        fontSize: '0.85rem',
+                                                                                                        padding: '2px 8px',
+                                                                                                        backgroundColor: 'var(--bg-surface-hover)',
+                                                                                                        borderRadius: '4px'
+                                                                                                    }}>
                                                                                                         Total: {categoryQuotaValue}
                                                                                                     </span>
                                                                                                 )}
+                                                                                                {/* Show selected items in summary */}
+                                                                                                {selectedItemsForCategory.length > 0 && (
+                                                                                                    <div style={{ 
+                                                                                                        display: 'flex', 
+                                                                                                        alignItems: 'center', 
+                                                                                                        gap: '4px',
+                                                                                                        flexWrap: 'wrap',
+                                                                                                        fontSize: '0.85rem',
+                                                                                                        color: 'var(--text-secondary)'
+                                                                                                    }}>
+                                                                                                        {selectedItemsForCategory.map(({ item, qty }, idx) => (
+                                                                                                            <span 
+                                                                                                                key={item.id}
+                                                                                                                style={{
+                                                                                                                    padding: '2px 8px',
+                                                                                                                    backgroundColor: 'var(--bg-surface-hover)',
+                                                                                                                    borderRadius: '4px',
+                                                                                                                    fontSize: '0.8rem'
+                                                                                                                }}
+                                                                                                            >
+                                                                                                                {item.name} {qty > 1 && `(${qty})`}
+                                                                                                            </span>
+                                                                                                        ))}
+                                                                                                    </div>
+                                                                                                )}
+                                                                                                {selectedItemsForCategory.length === 0 && (
+                                                                                                    <span style={{ 
+                                                                                                        fontSize: '0.8rem', 
+                                                                                                        color: 'var(--text-tertiary)',
+                                                                                                        fontStyle: 'italic'
+                                                                                                    }}>
+                                                                                                        No items selected
+                                                                                                    </span>
+                                                                                                )}
+                                                                                            </div>
+                                                                                            <div style={{ 
+                                                                                                transform: isOpen ? 'rotate(90deg)' : 'rotate(0deg)',
+                                                                                                transition: 'transform 0.2s ease',
+                                                                                                marginLeft: '8px'
+                                                                                            }}>
+                                                                                                <ChevronRight size={20} />
                                                                                             </div>
                                                                                         </div>
-                                                                                        {requiredQuotaValue !== null && !meetsQuota && (
-                                                                                            <div style={{
-                                                                                                marginBottom: '0.5rem',
-                                                                                                padding: '0.5rem',
-                                                                                                backgroundColor: 'rgba(239, 68, 68, 0.1)',
-                                                                                                borderRadius: '4px',
-                                                                                                fontSize: '0.75rem',
-                                                                                                color: 'var(--color-danger)',
-                                                                                                display: 'flex',
-                                                                                                alignItems: 'center',
-                                                                                                gap: '0.25rem'
+                                                                                        
+                                                                                        {/* Shelf Content - Only visible when open */}
+                                                                                        {isOpen && (
+                                                                                            <div style={{ 
+                                                                                                padding: '16px',
+                                                                                                backgroundColor: 'var(--bg-surface)',
+                                                                                                animation: 'fadeIn 0.2s ease'
                                                                                             }}>
-                                                                                                <AlertTriangle size={12} />
-                                                                                                <span>You must have a total of {requiredQuotaValue} {category.name} points</span>
-                                                                                            </div>
-                                                                                        )}
+                                                                                                {requiredQuotaValue !== null && !meetsQuota && (
+                                                                                                    <div style={{
+                                                                                                        marginBottom: '1rem',
+                                                                                                        padding: '0.75rem',
+                                                                                                        backgroundColor: 'rgba(239, 68, 68, 0.1)',
+                                                                                                        borderRadius: '6px',
+                                                                                                        fontSize: '0.85rem',
+                                                                                                        color: 'var(--color-danger)',
+                                                                                                        display: 'flex',
+                                                                                                        alignItems: 'center',
+                                                                                                        gap: '0.5rem',
+                                                                                                        border: '1px solid var(--color-danger)'
+                                                                                                    }}>
+                                                                                                        <AlertTriangle size={16} />
+                                                                                                        <span>You must have a total of {requiredQuotaValue} {category.name} points</span>
+                                                                                                    </div>
+                                                                                                )}
 
-                                                                                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '1rem' }}>
+                                                                                                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '1rem' }}>
                                                                                             {availableItems.map(item => {
                                                                                                 const qty = Number(selectedItems[item.id] || 0);
                                                                                                 const note = box.itemNotes?.[item.id] || '';
@@ -3344,7 +3458,9 @@ export function ClientProfileDetail({
                                                                                                     </div>
                                                                                                 );
                                                                                             })}
-                                                                                        </div>
+                                                                                                </div>
+                                                                                            </div>
+                                                                                        )}
                                                                                     </div>
                                                                                 );
                                                                             })}

@@ -11903,25 +11903,6 @@
       "meal_type": "Triangle Breakfast/Lunch (12 Meals)_1769015086737"
     },
     {
-      "id": "c7d49494-294b-4486-91a9-11413b476d24",
-      "client_id": "CLIENT-158",
-      "service_type": "Boxes",
-      "case_id": "https://app.uniteus.io/dashboard/cases/open/40d3adf3-12f2-4b70-95f6-b4143935c122/contact/2748887f-a80b-4564-9a74-46f10b206d60",
-      "status": "scheduled",
-      "last_updated": "2026-01-21T19:05:22.901+00:00",
-      "updated_by": "Avraham ",
-      "created_at": "2026-01-21T19:05:26.191746+00:00",
-      "take_effect_date": null,
-      "total_value": 0,
-      "total_items": 1,
-      "notes": null,
-      "processed_order_id": null,
-      "processed_at": null,
-      "delivery_day": "Tuesday",
-      "order_number": 103905,
-      "meal_type": "Lunch"
-    },
-    {
       "id": "c3b78380-1b3c-4906-bb8d-83bf3a2331f3",
       "client_id": "CLIENT-594",
       "service_type": "Boxes",
@@ -11977,6 +11958,25 @@
       "delivery_day": "Monday",
       "order_number": 106794,
       "meal_type": "Triangle Breakfast/Lunch (12 Meals)_1769100360681"
+    },
+    {
+      "id": "296fd8d0-fea8-4022-8add-19baa438f316",
+      "client_id": "CLIENT-158",
+      "service_type": "Boxes",
+      "case_id": "https://app.uniteus.io/dashboard/cases/open/40d3adf3-12f2-4b70-95f6-b4143935c122/contact/2748887f-a80b-4564-9a74-46f10b206d60",
+      "status": "scheduled",
+      "last_updated": "2026-01-26T17:43:18.426+00:00",
+      "updated_by": "Avraham ",
+      "created_at": "2026-01-26T17:43:58.864415+00:00",
+      "take_effect_date": null,
+      "total_value": 0,
+      "total_items": 1,
+      "notes": null,
+      "processed_order_id": null,
+      "processed_at": null,
+      "delivery_day": "Tuesday",
+      "order_number": 106801,
+      "meal_type": "Lunch"
     }
   ],
   "orderVendorSelections": [],
@@ -19691,36 +19691,6 @@
       }
     },
     {
-      "id": "46173341-9872-4523-85ad-852f5d446ea9",
-      "client_id": "CLIENT-158",
-      "case_id": "https://app.uniteus.io/dashboard/cases/open/40d3adf3-12f2-4b70-95f6-b4143935c122/contact/2748887f-a80b-4564-9a74-46f10b206d60",
-      "box_type_id": "",
-      "vendor_id": "3759e864-908e-427e-9e2b-6e139643bdcc",
-      "quantity": null,
-      "items": {
-        "0da86fa1-12f5-4404-81fc-4545eb6ee530": 1,
-        "3310fc61-1004-4210-acfa-a9b068329e92": 1,
-        "3718ff75-adb5-451b-b1ed-dce39fd2d401": 1,
-        "3b998be0-099e-46dd-a75f-b4107b40abb8": 1,
-        "3de6cc73-1655-401b-9081-ea0671b951b9": 1,
-        "4e32676a-42ac-4475-82dd-b27d1e668a61": 1,
-        "5381c4d5-f9bd-4557-bd60-b42f19d56cf8": 1,
-        "660e4d8b-94fb-4a9d-b11b-9b21c11d431f": 1,
-        "67abf151-e922-4f73-b35a-52660d31d2da": 8,
-        "8817c9bd-d74a-463d-be39-334582085fc5": 10,
-        "89a14713-d319-4473-b049-cc6c7b6aa467": 1,
-        "8b16f87e-7a58-4a2e-8398-26ee2442d1c8": 1,
-        "a95d0de9-b8f0-415c-a31e-0f20318668e2": 1,
-        "c757346d-fcbf-48b8-b812-60e196d4c078": 1,
-        "f4483194-b9ef-40d2-9c55-57df1ae7621c": 1,
-        "f9bd8014-df43-47ce-b940-32ef37e81d61": 1
-      },
-      "created_at": "2026-01-21T18:59:30.111717+00:00",
-      "updated_at": "2026-01-21T18:59:30.111717+00:00",
-      "updated_by": "38bcee49-99fc-4dcf-94d5-b1a7045cd3a4",
-      "item_notes": {}
-    },
-    {
       "id": "ca762aba-a4fc-4f6f-849c-9f8a6fbdc86c",
       "client_id": "CLIENT-594",
       "case_id": "123",
@@ -19732,7 +19702,40 @@
       "updated_at": "2026-01-21T18:09:27.626858+00:00",
       "updated_by": "1c3850c2-e331-4bc6-a217-3a146149c132",
       "item_notes": {}
+    },
+    {
+      "id": "fab9255f-110f-4911-90f2-61f21cd34aac",
+      "client_id": "CLIENT-158",
+      "case_id": "https://app.uniteus.io/dashboard/cases/open/40d3adf3-12f2-4b70-95f6-b4143935c122/contact/2748887f-a80b-4564-9a74-46f10b206d60",
+      "box_type_id": null,
+      "vendor_id": "3152cbbc-662b-4cb4-bd70-6d4c505aee7c",
+      "quantity": null,
+      "items": {
+        "0da86fa1-12f5-4404-81fc-4545eb6ee530": 2,
+        "3310fc61-1004-4210-acfa-a9b068329e92": 1,
+        "3718ff75-adb5-451b-b1ed-dce39fd2d401": 1,
+        "3b998be0-099e-46dd-a75f-b4107b40abb8": 2,
+        "3de6cc73-1655-401b-9081-ea0671b951b9": 2,
+        "48550d6f-1382-4b22-aa7f-7fbd4f1c11d6": 2,
+        "5381c4d5-f9bd-4557-bd60-b42f19d56cf8": 1,
+        "660e4d8b-94fb-4a9d-b11b-9b21c11d431f": 3,
+        "67abf151-e922-4f73-b35a-52660d31d2da": 5,
+        "8817c9bd-d74a-463d-be39-334582085fc5": 2,
+        "89a14713-d319-4473-b049-cc6c7b6aa467": 1,
+        "8b16f87e-7a58-4a2e-8398-26ee2442d1c8": 1,
+        "a95d0de9-b8f0-415c-a31e-0f20318668e2": 1,
+        "ab7afbc4-b55c-4223-825d-c471b0485f4e": 1,
+        "f4483194-b9ef-40d2-9c55-57df1ae7621c": 1,
+        "f9bd8014-df43-47ce-b940-32ef37e81d61": 1
+      },
+      "created_at": "2026-01-26T17:43:21.063563+00:00",
+      "updated_at": "2026-01-26T17:43:21.063563+00:00",
+      "updated_by": "a9979acb-f5c2-4a9b-b1d6-9f5ce991775e",
+      "item_notes": {
+        "48550d6f-1382-4b22-aa7f-7fbd4f1c11d6": "1 litr soda diet",
+        "ab7afbc4-b55c-4223-825d-c471b0485f4e": "chulent beens"
+      }
     }
   ],
-  "lastSynced": "2026-01-26T17:33:01.437Z"
+  "lastSynced": "2026-01-26T17:43:59.694Z"
 }

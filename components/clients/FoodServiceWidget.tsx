@@ -3,7 +3,7 @@
 import React from 'react';
 import { ClientProfile, Vendor, MenuItem, MealCategory, MealItem } from '@/lib/types';
 import { isMeetingMinimum, isMeetingExactTarget } from '@/lib/utils';
-import { Plus, Trash2, Calendar, Check, AlertTriangle, MessageSquare, Info } from 'lucide-react';
+import { Plus, Trash2, Calendar, Check, AlertTriangle, MessageSquare, Info, ChevronRight } from 'lucide-react';
 import { calculateVendorEffectiveDate } from '@/lib/order-dates';
 import TextareaAutosize from 'react-textarea-autosize';
 import styles from './ClientProfile.module.css';
@@ -476,6 +476,21 @@ export default function FoodServiceWidget({
 
     // State to track active tab for each vendor block
     const [activeDays, setActiveDays] = React.useState<{ [key: number]: string }>({});
+    
+    // State to track which shelf is open (vendor index or meal uniqueKey)
+    const [openShelf, setOpenShelf] = React.useState<string | null>(null);
+    
+    // Helper to generate shelf ID
+    const getVendorShelfId = (index: number) => `vendor-${index}`;
+    const getMealShelfId = (uniqueKey: string) => `meal-${uniqueKey}`;
+    
+    // Helper to check if a shelf is open
+    const isShelfOpen = (shelfId: string) => openShelf === shelfId;
+    
+    // Helper to toggle shelf
+    const toggleShelf = (shelfId: string) => {
+        setOpenShelf(openShelf === shelfId ? null : shelfId);
+    };
 
     const renderVendorBlocks = () => {
         const selections = orderConfig.vendorSelections || [];
@@ -499,34 +514,192 @@ export default function FoodServiceWidget({
 
                     // Check if multi-day mode is active for this vendor
                     const selectedDays = selection.selectedDeliveryDays || [];
+                    
+                    // Calculate summary info and get selected items
+                    const selectedItemsForSummary = (() => {
+                        const items: Array<{ item: MenuItem; qty: number }> = [];
+                        
+                        if (selection.itemsByDay && selectedDays.length > 0) {
+                            // Multi-day format - collect items from all selected days
+                            const itemMap = new Map<string, { item: MenuItem; qty: number }>();
+                            selectedDays.forEach((day: string) => {
+                                const dayItems = selection.itemsByDay[day] || {};
+                                Object.entries(dayItems).forEach(([itemId, qty]) => {
+                                    const item = menuItems.find(i => i.id === itemId);
+                                    if (item) {
+                                        const existing = itemMap.get(itemId);
+                                        if (existing) {
+                                            existing.qty += Number(qty);
+                                        } else {
+                                            itemMap.set(itemId, { item, qty: Number(qty) });
+                                        }
+                                    }
+                                });
+                            });
+                            return Array.from(itemMap.values());
+                        } else if (selection.items) {
+                            // Single-day format
+                            Object.entries(selection.items).forEach(([itemId, qty]) => {
+                                const item = menuItems.find(i => i.id === itemId);
+                                if (item && Number(qty) > 0) {
+                                    items.push({ item, qty: Number(qty) });
+                                }
+                            });
+                        }
+                        return items;
+                    })();
+                    
+                    const selectedItemsCount = selectedItemsForSummary.length;
+                    
+                    const shelfId = getVendorShelfId(index);
+                    const isOpen = isShelfOpen(shelfId);
 
                     return (
-                        <div key={index} id={`vendor-block-${index}`} className={styles.vendorBlock}>
-                            {/* Header */}
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', flex: 1 }}>
-                                <select
-                                    className="input"
-                                    value={vendorId || ''}
-                                    onChange={(e) => handleVendorSelectionChange(index, e.target.value)}
-                                >
-                                    <option value="">Select Vendor...</option>
-                                    {vendors
-                                        .filter(v => {
-                                            if (!v.serviceTypes.includes('Food') || !v.isActive) return false;
+                        <div key={index} id={`vendor-block-${index}`} className={styles.vendorBlock} style={{
+                            border: '1px solid var(--border-color)',
+                            borderRadius: '8px',
+                            overflow: 'hidden',
+                            transition: 'all 0.2s ease'
+                        }}>
+                            {/* Shelf Header - Always Visible */}
+                            <div 
+                                onClick={() => toggleShelf(shelfId)}
+                                style={{
+                                    display: 'flex',
+                                    justifyContent: 'space-between',
+                                    alignItems: 'center',
+                                    padding: '12px 16px',
+                                    backgroundColor: isOpen ? 'var(--bg-surface-hover)' : 'var(--bg-surface)',
+                                    cursor: 'pointer',
+                                    borderBottom: isOpen ? '1px solid var(--border-color)' : 'none',
+                                    transition: 'background-color 0.2s ease'
+                                }}
+                            >
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flex: 1, flexWrap: 'wrap' }}>
+                                    <span style={{ 
+                                        fontWeight: 600, 
+                                        color: 'var(--text-primary)',
+                                        fontSize: '1rem'
+                                    }}>
+                                        {vendor ? vendor.name : 'Select Vendor...'}
+                                    </span>
+                                    {vendor && vendorMealCount > 0 && (
+                                        <span style={{ 
+                                            fontSize: '0.85rem', 
+                                            color: 'var(--text-secondary)',
+                                            padding: '2px 8px',
+                                            backgroundColor: 'var(--bg-surface-hover)',
+                                            borderRadius: '4px'
+                                        }}>
+                                            {vendorMealCount} meals
+                                        </span>
+                                    )}
+                                    {vendor && vendorMinimum > 0 && (
+                                        <span style={{ 
+                                            fontSize: '0.8rem', 
+                                            color: meetsMinimum ? 'var(--color-success)' : 'var(--color-danger)',
+                                            padding: '2px 8px',
+                                            backgroundColor: meetsMinimum ? '#d1fae5' : '#fee2e2',
+                                            borderRadius: '4px',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            gap: '4px'
+                                        }}>
+                                            {meetsMinimum ? <Check size={12} /> : <AlertTriangle size={12} />}
+                                            {vendorMealCount} / {vendorMinimum} min
+                                        </span>
+                                    )}
+                                    {/* Show selected items with names */}
+                                    {vendor && selectedItemsForSummary.length > 0 && (
+                                        <div style={{ 
+                                            display: 'flex', 
+                                            alignItems: 'center', 
+                                            gap: '4px',
+                                            flexWrap: 'wrap',
+                                            fontSize: '0.85rem',
+                                            color: 'var(--text-secondary)'
+                                        }}>
+                                            {selectedItemsForSummary.map(({ item, qty }, idx) => (
+                                                <span 
+                                                    key={item.id}
+                                                    style={{
+                                                        padding: '2px 8px',
+                                                        backgroundColor: 'var(--bg-surface-hover)',
+                                                        borderRadius: '4px',
+                                                        fontSize: '0.8rem'
+                                                    }}
+                                                >
+                                                    {item.name} {qty > 1 && `(${qty})`}
+                                                </span>
+                                            ))}
+                                        </div>
+                                    )}
+                                    {vendor && selectedItemsForSummary.length === 0 && (
+                                        <span style={{ 
+                                            fontSize: '0.8rem', 
+                                            color: 'var(--text-tertiary)',
+                                            fontStyle: 'italic'
+                                        }}>
+                                            No items selected
+                                        </span>
+                                    )}
+                                </div>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                    {vendor && (
+                                        <button 
+                                            className={`${styles.iconBtn} ${styles.danger}`} 
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                handleRemoveVendorBlock(index);
+                                            }}
+                                            style={{ padding: '4px 8px' }}
+                                        >
+                                            <Trash2 size={16} />
+                                        </button>
+                                    )}
+                                    <div style={{ 
+                                        transform: isOpen ? 'rotate(180deg)' : 'rotate(0deg)',
+                                        transition: 'transform 0.2s ease'
+                                    }}>
+                                        <ChevronRight size={20} />
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            {/* Shelf Content - Only visible when open */}
+                            {isOpen && (
+                                <div style={{ 
+                                    padding: '16px',
+                                    backgroundColor: 'var(--bg-surface)',
+                                    animation: 'fadeIn 0.2s ease'
+                                }}>
+                                    {/* Vendor Selection */}
+                                    <div style={{ marginBottom: '16px' }}>
+                                        <label className="label" style={{ marginBottom: '8px' }}>Vendor</label>
+                                        <select
+                                            className="input"
+                                            value={vendorId || ''}
+                                            onChange={(e) => handleVendorSelectionChange(index, e.target.value)}
+                                        >
+                                            <option value="">Select Vendor...</option>
+                                            {vendors
+                                                .filter(v => {
+                                                    if (!v.serviceTypes.includes('Food') || !v.isActive) return false;
 
-                                            // Feature: Filter by Client Location (if assigned)
-                                            if (client.locationId) {
-                                                const vendorHasLocation = v.locations?.some(l => l.locationId === client.locationId);
-                                                if (!vendorHasLocation) return false;
-                                            }
+                                                    // Feature: Filter by Client Location (if assigned)
+                                                    if (client.locationId) {
+                                                        const vendorHasLocation = v.locations?.some(l => l.locationId === client.locationId);
+                                                        if (!vendorHasLocation) return false;
+                                                    }
 
-                                            // Feature: Filter out vendors already selected in OTHER blocks
-                                            return !selections.some((s: any, idx: number) => s.vendorId === v.id && idx !== index);
-                                        })
-                                        .map(v => (
-                                            <option key={v.id} value={v.id}>{v.name}</option>
-                                        ))}
-                                </select>
+                                                    // Feature: Filter out vendors already selected in OTHER blocks
+                                                    return !selections.some((s: any, idx: number) => s.vendorId === v.id && idx !== index);
+                                                })
+                                                .map(v => (
+                                                    <option key={v.id} value={v.id}>{v.name}</option>
+                                                ))}
+                                        </select>
+                                    </div>
 
                                 {/* Multi-Day Selection - Toggle Buttons */}
                                 {vendorId && hasMultipleDays && (
@@ -577,15 +750,9 @@ export default function FoodServiceWidget({
                                         </div>
                                     </div>
                                 )}
-                            </div>
-                            <button className={`${styles.iconBtn} ${styles.danger}`} onClick={() => handleRemoveVendorBlock(index)}>
-                                <Trash2 size={16} />
-                            </button>
 
-
-                            {/* Items Display */}
-                            {
-                                vendorId && (
+                                    {/* Items Display */}
+                                    {vendorId && (
                                     <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
                                         {hasMultipleDays && selectedDays.length === 0 ? (
                                             <div className={styles.hint} style={{ textAlign: 'center', padding: '1rem', fontStyle: 'italic', color: 'var(--text-tertiary)' }}>
@@ -725,8 +892,9 @@ export default function FoodServiceWidget({
                                             </>
                                         )}
                                     </div>
-                                )
-                            }
+                                    )}
+                                </div>
+                            )}
                         </div>
                     );
                 })}
@@ -743,42 +911,176 @@ export default function FoodServiceWidget({
             const subCategories = mealCategories
                 .filter(c => c.mealType === mealType)
                 .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
+            
+            // Calculate summary info and get selected items
+            const selectedItemsForSummary = (() => {
+                const items: Array<{ item: MealItem; qty: number }> = [];
+                if (config.items) {
+                    Object.entries(config.items).forEach(([itemId, qty]) => {
+                        const item = mealItems.find(i => i.id === itemId);
+                        if (item && Number(qty) > 0) {
+                            items.push({ item, qty: Number(qty) });
+                        }
+                    });
+                }
+                return items;
+            })();
+            
+            const selectedItemsCount = selectedItemsForSummary.length;
+            const selectedVendor = config.vendorId ? vendors.find(v => v.id === config.vendorId) : null;
+            
+            // Calculate total value for summary
+            let totalSelectedValue = 0;
+            if (config.items) {
+                for (const [itemId, qty] of Object.entries(config.items)) {
+                    const item = mealItems.find(i => i.id === itemId);
+                    if (item) {
+                        totalSelectedValue += ((item.value || 0) * (qty as number));
+                    }
+                }
+            }
+            
+            const shelfId = getMealShelfId(uniqueKey);
+            const isOpen = isShelfOpen(shelfId);
 
             return (
                 <div key={uniqueKey} id={`meal-block-${uniqueKey}`} className={styles.vendorBlock} style={{
-                    borderLeft: '4px solid var(--color-primary)'
+                    borderLeft: '4px solid var(--color-primary)',
+                    border: '1px solid var(--border-color)',
+                    borderRadius: '8px',
+                    overflow: 'hidden',
+                    transition: 'all 0.2s ease'
                 }}>
-                    {/* Header */}
-                    <div className={styles.vendorHeader}>
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                            <span style={{ fontWeight: 600, color: 'var(--color-primary)' }}>{mealType}</span>
-                            {!isClientPortal && (
-                                <select
-                                    className="input"
-                                    style={{ padding: '4px 8px', fontSize: '0.9rem', maxWidth: '200px' }}
-                                    value={config.vendorId || ''}
-                                    onChange={(e) => handleMealVendorChange(uniqueKey, e.target.value)}
-                                >
-                                    <option value="">Select Vendor (Optional)</option>
-                                    {vendors
-                                        .filter(v => v.serviceTypes.includes('Food') && v.isActive)
-                                        .map(v => (
-                                            <option key={v.id} value={v.id}>{v.name}</option>
-                                        ))}
-                                </select>
+                    {/* Shelf Header - Always Visible (Condensed Single Line) */}
+                    <div 
+                        onClick={() => toggleShelf(shelfId)}
+                        style={{
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            alignItems: 'center',
+                            padding: '12px 16px',
+                            backgroundColor: isOpen ? 'var(--bg-surface-hover)' : 'var(--bg-surface)',
+                            cursor: 'pointer',
+                            borderBottom: isOpen ? '1px solid var(--border-color)' : 'none',
+                            transition: 'background-color 0.2s ease'
+                        }}
+                    >
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flex: 1, flexWrap: 'wrap' }}>
+                            <span style={{ 
+                                fontWeight: 600, 
+                                color: 'var(--color-primary)',
+                                fontSize: '1rem'
+                            }}>
+                                {mealType}
+                            </span>
+                            {totalSelectedValue > 0 && (
+                                <span style={{ 
+                                    fontSize: '0.85rem', 
+                                    color: 'var(--text-secondary)',
+                                    padding: '2px 8px',
+                                    backgroundColor: 'var(--bg-surface-hover)',
+                                    borderRadius: '4px'
+                                }}>
+                                    {totalSelectedValue} value
+                                </span>
                             )}
-                            {isClientPortal && config.vendorId && (
-                                <span style={{ fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
-                                    {vendors.find(v => v.id === config.vendorId)?.name}
+                            {selectedVendor && (
+                                <span style={{ 
+                                    fontSize: '0.85rem', 
+                                    color: 'var(--text-secondary)',
+                                    fontStyle: 'italic',
+                                    padding: '2px 8px',
+                                    backgroundColor: 'var(--bg-surface-hover)',
+                                    borderRadius: '4px'
+                                }}>
+                                    {selectedVendor.name}
+                                </span>
+                            )}
+                            {/* Show selected items with names */}
+                            {selectedItemsForSummary.length > 0 && (
+                                <div style={{ 
+                                    display: 'flex', 
+                                    alignItems: 'center', 
+                                    gap: '4px',
+                                    flexWrap: 'wrap',
+                                    fontSize: '0.85rem',
+                                    color: 'var(--text-secondary)'
+                                }}>
+                                    {selectedItemsForSummary.map(({ item, qty }, idx) => (
+                                        <span 
+                                            key={item.id}
+                                            style={{
+                                                padding: '2px 8px',
+                                                backgroundColor: 'var(--bg-surface-hover)',
+                                                borderRadius: '4px',
+                                                fontSize: '0.8rem'
+                                            }}
+                                        >
+                                            {item.name} {qty > 1 && `(${qty})`}
+                                        </span>
+                                    ))}
+                                </div>
+                            )}
+                            {selectedItemsForSummary.length === 0 && subCategories.length > 0 && (
+                                <span style={{ 
+                                    fontSize: '0.8rem', 
+                                    color: 'var(--text-tertiary)',
+                                    fontStyle: 'italic'
+                                }}>
+                                    {subCategories.length} {subCategories.length === 1 ? 'category' : 'categories'} available
                                 </span>
                             )}
                         </div>
-                        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                            <button className={`${styles.iconBtn} ${styles.danger}`} onClick={() => handleRemoveMeal(uniqueKey)}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <button 
+                                className={`${styles.iconBtn} ${styles.danger}`} 
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleRemoveMeal(uniqueKey);
+                                }}
+                                style={{ padding: '4px 8px' }}
+                            >
                                 <Trash2 size={16} />
                             </button>
+                            <div style={{ 
+                                transform: isOpen ? 'rotate(180deg)' : 'rotate(0deg)',
+                                transition: 'transform 0.2s ease'
+                            }}>
+                                <ChevronRight size={20} />
+                            </div>
                         </div>
                     </div>
+                    
+                    {/* Shelf Content - Only visible when open */}
+                    {isOpen && (
+                        <div style={{ 
+                            padding: '16px',
+                            backgroundColor: 'var(--bg-surface)',
+                            animation: 'fadeIn 0.2s ease'
+                        }}>
+                            {/* Vendor Selection */}
+                            {!isClientPortal && (
+                                <div style={{ marginBottom: '16px' }}>
+                                    <label className="label" style={{ marginBottom: '8px' }}>Vendor (Optional)</label>
+                                    <select
+                                        className="input"
+                                        value={config.vendorId || ''}
+                                        onChange={(e) => handleMealVendorChange(uniqueKey, e.target.value)}
+                                    >
+                                        <option value="">Select Vendor (Optional)</option>
+                                        {vendors
+                                            .filter(v => v.serviceTypes.includes('Food') && v.isActive)
+                                            .map(v => (
+                                                <option key={v.id} value={v.id}>{v.name}</option>
+                                            ))}
+                                    </select>
+                                </div>
+                            )}
+                            {isClientPortal && config.vendorId && (
+                                <div style={{ marginBottom: '16px', fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
+                                    Vendor: {vendors.find(v => v.id === config.vendorId)?.name}
+                                </div>
+                            )}
 
                     {/* Items Grouped by Category */}
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
@@ -855,10 +1157,12 @@ export default function FoodServiceWidget({
                                 </div>
                             );
                         })}
-                        {mealItems.filter(i => mealCategories.find(c => c.id === i.categoryId)?.mealType === mealType).length === 0 && (
-                            <span className={styles.hint}>No items found for {mealType}.</span>
-                        )}
-                    </div>
+                            {mealItems.filter(i => mealCategories.find(c => c.id === i.categoryId)?.mealType === mealType).length === 0 && (
+                                <span className={styles.hint}>No items found for {mealType}.</span>
+                            )}
+                        </div>
+                        </div>
+                    )}
                 </div>
             );
         });
