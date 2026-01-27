@@ -1,6 +1,5 @@
 import { NextResponse } from 'next/server';
-import { addClient, getVendors, getMealItems } from '@/lib/actions';
-import { getStatuses, getNavigators } from '@/lib/cached-data';
+import { addClient, getVendors, getMealItems, getStatuses, getNavigators } from '@/lib/actions';
 import { randomUUID } from 'crypto';
 
 export async function GET() {

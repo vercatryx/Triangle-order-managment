@@ -3076,9 +3076,10 @@ export function ClientProfileDetail({
                                                                                 borderRadius: '4px',
                                                                                 fontSize: '0.8rem',
                                                                                 lineHeight: 1.4,
-                                                                                color: 'var(--text-primary)'
+                                                                                color: 'var(--text-primary)',
+                                                                                whiteSpace: 'pre-wrap'
                                                                             }}>
-                                                                                <strong>Snapshot:</strong> {entry.snapshot}
+                                                                                {entry.snapshot}
                                                                             </div>
                                                                         )}
                                                                         {entry.deliveryDay && (
@@ -5048,9 +5049,6 @@ export function ClientProfileDetail({
                     handleSaveAndClose();
                 }}>
                     <div className={styles.modalContent} onClick={e => e.stopPropagation()} style={{ position: 'relative' }}>
-                        <div style={{ padding: '1rem', backgroundColor: '#fee2e2', color: '#991b1b', border: '2px solid #ef4444', borderRadius: '8px', margin: '1rem', fontWeight: 'bold', textAlign: 'center', zIndex: 9999 }}>
-                            !!! AGENTIC DEBUG VERSION 2 !!! (History Granularity Update)
-                        </div>
                         {saving && (
                             <div className={styles.savingOverlay}>
                                 <div className={styles.savingIndicator}>
@@ -5426,90 +5424,99 @@ export function ClientProfileDetail({
     }
 
     function generateOrderSnapshot(config: OrderConfiguration | undefined): string {
-        if (!config || !config.serviceType) return 'No order configuration';
+        if (!config) return 'No order configuration';
+        let snapshot = `Service: ${config.serviceType || 'Not Set'}${config.caseId ? ` | Case ID: ${config.caseId}` : ''}\n`;
 
+        // Helper to get item name
         const getItemName = (id: string, isMeal = false) => {
-            if (isMeal) return mealItems.find(i => i.id === id)?.name || id;
-            return menuItems.find(i => i.id === id)?.name || id;
+            if (isMeal) return (mealItems || []).find(i => i.id === id)?.name || id;
+            return (menuItems || []).find(i => i.id === id)?.name || id;
         };
 
-        const getVendorName = (id: string) => vendors.find(v => v.id === id)?.name || id;
-        const getBoxTypeName = (id: string) => boxTypes.find(b => b.id === id)?.name || id;
+        // Helper to get vendor name
+        const getVendorName = (id: string) => (vendors || []).find(v => v.id === id)?.name || id;
 
-        let snapshot = `[${config.serviceType}] (Case ID: ${config.caseId || 'None'}) `;
+        // Helper to get box type name
+        const getBoxTypeName = (id: string) => (boxTypes || []).find(b => b.id === id)?.name || id;
 
+        // 1. PRIMARY SERVICE SECTION
+        let primarySection = '';
         if (config.serviceType === 'Boxes') {
             const boxes = config.boxOrders || [];
             if (boxes.length > 0) {
-                snapshot += boxes.map((box: any, i: number) => {
+                primarySection = boxes.map((box: any, i: number) => {
                     const items = box.items || {};
                     const itemDetails = Object.keys(items)
-                        .map(itemId => `${items[itemId]}x ${getItemName(itemId)}`)
-                        .join(', ');
+                        .map(itemId => `  - ${items[itemId]}x ${getItemName(itemId)}`)
+                        .join('\n');
                     const vendorName = getVendorName(box.vendorId);
                     const boxTypeName = getBoxTypeName(box.boxTypeId);
-                    return `Box ${i + 1}: ${boxTypeName} (Qty: ${box.quantity || 'N/A'}) [Vendor: ${vendorName}] {${itemDetails || 'No items'}}`;
-                }).join('; ');
+                    return `Box ${i + 1}: ${boxTypeName} (Qty: ${box.quantity || 1}) [Vendor: ${vendorName}]\n${itemDetails || '  - No items'}`;
+                }).join('\n');
             } else if (config.boxTypeId) {
-                // Legacy single box support
                 const items = (config as any).items || {};
                 const itemDetails = Object.keys(items)
-                    .map(itemId => `${items[itemId]}x ${getItemName(itemId)}`)
-                    .join(', ');
+                    .map(itemId => `  - ${items[itemId]}x ${getItemName(itemId)}`)
+                    .join('\n');
                 const vendorName = getVendorName((config as any).vendorId);
                 const boxTypeName = getBoxTypeName(config.boxTypeId);
-                snapshot += `Box: ${boxTypeName} (Qty: ${(config as any).boxQuantity || 1}) [Vendor: ${vendorName}] {${itemDetails || 'No items'}}`;
-            } else {
-                snapshot += 'No boxes configured';
+                primarySection = `Box: ${boxTypeName} (Qty: ${(config as any).boxQuantity || 1}) [Vendor: ${vendorName}]\n${itemDetails || '  - No items'}`;
             }
         } else if (config.serviceType === 'Food') {
+            // Check both consolidated (vendorSelections) and multi-day (deliveryDayOrders) formats
             const days = (config as any).deliveryDayOrders || {};
             const dayKeys = Object.keys(days).sort();
+
             if (dayKeys.length > 0) {
-                snapshot += dayKeys.map(day => {
+                primarySection = dayKeys.map(day => {
                     const selections = days[day]?.vendorSelections || [];
                     const vendorDetails = selections.map((vs: any) => {
                         const items = vs.items || {};
                         const itemDetails = Object.keys(items)
-                            .map(itemId => `${items[itemId]}x ${getItemName(itemId)}`)
-                            .join(', ');
-                        return `${getVendorName(vs.vendorId)}: ${itemDetails || 'No items'}`;
-                    }).join('; ');
-                    return `${day}: ${vendorDetails || 'No vendors'}`;
-                }).join(' | ');
-            } else if ((config as any).vendorSelections) {
-                // Older food format
-                snapshot += (config as any).vendorSelections.map((vs: any) => {
+                            .map(itemId => `    - ${items[itemId]}x ${getItemName(itemId)}`)
+                            .join('\n');
+                        return `  Vendor [${getVendorName(vs.vendorId)}]:\n${itemDetails || '    - No items'}`;
+                    }).join('\n');
+                    return `${day}:\n${vendorDetails || '  - No vendors'}`;
+                }).join('\n');
+            } else if ((config as any).vendorSelections && (config as any).vendorSelections.length > 0) {
+                primarySection = (config as any).vendorSelections.map((vs: any) => {
                     const items = vs.items || {};
                     const itemDetails = Object.keys(items)
-                        .map(itemId => `${items[itemId]}x ${getItemName(itemId)}`)
-                        .join(', ');
-                    return `${getVendorName(vs.vendorId)}: ${itemDetails || 'No items'}`;
-                }).join(' | ');
-            } else {
-                snapshot += 'No food deliveries configured';
-            }
-        } else if (config.serviceType === 'Meal') {
-            const meals = (config as any).mealSelections || {};
-            const mealTypes = Object.keys(meals).sort();
-            if (mealTypes.length > 0) {
-                snapshot += mealTypes.map(mType => {
-                    const m = meals[mType];
-                    const items = m?.items || {};
-                    const itemDetails = Object.keys(items)
-                        .map(itemId => `${items[itemId]}x ${getItemName(itemId, true)}`)
-                        .join(', ');
-                    const vName = m?.vendorId ? getVendorName(m.vendorId) : 'No vendor';
-                    return `${mType} [${vName}]: {${itemDetails || 'No items'}}`;
-                }).join(' | ');
-            } else {
-                snapshot += 'No meal selections configured';
+                        .map(itemId => `  - ${items[itemId]}x ${getItemName(itemId)}`)
+                        .join('\n');
+                    return `Vendor [${getVendorName(vs.vendorId)}]:\n${itemDetails || '  - No items'}`;
+                }).join('\n');
             }
         } else if (config.serviceType === 'Custom') {
-            snapshot += `${(config as any).custom_name || 'Unnamed'}: $${(config as any).custom_price || 0} (${(config as any).deliveryDay || 'No day'})`;
+            primarySection = `Custom Order: ${(config as any).custom_name || 'Unnamed'}\n`;
+            primarySection += `Price: $${(config as any).custom_price || 0}\n`;
+            primarySection += `Vendor: ${getVendorName((config as any).vendorId)}`;
         }
 
-        return `Full Order State: ${snapshot}`;
+        if (primarySection) {
+            snapshot += primarySection + '\n';
+        }
+
+        // 2. MEAL SELECTIONS SECTION (CUMULATIVE)
+        const meals = (config as any).mealSelections || {};
+        const mealTypes = Object.keys(meals).sort();
+        if (mealTypes.length > 0) {
+            if (primarySection) snapshot += '--- Meals ---\n';
+            snapshot += mealTypes.map(mType => {
+                const m = meals[mType];
+                const items = m?.items || {};
+                const itemDetails = Object.keys(items)
+                    .map(itemId => `  - ${items[itemId]}x ${getItemName(itemId, true)}`)
+                    .join('\n');
+                const vName = m?.vendorId ? getVendorName(m.vendorId) : 'No vendor';
+                return `${mType} [${vName}]:\n${itemDetails || '  - No items'}`;
+            }).join('\n');
+        } else if (config.serviceType === 'Meal' && !primarySection) {
+            snapshot += 'No meal selections configured';
+        }
+
+        return snapshot.trim();
     }
 
 
@@ -5774,30 +5781,21 @@ export function ClientProfileDetail({
 
             let updateData: Partial<ClientProfile> = { ...formData };
 
-            console.log(`[ClientProfile] [history] calling recordClientChange with summary:`, summary);
-            try {
-                await recordClientChange(clientId, summary, 'Admin');
+            // Prepare the updated JSONB history for the clients table
+            // This is the "One Thing" that gets saved to persist history
 
-                // Prepare the updated JSONB history for the clients table
-                const newHistoryEntry = {
-                    type: 'upcoming',
-                    orderId: orderConfig?.id || orderConfig?.orderId || 'manual-save',
-                    serviceType: orderConfig?.serviceType,
-                    caseId: orderConfig?.caseId,
-                    deliveryDay: orderConfig?.deliveryDay,
-                    orderDetails: orderConfig,
-                    snapshot: orderSnapshot,
-                    timestamp: new Date().toISOString(),
-                    updatedBy: currentUser?.role || currentUser?.id || 'Admin'
-                };
+            // Prepare the updated JSONB history for the clients table
+            const newHistoryEntry = {
+                type: 'save_event',
+                orderDetails: orderConfig,
+                snapshot: orderSnapshot,
+                timestamp: new Date().toISOString(),
+                updatedBy: currentUser?.role || currentUser?.id || 'Admin'
+            };
 
-                // Add to updateData so updateClient saves it in one call
-                updateData.orderHistory = [...(client?.orderHistory || []), newHistoryEntry];
+            // Add to updateData so updateClient saves it in one call
+            updateData.orderHistory = [...(client?.orderHistory || []), newHistoryEntry];
 
-            } catch (e: any) {
-                console.error('[ClientProfile] [history] recordClientChange FAILED:', e);
-                throw e;
-            }
 
             // Log Navigator Action if applicable
             if (currentUser?.role === 'navigator' && client.statusId !== formData.statusId) {
