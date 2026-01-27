@@ -6060,10 +6060,15 @@ export async function getOrdersPaginated(page: number, pageSize: number, filter?
 }
 
 export async function getAllOrders() {
+    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    const db = serviceRoleKey
+        ? createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, serviceRoleKey, { auth: { persistSession: false } })
+        : supabase;
+
     // For the Orders tab, show orders from the orders table
     // Exclude billing_pending orders (those should only show on billing page)
     // Only show scheduled orders (orders with scheduled_delivery_date)
-    const { data, error } = await supabase
+    const { data, error } = await db
         .from('orders')
         .select(`
             *,
@@ -6080,13 +6085,84 @@ export async function getAllOrders() {
         return [];
     }
 
-    return (data || []).map((o: any) => ({
-        ...o,
-        clientName: o.clients?.full_name || 'Unknown',
-        // Use actual status from DB
-        status: o.status || 'pending',
-        scheduled_delivery_date: o.scheduled_delivery_date || null
-    }));
+    const orders = data || [];
+    const orderIds = orders.map((o: any) => o.id);
+    const vendorNamesByOrderId = new Map<string, string[]>();
+
+    if (orderIds.length > 0) {
+        const BATCH = 200;
+        const ovsBatches = [] as { order_id: string; vendor_id: string | null }[];
+        const obsBatches = [] as { order_id: string; vendor_id: string | null }[];
+        for (let i = 0; i < orderIds.length; i += BATCH) {
+            const batch = orderIds.slice(i, i + BATCH);
+            const [ovsRes, obsRes] = await Promise.all([
+                db.from('order_vendor_selections').select('order_id, vendor_id').in('order_id', batch),
+                db.from('order_box_selections').select('order_id, vendor_id').in('order_id', batch)
+            ]);
+            if (ovsRes.error) console.error('[getAllOrders] OVS fetch error:', ovsRes.error);
+            if (obsRes.error) console.error('[getAllOrders] OBS fetch error:', obsRes.error);
+            ovsBatches.push(...(ovsRes.data || []));
+            obsBatches.push(...(obsRes.data || []));
+        }
+
+        const allVendorIds = new Set<string>();
+        ovsBatches.forEach((r: any) => { if (r.vendor_id) allVendorIds.add(r.vendor_id); });
+        obsBatches.forEach((r: any) => { if (r.vendor_id) allVendorIds.add(r.vendor_id); });
+
+        // Equipment: vendor may be in notes only
+        for (const o of orders) {
+            if (o.service_type === 'Equipment' && o.notes) {
+                try {
+                    const notes = typeof o.notes === 'string' ? JSON.parse(o.notes) : o.notes;
+                    const vid = notes?.vendorId ?? notes?.vendor_id;
+                    if (vid) allVendorIds.add(vid);
+                } catch (_) { /* ignore */ }
+            }
+        }
+
+        const vendorById = new Map<string, string>();
+        if (allVendorIds.size > 0) {
+            const { data: vendors, error: vErr } = await db
+                .from('vendors')
+                .select('id, name')
+                .in('id', Array.from(allVendorIds));
+            if (vErr) console.error('[getAllOrders] Vendors fetch error:', vErr);
+            (vendors || []).forEach((v: any) => vendorById.set(v.id, v.name));
+        }
+
+        const addVendor = (orderId: string, vendorId: string | null) => {
+            if (!orderId) return;
+            const name = vendorId ? (vendorById.get(vendorId) ?? 'Unknown') : 'Unknown';
+            const existing = vendorNamesByOrderId.get(orderId) || [];
+            if (!existing.includes(name)) existing.push(name);
+            vendorNamesByOrderId.set(orderId, existing);
+        };
+
+        ovsBatches.forEach((r: any) => addVendor(r.order_id, r.vendor_id));
+        obsBatches.forEach((r: any) => addVendor(r.order_id, r.vendor_id));
+
+        for (const o of orders) {
+            if (o.service_type === 'Equipment' && o.notes) {
+                try {
+                    const notes = typeof o.notes === 'string' ? JSON.parse(o.notes) : o.notes;
+                    const vid = notes?.vendorId ?? notes?.vendor_id;
+                    if (vid) addVendor(o.id, vid);
+                } catch (_) { /* ignore */ }
+            }
+        }
+    }
+
+    return orders.map((o: any) => {
+        let vendorNames = vendorNamesByOrderId.get(o.id) || [];
+        if (vendorNames.length === 0) vendorNames = ['Unknown'];
+        return {
+            ...o,
+            clientName: o.clients?.full_name || 'Unknown',
+            status: o.status || 'pending',
+            scheduled_delivery_date: o.scheduled_delivery_date || null,
+            vendorNames: vendorNames.sort()
+        };
+    });
 }
 
 export async function getOrderById(orderId: string) {

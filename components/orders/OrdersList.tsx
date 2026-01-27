@@ -55,6 +55,9 @@ export function OrdersList() {
         } else if (sortConfig.key === 'order_number') {
             aValue = Number(a.order_number || 0);
             bValue = Number(b.order_number || 0);
+        } else if (sortConfig.key === 'vendors') {
+            aValue = (a.vendorNames || []).join(', ') || '';
+            bValue = (b.vendorNames || []).join(', ') || '';
         }
 
         if (aValue < bValue) {
@@ -67,9 +70,11 @@ export function OrdersList() {
     });
 
     const filteredOrders = sortedOrders.filter(o => {
+        const vendorStr = (o.vendorNames || []).join(' ').toLowerCase();
         const matchesSearch =
             (o.clientName || '').toLowerCase().includes(search.toLowerCase()) ||
-            (o.order_number || '').toString().includes(search);
+            (o.order_number || '').toString().includes(search) ||
+            vendorStr.includes(search.toLowerCase());
 
         const matchesStatus = statusFilter === 'all' || o.status === statusFilter;
 
@@ -152,7 +157,7 @@ export function OrdersList() {
                     <Search size={18} className={styles.searchIcon} />
                     <input
                         className="input"
-                        placeholder="Search by client or order #..."
+                        placeholder="Search by client, order # or vendor..."
                         style={{ paddingLeft: '2.5rem', width: '300px' }}
                         value={search}
                         onChange={e => setSearch(e.target.value)}
@@ -197,6 +202,12 @@ export function OrdersList() {
                         Service <ArrowUpDown size={14} style={{ marginLeft: '4px' }} />
                     </span>
                     <span
+                        style={{ flex: 1.5, cursor: 'pointer', display: 'flex', alignItems: 'center' }}
+                        onClick={() => handleSort('vendors')}
+                    >
+                        Vendors <ArrowUpDown size={14} style={{ marginLeft: '4px' }} />
+                    </span>
+                    <span
                         style={{ flex: 1, cursor: 'pointer', display: 'flex', alignItems: 'center' }}
                         onClick={() => handleSort('items')}
                     >
@@ -222,6 +233,9 @@ export function OrdersList() {
                         <span style={{ width: '100px', fontWeight: 600 }}>{order.order_number || 'N/A'}</span>
                         <span style={{ flex: 2 }}>{order.clientName}</span>
                         <span style={{ flex: 1 }}>{order.service_type}</span>
+                        <span style={{ flex: 1.5, fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                            {((order.vendorNames as string[]) || ['Unknown']).join(', ')}
+                        </span>
                         <span style={{ flex: 1, fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
                             {order.total_items !== null && order.total_items !== undefined ? `${order.total_items} item${order.total_items !== 1 ? 's' : ''}` : '-'}
                         </span>
