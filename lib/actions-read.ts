@@ -34,10 +34,10 @@ export const getStatuses = cacheFn(async function () {
             .from('client_statuses')
             .select('*')
             .order('created_at', { ascending: true });
-        
+
         if (error) throw error;
         if (!data) return [];
-        
+
         return data.map((s: any) => ({
             id: s.id,
             name: s.name,
@@ -56,17 +56,17 @@ export const getVendors = cacheFn(async function () {
         const { data: vendors, error: vendorsError } = await supabase
             .from('vendors')
             .select('*');
-        
+
         if (vendorsError) throw vendorsError;
         if (!vendors) return [];
-        
+
         // Fetch vendor locations in batch (SPEED OPTIMIZATION)
         const { data: vendorLocations, error: vlError } = await supabase
             .from('vendor_locations')
             .select('*, locations(*)');
-        
+
         if (vlError) throw vlError;
-        
+
         // Create a map of vendor locations
         const locationMap = new Map<string, any[]>();
         (vendorLocations || []).forEach((vl: any) => {
@@ -80,7 +80,7 @@ export const getVendors = cacheFn(async function () {
                 name: vl.locations?.name ?? 'Unknown'
             });
         });
-        
+
         return vendors.map((v: any) => ({
             ...mapVendorRow(v),
             locations: locationMap.get(v.id) || []
@@ -98,7 +98,7 @@ export async function getVendor(id: string) {
             .select('*')
             .eq('id', id)
             .single();
-        
+
         if (error || !data) return null;
         return mapVendorRow(data);
     } catch (e) {
@@ -435,6 +435,7 @@ export async function getOrderHistory(clientId: string) {
     }
 
     const data = result.data;
+    console.log(`[history] getOrderHistory fetched for ${clientId}`, { count: data?.length || 0, data });
     if (!data || data.length === 0) return [];
 
     return data.map((d: any) => ({

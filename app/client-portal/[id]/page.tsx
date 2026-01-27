@@ -1,4 +1,5 @@
 import { getPublicClient, getStatuses, getNavigators, getVendors, getMenuItems, getBoxTypes, getCategories, getUpcomingOrderForClient, getActiveOrderForClient, getOrderHistory, getMealCategories, getMealItems, getClientFoodOrder, getClientMealOrder, getClientBoxOrder } from '@/lib/actions';
+import { getClientHistory } from '@/lib/cached-data';
 import { ClientPortalInterface } from '@/components/clients/ClientPortalInterface';
 import { notFound } from 'next/navigation';
 import { logout } from '@/lib/auth-actions';
@@ -23,7 +24,8 @@ export default async function ClientPortalPage({ params }: { params: { id: strin
         mealItems,
         foodOrder,
         mealOrder,
-        boxOrders
+        boxOrders,
+        clientHistory
     ] = await Promise.all([
         getPublicClient(id),
         getStatuses(),
@@ -39,7 +41,8 @@ export default async function ClientPortalPage({ params }: { params: { id: strin
         getMealItems(),
         getClientFoodOrder(id),
         getClientMealOrder(id),
-        getClientBoxOrder(id)
+        getClientBoxOrder(id),
+        getClientHistory(id)
     ]);
 
     if (!client) {
@@ -63,6 +66,7 @@ export default async function ClientPortalPage({ params }: { params: { id: strin
             foodOrder={foodOrder}
             mealOrder={mealOrder}
             boxOrders={boxOrders}
+            clientHistory={clientHistory || []}
         />
     );
 }

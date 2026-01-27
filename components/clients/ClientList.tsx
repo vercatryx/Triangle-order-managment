@@ -315,8 +315,16 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
             // Show clients with box orders that do not have a vendor assigned
             let boxesNeedsVendor = false;
             if (c.serviceType === 'Boxes') {
-                // Check box orders from activeOrder (available on all clients)
-                const boxOrders = c.activeOrder?.boxOrders || [];
+                // Check box orders from activeOrder first (available on all clients)
+                let boxOrders = c.activeOrder?.boxOrders || [];
+                
+                // Fallback to cache if activeOrder doesn't have boxOrders
+                if (boxOrders.length === 0) {
+                    const clientDetails = detailsCache[c.id];
+                    if (clientDetails?.boxOrders) {
+                        boxOrders = clientDetails.boxOrders;
+                    }
+                }
                 
                 if (boxOrders.length === 0) {
                     boxesNeedsVendor = true; // No box orders means needs vendor
@@ -1050,8 +1058,16 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
 
         // Check if client with boxes doesn't have vendor assigned
         if (client.serviceType === 'Boxes') {
-            // Check box orders from activeOrder (available on all clients)
-            const boxOrders = client.activeOrder?.boxOrders || [];
+            // Check box orders from activeOrder first (available on all clients)
+            let boxOrders = client.activeOrder?.boxOrders || [];
+            
+            // Fallback to cache if activeOrder doesn't have boxOrders
+            if (boxOrders.length === 0) {
+                const clientDetails = detailsCache[client.id];
+                if (clientDetails?.boxOrders) {
+                    boxOrders = clientDetails.boxOrders;
+                }
+            }
             
             if (boxOrders.length === 0) {
                 // No box orders means needs vendor
@@ -1085,8 +1101,16 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
                 // Show clients with box orders that do not have a vendor assigned
                 let boxesNeedsVendor = false;
                 if (c.serviceType === 'Boxes') {
-                    // Check box orders from activeOrder (available on all clients)
-                    const boxOrders = c.activeOrder?.boxOrders || [];
+                    // Check box orders from activeOrder first (available on all clients)
+                    let boxOrders = c.activeOrder?.boxOrders || [];
+                    
+                    // Fallback to cache if activeOrder doesn't have boxOrders
+                    if (boxOrders.length === 0) {
+                        const clientDetails = detailsCache[c.id];
+                        if (clientDetails?.boxOrders) {
+                            boxOrders = clientDetails.boxOrders;
+                        }
+                    }
                     
                     if (boxOrders.length === 0) {
                         boxesNeedsVendor = true; // No box orders means needs vendor

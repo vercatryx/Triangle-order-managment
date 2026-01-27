@@ -3,8 +3,8 @@
 import { useState, useEffect, Fragment, useMemo, useRef, ReactNode } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import Link from 'next/link';
-import { ClientProfile, ClientStatus, Navigator, Vendor, MenuItem, BoxType, ServiceType, AppSettings, DeliveryRecord, ItemCategory, ClientFullDetails, BoxQuota, MealCategory, MealItem, ClientFoodOrder, ClientMealOrder, ClientBoxOrder, Equipment } from '@/lib/types';
-import { updateClient, addClient, deleteClient, updateDeliveryProof, recordClientChange, syncCurrentOrderToUpcoming, logNavigatorAction, getBoxQuotas, saveEquipmentOrder, getRegularClients, getDependentsByParentId, addDependent, checkClientNameExists, getClientFullDetails, saveClientFoodOrder, saveClientMealOrder, saveClientBoxOrder, saveClientCustomOrder, getEquipment, getClientProfileData } from '@/lib/actions';
+import { ClientProfile, ClientStatus, Navigator, Vendor, MenuItem, BoxType, ServiceType, AppSettings, DeliveryRecord, ItemCategory, ClientFullDetails, BoxQuota, MealCategory, MealItem, ClientFoodOrder, ClientMealOrder, ClientBoxOrder, Equipment, OrderConfiguration } from '@/lib/types';
+import { updateClient, addClient, deleteClient, updateDeliveryProof, recordClientChange, syncCurrentOrderToUpcoming, logNavigatorAction, getBoxQuotas, saveEquipmentOrder, getRegularClients, getDependentsByParentId, addDependent, checkClientNameExists, getClientFullDetails, saveClientFoodOrder, saveClientMealOrder, saveClientBoxOrder, saveClientCustomOrder, getEquipment, getClientProfileData, appendOrderHistory } from '@/lib/actions';
 import { getSingleForm, getClientSubmissions } from '@/lib/form-actions';
 import { getClient, getStatuses, getNavigators, getVendors, getMenuItems, getBoxTypes, getSettings, getCategories, getClients, invalidateClientData, invalidateReferenceData, getActiveOrderForClient, getUpcomingOrderForClient, getOrderHistory, getClientHistory, getBillingHistory, invalidateOrderData, getMealCategories, getMealItems, getRecentOrdersForClient, getClientsLight } from '@/lib/cached-data';
 import { areAnyDeliveriesLocked, getEarliestEffectiveDate, getLockedWeekDescription } from '@/lib/weekly-lock';
@@ -222,18 +222,18 @@ export function ClientProfileDetail({
     const [showEquipmentOrder, setShowEquipmentOrder] = useState(false);
     const [equipmentOrder, setEquipmentOrder] = useState<{ vendorId: string; equipmentId: string; caseId: string } | null>(null);
     const [submittingEquipmentOrder, setSubmittingEquipmentOrder] = useState(false);
-    
+
     // State to track which category shelf is open (format: "boxIndex-categoryId")
     const [openCategoryShelf, setOpenCategoryShelf] = useState<string | null>(null);
-    
+
     // Helper to generate category shelf ID
     const getCategoryShelfId = (boxIndex: number, categoryId: string) => `box-${boxIndex}-cat-${categoryId}`;
-    
+
     // Helper to check if a category shelf is open
     const isCategoryShelfOpen = (boxIndex: number, categoryId: string) => {
         return openCategoryShelf === getCategoryShelfId(boxIndex, categoryId);
     };
-    
+
     // Helper to toggle category shelf (only one can be open per box)
     const toggleCategoryShelf = (boxIndex: number, categoryId: string) => {
         const shelfId = getCategoryShelfId(boxIndex, categoryId);
@@ -252,6 +252,10 @@ export function ClientProfileDetail({
     const [orderHistory, setOrderHistory] = useState<any[]>([]);
     const [billingHistory, setBillingHistory] = useState<any[]>([]);
     const [activeHistoryTab, setActiveHistoryTab] = useState<'deliveries' | 'audit' | 'billing'>('deliveries');
+    const [clientOrderHistory, setClientOrderHistory] = useState<any[]>([]);
+    const [orderHistoryExpanded, setOrderHistoryExpanded] = useState<boolean>(false);
+    const [recentOrdersExpanded, setRecentOrdersExpanded] = useState<boolean>(false);
+    const [historyExpanded, setHistoryExpanded] = useState<boolean>(false);
     const [allClients, setAllClients] = useState<any[]>(initialAllClients || []); // optimization: lightweight list
     const [expandedBillingRows, setExpandedBillingRows] = useState<Set<string>>(new Set());
     const [regularClients, setRegularClients] = useState<any[]>(initialRegularClients || []); // optimization: lightweight list
@@ -319,7 +323,7 @@ export function ClientProfileDetail({
             initialDataClientId: initialData?.client?.id,
             matchesClientId: initialData?.client?.id === clientId
         });
-        
+
         // Handle new client case - initialize with defaults
         if (isNewClient) {
             console.log(`[ClientProfile] Initializing new client`);
@@ -550,7 +554,7 @@ export function ClientProfileDetail({
         if (data.foodOrder) {
             // Convert deliveryDayOrders format from DB back to vendorSelections with itemsByDay for UI
             let foodOrderForUI = { ...data.foodOrder } as any;
-            
+
             console.log(`[ClientProfile] Food order structure for ${data.client?.id}:`, {
                 hasDeliveryDayOrders: !!foodOrderForUI.deliveryDayOrders,
                 hasVendorSelections: !!foodOrderForUI.vendorSelections,
@@ -564,7 +568,7 @@ export function ClientProfileDetail({
             // Convert if we have deliveryDayOrders and either no vendorSelections or empty vendorSelections
             if (foodOrderForUI.deliveryDayOrders && (!foodOrderForUI.vendorSelections || (Array.isArray(foodOrderForUI.vendorSelections) && foodOrderForUI.vendorSelections.length === 0))) {
                 console.log(`[ClientProfile] Converting deliveryDayOrders to vendorSelections for ${data.client?.id}`);
-                
+
                 // Build a map of vendors across all days
                 const vendorMap = new Map<string, any>();
 
@@ -758,6 +762,21 @@ export function ClientProfileDetail({
         setHistory(data.history || []);
         setOrderHistory(data.orderHistory || []);
         setBillingHistory(data.billingHistory || []);
+
+        // Load order_history from client data
+        try {
+            const orderHistoryData = (data.client as any)?.order_history;
+            if (orderHistoryData) {
+                const parsed = Array.isArray(orderHistoryData) ? orderHistoryData : JSON.parse(orderHistoryData);
+                setClientOrderHistory(parsed || []);
+            } else {
+                setClientOrderHistory([]);
+            }
+        } catch (e) {
+            console.warn('Error parsing order_history:', e);
+            setClientOrderHistory([]);
+        }
+
         setLoadingOrderDetails(false);
         console.log(`[ClientProfile] Basic data set for ${data.client?.id}:`, {
             activeOrder: !!data.activeOrder,
@@ -964,7 +983,7 @@ export function ClientProfileDetail({
                         hasBoxOrders: !!details?.boxOrders,
                         boxOrdersCount: details?.boxOrders?.length || 0
                     });
-                    
+
                     if (details) {
                         // Mock missing history for initial hydration
                         const fullDetailsInit: any = {
@@ -1003,24 +1022,47 @@ export function ClientProfileDetail({
         setLoadingHistory(true);
         try {
             const startTime = Date.now();
-            // Fetch in parallel
-            const [h, oh, bh, s] = await Promise.all([
+            // Fetch in parallel - also fetch client to get updated order_history JSONB column
+            const [h, oh, bh, s, clientData] = await Promise.all([
                 getClientHistory(clientId),
                 getOrderHistory(clientId),
                 getBillingHistory(clientId),
-                getClientSubmissions(clientId)
+                getClientSubmissions(clientId),
+                getClient(clientId) // Reload client to get updated order_history
             ]);
             const fetchTime = Date.now() - startTime;
             console.log(`[ClientProfile] History data fetched in ${fetchTime}ms for ${clientId}:`, {
                 historyCount: h?.length || 0,
                 orderHistoryCount: oh?.length || 0,
                 billingHistoryCount: bh?.length || 0,
-                submissionsCount: s?.success ? (s.data?.length || 0) : 0
+                submissionsCount: s?.success ? (s.data?.length || 0) : 0,
+                clientOrderHistoryCount: (clientData as any)?.order_history?.length || 0
             });
             setHistory(h || []);
             setOrderHistory(oh || []);
             setBillingHistory(bh || []);
             if (s.success && s.data) setSubmissions(s.data);
+
+            // Load order_history from client data
+            if (clientData) {
+                try {
+                    const orderHistoryData = (clientData as any).order_history;
+                    if (orderHistoryData) {
+                        const parsed = Array.isArray(orderHistoryData) ? orderHistoryData : JSON.parse(orderHistoryData);
+                        console.log(`[ClientProfile] Parsed order_history for ${clientId}:`, {
+                            count: parsed.length,
+                            sample: parsed[0] ? Object.keys(parsed[0]) : []
+                        });
+                        setClientOrderHistory(parsed || []);
+                    } else {
+                        setClientOrderHistory([]);
+                    }
+                } catch (e) {
+                    console.warn(`[ClientProfile] Error parsing order_history for ${clientId}:`, e);
+                    setClientOrderHistory([]);
+                }
+            }
+
             setHistoryLoaded(true);
             console.log(`[ClientProfile] loadHistoryLazy() completed for ${clientId}`);
         } catch (e) {
@@ -1055,6 +1097,19 @@ export function ClientProfileDetail({
 
         if (c) {
             setClient(c);
+            // Load order_history from client data
+            try {
+                const orderHistoryData = (c as any).order_history;
+                if (orderHistoryData) {
+                    const parsed = Array.isArray(orderHistoryData) ? orderHistoryData : JSON.parse(orderHistoryData);
+                    setClientOrderHistory(parsed || []);
+                } else {
+                    setClientOrderHistory([]);
+                }
+            } catch (e) {
+                console.warn('Error parsing order_history:', e);
+                setClientOrderHistory([]);
+            }
         }
         setStatuses(s);
         setNavigators(n);
@@ -2789,6 +2844,651 @@ export function ClientProfileDetail({
                                         <textarea className="input" style={{ height: '100px' }} value={formData.notes || ''} onChange={e => setFormData({ ...formData, notes: e.target.value })} />
                                     </div>
 
+                                    {/* Order History Section - Admin Only */}
+                                    {!isNewClient && (currentUser?.role === 'admin' || currentUser?.role === 'super_admin') && (
+                                        <div className={styles.formGroup} style={{ marginTop: '2rem' }}>
+                                            <button
+                                                type="button"
+                                                onClick={() => setOrderHistoryExpanded(!orderHistoryExpanded)}
+                                                style={{
+                                                    width: '100%',
+                                                    display: 'flex',
+                                                    justifyContent: 'space-between',
+                                                    alignItems: 'center',
+                                                    padding: '0.75rem 1rem',
+                                                    backgroundColor: 'var(--bg-surface-hover)',
+                                                    border: '1px solid var(--border-color)',
+                                                    borderRadius: 'var(--radius-md)',
+                                                    cursor: 'pointer',
+                                                    fontSize: '0.9rem',
+                                                    fontWeight: 600
+                                                }}
+                                            >
+                                                <span style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                                    <History size={16} />
+                                                    Order History ({clientOrderHistory.length})
+                                                </span>
+                                                {orderHistoryExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                                            </button>
+                                            {orderHistoryExpanded && (
+                                                <div style={{
+                                                    marginTop: '1rem',
+                                                    padding: '1rem',
+                                                    backgroundColor: 'var(--bg-surface)',
+                                                    border: '1px solid var(--border-color)',
+                                                    borderRadius: 'var(--radius-md)',
+                                                    maxHeight: '600px',
+                                                    overflowY: 'auto'
+                                                }}>
+                                                    {clientOrderHistory.length === 0 ? (
+                                                        <p style={{ color: 'var(--text-secondary)', fontStyle: 'italic' }}>No order history available.</p>
+                                                    ) : (
+                                                        <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                                                            {clientOrderHistory.slice().reverse().map((entry: any, index: number) => {
+                                                                // Debug: Log entry structure
+                                                                if (index === 0) {
+                                                                    console.log(`[ClientProfile] Rendering order history entry ${index}:`, {
+                                                                        keys: Object.keys(entry),
+                                                                        hasOrderDetails: !!entry.orderDetails,
+                                                                        orderDetailsKeys: entry.orderDetails ? Object.keys(entry.orderDetails) : [],
+                                                                        serviceType: entry.serviceType,
+                                                                        type: entry.type,
+                                                                        fullEntry: entry
+                                                                    });
+                                                                }
+                                                                return (
+                                                                    <div
+                                                                        key={index}
+                                                                        style={{
+                                                                            padding: '1rem',
+                                                                            backgroundColor: 'var(--bg-app)',
+                                                                            border: '1px solid var(--border-color)',
+                                                                            borderRadius: 'var(--radius-sm)',
+                                                                            fontSize: '0.85rem'
+                                                                        }}
+                                                                    >
+                                                                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem', fontWeight: 600 }}>
+                                                                            <span>{entry.type === 'upcoming' ? 'Upcoming Order' : 'Order'} - {entry.serviceType}</span>
+                                                                            <span style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>
+                                                                                {entry.timestamp ? new Date(entry.timestamp).toLocaleString() : 'Unknown date'}
+                                                                            </span>
+                                                                        </div>
+
+                                                                        {/* Always show what was changed - comprehensive summary */}
+                                                                        <div style={{ marginBottom: '0.75rem', padding: '0.75rem', backgroundColor: 'var(--bg-surface-active)', borderRadius: '4px', border: '1px solid var(--color-primary)' }}>
+                                                                            <strong style={{ fontSize: '0.9rem', color: 'var(--color-primary)', display: 'block', marginBottom: '0.5rem' }}>What Changed:</strong>
+
+                                                                            {/* Food Orders */}
+                                                                            {entry.serviceType === 'Food' && (
+                                                                                <div style={{ fontSize: '0.85rem' }}>
+                                                                                    {entry.orderDetails?.vendorSelections && entry.orderDetails.vendorSelections.length > 0 ? (
+                                                                                        entry.orderDetails.vendorSelections.map((vs: any, idx: number) => (
+                                                                                            <div key={idx} style={{ marginBottom: '0.5rem' }}>
+                                                                                                <strong>Vendor:</strong> {vs.vendorName || vs.vendorId || 'Unknown'}
+                                                                                                {vs.itemsDetails && (
+                                                                                                    <div style={{ marginLeft: '1rem', marginTop: '0.25rem' }}>
+                                                                                                        {Object.entries(vs.itemsDetails).map(([key, itemDetail]: [string, any]) => {
+                                                                                                            if (Array.isArray(itemDetail)) {
+                                                                                                                return itemDetail.map((item: any, itemIdx: number) => (
+                                                                                                                    <div key={itemIdx} style={{ fontSize: '0.8rem', marginTop: '0.15rem' }}>
+                                                                                                                        • {item.itemName} × {item.quantity} (${item.totalValue.toFixed(2)})
+                                                                                                                        {item.note && <span style={{ fontStyle: 'italic' }}> - {item.note}</span>}
+                                                                                                                    </div>
+                                                                                                                ));
+                                                                                                            } else {
+                                                                                                                return (
+                                                                                                                    <div key={key} style={{ fontSize: '0.8rem', marginTop: '0.15rem' }}>
+                                                                                                                        • {itemDetail.itemName} × {itemDetail.quantity} (${itemDetail.totalValue.toFixed(2)})
+                                                                                                                        {itemDetail.note && <span style={{ fontStyle: 'italic' }}> - {itemDetail.note}</span>}
+                                                                                                                    </div>
+                                                                                                                );
+                                                                                                            }
+                                                                                                        })}
+                                                                                                    </div>
+                                                                                                )}
+                                                                                            </div>
+                                                                                        ))
+                                                                                    ) : entry.orderConfig?.vendorSelections ? (
+                                                                                        <div>
+                                                                                            {entry.orderConfig.vendorSelections.map((vs: any, idx: number) => (
+                                                                                                <div key={idx} style={{ marginBottom: '0.5rem' }}>
+                                                                                                    <strong>Vendor ID:</strong> {vs.vendorId || 'None'}
+                                                                                                    {vs.items && Object.keys(vs.items).length > 0 && (
+                                                                                                        <div style={{ marginLeft: '1rem', fontSize: '0.8rem' }}>
+                                                                                                            {Object.entries(vs.items).map(([itemId, qty]: [string, any]) => (
+                                                                                                                <div key={itemId}>• Item {itemId}: × {qty}</div>
+                                                                                                            ))}
+                                                                                                        </div>
+                                                                                                    )}
+                                                                                                </div>
+                                                                                            ))}
+                                                                                        </div>
+                                                                                    ) : (
+                                                                                        <div style={{ fontStyle: 'italic', color: 'var(--text-secondary)' }}>No vendor selections found</div>
+                                                                                    )}
+                                                                                </div>
+                                                                            )}
+
+                                                                            {/* Box Orders */}
+                                                                            {entry.serviceType === 'Boxes' && (
+                                                                                <div style={{ fontSize: '0.85rem' }}>
+                                                                                    {entry.orderDetails?.boxOrders && entry.orderDetails.boxOrders.length > 0 ? (
+                                                                                        entry.orderDetails.boxOrders.map((box: any, idx: number) => (
+                                                                                            <div key={idx} style={{ marginBottom: '0.5rem' }}>
+                                                                                                <strong>Box:</strong> {box.boxTypeName || box.boxTypeId || 'Unknown'} × {box.quantity} from <strong>{box.vendorName || box.vendorId || 'Unknown'}</strong>
+                                                                                                {box.itemsDetails && box.itemsDetails.length > 0 && (
+                                                                                                    <div style={{ marginLeft: '1rem', marginTop: '0.25rem' }}>
+                                                                                                        {box.itemsDetails.map((item: any, itemIdx: number) => (
+                                                                                                            <div key={itemIdx} style={{ fontSize: '0.8rem', marginTop: '0.15rem' }}>
+                                                                                                                • {item.itemName} × {item.quantity} (${item.totalValue.toFixed(2)})
+                                                                                                                {item.note && <span style={{ fontStyle: 'italic' }}> - {item.note}</span>}
+                                                                                                            </div>
+                                                                                                        ))}
+                                                                                                    </div>
+                                                                                                )}
+                                                                                            </div>
+                                                                                        ))
+                                                                                    ) : entry.orderConfig?.boxOrders ? (
+                                                                                        <div>
+                                                                                            {entry.orderConfig.boxOrders.map((box: any, idx: number) => (
+                                                                                                <div key={idx} style={{ marginBottom: '0.5rem' }}>
+                                                                                                    <strong>Box Type:</strong> {box.boxTypeId || 'None'} × {box.quantity || 1}
+                                                                                                    {box.items && Object.keys(box.items).length > 0 && (
+                                                                                                        <div style={{ marginLeft: '1rem', fontSize: '0.8rem' }}>
+                                                                                                            {Object.entries(box.items).map(([itemId, qty]: [string, any]) => (
+                                                                                                                <div key={itemId}>• Item {itemId}: × {qty}</div>
+                                                                                                            ))}
+                                                                                                        </div>
+                                                                                                    )}
+                                                                                                </div>
+                                                                                            ))}
+                                                                                        </div>
+                                                                                    ) : (
+                                                                                        <div style={{ fontStyle: 'italic', color: 'var(--text-secondary)' }}>No box orders found</div>
+                                                                                    )}
+                                                                                </div>
+                                                                            )}
+
+                                                                            {/* Meal Orders */}
+                                                                            {entry.serviceType === 'Meal' && (
+                                                                                <div style={{ fontSize: '0.85rem' }}>
+                                                                                    {entry.orderDetails?.mealSelections && Object.keys(entry.orderDetails.mealSelections).length > 0 ? (
+                                                                                        entry.orderDetails.mealSelections.map((meal: any, idx: number) => (
+                                                                                            <div key={idx} style={{ marginBottom: '0.5rem' }}>
+                                                                                                <strong>Meal Type:</strong> {meal.mealType} from <strong>{meal.vendorName || meal.vendorId || 'Unknown'}</strong>
+                                                                                                {meal.itemsDetails && meal.itemsDetails.length > 0 && (
+                                                                                                    <div style={{ marginLeft: '1rem', marginTop: '0.25rem' }}>
+                                                                                                        {meal.itemsDetails.map((item: any, itemIdx: number) => (
+                                                                                                            <div key={itemIdx} style={{ fontSize: '0.8rem', marginTop: '0.15rem' }}>
+                                                                                                                • {item.itemName} × {item.quantity} (${item.totalValue.toFixed(2)})
+                                                                                                                {item.note && <span style={{ fontStyle: 'italic' }}> - {item.note}</span>}
+                                                                                                            </div>
+                                                                                                        ))}
+                                                                                                    </div>
+                                                                                                )}
+                                                                                            </div>
+                                                                                        ))
+                                                                                    ) : entry.orderConfig?.mealSelections ? (
+                                                                                        <div>
+                                                                                            {Object.entries(entry.orderConfig.mealSelections).map(([key, meal]: [string, any]) => (
+                                                                                                <div key={key} style={{ marginBottom: '0.5rem' }}>
+                                                                                                    <strong>Meal:</strong> {meal.mealType || key}
+                                                                                                    {meal.items && Object.keys(meal.items).length > 0 && (
+                                                                                                        <div style={{ marginLeft: '1rem', fontSize: '0.8rem' }}>
+                                                                                                            {Object.entries(meal.items).map(([itemId, qty]: [string, any]) => (
+                                                                                                                <div key={itemId}>• Item {itemId}: × {qty}</div>
+                                                                                                            ))}
+                                                                                                        </div>
+                                                                                                    )}
+                                                                                                </div>
+                                                                                            ))}
+                                                                                        </div>
+                                                                                    ) : (
+                                                                                        <div style={{ fontStyle: 'italic', color: 'var(--text-secondary)' }}>No meal selections found</div>
+                                                                                    )}
+                                                                                </div>
+                                                                            )}
+
+                                                                            {/* Custom Orders */}
+                                                                            {entry.serviceType === 'Custom' && (
+                                                                                <div style={{ fontSize: '0.85rem' }}>
+                                                                                    {entry.orderDetails?.customOrder ? (
+                                                                                        <div>
+                                                                                            <strong>Custom Order:</strong> {entry.orderDetails.customOrder.description} from <strong>{entry.orderDetails.customOrder.vendorName || entry.orderDetails.customOrder.vendorId || 'Unknown'}</strong>
+                                                                                            <span> - ${entry.orderDetails.customOrder.price.toFixed(2)}</span>
+                                                                                        </div>
+                                                                                    ) : entry.orderConfig?.custom_name ? (
+                                                                                        <div>
+                                                                                            <strong>Custom Order:</strong> {entry.orderConfig.custom_name} - ${entry.orderConfig.custom_price || 0}
+                                                                                        </div>
+                                                                                    ) : (
+                                                                                        <div style={{ fontStyle: 'italic', color: 'var(--text-secondary)' }}>No custom order details found</div>
+                                                                                    )}
+                                                                                </div>
+                                                                            )}
+                                                                        </div>
+                                                                        {entry.snapshot && (
+                                                                            <div style={{
+                                                                                marginTop: '0.5rem',
+                                                                                padding: '0.5rem',
+                                                                                backgroundColor: 'var(--bg-surface-hover)',
+                                                                                border: '1px solid var(--border-color)',
+                                                                                borderRadius: '4px',
+                                                                                fontSize: '0.8rem',
+                                                                                lineHeight: 1.4,
+                                                                                color: 'var(--text-primary)'
+                                                                            }}>
+                                                                                <strong>Snapshot:</strong> {entry.snapshot}
+                                                                            </div>
+                                                                        )}
+                                                                        {entry.deliveryDay && (
+                                                                            <div style={{ marginBottom: '0.25rem' }}>
+                                                                                <strong>Delivery Day:</strong> {entry.deliveryDay}
+                                                                            </div>
+                                                                        )}
+                                                                        {entry.mealType && (
+                                                                            <div style={{ marginBottom: '0.25rem' }}>
+                                                                                <strong>Meal Type:</strong> {entry.mealType}
+                                                                            </div>
+                                                                        )}
+                                                                        {entry.caseId && (
+                                                                            <div style={{ marginBottom: '0.25rem' }}>
+                                                                                <strong>Case ID:</strong> {entry.caseId}
+                                                                            </div>
+                                                                        )}
+                                                                        {entry.totalValue !== undefined && (
+                                                                            <div style={{ marginBottom: '0.25rem' }}>
+                                                                                <strong>Total Value:</strong> ${entry.totalValue.toFixed(2)}
+                                                                            </div>
+                                                                        )}
+                                                                        {entry.totalItems !== undefined && (
+                                                                            <div style={{ marginBottom: '0.25rem' }}>
+                                                                                <strong>Total Items:</strong> {entry.totalItems}
+                                                                            </div>
+                                                                        )}
+                                                                        {entry.updatedBy && (
+                                                                            <div style={{ marginBottom: '0.25rem' }}>
+                                                                                <strong>Updated By:</strong> {entry.updatedBy}
+                                                                            </div>
+                                                                        )}
+                                                                        {entry.notes && (
+                                                                            <div style={{ marginBottom: '0.5rem', padding: '0.5rem', backgroundColor: 'var(--bg-surface-hover)', borderRadius: '4px' }}>
+                                                                                <strong>Notes:</strong> {entry.notes}
+                                                                            </div>
+                                                                        )}
+
+                                                                        {/* Show comprehensive order details summary */}
+                                                                        {entry.orderDetails && (
+                                                                            <div style={{ marginTop: '0.5rem', marginBottom: '0.5rem', padding: '0.75rem', backgroundColor: 'var(--bg-surface-active)', borderRadius: '4px', border: '1px solid var(--color-primary)' }}>
+                                                                                <strong style={{ fontSize: '0.9rem', color: 'var(--color-primary)' }}>Order Details Summary:</strong>
+                                                                                <div style={{ marginTop: '0.5rem', fontSize: '0.85rem' }}>
+                                                                                    {entry.orderDetails.serviceType === 'Food' && entry.orderDetails.vendorSelections && (
+                                                                                        <div>
+                                                                                            <strong>Food Order:</strong>
+                                                                                            {entry.orderDetails.vendorSelections.map((vs: any, idx: number) => (
+                                                                                                <div key={idx} style={{ marginLeft: '1rem', marginTop: '0.25rem' }}>
+                                                                                                    • Vendor: <strong>{vs.vendorName || vs.vendorId}</strong>
+                                                                                                    {vs.itemsDetails && Object.keys(vs.itemsDetails).length > 0 && (
+                                                                                                        <span> - {Object.keys(vs.itemsDetails).length} item(s)</span>
+                                                                                                    )}
+                                                                                                </div>
+                                                                                            ))}
+                                                                                        </div>
+                                                                                    )}
+                                                                                    {entry.orderDetails.serviceType === 'Boxes' && entry.orderDetails.boxOrders && (
+                                                                                        <div>
+                                                                                            <strong>Box Order:</strong>
+                                                                                            {entry.orderDetails.boxOrders.map((box: any, idx: number) => (
+                                                                                                <div key={idx} style={{ marginLeft: '1rem', marginTop: '0.25rem' }}>
+                                                                                                    • {box.boxTypeName || 'Box'} × {box.quantity} from <strong>{box.vendorName || box.vendorId}</strong>
+                                                                                                    {box.itemsDetails && box.itemsDetails.length > 0 && (
+                                                                                                        <span> - {box.itemsDetails.length} item(s)</span>
+                                                                                                    )}
+                                                                                                </div>
+                                                                                            ))}
+                                                                                        </div>
+                                                                                    )}
+                                                                                    {entry.orderDetails.serviceType === 'Meal' && entry.orderDetails.mealSelections && (
+                                                                                        <div>
+                                                                                            <strong>Meal Order:</strong>
+                                                                                            {entry.orderDetails.mealSelections.map((meal: any, idx: number) => (
+                                                                                                <div key={idx} style={{ marginLeft: '1rem', marginTop: '0.25rem' }}>
+                                                                                                    • {meal.mealType} from <strong>{meal.vendorName || meal.vendorId}</strong>
+                                                                                                    {meal.itemsDetails && meal.itemsDetails.length > 0 && (
+                                                                                                        <span> - {meal.itemsDetails.length} item(s)</span>
+                                                                                                    )}
+                                                                                                </div>
+                                                                                            ))}
+                                                                                        </div>
+                                                                                    )}
+                                                                                    {entry.orderDetails.serviceType === 'Custom' && entry.orderDetails.customOrder && (
+                                                                                        <div>
+                                                                                            <strong>Custom Order:</strong>
+                                                                                            <div style={{ marginLeft: '1rem', marginTop: '0.25rem' }}>
+                                                                                                • {entry.orderDetails.customOrder.description} from <strong>{entry.orderDetails.customOrder.vendorName || entry.orderDetails.customOrder.vendorId}</strong>
+                                                                                                <span> - ${entry.orderDetails.customOrder.price.toFixed(2)}</span>
+                                                                                            </div>
+                                                                                        </div>
+                                                                                    )}
+                                                                                </div>
+                                                                            </div>
+                                                                        )}
+
+                                                                        {entry.orderDetails?.vendorSelections && entry.orderDetails.vendorSelections.length > 0 && (
+                                                                            <details style={{ marginTop: '0.5rem' }}>
+                                                                                <summary style={{ cursor: 'pointer', fontWeight: 600, marginBottom: '0.5rem' }}>
+                                                                                    Vendor Selections ({entry.orderDetails.vendorSelections.length})
+                                                                                </summary>
+                                                                                <div style={{ marginLeft: '1rem', marginTop: '0.5rem' }}>
+                                                                                    {entry.orderDetails.vendorSelections.map((vs: any, vsIndex: number) => (
+                                                                                        <div key={vsIndex} style={{ marginBottom: '1rem', padding: '0.75rem', backgroundColor: 'var(--bg-surface-hover)', borderRadius: '4px' }}>
+                                                                                            <div style={{ marginBottom: '0.5rem', fontWeight: 600 }}>
+                                                                                                <strong>Vendor:</strong> {vs.vendorName || vs.vendorId || 'Unknown'}
+                                                                                                {vs.vendorEmail && <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginLeft: '0.5rem' }}>({vs.vendorEmail})</span>}
+                                                                                            </div>
+                                                                                            {vs.selectedDeliveryDays && vs.selectedDeliveryDays.length > 0 && (
+                                                                                                <div style={{ marginBottom: '0.5rem', fontSize: '0.85rem' }}>
+                                                                                                    <strong>Delivery Days:</strong> {vs.selectedDeliveryDays.join(', ')}
+                                                                                                </div>
+                                                                                            )}
+                                                                                            {vs.itemsDetails && (
+                                                                                                <div style={{ marginTop: '0.5rem' }}>
+                                                                                                    <strong>Items:</strong>
+                                                                                                    {Object.entries(vs.itemsDetails).map(([key, itemDetail]: [string, any]) => {
+                                                                                                        if (Array.isArray(itemDetail)) {
+                                                                                                            // Items by day
+                                                                                                            return (
+                                                                                                                <div key={key} style={{ marginLeft: '1rem', marginTop: '0.25rem', fontSize: '0.85rem' }}>
+                                                                                                                    <strong>{key}:</strong>
+                                                                                                                    {itemDetail.map((item: any, idx: number) => (
+                                                                                                                        <div key={idx} style={{ marginLeft: '1rem', marginTop: '0.25rem' }}>
+                                                                                                                            {item.itemName} × {item.quantity} (${item.totalValue.toFixed(2)})
+                                                                                                                            {item.note && <span style={{ fontStyle: 'italic', color: 'var(--text-secondary)' }}> - Note: {item.note}</span>}
+                                                                                                                        </div>
+                                                                                                                    ))}
+                                                                                                                </div>
+                                                                                                            );
+                                                                                                        } else {
+                                                                                                            // Flat items
+                                                                                                            return (
+                                                                                                                <div key={key} style={{ marginLeft: '1rem', marginTop: '0.25rem', fontSize: '0.85rem' }}>
+                                                                                                                    {itemDetail.itemName} × {itemDetail.quantity} (${itemDetail.totalValue.toFixed(2)})
+                                                                                                                    {itemDetail.note && <span style={{ fontStyle: 'italic', color: 'var(--text-secondary)' }}> - Note: {itemDetail.note}</span>}
+                                                                                                                </div>
+                                                                                                            );
+                                                                                                        }
+                                                                                                    })}
+                                                                                                </div>
+                                                                                            )}
+                                                                                        </div>
+                                                                                    ))}
+                                                                                </div>
+                                                                            </details>
+                                                                        )}
+                                                                        {entry.vendorSelections && entry.vendorSelections.length > 0 && !entry.orderDetails?.vendorSelections && (
+                                                                            <details style={{ marginTop: '0.5rem' }}>
+                                                                                <summary style={{ cursor: 'pointer', fontWeight: 600, marginBottom: '0.5rem' }}>
+                                                                                    Vendor Selections ({entry.vendorSelections.length})
+                                                                                </summary>
+                                                                                <div style={{ marginLeft: '1rem', marginTop: '0.5rem' }}>
+                                                                                    {entry.vendorSelections.map((vs: any, vsIndex: number) => (
+                                                                                        <div key={vsIndex} style={{ marginBottom: '0.5rem', padding: '0.5rem', backgroundColor: 'var(--bg-surface-hover)', borderRadius: '4px' }}>
+                                                                                            <strong>Vendor:</strong> {vs.vendors?.name || vs.vendorName || vs.vendor_id || 'Unknown'}
+                                                                                            {vs.items && vs.items.length > 0 && (
+                                                                                                <div style={{ marginTop: '0.5rem' }}>
+                                                                                                    {vs.items.map((item: any, itemIdx: number) => (
+                                                                                                        <div key={itemIdx} style={{ fontSize: '0.85rem', marginTop: '0.25rem' }}>
+                                                                                                            {item.itemName || item.menu_items?.name || item.meal_items?.name || 'Item'} × {item.quantity} (${item.totalValue?.toFixed(2) || '0.00'})
+                                                                                                            {item.notes && <span style={{ fontStyle: 'italic', color: 'var(--text-secondary)' }}> - Note: {item.notes}</span>}
+                                                                                                        </div>
+                                                                                                    ))}
+                                                                                                </div>
+                                                                                            )}
+                                                                                        </div>
+                                                                                    ))}
+                                                                                </div>
+                                                                            </details>
+                                                                        )}
+                                                                        {entry.items && entry.items.length > 0 && (
+                                                                            <details style={{ marginTop: '0.5rem' }}>
+                                                                                <summary style={{ cursor: 'pointer', fontWeight: 600, marginBottom: '0.5rem' }}>
+                                                                                    Items ({entry.items.length})
+                                                                                </summary>
+                                                                                <div style={{ marginLeft: '1rem', marginTop: '0.5rem' }}>
+                                                                                    {entry.items.map((item: any, itemIndex: number) => (
+                                                                                        <div key={itemIndex} style={{ marginBottom: '0.5rem', padding: '0.5rem', backgroundColor: 'var(--bg-surface-hover)', borderRadius: '4px' }}>
+                                                                                            <div><strong>Item:</strong> {item.menu_items?.name || item.meal_items?.name || 'Custom Item'}</div>
+                                                                                            <div>Quantity: {item.quantity}</div>
+                                                                                            {item.unit_value && <div>Unit Value: ${item.unit_value.toFixed(2)}</div>}
+                                                                                            {item.total_value && <div>Total: ${item.total_value.toFixed(2)}</div>}
+                                                                                            {item.notes && <div style={{ marginTop: '0.25rem', fontStyle: 'italic' }}>Note: {item.notes}</div>}
+                                                                                        </div>
+                                                                                    ))}
+                                                                                </div>
+                                                                            </details>
+                                                                        )}
+                                                                        {entry.orderDetails?.boxOrders && entry.orderDetails.boxOrders.length > 0 && (
+                                                                            <details style={{ marginTop: '0.5rem' }}>
+                                                                                <summary style={{ cursor: 'pointer', fontWeight: 600, marginBottom: '0.5rem' }}>
+                                                                                    Box Orders ({entry.orderDetails.boxOrders.length})
+                                                                                </summary>
+                                                                                <div style={{ marginLeft: '1rem', marginTop: '0.5rem' }}>
+                                                                                    {entry.orderDetails.boxOrders.map((box: any, bsIndex: number) => (
+                                                                                        <div key={bsIndex} style={{ marginBottom: '1rem', padding: '0.75rem', backgroundColor: 'var(--bg-surface-hover)', borderRadius: '4px' }}>
+                                                                                            <div style={{ marginBottom: '0.5rem', fontWeight: 600 }}>
+                                                                                                <strong>Box Type:</strong> {box.boxTypeName || box.boxTypeId || 'Unknown'}
+                                                                                            </div>
+                                                                                            <div style={{ marginBottom: '0.25rem' }}>
+                                                                                                <strong>Vendor:</strong> {box.vendorName || box.vendorId || 'Unknown'}
+                                                                                            </div>
+                                                                                            <div style={{ marginBottom: '0.25rem' }}>
+                                                                                                <strong>Quantity:</strong> {box.quantity}
+                                                                                            </div>
+                                                                                            {box.itemsDetails && box.itemsDetails.length > 0 && (
+                                                                                                <div style={{ marginTop: '0.5rem' }}>
+                                                                                                    <strong>Items:</strong>
+                                                                                                    {box.itemsDetails.map((item: any, itemIdx: number) => (
+                                                                                                        <div key={itemIdx} style={{ marginLeft: '1rem', marginTop: '0.25rem', fontSize: '0.85rem' }}>
+                                                                                                            {item.itemName} × {item.quantity} (${item.totalValue.toFixed(2)})
+                                                                                                            {item.note && <span style={{ fontStyle: 'italic', color: 'var(--text-secondary)' }}> - Note: {item.note}</span>}
+                                                                                                        </div>
+                                                                                                    ))}
+                                                                                                </div>
+                                                                                            )}
+                                                                                        </div>
+                                                                                    ))}
+                                                                                </div>
+                                                                            </details>
+                                                                        )}
+                                                                        {entry.orderDetails?.mealSelections && Object.keys(entry.orderDetails.mealSelections).length > 0 && (
+                                                                            <details style={{ marginTop: '0.5rem' }}>
+                                                                                <summary style={{ cursor: 'pointer', fontWeight: 600, marginBottom: '0.5rem' }}>
+                                                                                    Meal Selections ({Object.keys(entry.orderDetails.mealSelections).length})
+                                                                                </summary>
+                                                                                <div style={{ marginLeft: '1rem', marginTop: '0.5rem' }}>
+                                                                                    {entry.orderDetails.mealSelections.map((meal: any, mealIndex: number) => (
+                                                                                        <div key={mealIndex} style={{ marginBottom: '1rem', padding: '0.75rem', backgroundColor: 'var(--bg-surface-hover)', borderRadius: '4px' }}>
+                                                                                            <div style={{ marginBottom: '0.5rem', fontWeight: 600 }}>
+                                                                                                <strong>Meal Type:</strong> {meal.mealType}
+                                                                                            </div>
+                                                                                            <div style={{ marginBottom: '0.5rem' }}>
+                                                                                                <strong>Vendor:</strong> {meal.vendorName || meal.vendorId || 'Unknown'}
+                                                                                            </div>
+                                                                                            {meal.itemsDetails && meal.itemsDetails.length > 0 && (
+                                                                                                <div style={{ marginTop: '0.5rem' }}>
+                                                                                                    <strong>Items:</strong>
+                                                                                                    {meal.itemsDetails.map((item: any, itemIdx: number) => (
+                                                                                                        <div key={itemIdx} style={{ marginLeft: '1rem', marginTop: '0.25rem', fontSize: '0.85rem' }}>
+                                                                                                            {item.itemName} × {item.quantity} (${item.totalValue.toFixed(2)})
+                                                                                                            {item.note && <span style={{ fontStyle: 'italic', color: 'var(--text-secondary)' }}> - Note: {item.note}</span>}
+                                                                                                        </div>
+                                                                                                    ))}
+                                                                                                </div>
+                                                                                            )}
+                                                                                        </div>
+                                                                                    ))}
+                                                                                </div>
+                                                                            </details>
+                                                                        )}
+                                                                        {entry.orderDetails?.customOrder && (
+                                                                            <details style={{ marginTop: '0.5rem' }}>
+                                                                                <summary style={{ cursor: 'pointer', fontWeight: 600, marginBottom: '0.5rem' }}>
+                                                                                    Custom Order Details
+                                                                                </summary>
+                                                                                <div style={{ marginLeft: '1rem', marginTop: '0.5rem', padding: '0.75rem', backgroundColor: 'var(--bg-surface-hover)', borderRadius: '4px' }}>
+                                                                                    <div style={{ marginBottom: '0.25rem' }}>
+                                                                                        <strong>Vendor:</strong> {entry.orderDetails.customOrder.vendorName || entry.orderDetails.customOrder.vendorId || 'Unknown'}
+                                                                                    </div>
+                                                                                    <div style={{ marginBottom: '0.25rem' }}>
+                                                                                        <strong>Description:</strong> {entry.orderDetails.customOrder.description}
+                                                                                    </div>
+                                                                                    <div style={{ marginBottom: '0.25rem' }}>
+                                                                                        <strong>Price:</strong> ${entry.orderDetails.customOrder.price.toFixed(2)}
+                                                                                    </div>
+                                                                                    {entry.orderDetails.customOrder.deliveryDay && (
+                                                                                        <div style={{ marginBottom: '0.25rem' }}>
+                                                                                            <strong>Delivery Day:</strong> {entry.orderDetails.customOrder.deliveryDay}
+                                                                                        </div>
+                                                                                    )}
+                                                                                </div>
+                                                                            </details>
+                                                                        )}
+                                                                        {entry.boxSelections && entry.boxSelections.length > 0 && !entry.orderDetails?.boxOrders && (
+                                                                            <details style={{ marginTop: '0.5rem' }}>
+                                                                                <summary style={{ cursor: 'pointer', fontWeight: 600, marginBottom: '0.5rem' }}>
+                                                                                    Box Selections ({entry.boxSelections.length})
+                                                                                </summary>
+                                                                                <div style={{ marginLeft: '1rem', marginTop: '0.5rem' }}>
+                                                                                    {entry.boxSelections.map((bs: any, bsIndex: number) => (
+                                                                                        <div key={bsIndex} style={{ marginBottom: '0.5rem', padding: '0.5rem', backgroundColor: 'var(--bg-surface-hover)', borderRadius: '4px' }}>
+                                                                                            <div><strong>Box Type:</strong> {bs.box_types?.name || bs.boxTypeName || bs.box_type_id || 'Unknown'}</div>
+                                                                                            <div><strong>Vendor:</strong> {bs.vendors?.name || bs.vendorName || bs.vendor_id || 'Unknown'}</div>
+                                                                                            <div>Quantity: {bs.quantity}</div>
+                                                                                            {bs.total_value && <div>Total: ${bs.total_value.toFixed(2)}</div>}
+                                                                                            {bs.items && Object.keys(bs.items).length > 0 && (
+                                                                                                <div style={{ marginTop: '0.25rem' }}>
+                                                                                                    <strong>Items:</strong> {JSON.stringify(bs.items, null, 2)}
+                                                                                                </div>
+                                                                                            )}
+                                                                                        </div>
+                                                                                    ))}
+                                                                                </div>
+                                                                            </details>
+                                                                        )}
+                                                                        {/* Fallback: Show orderConfig if orderDetails is not available */}
+                                                                        {!entry.orderDetails && entry.orderConfig && (
+                                                                            <details style={{ marginTop: '0.5rem' }}>
+                                                                                <summary style={{ cursor: 'pointer', fontWeight: 600, marginBottom: '0.5rem' }}>
+                                                                                    Order Configuration
+                                                                                </summary>
+                                                                                <div style={{ marginLeft: '1rem', marginTop: '0.5rem', padding: '0.75rem', backgroundColor: 'var(--bg-surface-hover)', borderRadius: '4px' }}>
+                                                                                    {entry.orderConfig.serviceType && (
+                                                                                        <div style={{ marginBottom: '0.5rem' }}>
+                                                                                            <strong>Service Type:</strong> {entry.orderConfig.serviceType}
+                                                                                        </div>
+                                                                                    )}
+                                                                                    {entry.orderConfig.caseId && (
+                                                                                        <div style={{ marginBottom: '0.5rem' }}>
+                                                                                            <strong>Case ID:</strong> {entry.orderConfig.caseId}
+                                                                                        </div>
+                                                                                    )}
+                                                                                    {entry.orderConfig.vendorSelections && Array.isArray(entry.orderConfig.vendorSelections) && entry.orderConfig.vendorSelections.length > 0 && (
+                                                                                        <div style={{ marginTop: '0.5rem' }}>
+                                                                                            <strong>Vendor Selections:</strong>
+                                                                                            {entry.orderConfig.vendorSelections.map((vs: any, idx: number) => (
+                                                                                                <div key={idx} style={{ marginLeft: '1rem', marginTop: '0.25rem', fontSize: '0.85rem' }}>
+                                                                                                    • Vendor ID: {vs.vendorId || 'None'}
+                                                                                                    {vs.items && Object.keys(vs.items).length > 0 && (
+                                                                                                        <span> - {Object.keys(vs.items).length} item(s)</span>
+                                                                                                    )}
+                                                                                                </div>
+                                                                                            ))}
+                                                                                        </div>
+                                                                                    )}
+                                                                                    {entry.orderConfig.boxOrders && Array.isArray(entry.orderConfig.boxOrders) && entry.orderConfig.boxOrders.length > 0 && (
+                                                                                        <div style={{ marginTop: '0.5rem' }}>
+                                                                                            <strong>Box Orders:</strong>
+                                                                                            {entry.orderConfig.boxOrders.map((box: any, idx: number) => (
+                                                                                                <div key={idx} style={{ marginLeft: '1rem', marginTop: '0.25rem', fontSize: '0.85rem' }}>
+                                                                                                    • Box Type: {box.boxTypeId || 'None'} × {box.quantity || 1}
+                                                                                                    {box.items && Object.keys(box.items).length > 0 && (
+                                                                                                        <span> - {Object.keys(box.items).length} item(s)</span>
+                                                                                                    )}
+                                                                                                </div>
+                                                                                            ))}
+                                                                                        </div>
+                                                                                    )}
+                                                                                    {entry.orderConfig.mealSelections && Object.keys(entry.orderConfig.mealSelections).length > 0 && (
+                                                                                        <div style={{ marginTop: '0.5rem' }}>
+                                                                                            <strong>Meal Selections:</strong>
+                                                                                            {Object.entries(entry.orderConfig.mealSelections).map(([key, meal]: [string, any]) => (
+                                                                                                <div key={key} style={{ marginLeft: '1rem', marginTop: '0.25rem', fontSize: '0.85rem' }}>
+                                                                                                    • {meal.mealType || key}
+                                                                                                    {meal.items && Object.keys(meal.items).length > 0 && (
+                                                                                                        <span> - {Object.keys(meal.items).length} item(s)</span>
+                                                                                                    )}
+                                                                                                </div>
+                                                                                            ))}
+                                                                                        </div>
+                                                                                    )}
+                                                                                    {entry.orderConfig.custom_name && (
+                                                                                        <div style={{ marginTop: '0.5rem' }}>
+                                                                                            <strong>Custom Order:</strong> {entry.orderConfig.custom_name} - ${entry.orderConfig.custom_price || 0}
+                                                                                        </div>
+                                                                                    )}
+                                                                                </div>
+                                                                            </details>
+                                                                        )}
+
+                                                                        {/* Full order data for debugging */}
+                                                                        {entry.orderData && (
+                                                                            <details style={{ marginTop: '0.5rem' }}>
+                                                                                <summary style={{ cursor: 'pointer', fontWeight: 600, marginBottom: '0.5rem', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                                                                                    Full Order Data (Debug)
+                                                                                </summary>
+                                                                                <pre style={{
+                                                                                    marginLeft: '1rem',
+                                                                                    marginTop: '0.5rem',
+                                                                                    padding: '0.5rem',
+                                                                                    backgroundColor: 'var(--bg-surface-hover)',
+                                                                                    borderRadius: '4px',
+                                                                                    fontSize: '0.75rem',
+                                                                                    overflow: 'auto',
+                                                                                    maxHeight: '200px'
+                                                                                }}>
+                                                                                    {JSON.stringify(entry.orderData, null, 2)}
+                                                                                </pre>
+                                                                            </details>
+                                                                        )}
+                                                                        {entry.orderConfig && !entry.orderData && (
+                                                                            <details style={{ marginTop: '0.5rem' }}>
+                                                                                <summary style={{ cursor: 'pointer', fontWeight: 600, marginBottom: '0.5rem', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                                                                                    Full Order Config (Debug)
+                                                                                </summary>
+                                                                                <pre style={{
+                                                                                    marginLeft: '1rem',
+                                                                                    marginTop: '0.5rem',
+                                                                                    padding: '0.5rem',
+                                                                                    backgroundColor: 'var(--bg-surface-hover)',
+                                                                                    borderRadius: '4px',
+                                                                                    fontSize: '0.75rem',
+                                                                                    overflow: 'auto',
+                                                                                    maxHeight: '200px'
+                                                                                }}>
+                                                                                    {JSON.stringify(entry.orderConfig, null, 2)}
+                                                                                </pre>
+                                                                            </details>
+                                                                        )}
+                                                                    </div>
+                                                                );
+                                                            })}
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            )}
+                                        </div>
+                                    )}
+
                                     <div className={styles.formGroup}>
                                         <label className="label">Screening Status</label>
                                         <div style={{
@@ -3395,7 +4095,7 @@ export function ClientProfileDetail({
                                                                                 }
 
                                                                                 const meetsQuota = requiredQuotaValue !== null ? isMeetingExactTarget(categoryQuotaValue, requiredQuotaValue) : true;
-                                                                                
+
                                                                                 // Get selected items for this category to show in summary
                                                                                 const selectedItemsForCategory = availableItems.filter(item => {
                                                                                     const qty = Number(selectedItems[item.id] || 0);
@@ -3404,21 +4104,21 @@ export function ClientProfileDetail({
                                                                                     const qty = Number(selectedItems[item.id] || 0);
                                                                                     return { item, qty };
                                                                                 });
-                                                                                
+
                                                                                 const shelfId = getCategoryShelfId(index, category.id);
                                                                                 const isOpen = isCategoryShelfOpen(index, category.id);
 
                                                                                 return (
-                                                                                    <div key={category.id} style={{ 
-                                                                                        marginBottom: '1rem', 
-                                                                                        background: 'var(--bg-surface)', 
-                                                                                        borderRadius: '8px', 
+                                                                                    <div key={category.id} style={{
+                                                                                        marginBottom: '1rem',
+                                                                                        background: 'var(--bg-surface)',
+                                                                                        borderRadius: '8px',
                                                                                         border: requiredQuotaValue !== null && !meetsQuota ? '2px solid var(--color-danger)' : '1px solid var(--border-color)',
                                                                                         overflow: 'hidden',
                                                                                         transition: 'all 0.2s ease'
                                                                                     }}>
                                                                                         {/* Shelf Header - Always Visible */}
-                                                                                        <div 
+                                                                                        <div
                                                                                             onClick={() => toggleCategoryShelf(index, category.id)}
                                                                                             style={{
                                                                                                 display: 'flex',
@@ -3448,8 +4148,8 @@ export function ClientProfileDetail({
                                                                                                     </span>
                                                                                                 )}
                                                                                                 {categoryQuotaValue > 0 && requiredQuotaValue === null && (
-                                                                                                    <span style={{ 
-                                                                                                        color: 'var(--text-secondary)', 
+                                                                                                    <span style={{
+                                                                                                        color: 'var(--text-secondary)',
                                                                                                         fontSize: '0.85rem',
                                                                                                         padding: '2px 8px',
                                                                                                         backgroundColor: 'var(--bg-surface-hover)',
@@ -3460,16 +4160,16 @@ export function ClientProfileDetail({
                                                                                                 )}
                                                                                                 {/* Show selected items in summary */}
                                                                                                 {selectedItemsForCategory.length > 0 && (
-                                                                                                    <div style={{ 
-                                                                                                        display: 'flex', 
-                                                                                                        alignItems: 'center', 
+                                                                                                    <div style={{
+                                                                                                        display: 'flex',
+                                                                                                        alignItems: 'center',
                                                                                                         gap: '4px',
                                                                                                         flexWrap: 'wrap',
                                                                                                         fontSize: '0.85rem',
                                                                                                         color: 'var(--text-secondary)'
                                                                                                     }}>
                                                                                                         {selectedItemsForCategory.map(({ item, qty }, idx) => (
-                                                                                                            <span 
+                                                                                                            <span
                                                                                                                 key={item.id}
                                                                                                                 style={{
                                                                                                                     padding: '2px 8px',
@@ -3484,8 +4184,8 @@ export function ClientProfileDetail({
                                                                                                     </div>
                                                                                                 )}
                                                                                                 {selectedItemsForCategory.length === 0 && (
-                                                                                                    <span style={{ 
-                                                                                                        fontSize: '0.8rem', 
+                                                                                                    <span style={{
+                                                                                                        fontSize: '0.8rem',
                                                                                                         color: 'var(--text-tertiary)',
                                                                                                         fontStyle: 'italic'
                                                                                                     }}>
@@ -3493,7 +4193,7 @@ export function ClientProfileDetail({
                                                                                                     </span>
                                                                                                 )}
                                                                                             </div>
-                                                                                            <div style={{ 
+                                                                                            <div style={{
                                                                                                 transform: isOpen ? 'rotate(90deg)' : 'rotate(0deg)',
                                                                                                 transition: 'transform 0.2s ease',
                                                                                                 marginLeft: '8px'
@@ -3501,10 +4201,10 @@ export function ClientProfileDetail({
                                                                                                 <ChevronRight size={20} />
                                                                                             </div>
                                                                                         </div>
-                                                                                        
+
                                                                                         {/* Shelf Content - Only visible when open */}
                                                                                         {isOpen && (
-                                                                                            <div style={{ 
+                                                                                            <div style={{
                                                                                                 padding: '16px',
                                                                                                 backgroundColor: 'var(--bg-surface)',
                                                                                                 animation: 'fadeIn 0.2s ease'
@@ -3528,76 +4228,76 @@ export function ClientProfileDetail({
                                                                                                 )}
 
                                                                                                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '1rem' }}>
-                                                                                            {availableItems.map(item => {
-                                                                                                const qty = Number(selectedItems[item.id] || 0);
-                                                                                                const note = box.itemNotes?.[item.id] || '';
-                                                                                                const isSelected = qty > 0;
+                                                                                                    {availableItems.map(item => {
+                                                                                                        const qty = Number(selectedItems[item.id] || 0);
+                                                                                                        const note = box.itemNotes?.[item.id] || '';
+                                                                                                        const isSelected = qty > 0;
 
-                                                                                                return (
-                                                                                                    <div key={item.id} style={{
-                                                                                                        border: isSelected ? '1px solid var(--color-primary)' : '1px solid var(--border-color)',
-                                                                                                        backgroundColor: isSelected ? 'rgba(var(--color-primary-rgb), 0.05)' : 'var(--bg-app)',
-                                                                                                        borderRadius: '8px',
-                                                                                                        padding: '12px',
-                                                                                                        display: 'flex',
-                                                                                                        flexDirection: 'column',
-                                                                                                        gap: '10px',
-                                                                                                        transition: 'all 0.2s ease',
-                                                                                                        boxShadow: isSelected ? '0 2px 4px rgba(0,0,0,0.05)' : 'none'
-                                                                                                    }}>
-                                                                                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '10px' }}>
-                                                                                                            <div style={{ flex: 1 }}>
-                                                                                                                <div style={{ fontWeight: 600, fontSize: '0.9rem', color: isSelected ? 'var(--color-primary)' : 'var(--text-primary)' }}>
-                                                                                                                    {item.name}
+                                                                                                        return (
+                                                                                                            <div key={item.id} style={{
+                                                                                                                border: isSelected ? '1px solid var(--color-primary)' : '1px solid var(--border-color)',
+                                                                                                                backgroundColor: isSelected ? 'rgba(var(--color-primary-rgb), 0.05)' : 'var(--bg-app)',
+                                                                                                                borderRadius: '8px',
+                                                                                                                padding: '12px',
+                                                                                                                display: 'flex',
+                                                                                                                flexDirection: 'column',
+                                                                                                                gap: '10px',
+                                                                                                                transition: 'all 0.2s ease',
+                                                                                                                boxShadow: isSelected ? '0 2px 4px rgba(0,0,0,0.05)' : 'none'
+                                                                                                            }}>
+                                                                                                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '10px' }}>
+                                                                                                                    <div style={{ flex: 1 }}>
+                                                                                                                        <div style={{ fontWeight: 600, fontSize: '0.9rem', color: isSelected ? 'var(--color-primary)' : 'var(--text-primary)' }}>
+                                                                                                                            {item.name}
+                                                                                                                        </div>
+                                                                                                                        {(item.quotaValue || 1) !== 1 && (
+                                                                                                                            <div style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)', marginTop: '2px' }}>
+                                                                                                                                Counts as {item.quotaValue} meals
+                                                                                                                            </div>
+                                                                                                                        )}
+                                                                                                                    </div>
+                                                                                                                    <div className={styles.quantityControl} style={{ display: 'flex', alignItems: 'center', gap: '8px', backgroundColor: 'var(--bg-surface)', padding: '2px', borderRadius: '6px', border: '1px solid var(--border-color)' }}>
+                                                                                                                        <button
+                                                                                                                            onClick={() => handleBoxItemUpdate(index, item.id, Math.max(0, qty - 1), note)}
+                                                                                                                            className="btn btn-ghost btn-sm"
+                                                                                                                            style={{ width: '24px', height: '24px', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                                                                                                                            disabled={qty === 0}
+                                                                                                                        >
+                                                                                                                            -
+                                                                                                                        </button>
+                                                                                                                        <span style={{ width: '24px', textAlign: 'center', fontWeight: 600, fontSize: '0.9rem' }}>{qty}</span>
+                                                                                                                        <button
+                                                                                                                            onClick={() => handleBoxItemUpdate(index, item.id, qty + 1, note)}
+                                                                                                                            className="btn btn-ghost btn-sm"
+                                                                                                                            style={{ width: '24px', height: '24px', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                                                                                                                        >
+                                                                                                                            +
+                                                                                                                        </button>
+                                                                                                                    </div>
                                                                                                                 </div>
-                                                                                                                {(item.quotaValue || 1) !== 1 && (
-                                                                                                                    <div style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)', marginTop: '2px' }}>
-                                                                                                                        Counts as {item.quotaValue} meals
+
+                                                                                                                {isSelected && (
+                                                                                                                    <div style={{ marginTop: '0px' }}>
+                                                                                                                        <TextareaAutosize
+                                                                                                                            minRows={1}
+                                                                                                                            placeholder="Add notes for this item..."
+                                                                                                                            value={note}
+                                                                                                                            onChange={(e) => handleBoxItemUpdate(index, item.id, qty, e.target.value)}
+                                                                                                                            style={{
+                                                                                                                                width: '100%',
+                                                                                                                                fontSize: '0.85rem',
+                                                                                                                                padding: '6px 8px',
+                                                                                                                                borderRadius: '6px',
+                                                                                                                                border: '1px solid rgba(0,0,0,0.1)',
+                                                                                                                                backgroundColor: 'rgba(255,255,255,0.5)',
+                                                                                                                                resize: 'none'
+                                                                                                                            }}
+                                                                                                                        />
                                                                                                                     </div>
                                                                                                                 )}
                                                                                                             </div>
-                                                                                                            <div className={styles.quantityControl} style={{ display: 'flex', alignItems: 'center', gap: '8px', backgroundColor: 'var(--bg-surface)', padding: '2px', borderRadius: '6px', border: '1px solid var(--border-color)' }}>
-                                                                                                                <button
-                                                                                                                    onClick={() => handleBoxItemUpdate(index, item.id, Math.max(0, qty - 1), note)}
-                                                                                                                    className="btn btn-ghost btn-sm"
-                                                                                                                    style={{ width: '24px', height: '24px', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-                                                                                                                    disabled={qty === 0}
-                                                                                                                >
-                                                                                                                    -
-                                                                                                                </button>
-                                                                                                                <span style={{ width: '24px', textAlign: 'center', fontWeight: 600, fontSize: '0.9rem' }}>{qty}</span>
-                                                                                                                <button
-                                                                                                                    onClick={() => handleBoxItemUpdate(index, item.id, qty + 1, note)}
-                                                                                                                    className="btn btn-ghost btn-sm"
-                                                                                                                    style={{ width: '24px', height: '24px', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-                                                                                                                >
-                                                                                                                    +
-                                                                                                                </button>
-                                                                                                            </div>
-                                                                                                        </div>
-
-                                                                                                        {isSelected && (
-                                                                                                            <div style={{ marginTop: '0px' }}>
-                                                                                                                <TextareaAutosize
-                                                                                                                    minRows={1}
-                                                                                                                    placeholder="Add notes for this item..."
-                                                                                                                    value={note}
-                                                                                                                    onChange={(e) => handleBoxItemUpdate(index, item.id, qty, e.target.value)}
-                                                                                                                    style={{
-                                                                                                                        width: '100%',
-                                                                                                                        fontSize: '0.85rem',
-                                                                                                                        padding: '6px 8px',
-                                                                                                                        borderRadius: '6px',
-                                                                                                                        border: '1px solid rgba(0,0,0,0.1)',
-                                                                                                                        backgroundColor: 'rgba(255,255,255,0.5)',
-                                                                                                                        resize: 'none'
-                                                                                                                    }}
-                                                                                                                />
-                                                                                                            </div>
-                                                                                                        )}
-                                                                                                    </div>
-                                                                                                );
-                                                                                            })}
+                                                                                                        );
+                                                                                                    })}
                                                                                                 </div>
                                                                                             </div>
                                                                                         )}
@@ -3891,267 +4591,388 @@ export function ClientProfileDetail({
                                 }
                             </section>
 
-                            {/* Recent Orders Panel */}
+                            {/* Recent Orders Panel - Collapsible Shelf */}
                             <section className={styles.card} style={{ marginTop: 'var(--spacing-lg)' }}>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: 'var(--spacing-md)' }}>
-                                    <Calendar size={18} />
-                                    <h3 className={styles.sectionTitle} style={{ marginBottom: 0, borderBottom: 'none', paddingBottom: 0 }}>
-                                        Recent Orders
-                                    </h3>
-                                </div>
-                                {loadingOrderDetails ? (
-                                    <div className={styles.loadingContainer}>
-                                        <div className={styles.spinner}></div>
-                                        <p className={styles.loadingText}>Loading order details...</p>
-                                    </div>
-                                ) : activeOrder ? (
+                                <button
+                                    type="button"
+                                    onClick={() => setRecentOrdersExpanded(!recentOrdersExpanded)}
+                                    style={{
+                                        width: '100%',
+                                        display: 'flex',
+                                        justifyContent: 'space-between',
+                                        alignItems: 'center',
+                                        padding: '0.75rem 1rem',
+                                        backgroundColor: 'var(--bg-surface-hover)',
+                                        border: '1px solid var(--border-color)',
+                                        borderRadius: 'var(--radius-md)',
+                                        cursor: 'pointer',
+                                        fontSize: '0.9rem',
+                                        fontWeight: 600,
+                                        marginBottom: recentOrdersExpanded ? 'var(--spacing-md)' : 0,
+                                        transition: 'all 0.2s ease'
+                                    }}
+                                    onMouseOver={(e) => {
+                                        e.currentTarget.style.backgroundColor = 'var(--bg-surface-active)';
+                                    }}
+                                    onMouseOut={(e) => {
+                                        e.currentTarget.style.backgroundColor = 'var(--bg-surface-hover)';
+                                    }}
+                                >
+                                    <span style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                        <Calendar size={18} />
+                                        Recent Orders ({activeOrder ? (activeOrder.multiple === true && Array.isArray(activeOrder.orders) ? activeOrder.orders.length : 1) : 0})
+                                    </span>
+                                    {recentOrdersExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                                </button>
+                                {recentOrdersExpanded && (
                                     <div>
-                                        {(() => {
-                                            // Handle both single order (backward compatibility) and multiple orders
-                                            const isMultiple = activeOrder.multiple === true && Array.isArray(activeOrder.orders);
-                                            const ordersToDisplay = isMultiple ? activeOrder.orders : [activeOrder];
+                                        {loadingOrderDetails ? (
+                                            <div className={styles.loadingContainer}>
+                                                <div className={styles.spinner}></div>
+                                                <p className={styles.loadingText}>Loading order details...</p>
+                                            </div>
+                                        ) : activeOrder ? (
+                                            <div>
+                                                {(() => {
+                                                    // Handle both single order (backward compatibility) and multiple orders
+                                                    const isMultiple = activeOrder.multiple === true && Array.isArray(activeOrder.orders);
+                                                    const ordersToDisplay = isMultiple ? activeOrder.orders : [activeOrder];
 
-                                            return (
-                                                <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--spacing-md)' }}>
-                                                    {ordersToDisplay.map((order: any, orderIdx: number) => {
-                                                        const isFood = order.serviceType === 'Food';
-                                                        const isBoxes = order.serviceType === 'Boxes';
-                                                        const isEquipment = order.serviceType === 'Equipment';
+                                                    return (
+                                                        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--spacing-md)' }}>
+                                                            {ordersToDisplay.map((order: any, orderIdx: number) => {
+                                                                const isFood = order.serviceType === 'Food';
+                                                                const isBoxes = order.serviceType === 'Boxes';
+                                                                const isEquipment = order.serviceType === 'Equipment';
 
-                                                        return (
-                                                            <div key={orderIdx} style={isMultiple ? {
-                                                                padding: 'var(--spacing-md)',
-                                                                backgroundColor: 'var(--bg-surface)',
-                                                                borderRadius: 'var(--radius-md)',
-                                                                border: '1px solid var(--border-color)'
-                                                            } : {}}>
-                                                                <div style={{
-                                                                    marginBottom: 'var(--spacing-md)',
-                                                                    paddingBottom: 'var(--spacing-sm)',
-                                                                    borderBottom: '1px solid var(--border-color)',
-                                                                    display: 'flex',
-                                                                    justifyContent: 'space-between',
-                                                                    alignItems: 'center',
-                                                                    flexWrap: 'wrap',
-                                                                    gap: '8px'
-                                                                }}>
-                                                                    <div style={{
-                                                                        fontSize: '0.9rem',
-                                                                        fontWeight: 600,
-                                                                        color: 'var(--text-secondary)'
-                                                                    }}>
-                                                                        {order.id ? (
-                                                                            <Link href={`/orders/${order.id}`} style={{ color: 'var(--color-primary)', textDecoration: 'none', cursor: 'pointer' }}>
-                                                                                {order.orderNumber ? `Order #${order.orderNumber}` : `Order ${orderIdx + 1}`}
-                                                                            </Link>
-                                                                        ) : (
-                                                                            <span>{order.orderNumber ? `Order #${order.orderNumber}` : `Order ${orderIdx + 1}`}</span>
-                                                                        )}
-                                                                        {isMultiple && !order.orderNumber && ` of ${ordersToDisplay.length}`}
-                                                                        {order.scheduledDeliveryDate && (
-                                                                            <span style={{ marginLeft: 'var(--spacing-sm)', fontSize: '0.85rem', fontWeight: 400, color: 'var(--text-secondary)' }}>
-                                                                                • Scheduled: {new Date(order.scheduledDeliveryDate).toLocaleDateString('en-US', { timeZone: 'UTC' })}
-                                                                            </span>
-                                                                        )}
-                                                                    </div>
-
-                                                                    {/* Proof of Delivery / Status */}
-                                                                    <div style={{ fontSize: '0.85rem' }}>
-                                                                        {order.proofOfDelivery ? (
-                                                                            <a
-                                                                                href={order.proofOfDelivery}
-                                                                                target="_blank"
-                                                                                rel="noopener noreferrer"
-                                                                                style={{
-                                                                                    display: 'flex',
-                                                                                    alignItems: 'center',
-                                                                                    gap: '4px',
-                                                                                    color: 'var(--color-primary)',
-                                                                                    fontWeight: 500,
-                                                                                    textDecoration: 'none'
-                                                                                }}
-                                                                            >
-                                                                                View Proof of Delivery
-                                                                            </a>
-                                                                        ) : (
-                                                                            <span style={{
-                                                                                color: 'var(--text-tertiary)',
-                                                                                fontStyle: 'italic',
-                                                                                display: 'flex',
-                                                                                alignItems: 'center',
-                                                                                gap: '4px'
+                                                                return (
+                                                                    <div key={orderIdx} style={isMultiple ? {
+                                                                        padding: 'var(--spacing-md)',
+                                                                        backgroundColor: 'var(--bg-surface)',
+                                                                        borderRadius: 'var(--radius-md)',
+                                                                        border: '1px solid var(--border-color)'
+                                                                    } : {}}>
+                                                                        <div style={{
+                                                                            marginBottom: 'var(--spacing-md)',
+                                                                            paddingBottom: 'var(--spacing-sm)',
+                                                                            borderBottom: '1px solid var(--border-color)',
+                                                                            display: 'flex',
+                                                                            justifyContent: 'space-between',
+                                                                            alignItems: 'center',
+                                                                            flexWrap: 'wrap',
+                                                                            gap: '8px'
+                                                                        }}>
+                                                                            <div style={{
+                                                                                fontSize: '0.9rem',
+                                                                                fontWeight: 600,
+                                                                                color: 'var(--text-secondary)'
                                                                             }}>
-                                                                                Not yet delivered
-                                                                            </span>
-                                                                        )}
-                                                                    </div>
-                                                                </div>
-                                                                <div>
-                                                                    {/* Service Type Header */}
-                                                                    <div style={{ marginBottom: 'var(--spacing-sm)', fontSize: '0.9rem', fontWeight: 600, color: 'var(--text-primary)' }}>
-                                                                        {isFood ? 'Food' : isBoxes ? 'Boxes' : isEquipment ? 'Equipment' : 'Unknown Service'}
-                                                                    </div>
+                                                                                {order.id ? (
+                                                                                    <Link href={`/orders/${order.id}`} style={{ color: 'var(--color-primary)', textDecoration: 'none', cursor: 'pointer' }}>
+                                                                                        {order.orderNumber ? `Order #${order.orderNumber}` : `Order ${orderIdx + 1}`}
+                                                                                    </Link>
+                                                                                ) : (
+                                                                                    <span>{order.orderNumber ? `Order #${order.orderNumber}` : `Order ${orderIdx + 1}`}</span>
+                                                                                )}
+                                                                                {isMultiple && !order.orderNumber && ` of ${ordersToDisplay.length}`}
+                                                                                {order.scheduledDeliveryDate && (
+                                                                                    <span style={{ marginLeft: 'var(--spacing-sm)', fontSize: '0.85rem', fontWeight: 400, color: 'var(--text-secondary)' }}>
+                                                                                        • Scheduled: {new Date(order.scheduledDeliveryDate).toLocaleDateString('en-US', { timeZone: 'UTC' })}
+                                                                                    </span>
+                                                                                )}
+                                                                            </div>
 
-                                                                    {/* Food Order Display - Show vendors first, then items grouped by vendor */}
-                                                                    {isFood && (
-                                                                        <div style={{ padding: 'var(--spacing-md)', backgroundColor: 'var(--bg-surface)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)' }}>
-                                                                            {order.vendorSelections && order.vendorSelections.length > 0 ? (
-                                                                                <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--spacing-md)' }}>
-                                                                                    {order.vendorSelections.map((vendorSelection: any, idx: number) => {
-                                                                                        const vendor = vendors.find(v => v.id === vendorSelection.vendorId);
-                                                                                        const vendorName = vendor?.name || 'Unassigned';
-                                                                                        const nextDelivery = getNextDeliveryDate(vendorSelection.vendorId);
-                                                                                        const items = vendorSelection.items || {};
+                                                                            {/* Proof of Delivery / Status */}
+                                                                            <div style={{ fontSize: '0.85rem' }}>
+                                                                                {order.proofOfDelivery ? (
+                                                                                    <a
+                                                                                        href={order.proofOfDelivery}
+                                                                                        target="_blank"
+                                                                                        rel="noopener noreferrer"
+                                                                                        style={{
+                                                                                            display: 'flex',
+                                                                                            alignItems: 'center',
+                                                                                            gap: '4px',
+                                                                                            color: 'var(--color-primary)',
+                                                                                            fontWeight: 500,
+                                                                                            textDecoration: 'none'
+                                                                                        }}
+                                                                                    >
+                                                                                        View Proof of Delivery
+                                                                                    </a>
+                                                                                ) : (
+                                                                                    <span style={{
+                                                                                        color: 'var(--text-tertiary)',
+                                                                                        fontStyle: 'italic',
+                                                                                        display: 'flex',
+                                                                                        alignItems: 'center',
+                                                                                        gap: '4px'
+                                                                                    }}>
+                                                                                        Not yet delivered
+                                                                                    </span>
+                                                                                )}
+                                                                            </div>
+                                                                        </div>
+                                                                        <div>
+                                                                            {/* Service Type Header */}
+                                                                            <div style={{ marginBottom: 'var(--spacing-sm)', fontSize: '0.9rem', fontWeight: 600, color: 'var(--text-primary)' }}>
+                                                                                {isFood ? 'Food' : isBoxes ? 'Boxes' : isEquipment ? 'Equipment' : 'Unknown Service'}
+                                                                            </div>
+
+                                                                            {/* Food Order Display - Show vendors first, then items grouped by vendor */}
+                                                                            {isFood && (
+                                                                                <div style={{ padding: 'var(--spacing-md)', backgroundColor: 'var(--bg-surface)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)' }}>
+                                                                                    {order.vendorSelections && order.vendorSelections.length > 0 ? (
+                                                                                        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--spacing-md)' }}>
+                                                                                            {order.vendorSelections.map((vendorSelection: any, idx: number) => {
+                                                                                                const vendor = vendors.find(v => v.id === vendorSelection.vendorId);
+                                                                                                const vendorName = vendor?.name || 'Unassigned';
+                                                                                                const nextDelivery = getNextDeliveryDate(vendorSelection.vendorId);
+                                                                                                const items = vendorSelection.items || {};
+
+                                                                                                return (
+                                                                                                    <div key={idx} style={{ padding: 'var(--spacing-md)', backgroundColor: 'var(--bg-surface)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)' }}>
+                                                                                                        {/* Vendor Header */}
+                                                                                                        <div style={{ marginBottom: 'var(--spacing-sm)', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                                                                                                            {vendorName}
+                                                                                                        </div>
+                                                                                                        {/* Items List */}
+                                                                                                        {Object.keys(items).length > 0 ? (
+                                                                                                            <div style={{ fontSize: '0.85rem', color: 'var(--text-primary)' }}>
+                                                                                                                {Object.entries(items).map(([itemId, qty]: [string, any]) => {
+                                                                                                                    const item = menuItems.find(i => i.id === itemId);
+                                                                                                                    return item ? (
+                                                                                                                        <div key={itemId} style={{ marginBottom: '4px' }}>
+                                                                                                                            {item.name} × {qty}
+                                                                                                                        </div>
+                                                                                                                    ) : null;
+                                                                                                                })}
+                                                                                                            </div>
+                                                                                                        ) : (
+                                                                                                            <div style={{ fontSize: '0.85rem', color: 'var(--text-tertiary)', fontStyle: 'italic' }}>
+                                                                                                                No items selected
+                                                                                                            </div>
+                                                                                                        )}
+
+                                                                                                    </div>
+                                                                                                );
+                                                                                            })}
+                                                                                        </div>
+                                                                                    ) : (
+                                                                                        <div style={{ fontSize: '0.85rem', color: 'var(--text-tertiary)', fontStyle: 'italic' }}>
+                                                                                            No vendors or items selected
+                                                                                        </div>
+                                                                                    )}
+                                                                                </div>
+                                                                            )}
+
+                                                                            {/* Boxes Order Display - Show vendor, box type, and all items */}
+                                                                            {isBoxes && (order.boxTypeId || (order.boxOrders && order.boxOrders.length > 0)) && (
+                                                                                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                                                                                    {(() => {
+                                                                                        const boxesToDisplay = (order.boxOrders && order.boxOrders.length > 0)
+                                                                                            ? order.boxOrders
+                                                                                            : [{
+                                                                                                boxTypeId: order.boxTypeId,
+                                                                                                vendorId: order.vendorId,
+                                                                                                quantity: order.boxQuantity,
+                                                                                                items: order.items
+                                                                                            }];
+
+                                                                                        return boxesToDisplay.map((boxData: any, bIdx: number) => {
+                                                                                            const box = boxTypes.find(b => b.id === boxData.boxTypeId);
+                                                                                            const boxVendorId = boxData.vendorId || box?.vendorId || null;
+                                                                                            const vendor = boxVendorId ? vendors.find(v => v.id === boxVendorId) : null;
+                                                                                            const vendorName = vendor?.name || 'Unassigned';
+                                                                                            const boxName = box?.name || 'Unknown Box';
+                                                                                            const items = boxData.items || {};
+
+                                                                                            return (
+                                                                                                <div key={bIdx} style={{ padding: 'var(--spacing-md)', backgroundColor: 'var(--bg-surface)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)' }}>
+                                                                                                    {/* Vendor */}
+                                                                                                    <div style={{ marginBottom: 'var(--spacing-xs)', fontSize: '0.8rem', color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.025em', fontWeight: 600 }}>
+                                                                                                        {vendorName}
+                                                                                                    </div>
+                                                                                                    {/* Box Type and Quantity */}
+                                                                                                    <div style={{ marginBottom: 'var(--spacing-sm)', fontSize: '0.9rem', color: 'var(--text-primary)', fontWeight: 600 }}>
+                                                                                                        {boxName} × {boxData.quantity || 1}
+                                                                                                    </div>
+                                                                                                    {/* Items List */}
+                                                                                                    {Object.keys(items).length > 0 ? (
+                                                                                                        <div style={{ fontSize: '0.85rem', color: 'var(--text-primary)' }}>
+                                                                                                            {Object.entries(items).map(([itemId, qty]: [string, any]) => {
+                                                                                                                const item = menuItems.find(i => i.id === itemId);
+                                                                                                                return item ? (
+                                                                                                                    <div key={itemId} style={{ marginBottom: '4px', display: 'flex', justifyContent: 'space-between' }}>
+                                                                                                                        <span>{item.name}</span>
+                                                                                                                        <span style={{ color: 'var(--text-secondary)' }}>× {qty}</span>
+                                                                                                                    </div>
+                                                                                                                ) : null;
+                                                                                                            })}
+                                                                                                        </div>
+                                                                                                    ) : (
+                                                                                                        <div style={{ fontSize: '0.85rem', color: 'var(--text-tertiary)', fontStyle: 'italic' }}>
+                                                                                                            No items selected
+                                                                                                        </div>
+                                                                                                    )}
+                                                                                                </div>
+                                                                                            );
+                                                                                        });
+                                                                                    })()}
+                                                                                </div>
+                                                                            )}
+
+                                                                            {/* Equipment Order Display */}
+                                                                            {isEquipment && (
+                                                                                <div style={{ padding: 'var(--spacing-md)', backgroundColor: 'var(--bg-surface)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)' }}>
+                                                                                    {(() => {
+                                                                                        // Parse equipment details from order notes or orderDetails
+                                                                                        let equipmentDetails: any = null;
+                                                                                        try {
+                                                                                            if (order.orderDetails?.equipmentSelection) {
+                                                                                                equipmentDetails = order.orderDetails.equipmentSelection;
+                                                                                            } else if (order.notes) {
+                                                                                                const parsed = JSON.parse(order.notes);
+                                                                                                if (parsed.equipmentName) {
+                                                                                                    equipmentDetails = parsed;
+                                                                                                }
+                                                                                            }
+                                                                                        } catch (e) {
+                                                                                            console.error('Error parsing equipment order:', e);
+                                                                                        }
+
+                                                                                        const vendorId = equipmentDetails?.vendorId;
+                                                                                        const vendor = vendorId ? vendors.find(v => v.id === vendorId) : null;
+                                                                                        const vendorName = vendor?.name || 'Unknown Vendor';
+                                                                                        const equipmentName = equipmentDetails?.equipmentName || 'Unknown Equipment';
+                                                                                        const price = equipmentDetails?.price || order.totalValue || 0;
+                                                                                        const nextDelivery = vendorId ? getNextDeliveryDate(vendorId) : null;
 
                                                                                         return (
-                                                                                            <div key={idx} style={{ padding: 'var(--spacing-md)', backgroundColor: 'var(--bg-surface)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)' }}>
-                                                                                                {/* Vendor Header */}
+                                                                                            <>
+                                                                                                {/* Vendor */}
                                                                                                 <div style={{ marginBottom: 'var(--spacing-sm)', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
                                                                                                     {vendorName}
                                                                                                 </div>
-                                                                                                {/* Items List */}
-                                                                                                {Object.keys(items).length > 0 ? (
-                                                                                                    <div style={{ fontSize: '0.85rem', color: 'var(--text-primary)' }}>
-                                                                                                        {Object.entries(items).map(([itemId, qty]: [string, any]) => {
-                                                                                                            const item = menuItems.find(i => i.id === itemId);
-                                                                                                            return item ? (
-                                                                                                                <div key={itemId} style={{ marginBottom: '4px' }}>
-                                                                                                                    {item.name} × {qty}
-                                                                                                                </div>
-                                                                                                            ) : null;
-                                                                                                        })}
-                                                                                                    </div>
-                                                                                                ) : (
-                                                                                                    <div style={{ fontSize: '0.85rem', color: 'var(--text-tertiary)', fontStyle: 'italic' }}>
-                                                                                                        No items selected
-                                                                                                    </div>
-                                                                                                )}
+                                                                                                {/* Equipment Item */}
+                                                                                                <div style={{ marginBottom: 'var(--spacing-sm)', fontSize: '0.85rem', color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                                                                                    <Wrench size={14} />
+                                                                                                    <span>{equipmentName}</span>
+                                                                                                    <span style={{ marginLeft: 'auto', fontWeight: 600, color: 'var(--color-primary)' }}>
+                                                                                                        ${price.toFixed(2)}
+                                                                                                    </span>
+                                                                                                </div>
 
-                                                                                            </div>
+                                                                                            </>
                                                                                         );
-                                                                                    })}
-                                                                                </div>
-                                                                            ) : (
-                                                                                <div style={{ fontSize: '0.85rem', color: 'var(--text-tertiary)', fontStyle: 'italic' }}>
-                                                                                    No vendors or items selected
+                                                                                    })()}
                                                                                 </div>
                                                                             )}
                                                                         </div>
-                                                                    )}
-
-                                                                    {/* Boxes Order Display - Show vendor, box type, and all items */}
-                                                                    {isBoxes && (order.boxTypeId || (order.boxOrders && order.boxOrders.length > 0)) && (
-                                                                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-                                                                            {(() => {
-                                                                                const boxesToDisplay = (order.boxOrders && order.boxOrders.length > 0)
-                                                                                    ? order.boxOrders
-                                                                                    : [{
-                                                                                        boxTypeId: order.boxTypeId,
-                                                                                        vendorId: order.vendorId,
-                                                                                        quantity: order.boxQuantity,
-                                                                                        items: order.items
-                                                                                    }];
-
-                                                                                return boxesToDisplay.map((boxData: any, bIdx: number) => {
-                                                                                    const box = boxTypes.find(b => b.id === boxData.boxTypeId);
-                                                                                    const boxVendorId = boxData.vendorId || box?.vendorId || null;
-                                                                                    const vendor = boxVendorId ? vendors.find(v => v.id === boxVendorId) : null;
-                                                                                    const vendorName = vendor?.name || 'Unassigned';
-                                                                                    const boxName = box?.name || 'Unknown Box';
-                                                                                    const items = boxData.items || {};
-
-                                                                                    return (
-                                                                                        <div key={bIdx} style={{ padding: 'var(--spacing-md)', backgroundColor: 'var(--bg-surface)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)' }}>
-                                                                                            {/* Vendor */}
-                                                                                            <div style={{ marginBottom: 'var(--spacing-xs)', fontSize: '0.8rem', color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.025em', fontWeight: 600 }}>
-                                                                                                {vendorName}
-                                                                                            </div>
-                                                                                            {/* Box Type and Quantity */}
-                                                                                            <div style={{ marginBottom: 'var(--spacing-sm)', fontSize: '0.9rem', color: 'var(--text-primary)', fontWeight: 600 }}>
-                                                                                                {boxName} × {boxData.quantity || 1}
-                                                                                            </div>
-                                                                                            {/* Items List */}
-                                                                                            {Object.keys(items).length > 0 ? (
-                                                                                                <div style={{ fontSize: '0.85rem', color: 'var(--text-primary)' }}>
-                                                                                                    {Object.entries(items).map(([itemId, qty]: [string, any]) => {
-                                                                                                        const item = menuItems.find(i => i.id === itemId);
-                                                                                                        return item ? (
-                                                                                                            <div key={itemId} style={{ marginBottom: '4px', display: 'flex', justifyContent: 'space-between' }}>
-                                                                                                                <span>{item.name}</span>
-                                                                                                                <span style={{ color: 'var(--text-secondary)' }}>× {qty}</span>
-                                                                                                            </div>
-                                                                                                        ) : null;
-                                                                                                    })}
-                                                                                                </div>
-                                                                                            ) : (
-                                                                                                <div style={{ fontSize: '0.85rem', color: 'var(--text-tertiary)', fontStyle: 'italic' }}>
-                                                                                                    No items selected
-                                                                                                </div>
-                                                                                            )}
-                                                                                        </div>
-                                                                                    );
-                                                                                });
-                                                                            })()}
-                                                                        </div>
-                                                                    )}
-
-                                                                    {/* Equipment Order Display */}
-                                                                    {isEquipment && (
-                                                                        <div style={{ padding: 'var(--spacing-md)', backgroundColor: 'var(--bg-surface)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)' }}>
-                                                                            {(() => {
-                                                                                // Parse equipment details from order notes or orderDetails
-                                                                                let equipmentDetails: any = null;
-                                                                                try {
-                                                                                    if (order.orderDetails?.equipmentSelection) {
-                                                                                        equipmentDetails = order.orderDetails.equipmentSelection;
-                                                                                    } else if (order.notes) {
-                                                                                        const parsed = JSON.parse(order.notes);
-                                                                                        if (parsed.equipmentName) {
-                                                                                            equipmentDetails = parsed;
-                                                                                        }
-                                                                                    }
-                                                                                } catch (e) {
-                                                                                    console.error('Error parsing equipment order:', e);
-                                                                                }
-
-                                                                                const vendorId = equipmentDetails?.vendorId;
-                                                                                const vendor = vendorId ? vendors.find(v => v.id === vendorId) : null;
-                                                                                const vendorName = vendor?.name || 'Unknown Vendor';
-                                                                                const equipmentName = equipmentDetails?.equipmentName || 'Unknown Equipment';
-                                                                                const price = equipmentDetails?.price || order.totalValue || 0;
-                                                                                const nextDelivery = vendorId ? getNextDeliveryDate(vendorId) : null;
-
-                                                                                return (
-                                                                                    <>
-                                                                                        {/* Vendor */}
-                                                                                        <div style={{ marginBottom: 'var(--spacing-sm)', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                                                                                            {vendorName}
-                                                                                        </div>
-                                                                                        {/* Equipment Item */}
-                                                                                        <div style={{ marginBottom: 'var(--spacing-sm)', fontSize: '0.85rem', color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                                                                                            <Wrench size={14} />
-                                                                                            <span>{equipmentName}</span>
-                                                                                            <span style={{ marginLeft: 'auto', fontWeight: 600, color: 'var(--color-primary)' }}>
-                                                                                                ${price.toFixed(2)}
-                                                                                            </span>
-                                                                                        </div>
-
-                                                                                    </>
-                                                                                );
-                                                                            })()}
-                                                                        </div>
-                                                                    )}
-                                                                </div>
-                                                            </div>
-                                                        );
-                                                    })}
-                                                </div>
-                                            );
-                                        })()}
+                                                                    </div>
+                                                                );
+                                                            })}
+                                                        </div>
+                                                    );
+                                                })()}
+                                            </div>
+                                        ) : (
+                                            <div className={styles.empty}>
+                                                No recent orders.
+                                            </div>
+                                        )}
                                     </div>
-                                ) : (
-                                    <div className={styles.empty}>
-                                        No recent orders.
+                                )}
+                            </section>
+
+                            {/* History Panel - Collapsible Shelf */}
+                            <section className={styles.card} style={{ marginTop: 'var(--spacing-lg)' }}>
+                                <button
+                                    type="button"
+                                    onClick={() => setHistoryExpanded(!historyExpanded)}
+                                    style={{
+                                        width: '100%',
+                                        display: 'flex',
+                                        justifyContent: 'space-between',
+                                        alignItems: 'center',
+                                        padding: '0.75rem 1rem',
+                                        backgroundColor: 'var(--bg-surface-hover)',
+                                        border: '1px solid var(--border-color)',
+                                        borderRadius: 'var(--radius-md)',
+                                        cursor: 'pointer',
+                                        fontSize: '0.9rem',
+                                        fontWeight: 600,
+                                        marginBottom: historyExpanded ? 'var(--spacing-md)' : 0,
+                                        transition: 'all 0.2s ease'
+                                    }}
+                                    onMouseOver={(e) => {
+                                        e.currentTarget.style.backgroundColor = 'var(--bg-surface-active)';
+                                    }}
+                                    onMouseOut={(e) => {
+                                        e.currentTarget.style.backgroundColor = 'var(--bg-surface-hover)';
+                                    }}
+                                >
+                                    <span style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                        <History size={18} />
+                                        History ({orderHistory?.length || 0})
+                                    </span>
+                                    {historyExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                                </button>
+                                {historyExpanded && (
+                                    <div>
+                                        {loadingOrderDetails ? (
+                                            <div className={styles.loadingContainer}>
+                                                <div className={styles.spinner}></div>
+                                                <p className={styles.loadingText}>Loading history...</p>
+                                            </div>
+                                        ) : orderHistory && orderHistory.length > 0 ? (
+                                            <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--spacing-md)' }}>
+                                                {orderHistory.map((record: any, index: number) => (
+                                                    <div
+                                                        key={record.id || index}
+                                                        style={{
+                                                            padding: 'var(--spacing-md)',
+                                                            backgroundColor: 'var(--bg-surface)',
+                                                            borderRadius: 'var(--radius-sm)',
+                                                            border: '1px solid var(--border-color)',
+                                                            fontSize: '0.85rem'
+                                                        }}
+                                                    >
+                                                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem', fontWeight: 600 }}>
+                                                            <span>{record.type || 'Order'}</span>
+                                                            <span style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>
+                                                                {record.timestamp ? new Date(record.timestamp).toLocaleDateString() :
+                                                                    record.created_at ? new Date(record.created_at).toLocaleDateString() : 'Date TBD'}
+                                                            </span>
+                                                        </div>
+                                                        {record.service_type && (
+                                                            <div style={{ marginBottom: '0.25rem' }}>
+                                                                <strong>Service Type:</strong> {record.service_type}
+                                                            </div>
+                                                        )}
+                                                        {record.total_value !== undefined && (
+                                                            <div style={{ marginBottom: '0.25rem' }}>
+                                                                <strong>Total Value:</strong> ${parseFloat(record.total_value?.toString() || '0').toFixed(2)}
+                                                            </div>
+                                                        )}
+                                                        {record.status && (
+                                                            <div style={{ marginBottom: '0.25rem' }}>
+                                                                <strong>Status:</strong> {record.status}
+                                                            </div>
+                                                        )}
+                                                        {record.summary && (
+                                                            <div style={{ marginTop: '0.5rem', padding: '0.5rem', backgroundColor: 'var(--bg-surface-hover)', borderRadius: '4px', fontSize: '0.8rem' }}>
+                                                                {record.summary}
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        ) : (
+                                            <div className={styles.empty}>
+                                                No history available.
+                                            </div>
+                                        )}
                                     </div>
                                 )}
                             </section>
@@ -4227,6 +5048,9 @@ export function ClientProfileDetail({
                     handleSaveAndClose();
                 }}>
                     <div className={styles.modalContent} onClick={e => e.stopPropagation()} style={{ position: 'relative' }}>
+                        <div style={{ padding: '1rem', backgroundColor: '#fee2e2', color: '#991b1b', border: '2px solid #ef4444', borderRadius: '8px', margin: '1rem', fontWeight: 'bold', textAlign: 'center', zIndex: 9999 }}>
+                            !!! AGENTIC DEBUG VERSION 2 !!! (History Granularity Update)
+                        </div>
                         {saving && (
                             <div className={styles.savingOverlay}>
                                 <div className={styles.savingIndicator}>
@@ -4601,6 +5425,94 @@ export function ClientProfileDetail({
 
     }
 
+    function generateOrderSnapshot(config: OrderConfiguration | undefined): string {
+        if (!config || !config.serviceType) return 'No order configuration';
+
+        const getItemName = (id: string, isMeal = false) => {
+            if (isMeal) return mealItems.find(i => i.id === id)?.name || id;
+            return menuItems.find(i => i.id === id)?.name || id;
+        };
+
+        const getVendorName = (id: string) => vendors.find(v => v.id === id)?.name || id;
+        const getBoxTypeName = (id: string) => boxTypes.find(b => b.id === id)?.name || id;
+
+        let snapshot = `[${config.serviceType}] (Case ID: ${config.caseId || 'None'}) `;
+
+        if (config.serviceType === 'Boxes') {
+            const boxes = config.boxOrders || [];
+            if (boxes.length > 0) {
+                snapshot += boxes.map((box: any, i: number) => {
+                    const items = box.items || {};
+                    const itemDetails = Object.keys(items)
+                        .map(itemId => `${items[itemId]}x ${getItemName(itemId)}`)
+                        .join(', ');
+                    const vendorName = getVendorName(box.vendorId);
+                    const boxTypeName = getBoxTypeName(box.boxTypeId);
+                    return `Box ${i + 1}: ${boxTypeName} (Qty: ${box.quantity || 'N/A'}) [Vendor: ${vendorName}] {${itemDetails || 'No items'}}`;
+                }).join('; ');
+            } else if (config.boxTypeId) {
+                // Legacy single box support
+                const items = (config as any).items || {};
+                const itemDetails = Object.keys(items)
+                    .map(itemId => `${items[itemId]}x ${getItemName(itemId)}`)
+                    .join(', ');
+                const vendorName = getVendorName((config as any).vendorId);
+                const boxTypeName = getBoxTypeName(config.boxTypeId);
+                snapshot += `Box: ${boxTypeName} (Qty: ${(config as any).boxQuantity || 1}) [Vendor: ${vendorName}] {${itemDetails || 'No items'}}`;
+            } else {
+                snapshot += 'No boxes configured';
+            }
+        } else if (config.serviceType === 'Food') {
+            const days = (config as any).deliveryDayOrders || {};
+            const dayKeys = Object.keys(days).sort();
+            if (dayKeys.length > 0) {
+                snapshot += dayKeys.map(day => {
+                    const selections = days[day]?.vendorSelections || [];
+                    const vendorDetails = selections.map((vs: any) => {
+                        const items = vs.items || {};
+                        const itemDetails = Object.keys(items)
+                            .map(itemId => `${items[itemId]}x ${getItemName(itemId)}`)
+                            .join(', ');
+                        return `${getVendorName(vs.vendorId)}: ${itemDetails || 'No items'}`;
+                    }).join('; ');
+                    return `${day}: ${vendorDetails || 'No vendors'}`;
+                }).join(' | ');
+            } else if ((config as any).vendorSelections) {
+                // Older food format
+                snapshot += (config as any).vendorSelections.map((vs: any) => {
+                    const items = vs.items || {};
+                    const itemDetails = Object.keys(items)
+                        .map(itemId => `${items[itemId]}x ${getItemName(itemId)}`)
+                        .join(', ');
+                    return `${getVendorName(vs.vendorId)}: ${itemDetails || 'No items'}`;
+                }).join(' | ');
+            } else {
+                snapshot += 'No food deliveries configured';
+            }
+        } else if (config.serviceType === 'Meal') {
+            const meals = (config as any).mealSelections || {};
+            const mealTypes = Object.keys(meals).sort();
+            if (mealTypes.length > 0) {
+                snapshot += mealTypes.map(mType => {
+                    const m = meals[mType];
+                    const items = m?.items || {};
+                    const itemDetails = Object.keys(items)
+                        .map(itemId => `${items[itemId]}x ${getItemName(itemId, true)}`)
+                        .join(', ');
+                    const vName = m?.vendorId ? getVendorName(m.vendorId) : 'No vendor';
+                    return `${mType} [${vName}]: {${itemDetails || 'No items'}}`;
+                }).join(' | ');
+            } else {
+                snapshot += 'No meal selections configured';
+            }
+        } else if (config.serviceType === 'Custom') {
+            snapshot += `${(config as any).custom_name || 'Unnamed'}: $${(config as any).custom_price || 0} (${(config as any).deliveryDay || 'No day'})`;
+        }
+
+        return `Full Order State: ${snapshot}`;
+    }
+
+
     async function executeSave(unitsAdded: number = 0): Promise<boolean> {
         if (!client && !isNewClient) return false;
         setSaving(true);
@@ -4829,13 +5741,23 @@ export function ClientProfileDetail({
                 changes.push(`Expiration Date: ${client.expirationDate || 'null'} -> ${formData.expirationDate || 'null'}`);
             }
 
-            // Check if order configuration changed
-            const hasOrderChanges = orderConfig && orderConfig.caseId;
-            if (hasOrderChanges) {
-                changes.push('Order configuration changed');
+            // Check if any functional change occurred
+            const hasOrderConfigChanges = JSON.stringify(orderConfig) !== JSON.stringify(originalOrderConfig);
+            const hasOrderChanges = !!(orderConfig && orderConfig.caseId);
+
+            // Generate the full snapshot
+            const orderSnapshot = generateOrderSnapshot(orderConfig);
+
+            let summary = '';
+            if (changes.length > 0 || hasOrderConfigChanges) {
+                summary = (changes.length > 0 ? changes.join(', ') + ' | ' : '') + orderSnapshot;
+            } else {
+                // For "re-saves", still capture the current state for reference
+                summary = `Profile re-saved (no changes) | ${orderSnapshot}`;
             }
 
-            const summary = changes.length > 0 ? changes.join(', ') : 'No functional changes detected (re-saved profile)';
+            console.log(`[ClientProfile] [history] executeSave summary:`, summary);
+            console.log(`[ClientProfile] [history] executeSave changes array:`, JSON.stringify(changes));
 
             // Update client profile
             // We defer this call until after we've prepared the activeOrder above if needed
@@ -4852,7 +5774,30 @@ export function ClientProfileDetail({
 
             let updateData: Partial<ClientProfile> = { ...formData };
 
-            await recordClientChange(clientId, summary, 'Admin');
+            console.log(`[ClientProfile] [history] calling recordClientChange with summary:`, summary);
+            try {
+                await recordClientChange(clientId, summary, 'Admin');
+
+                // Prepare the updated JSONB history for the clients table
+                const newHistoryEntry = {
+                    type: 'upcoming',
+                    orderId: orderConfig?.id || orderConfig?.orderId || 'manual-save',
+                    serviceType: orderConfig?.serviceType,
+                    caseId: orderConfig?.caseId,
+                    deliveryDay: orderConfig?.deliveryDay,
+                    orderDetails: orderConfig,
+                    snapshot: orderSnapshot,
+                    timestamp: new Date().toISOString(),
+                    updatedBy: currentUser?.role || currentUser?.id || 'Admin'
+                };
+
+                // Add to updateData so updateClient saves it in one call
+                updateData.orderHistory = [...(client?.orderHistory || []), newHistoryEntry];
+
+            } catch (e: any) {
+                console.error('[ClientProfile] [history] recordClientChange FAILED:', e);
+                throw e;
+            }
 
             // Log Navigator Action if applicable
             if (currentUser?.role === 'navigator' && client.statusId !== formData.statusId) {
@@ -4869,7 +5814,6 @@ export function ClientProfileDetail({
             }
 
             // Sync Current Order Request
-            const hasOrderConfigChanges = JSON.stringify(orderConfig) !== JSON.stringify(originalOrderConfig);
             if (hasOrderConfigChanges || hasOrderChanges) {
 
 

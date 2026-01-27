@@ -43,6 +43,7 @@ export interface ClientProfile {
 
   createdAt: string;
   updatedAt: string;
+  orderHistory?: any[];
 }
 
 export interface OrderConfiguration {

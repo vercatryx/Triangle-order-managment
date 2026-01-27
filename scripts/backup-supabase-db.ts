@@ -213,6 +213,7 @@ async function trySupabaseCliBackup() {
         console.log(`\n✅ CLI backup completed: ${backupPath} (${(stats.size / 1024 / 1024).toFixed(2)} MB)`);
         
         return {
+            customFormat: '',
             sqlFormat: backupPath,
             timestamp: new Date().toISOString(),
             method: 'Supabase CLI',

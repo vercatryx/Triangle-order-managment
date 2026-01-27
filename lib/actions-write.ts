@@ -1243,6 +1243,7 @@ export async function recordClientChange(clientId: string, summary: string, who?
         userName = session?.name || 'Admin';
     }
 
+    console.log(`[history] recordClientChange called`, { clientId, summary, who });
     const { error } = await supabase
         .from('order_history')
         .insert([{

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabase } from '@/lib/supabase';
-import { getMenuItems, getVendors, getBoxTypes, getSettings, getClient } from '@/lib/actions';
+import { getMenuItems, getVendors, getBoxTypes, getSettings, getClient, appendOrderHistory } from '@/lib/actions';
 import { randomUUID } from 'crypto';
 import { getNextDeliveryDate, getTakeEffectDateLegacy } from '@/lib/order-dates';
 import { getCurrentTime } from '@/lib/time';
@@ -280,6 +280,108 @@ async function precheckAndTransferUpcomingOrders() {
                                 processed_at: new Date().toISOString()
                             })
                             .eq('id', upcomingOrder.id);
+
+                        // Append to order history with comprehensive details
+                        try {
+                            const { getVendors, getMenuItems, getBoxTypes, getMealItems } = await import('@/lib/actions');
+                            
+                            // Fetch all related data for the history entry
+                            const [vendorSelectionsData, itemsData, boxSelectionsData, vendorsList, menuItemsList, boxTypesList, mealItemsList] = await Promise.all([
+                                supabase
+                                    .from('order_vendor_selections')
+                                    .select('*, vendors(name, email)')
+                                    .eq('order_id', newOrder.id),
+                                supabase
+                                    .from('order_items')
+                                    .select('*, menu_items(name, value, price_each), meal_items(name, price_each)')
+                                    .eq('order_id', newOrder.id),
+                                supabase
+                                    .from('order_box_selections')
+                                    .select('*, box_types(name, price_each), vendors(name, email)')
+                                    .eq('order_id', newOrder.id),
+                                getVendors(),
+                                getMenuItems(),
+                                getBoxTypes(),
+                                getMealItems()
+                            ]);
+
+                            // Build comprehensive order details
+                            const orderDetails: any = {
+                                serviceType: newOrder.service_type,
+                                caseId: newOrder.case_id || null,
+                                scheduledDeliveryDate: scheduledDeliveryDate
+                            };
+
+                            // Enrich vendor selections with item names
+                            if (vendorSelectionsData.data && vendorSelectionsData.data.length > 0) {
+                                orderDetails.vendorSelections = vendorSelectionsData.data.map((vs: any) => {
+                                    const vendorItems = (itemsData.data || []).filter((item: any) => item.vendor_selection_id === vs.id);
+                                    const itemsDetails = vendorItems.map((item: any) => ({
+                                        itemId: item.menu_item_id || item.meal_item_id,
+                                        itemName: item.menu_items?.name || item.meal_items?.name || 'Custom Item',
+                                        quantity: item.quantity,
+                                        unitValue: item.unit_value,
+                                        totalValue: item.total_value,
+                                        notes: item.notes || null
+                                    }));
+                                    return {
+                                        vendorId: vs.vendor_id,
+                                        vendorName: vs.vendors?.name || 'Unknown Vendor',
+                                        vendorEmail: vs.vendors?.email || null,
+                                        items: itemsDetails
+                                    };
+                                });
+                            }
+
+                            // Enrich box selections
+                            if (boxSelectionsData.data && boxSelectionsData.data.length > 0) {
+                                orderDetails.boxOrders = boxSelectionsData.data.map((bs: any) => {
+                                    const boxType = boxTypesList.find(bt => bt.id === bs.box_type_id);
+                                    const vendor = vendorsList.find(v => v.id === bs.vendor_id);
+                                    const itemsDetails = Object.entries(bs.items || {}).map(([itemId, qty]: [string, any]) => {
+                                        const menuItem = menuItemsList.find(mi => mi.id === itemId);
+                                        const itemData = typeof qty === 'object' ? qty : { quantity: qty };
+                                        return {
+                                            itemId,
+                                            itemName: menuItem?.name || 'Unknown Item',
+                                            quantity: itemData.quantity || qty,
+                                            unitValue: itemData.price || menuItem?.priceEach || menuItem?.value || 0,
+                                            totalValue: (itemData.price || menuItem?.priceEach || menuItem?.value || 0) * (itemData.quantity || qty as number),
+                                            note: itemData.note || null
+                                        };
+                                    });
+                                    return {
+                                        boxTypeId: bs.box_type_id,
+                                        boxTypeName: boxType?.name || 'Unknown Box',
+                                        vendorId: bs.vendor_id,
+                                        vendorName: vendor?.name || 'Unknown Vendor',
+                                        quantity: bs.quantity,
+                                        items: bs.items || {},
+                                        itemsDetails: itemsDetails
+                                    };
+                                });
+                            }
+
+                            await appendOrderHistory(upcomingOrder.client_id, {
+                                type: 'order',
+                                orderId: newOrder.id,
+                                serviceType: newOrder.service_type,
+                                scheduledDeliveryDate: scheduledDeliveryDate,
+                                caseId: newOrder.case_id || null,
+                                totalValue: newOrder.total_value,
+                                totalItems: newOrder.total_items,
+                                notes: newOrder.notes || null,
+                                updatedBy: newOrder.updated_by || null,
+                                timestamp: new Date().toISOString(),
+                                vendorSelections: vendorSelectionsData.data || [],
+                                items: itemsData.data || [],
+                                boxSelections: boxSelectionsData.data || [],
+                                orderDetails: orderDetails,
+                                orderData: newOrder
+                            });
+                        } catch (historyError: any) {
+                            console.warn('[process-weekly-orders] Error appending to order history:', historyError);
+                        }
 
                         transferResults.transferred++;
                     } catch (error: any) {
