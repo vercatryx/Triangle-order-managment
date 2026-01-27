@@ -14,6 +14,7 @@ interface SimulationReport {
         date: string;
         reason: string;
     }[];
+    creationId?: number; // Optional creation_id for this batch
 }
 
 /**
@@ -40,13 +41,14 @@ export async function sendSchedulingReport(report: SimulationReport, recipient: 
         return;
     }
 
-    const { totalCreated, breakdown, unexpectedFailures } = report;
+    const { totalCreated, breakdown, unexpectedFailures, creationId } = report;
 
-    const subject = `Order Scheduling Report - ${new Date().toLocaleDateString()}`;
+    const subject = `Order Scheduling Report - ${new Date().toLocaleDateString()}${creationId ? ` (Creation ID: ${creationId})` : ''}`;
 
     let html = `
     <h1>Order Scheduling Execution Report</h1>
     <p><strong>Date:</strong> ${new Date().toLocaleString()}</p>
+    ${creationId ? `<p><strong>Creation ID:</strong> ${creationId}</p>` : ''}
     
     <h2>Summary</h2>
     <ul>

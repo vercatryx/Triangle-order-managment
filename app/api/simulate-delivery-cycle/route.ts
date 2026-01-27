@@ -13,6 +13,7 @@ import {
 import { sendSchedulingReport } from '@/lib/email-report';
 import { AppSettings, Vendor } from '@/lib/types';
 import * as XLSX from 'xlsx';
+import { getNextCreationId } from '@/lib/actions';
 
 // Initialize Supabase Admin Client to bypass RLS
 const supabase = createClient(
@@ -40,7 +41,11 @@ export async function POST(request: NextRequest) {
         summary: string,
         vendor: string,
         orderCreated: boolean,
-        scheduledDeliveryDate: string | null
+        scheduledDeliveryDate: string | null,
+        // Track orders created in this run
+        ordersCreatedThisRun: Array<{ type: string, date: string, vendor: string }>,
+        // Track expected orders for this week
+        expectedOrdersThisWeek: Array<{ type: string, day: string, vendor: string, cutoffDay: string }>
     }>();
 
     function setClientStatus(clientId: string, type: 'food' | 'meal' | 'box' | 'custom', status: string) {
@@ -203,7 +208,9 @@ export async function POST(request: NextRequest) {
                 summary: '',
                 vendor: 'no vendor set',
                 orderCreated: false,
-                scheduledDeliveryDate: null
+                scheduledDeliveryDate: null,
+                ordersCreatedThisRun: [],
+                expectedOrdersThisWeek: []
             });
         }
 
@@ -359,16 +366,18 @@ export async function POST(request: NextRequest) {
         }
         
         // Process Custom Orders (from upcoming_orders)
+        // Fetch vendor selections for upcoming orders (needed for both summary and expected orders calculation)
+        let upcomingVendorSelections: any[] = [];
         if (allUpcomingOrders && allUpcomingOrders.length > 0) {
-            // Fetch vendor selections for upcoming orders
             const upcomingOrderIds = allUpcomingOrders.map((uo: any) => uo.id);
-            const { data: upcomingVendorSelections } = await supabase
+            const { data: upcomingVsData } = await supabase
                 .from('upcoming_order_vendor_selections')
                 .select('*')
                 .in('upcoming_order_id', upcomingOrderIds);
+            upcomingVendorSelections = upcomingVsData || [];
             
             // Fetch items for upcoming orders
-            const vendorSelectionIds = (upcomingVendorSelections || []).map((vs: any) => vs.id);
+            const vendorSelectionIds = upcomingVendorSelections.map((vs: any) => vs.id);
             const { data: upcomingItems } = vendorSelectionIds.length > 0
                 ? await supabase
                     .from('upcoming_order_items')
@@ -411,7 +420,7 @@ export async function POST(request: NextRequest) {
                 const summaries: string[] = [];
                 
                 // Get vendor selections for this order
-                const orderVendorSelections = (upcomingVendorSelections || []).filter(
+                const orderVendorSelections = upcomingVendorSelections.filter(
                     (vs: any) => vs.upcoming_order_id === upcomingOrder.id
                 );
                 
@@ -513,6 +522,184 @@ export async function POST(request: NextRequest) {
             .maybeSingle();
         let nextOrderNumber = Math.max(100000, (maxOrderData?.order_number || 0) + 1);
 
+        // --- Helper: Calculate current week (Sunday to Saturday) ---
+        const getCurrentWeek = () => {
+            const todayDate = new Date(today);
+            const dayOfWeek = todayDate.getDay(); // 0 = Sunday, 6 = Saturday
+            const weekStart = new Date(todayDate);
+            weekStart.setDate(todayDate.getDate() - dayOfWeek); // Go back to Sunday
+            weekStart.setHours(0, 0, 0, 0);
+            const weekEnd = new Date(weekStart);
+            weekEnd.setDate(weekStart.getDate() + 6); // Saturday
+            weekEnd.setHours(23, 59, 59, 999);
+            return { weekStart, weekEnd };
+        };
+
+        const { weekStart, weekEnd } = getCurrentWeek();
+
+        // --- Helper: Calculate expected orders for this week ---
+        const calculateExpectedOrdersForWeek = (clientId: string, client: any) => {
+            const expectedOrders: Array<{ type: string, day: string, vendor: string, cutoffDay: string }> = [];
+            
+            // Check Food orders
+            if (client.service_type === 'Food') {
+                const foodOrder = foodOrdersForSummary?.find((fo: any) => fo.client_id === clientId);
+                if (foodOrder) {
+                    const dayOrders = typeof foodOrder.delivery_day_orders === 'string'
+                        ? JSON.parse(foodOrder.delivery_day_orders)
+                        : foodOrder.delivery_day_orders;
+                    
+                    if (dayOrders) {
+                        for (const [dayName, dayData] of Object.entries(dayOrders)) {
+                            const dayDataTyped = dayData as any;
+                            const vendorSelections = dayDataTyped.vendorSelections || [];
+                            for (const sel of vendorSelections) {
+                                if (!sel.vendorId) continue;
+                                const vendor = vendorMap.get(sel.vendorId);
+                                if (!vendor) continue;
+                                
+                                const cutoff = vendor.cutoffDays || 0;
+                                // Calculate when this order should be created (delivery day - cutoff)
+                                const dayNumber = DAY_NAME_TO_NUMBER[dayName];
+                                if (dayNumber !== undefined) {
+                                    // Find this day in the current week
+                                    const weekDay = new Date(weekStart);
+                                    weekDay.setDate(weekStart.getDate() + dayNumber);
+                                    
+                                    if (weekDay >= weekStart && weekDay <= weekEnd) {
+                                        // Calculate cutoff day (delivery day - cutoff)
+                                        const cutoffDate = new Date(weekDay);
+                                        cutoffDate.setDate(weekDay.getDate() - cutoff);
+                                        const cutoffDayName = cutoffDate.toLocaleDateString('en-US', { weekday: 'long' });
+                                        
+                                        expectedOrders.push({
+                                            type: 'Food',
+                                            day: dayName,
+                                            vendor: vendor.name,
+                                            cutoffDay: cutoffDayName
+                                        });
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Check Meal orders
+            if (client.service_type === 'Food' || client.service_type === 'Meal') {
+                const mealOrder = mealOrdersForSummary?.find((mo: any) => mo.client_id === clientId);
+                if (mealOrder) {
+                    const rawSelections = typeof mealOrder.meal_selections === 'string'
+                        ? JSON.parse(mealOrder.meal_selections)
+                        : mealOrder.meal_selections;
+                    
+                    if (rawSelections) {
+                        for (const [mealType, group] of Object.entries(rawSelections)) {
+                            const groupData = group as any;
+                            if (!groupData.vendorId) continue;
+                            const vendor = vendorMap.get(groupData.vendorId);
+                            if (!vendor) continue;
+                            
+                            const cutoff = vendor.cutoffDays || 0;
+                            // Find first delivery day in this week
+                            for (const deliveryDay of vendor.deliveryDays || []) {
+                                const dayNumber = DAY_NAME_TO_NUMBER[deliveryDay];
+                                if (dayNumber !== undefined) {
+                                    const weekDay = new Date(weekStart);
+                                    weekDay.setDate(weekStart.getDate() + dayNumber);
+                                    
+                                    if (weekDay >= weekStart && weekDay <= weekEnd) {
+                                        const cutoffDate = new Date(weekDay);
+                                        cutoffDate.setDate(weekDay.getDate() - cutoff);
+                                        const cutoffDayName = cutoffDate.toLocaleDateString('en-US', { weekday: 'long' });
+                                        
+                                        expectedOrders.push({
+                                            type: 'Meal',
+                                            day: deliveryDay,
+                                            vendor: vendor.name,
+                                            cutoffDay: cutoffDayName
+                                        });
+                                        break; // Only one meal order per week
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Check Box orders
+            if (client.service_type === 'Boxes') {
+                const boxOrder = boxOrdersForSummary?.find((bo: any) => bo.client_id === clientId);
+                if (boxOrder && boxOrder.vendor_id) {
+                    const vendor = vendorMap.get(boxOrder.vendor_id);
+                    if (vendor) {
+                        const cutoff = vendor.cutoffDays || 0;
+                        // Find first delivery day in this week
+                        for (const deliveryDay of vendor.deliveryDays || []) {
+                            const dayNumber = DAY_NAME_TO_NUMBER[deliveryDay];
+                            if (dayNumber !== undefined) {
+                                const weekDay = new Date(weekStart);
+                                weekDay.setDate(weekStart.getDate() + dayNumber);
+                                
+                                if (weekDay >= weekStart && weekDay <= weekEnd) {
+                                    const cutoffDate = new Date(weekDay);
+                                    cutoffDate.setDate(weekDay.getDate() - cutoff);
+                                    const cutoffDayName = cutoffDate.toLocaleDateString('en-US', { weekday: 'long' });
+                                    
+                                    expectedOrders.push({
+                                        type: 'Boxes',
+                                        day: deliveryDay,
+                                        vendor: vendor.name,
+                                        cutoffDay: cutoffDayName
+                                    });
+                                    break; // Only one box order per week
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Check Custom orders
+            if (client.service_type === 'Custom') {
+                const customOrder = allUpcomingOrders?.find((co: any) => co.client_id === clientId);
+                if (customOrder && customOrder.delivery_day) {
+                    const vs = upcomingVendorSelections.find((v: any) => v.upcoming_order_id === customOrder.id);
+                    if (vs && vs.vendor_id) {
+                        const vendor = vendorMap.get(vs.vendor_id);
+                        if (vendor) {
+                            const cutoff = vendor.cutoffDays || 0;
+                            const dayNumber = DAY_NAME_TO_NUMBER[customOrder.delivery_day];
+                            if (dayNumber !== undefined) {
+                                const weekDay = new Date(weekStart);
+                                weekDay.setDate(weekStart.getDate() + dayNumber);
+                                
+                                if (weekDay >= weekStart && weekDay <= weekEnd) {
+                                    const cutoffDate = new Date(weekDay);
+                                    cutoffDate.setDate(weekDay.getDate() - cutoff);
+                                    const cutoffDayName = cutoffDate.toLocaleDateString('en-US', { weekday: 'long' });
+                                    
+                                    expectedOrders.push({
+                                        type: 'Custom',
+                                        day: customOrder.delivery_day,
+                                        vendor: vendor.name,
+                                        cutoffDay: cutoffDayName
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            return expectedOrders;
+        };
+
+        // Get next creation_id for this batch
+        const creationId = await getNextCreationId();
+
         // --- 2. Order Processing Helpers ---
 
         // Helper: Check Client Eligibility (Global Rule)
@@ -551,7 +738,8 @@ export async function POST(request: NextRequest) {
                         created_at: currentTime.toISOString(),
                         last_updated: currentTime.toISOString(),
                         notes: notes,
-                        case_id: caseId || `CASE-${Date.now()}`
+                        case_id: caseId || `CASE-${Date.now()}`,
+                        creation_id: creationId
                     })
                     .select()
                     .single();
@@ -709,6 +897,12 @@ export async function POST(request: NextRequest) {
                                 entry.vendor = vendor.name;
                                 entry.orderCreated = true;
                                 entry.scheduledDeliveryDate = newOrder.scheduled_delivery_date || deliveryDate.toISOString().split('T')[0];
+                                // Track order created in this run
+                                entry.ordersCreatedThisRun.push({
+                                    type: 'Food',
+                                    date: deliveryDate.toISOString().split('T')[0],
+                                    vendor: vendor.name
+                                });
                             }
                             
                             const { data: vs } = await supabase.from('order_vendor_selections').insert({
@@ -806,6 +1000,18 @@ export async function POST(request: NextRequest) {
 
             if (!candidateDate) return; // No valid day found (weird)
 
+            // BUG FIX: Check if candidate date is within reasonable cutoff window
+            // The candidate date should be at least 'cutoff' days away, but not too far
+            // We allow up to cutoff + 3 days to account for vendors with infrequent delivery days
+            const daysUntilCandidate = Math.round((candidateDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+            const maxDaysAllowed = cutoff + 3; // Allow some flexibility for infrequent delivery days
+            
+            if (daysUntilCandidate < cutoff || daysUntilCandidate > maxDaysAllowed) {
+                setClientStatus(template.client_id, type.toLowerCase() as 'meal' | 'box', 
+                    `Not on cutoff day - candidate date ${candidateDate.toISOString().split('T')[0]} is ${daysUntilCandidate} days away (cutoff: ${cutoff}, max: ${maxDaysAllowed})`);
+                return; // Skip - too far in advance or too soon
+            }
+
             // Weekly Limit Check
             // "If Meal order exists for a week (by delivery date)..."
             // We check the WEEK of candidateDate.
@@ -898,6 +1104,12 @@ export async function POST(request: NextRequest) {
                         }
                         entry.orderCreated = true;
                         entry.scheduledDeliveryDate = newOrder.scheduled_delivery_date || candidateDate.toISOString().split('T')[0];
+                        // Track order created in this run
+                        entry.ordersCreatedThisRun.push({
+                            type: 'Boxes',
+                            date: candidateDate.toISOString().split('T')[0],
+                            vendor: vendor.name
+                        });
                     }
                     
                     // Box Selection
@@ -957,6 +1169,12 @@ export async function POST(request: NextRequest) {
                         }
                         entry.orderCreated = true;
                         entry.scheduledDeliveryDate = newOrder.scheduled_delivery_date || candidateDate.toISOString().split('T')[0];
+                        // Track order created in this run
+                        entry.ordersCreatedThisRun.push({
+                            type: 'Meal',
+                            date: candidateDate.toISOString().split('T')[0],
+                            vendor: vendor?.name || 'Unknown'
+                        });
                     }
                     
                     let orderTotalValue = 0;
@@ -1121,6 +1339,12 @@ export async function POST(request: NextRequest) {
                         }
                         entry.orderCreated = true;
                         entry.scheduledDeliveryDate = newOrder.scheduled_delivery_date || deliveryDate.toISOString().split('T')[0];
+                        // Track order created in this run
+                        entry.ordersCreatedThisRun.push({
+                            type: 'Custom',
+                            date: deliveryDate.toISOString().split('T')[0],
+                            vendor: vendor.name
+                        });
                     }
                     
                     const { data: newVs } = await supabase.from('order_vendor_selections').insert({
@@ -1196,21 +1420,256 @@ export async function POST(request: NextRequest) {
             // console.log('[Custom Debug] No custom orders passed filter.');
         }
 
+        // Calculate expected orders for all clients (after all data is loaded and orders processed)
+        for (const client of clients) {
+            const entry = clientStatusMap.get(client.id);
+            if (entry) {
+                entry.expectedOrdersThisWeek = calculateExpectedOrdersForWeek(client.id, client);
+            }
+        }
+
         // --- 6. Generate Excel Report and Send Email ---
         console.log('[Unified Scheduling] Complete. Generating Excel and sending report...');
 
-        // Generate Excel Report
-        const excelReportData = Array.from(clientStatusMap.values()).map(entry => ({
-            'Customer Name': entry.clientName,
-            'Order Created': entry.orderCreated ? 'Yes' : 'No',
-            'Scheduled Delivery Date': entry.scheduledDeliveryDate ? new Date(entry.scheduledDeliveryDate).toLocaleDateString('en-US', { year: 'numeric', month: '2-digit', day: '2-digit' }) : '-',
-            'Vendor': entry.vendor,
-            'Summary': entry.summary || 'No upcoming orders',
-            'Food Orders': entry.foodStatus,
-            'Meal Orders': entry.mealStatus,
-            'Box Orders': entry.boxStatus,
-            'Custom Orders': entry.customStatus || 'No upcoming custom orders scheduled'
-        }));
+        // Helper: Get orders created this week from database
+        // Check both orders created in this run AND existing orders from previous runs
+        const weekStartStr = weekStart.toISOString().split('T')[0];
+        const weekEndStr = weekEnd.toISOString().split('T')[0];
+        
+        // Get orders created in this run
+        const { data: ordersThisWeekThisRun } = await supabase
+            .from('orders')
+            .select('id, client_id, service_type, scheduled_delivery_date, creation_id')
+            .gte('scheduled_delivery_date', weekStartStr)
+            .lte('scheduled_delivery_date', weekEndStr)
+            .eq('creation_id', creationId);
+
+        // Get ALL existing orders for this week (from any creation run)
+        const { data: allOrdersThisWeek } = await supabase
+            .from('orders')
+            .select('id, client_id, service_type, scheduled_delivery_date, creation_id')
+            .gte('scheduled_delivery_date', weekStartStr)
+            .lte('scheduled_delivery_date', weekEndStr)
+            .in('status', ['scheduled', 'pending', 'confirmed', 'processing']); // Only active orders
+
+        // Group orders by client (use all orders to check if they already exist)
+        const ordersByClient = new Map<string, Array<{ type: string, date: string, isNew: boolean }>>();
+        (allOrdersThisWeek || []).forEach((order: any) => {
+            if (!ordersByClient.has(order.client_id)) {
+                ordersByClient.set(order.client_id, []);
+            }
+            const isNew = (ordersThisWeekThisRun || []).some(o => o.id === order.id);
+            ordersByClient.get(order.client_id)!.push({
+                type: order.service_type,
+                date: order.scheduled_delivery_date,
+                isNew
+            });
+        });
+
+        // Helper: Check if cutoff day has passed
+        const hasCutoffDayPassed = (cutoffDayName: string): boolean => {
+            const todayDayNum = today.getDay(); // 0 = Sunday, 6 = Saturday
+            const cutoffDayNum = DAY_NAME_TO_NUMBER[cutoffDayName];
+            if (cutoffDayNum === undefined) return false;
+            
+            // If today is past the cutoff day in this week, it's missed
+            return todayDayNum > cutoffDayNum;
+        };
+
+        // Helper: Check if order was missed (cutoff day passed but not created)
+        const checkMissedOrders = (entry: typeof clientStatusMap extends Map<any, infer V> ? V : never, clientId: string): boolean => {
+            const expected = entry.expectedOrdersThisWeek || [];
+            const created = ordersByClient.get(clientId) || [];
+            
+            if (expected.length === 0) return false;
+            
+            // Group expected orders by type to count properly
+            const expectedByType = new Map<string, number>();
+            expected.forEach(exp => {
+                expectedByType.set(exp.type, (expectedByType.get(exp.type) || 0) + 1);
+            });
+            
+            const createdByType = new Map<string, number>();
+            created.forEach(cre => {
+                createdByType.set(cre.type, (createdByType.get(cre.type) || 0) + 1);
+            });
+            
+            // Check each expected order type
+            for (const [type, expectedCount] of expectedByType.entries()) {
+                const createdCount = createdByType.get(type) || 0;
+                
+                // If we're missing orders of this type, check if any cutoff days have passed
+                if (createdCount < expectedCount) {
+                    // Find all expected orders of this type and check their cutoff days
+                    const expectedOfThisType = expected.filter(e => e.type === type);
+                    for (const exp of expectedOfThisType) {
+                        // If cutoff day has passed and we still need more orders of this type, it's missed
+                        if (hasCutoffDayPassed(exp.cutoffDay)) {
+                            return true;
+                        }
+                    }
+                }
+            }
+            
+            return false;
+        };
+
+        // Helper: Generate "Is order expected this week" status (clearer messages)
+        const getOrderExpectedStatus = (entry: typeof clientStatusMap extends Map<any, infer V> ? V : never, clientId: string) => {
+            const expected = entry.expectedOrdersThisWeek || [];
+            const created = ordersByClient.get(clientId) || [];
+            
+            if (expected.length === 0) {
+                return 'No orders expected this week';
+            }
+
+            // Count orders by type (ignore isNew flag for counting)
+            const expectedByType = new Map<string, number>();
+            const createdByType = new Map<string, number>();
+            
+            expected.forEach(exp => {
+                expectedByType.set(exp.type, (expectedByType.get(exp.type) || 0) + 1);
+            });
+            
+            created.forEach(cre => {
+                createdByType.set(cre.type, (createdByType.get(cre.type) || 0) + 1);
+            });
+
+            // Check if all expected orders are created (either new or existing)
+            let allCreated = true;
+            for (const [type, count] of expectedByType.entries()) {
+                if ((createdByType.get(type) || 0) < count) {
+                    allCreated = false;
+                    break;
+                }
+            }
+
+            if (allCreated && created.length >= expected.length) {
+                const newCount = created.filter(c => c.isNew).length;
+                const existingCount = created.filter(c => !c.isNew).length;
+                if (newCount > 0 && existingCount > 0) {
+                    return `✓ All orders created (${newCount} new, ${existingCount} existing)`;
+                } else if (newCount > 0) {
+                    return `✓ All orders created this run (${newCount} new)`;
+                } else {
+                    return `✓ All orders already existed from previous run`;
+                }
+            }
+
+            // Find which orders are still expected (not yet created)
+            const stillExpected: Array<{ type: string, cutoffDay: string, deliveryDay: string, isMissed: boolean }> = [];
+            for (const exp of expected) {
+                const createdCount = created.filter(c => c.type === exp.type).length;
+                const expectedCount = expected.filter(e => e.type === exp.type).length;
+                if (createdCount < expectedCount) {
+                    const isMissed = hasCutoffDayPassed(exp.cutoffDay);
+                    stillExpected.push({ 
+                        type: exp.type, 
+                        cutoffDay: exp.cutoffDay,
+                        deliveryDay: exp.day,
+                        isMissed 
+                    });
+                }
+            }
+
+            if (created.length === 0) {
+                // No orders created yet - check if any are missed
+                const missedOrders = stillExpected.filter(e => e.isMissed);
+                if (missedOrders.length > 0) {
+                    const earliestMissed = missedOrders.reduce((earliest, exp) => {
+                        const cutoffDayNum = DAY_NAME_TO_NUMBER[exp.cutoffDay];
+                        const earliestDayNum = DAY_NAME_TO_NUMBER[earliest.cutoffDay];
+                        return cutoffDayNum !== undefined && earliestDayNum !== undefined && cutoffDayNum < earliestDayNum ? exp : earliest;
+                    }, missedOrders[0]);
+                    return `⚠ MISSED: Should have been created on ${earliestMissed.cutoffDay} (cutoff day already passed)`;
+                }
+                
+                // Not missed yet, will be created in future
+                const earliestCutoff = expected.reduce((earliest, exp) => {
+                    const cutoffDayNum = DAY_NAME_TO_NUMBER[exp.cutoffDay];
+                    const earliestDayNum = DAY_NAME_TO_NUMBER[earliest.cutoffDay];
+                    return cutoffDayNum !== undefined && earliestDayNum !== undefined && cutoffDayNum < earliestDayNum ? exp : earliest;
+                }, expected[0]);
+                return `→ Will be created on ${earliestCutoff.cutoffDay} (cutoff day is in the future)`;
+            }
+
+            // Some orders created, check remaining ones
+            const missedOrders = stillExpected.filter(e => e.isMissed);
+            const futureOrders = stillExpected.filter(e => !e.isMissed);
+            
+            const newCount = created.filter(c => c.isNew).length;
+            const existingCount = created.filter(c => !c.isNew).length;
+            
+            if (missedOrders.length > 0) {
+                const earliestMissed = missedOrders.reduce((earliest, exp) => {
+                    const cutoffDayNum = DAY_NAME_TO_NUMBER[exp.cutoffDay];
+                    const earliestDayNum = DAY_NAME_TO_NUMBER[earliest.cutoffDay];
+                    return cutoffDayNum !== undefined && earliestDayNum !== undefined && cutoffDayNum < earliestDayNum ? exp : earliest;
+                }, missedOrders[0]);
+                const createdText = existingCount > 0 
+                    ? `${created.length} total (${newCount} new, ${existingCount} existing)`
+                    : `${created.length} created`;
+                return `⚠ MISSED: ${createdText}, but ${missedOrders.length} missed (cutoff ${earliestMissed.cutoffDay} already passed)`;
+            }
+            
+            // Some orders created, some still expected in future
+            const createdCount = created.length;
+            const expectedCount = expected.length;
+            const earliestRemaining = futureOrders.reduce((earliest, exp) => {
+                const cutoffDayNum = DAY_NAME_TO_NUMBER[exp.cutoffDay];
+                const earliestDayNum = DAY_NAME_TO_NUMBER[earliest.cutoffDay];
+                return cutoffDayNum !== undefined && earliestDayNum !== undefined && cutoffDayNum < earliestDayNum ? exp : earliest;
+            }, futureOrders[0]);
+
+            const createdText = existingCount > 0 
+                ? `${createdCount} total (${newCount} new, ${existingCount} existing)`
+                : `${createdCount} created`;
+            return `✓ ${createdText}, ${futureOrders.length} will be created on ${earliestRemaining.cutoffDay} (cutoff day in future)`;
+        };
+
+        // Generate Excel Report - ensure ALL clients are included
+        const excelReportData = Array.from(clientStatusMap.entries()).map(([clientId, entry]) => {
+            const createdOrders = ordersByClient.get(clientId) || [];
+            
+            // Use actual created orders from database
+            // Separate new orders from existing ones
+            const newOrders = createdOrders.filter(o => o.isNew);
+            const existingOrders = createdOrders.filter(o => !o.isNew);
+            
+            let ordersCreatedText = '';
+            if (newOrders.length > 0 && existingOrders.length > 0) {
+                ordersCreatedText = `NEW: ${newOrders.map(o => `${o.type} on ${o.date}`).join(', ')} | EXISTING: ${existingOrders.map(o => `${o.type} on ${o.date}`).join(', ')}`;
+            } else if (newOrders.length > 0) {
+                ordersCreatedText = `NEW: ${newOrders.map(o => `${o.type} on ${o.date}`).join(', ')}`;
+            } else if (existingOrders.length > 0) {
+                ordersCreatedText = `EXISTING: ${existingOrders.map(o => `${o.type} on ${o.date}`).join(', ')}`;
+            } else {
+                ordersCreatedText = entry.orderCreated ? 'Yes (but not found in DB)' : 'No';
+            }
+            
+            const expectedStatus = getOrderExpectedStatus(entry, clientId);
+            const isMissed = checkMissedOrders(entry, clientId);
+            const expectedCount = entry.expectedOrdersThisWeek.length;
+            const expectedOrdersText = expectedCount > 0
+                ? entry.expectedOrdersThisWeek.map(e => `${e.type} on ${e.day} (cutoff: ${e.cutoffDay})`).join('; ')
+                : 'None';
+
+            return {
+                'Customer Name': entry.clientName,
+                'Order Created': ordersCreatedText,
+                'Scheduled Delivery Date': entry.scheduledDeliveryDate ? new Date(entry.scheduledDeliveryDate).toLocaleDateString('en-US', { year: 'numeric', month: '2-digit', day: '2-digit' }) : '-',
+                'Vendor': entry.vendor,
+                'Summary': entry.summary || 'No upcoming orders',
+                'Food Orders': entry.foodStatus,
+                'Meal Orders': entry.mealStatus,
+                'Box Orders': entry.boxStatus,
+                'Custom Orders': entry.customStatus || 'No upcoming custom orders scheduled',
+                'Is Order Expected This Week': expectedStatus,
+                'Orders Expected For This Week': expectedOrdersText,
+                'Missed For This Week': isMissed ? 'Yes' : 'No',
+                'Creation ID': creationId
+            };
+        });
 
         const worksheet = XLSX.utils.json_to_sheet(excelReportData);
         const workbook = XLSX.utils.book_new();
@@ -1219,14 +1678,18 @@ export async function POST(request: NextRequest) {
         // Set column widths for better readability
         const wscols = [
             { wch: 30 }, // Customer Name
-            { wch: 12 }, // Order Created
-            { wch: 15 }, // Created Date
+            { wch: 30 }, // Order Created (wider for multiple orders)
+            { wch: 15 }, // Scheduled Delivery Date
             { wch: 20 }, // Vendor
             { wch: 80 }, // Summary (wider for vendor/item details)
             { wch: 40 }, // Food Orders
             { wch: 40 }, // Meal Orders
             { wch: 40 }, // Box Orders
-            { wch: 40 }  // Custom Orders
+            { wch: 40 }, // Custom Orders
+            { wch: 70 }, // Is Order Expected This Week (wider for clearer messages)
+            { wch: 80 }, // Orders Expected For This Week
+            { wch: 20 }, // Missed For This Week
+            { wch: 12 }  // Creation ID
         ];
         worksheet['!cols'] = wscols;
 
@@ -1238,7 +1701,12 @@ export async function POST(request: NextRequest) {
             contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
         };
 
-        const emailResult = await sendSchedulingReport(report, reportEmail, [excelAttachment]);
+        // Include creation_id in the report
+        const reportWithCreationId = {
+            ...report,
+            creationId: creationId
+        };
+        const emailResult = await sendSchedulingReport(reportWithCreationId, reportEmail, [excelAttachment]);
 
         // --- 7. Return Result ---
         return NextResponse.json({

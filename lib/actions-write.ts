@@ -597,6 +597,10 @@ export async function saveEquipmentOrder(clientId: string, vendorId: string, equ
         price: equipmentItem.price
     };
 
+    // Get creation_id for this individual order
+    const { getNextCreationId } = await import('./actions');
+    const creationId = await getNextCreationId();
+
     // Create actual order in orders table (not upcoming_orders)
     const orderData: any = {
         client_id: clientId,
@@ -608,7 +612,8 @@ export async function saveEquipmentOrder(clientId: string, vendorId: string, equ
         scheduled_delivery_date: scheduledDeliveryDate ? scheduledDeliveryDate.toISOString().split('T')[0] : null,
         total_value: equipmentItem.price,
         total_items: 1,
-        notes: JSON.stringify(equipmentSelection)
+        notes: JSON.stringify(equipmentSelection),
+        creation_id: creationId
     };
 
     const { data: newOrder, error: orderError } = await supabase
@@ -692,6 +697,10 @@ export async function saveCustomOrder(clientId: string, vendorId: string, itemDe
         }
     }
 
+    // Get creation_id for this individual order
+    const { getNextCreationId } = await import('./actions');
+    const creationId = await getNextCreationId();
+
     // Create order record
     const orderData: any = {
         client_id: clientId,
@@ -703,7 +712,8 @@ export async function saveCustomOrder(clientId: string, vendorId: string, itemDe
         scheduled_delivery_date: scheduledDeliveryDate ? scheduledDeliveryDate.toISOString().split('T')[0] : null,
         total_value: price,
         total_items: 1,
-        notes: `Custom Order: ${itemDescription}`
+        notes: `Custom Order: ${itemDescription}`,
+        creation_id: creationId
     };
 
     const { data: newOrder, error: orderError } = await supabase

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabase } from '@/lib/supabase';
-import { getMenuItems, getVendors, getBoxTypes, getSettings, getClient, appendOrderHistory } from '@/lib/actions';
+import { getMenuItems, getVendors, getBoxTypes, getSettings, getClient, appendOrderHistory, getNextCreationId } from '@/lib/actions';
 import { randomUUID } from 'crypto';
 import { getNextDeliveryDate, getTakeEffectDateLegacy } from '@/lib/order-dates';
 import { getCurrentTime } from '@/lib/time';
@@ -152,7 +152,8 @@ async function precheckAndTransferUpcomingOrders() {
                             delivery_distribution: null, // Can be set later if needed
                             total_value: upcomingOrder.total_value,
                             total_items: upcomingOrder.total_items,
-                            notes: upcomingOrder.notes || null
+                            notes: upcomingOrder.notes || null,
+                            creation_id: creationId
                         };
 
                         const { data: newOrder, error: orderError } = await supabase
@@ -401,6 +402,9 @@ async function precheckAndTransferUpcomingOrders() {
 
 export async function GET(request: NextRequest) {
     try {
+        // Get next creation_id for this batch
+        const creationId = await getNextCreationId();
+        
         // Precheck: Transfer upcoming orders for clients with no existing orders
         const precheckResults = await precheckAndTransferUpcomingOrders();
 
@@ -790,7 +794,8 @@ export async function GET(request: NextRequest) {
                             delivery_distribution: null, // Can be set later if needed
                             total_value: order.total_value,
                             total_items: order.total_items,
-                            notes: order.notes || null
+                            notes: order.notes || null,
+                            creation_id: creationId
                         };
 
                         const { data: newOrder, error: orderError } = await supabase

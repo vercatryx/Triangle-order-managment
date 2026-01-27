@@ -21,6 +21,140 @@ function handleError(error: any) {
 }
 
 /**
+ * Get the next creation_id for batch order creation
+ * Returns the next numeric ID in sequence (max + 1, or 1 if no orders exist)
+ */
+export async function getNextCreationId(): Promise<number> {
+    const { data, error } = await supabase
+        .from('orders')
+        .select('creation_id')
+        .not('creation_id', 'is', null)
+        .order('creation_id', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+    if (error) {
+        console.error('Error fetching max creation_id:', error);
+        // If column doesn't exist yet, return 1
+        if (error.code === '42703') {
+            return 1;
+        }
+        throw new Error(`Failed to get next creation_id: ${error.message}`);
+    }
+
+    return (data?.creation_id || 0) + 1;
+}
+
+/**
+ * Get all creation_ids with their order counts
+ * Returns array of { creation_id, count, created_at } sorted by creation_id descending
+ * Uses last_updated to show the real time when orders were created, not fake time
+ */
+export async function getCreationIds(): Promise<Array<{ creation_id: number; count: number; created_at: string }>> {
+    const { data, error } = await supabase
+        .from('orders')
+        .select('creation_id, last_updated')
+        .not('creation_id', 'is', null);
+
+    if (error) {
+        console.error('Error fetching creation_ids:', error);
+        // If column doesn't exist yet, return empty array
+        if (error.code === '42703') {
+            return [];
+        }
+        throw new Error(`Failed to get creation_ids: ${error.message}`);
+    }
+
+    if (!data || data.length === 0) {
+        return [];
+    }
+
+    // Group by creation_id and count
+    const grouped = new Map<number, { count: number; created_at: string }>();
+    for (const order of data) {
+        const id = order.creation_id;
+        if (!grouped.has(id)) {
+            grouped.set(id, { count: 0, created_at: order.last_updated });
+        }
+        const entry = grouped.get(id)!;
+        entry.count++;
+        // Use most recent last_updated for this creation_id (shows real time, not fake time)
+        if (order.last_updated > entry.created_at) {
+            entry.created_at = order.last_updated;
+        }
+    }
+
+    // Convert to array and sort by creation_id descending
+    return Array.from(grouped.entries())
+        .map(([creation_id, { count, created_at }]) => ({ creation_id, count, created_at }))
+        .sort((a, b) => b.creation_id - a.creation_id);
+}
+
+/**
+ * Delete all orders with a specific creation_id
+ * Also deletes related records (order_items, order_vendor_selections, order_box_selections, billing_records)
+ */
+export async function deleteOrdersByCreationId(creationId: number): Promise<{ success: boolean; deletedCount: number; error?: string }> {
+    try {
+        // First, get all order IDs with this creation_id
+        const { data: orders, error: fetchError } = await supabase
+            .from('orders')
+            .select('id')
+            .eq('creation_id', creationId);
+
+        if (fetchError) {
+            return { success: false, deletedCount: 0, error: fetchError.message };
+        }
+
+        if (!orders || orders.length === 0) {
+            return { success: true, deletedCount: 0 };
+        }
+
+        const orderIds = orders.map(o => o.id);
+
+        // Delete related records first (cascade deletes should handle this, but being explicit)
+        // Delete order_items
+        await supabase
+            .from('order_items')
+            .delete()
+            .in('order_id', orderIds);
+
+        // Delete order_vendor_selections
+        await supabase
+            .from('order_vendor_selections')
+            .delete()
+            .in('order_id', orderIds);
+
+        // Delete order_box_selections
+        await supabase
+            .from('order_box_selections')
+            .delete()
+            .in('order_id', orderIds);
+
+        // Delete billing_records (if they reference these orders)
+        await supabase
+            .from('billing_records')
+            .delete()
+            .in('order_id', orderIds);
+
+        // Finally, delete the orders
+        const { error: deleteError } = await supabase
+            .from('orders')
+            .delete()
+            .eq('creation_id', creationId);
+
+        if (deleteError) {
+            return { success: false, deletedCount: 0, error: deleteError.message };
+        }
+
+        revalidatePath('/admin');
+        return { success: true, deletedCount: orders.length };
+    } catch (error: any) {
+        return { success: false, deletedCount: 0, error: error.message || 'Unknown error' };
+    }
+}
+
+/**
  * Append order details to client's order_history JSON column
  * This function collects comprehensive order information including vendor details, items, notes, etc.
  */
@@ -910,6 +1044,9 @@ export async function saveEquipmentOrder(clientId: string, vendorId: string, equ
         price: equipmentItem.price
     };
 
+    // Get creation_id for this individual order
+    const creationId = await getNextCreationId();
+
     // Create actual order in orders table (not upcoming_orders)
     const orderData: any = {
         client_id: clientId,
@@ -921,7 +1058,8 @@ export async function saveEquipmentOrder(clientId: string, vendorId: string, equ
         scheduled_delivery_date: scheduledDeliveryDate ? scheduledDeliveryDate.toISOString().split('T')[0] : null,
         total_value: equipmentItem.price,
         total_items: 1,
-        notes: JSON.stringify(equipmentSelection)
+        notes: JSON.stringify(equipmentSelection),
+        creation_id: creationId
     };
 
     const { data: newOrder, error: orderError } = await supabase
@@ -1005,6 +1143,9 @@ export async function saveCustomOrder(clientId: string, vendorId: string, itemDe
         }
     }
 
+    // Get creation_id for this individual order
+    const creationId = await getNextCreationId();
+
     // Create order record
     const orderData: any = {
         client_id: clientId,
@@ -1016,7 +1157,8 @@ export async function saveCustomOrder(clientId: string, vendorId: string, itemDe
         scheduled_delivery_date: scheduledDeliveryDate ? scheduledDeliveryDate.toISOString().split('T')[0] : null,
         total_value: price,
         total_items: 1,
-        notes: `Custom Order: ${itemDescription}`
+        notes: `Custom Order: ${itemDescription}`,
+        creation_id: creationId
     };
 
     const { data: newOrder, error: orderError } = await supabase
@@ -4039,6 +4181,9 @@ export async function processUpcomingOrders() {
     const errors: string[] = [];
     let processedCount = 0;
 
+    // Get creation_id once for this batch
+    const creationId = await getNextCreationId();
+
     for (const upcomingOrder of upcomingOrders) {
         try {
             // Calculate scheduled_delivery_date from delivery_day if available
@@ -4071,7 +4216,8 @@ export async function processUpcomingOrders() {
                 total_value: upcomingOrder.total_value,
                 total_items: upcomingOrder.total_items,
                 notes: upcomingOrder.notes,
-                order_number: upcomingOrder.order_number // Preserve the assigned 6-digit number
+                order_number: upcomingOrder.order_number, // Preserve the assigned 6-digit number
+                creation_id: creationId
             };
 
             const { data: newOrder, error: orderError } = await supabaseClient

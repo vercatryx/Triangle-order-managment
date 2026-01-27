@@ -2,9 +2,9 @@
 
 import { useState, useEffect } from 'react';
 import { AppSettings } from '@/lib/types';
-import { updateSettings } from '@/lib/actions';
+import { updateSettings, getCreationIds, deleteOrdersByCreationId } from '@/lib/actions';
 import { useDataCache } from '@/lib/data-cache';
-import { Save, PlayCircle, RefreshCw, X, Calendar } from 'lucide-react';
+import { Save, PlayCircle, RefreshCw, X, Calendar, Trash2, AlertTriangle } from 'lucide-react';
 import styles from './GlobalSettings.module.css';
 
 
@@ -30,14 +30,56 @@ export function GlobalSettings() {
         errors?: string[];
         skippedCount?: number;
     } | null>(null);
+    const [creationIds, setCreationIds] = useState<Array<{ creation_id: number; count: number; created_at: string }>>([]);
+    const [loadingCreationIds, setLoadingCreationIds] = useState(false);
+    const [deletingCreationId, setDeletingCreationId] = useState<number | null>(null);
 
     useEffect(() => {
         loadData();
+        loadCreationIds();
     }, []);
 
     async function loadData() {
         const data = await getSettings();
         setSettings(data);
+    }
+
+    async function loadCreationIds() {
+        setLoadingCreationIds(true);
+        try {
+            const ids = await getCreationIds();
+            setCreationIds(ids);
+        } catch (error) {
+            console.error('Error loading creation IDs:', error);
+        } finally {
+            setLoadingCreationIds(false);
+        }
+    }
+
+    async function handleDeleteCreationId(creationId: number) {
+        const creation = creationIds.find(c => c.creation_id === creationId);
+        if (!creation) return;
+
+        if (!confirm(`Are you sure you want to delete all ${creation.count} order(s) with creation ID ${creationId}? This action cannot be undone.`)) {
+            return;
+        }
+
+        setDeletingCreationId(creationId);
+        try {
+            const result = await deleteOrdersByCreationId(creationId);
+            if (result.success) {
+                setMessage(`Successfully deleted ${result.deletedCount} order(s) with creation ID ${creationId}`);
+                setTimeout(() => setMessage(null), 5000);
+                await loadCreationIds();
+                invalidateReferenceData();
+            } else {
+                alert(`Failed to delete orders: ${result.error || 'Unknown error'}`);
+            }
+        } catch (error: any) {
+            alert(`Error deleting orders: ${error.message || 'Unknown error'}`);
+        } finally {
+            setDeletingCreationId(null);
+        }
     }
 
     async function handleSave() {
@@ -323,6 +365,78 @@ export function GlobalSettings() {
                     </div>
                 </div>
             )}
+
+            <div className={styles.card} style={{ marginTop: 'var(--spacing-lg)' }}>
+                <h3 className={styles.sectionTitle}>Order Creation Management</h3>
+                <p className={styles.description}>
+                    Manage orders by creation ID. Each round of order creation gets a unique numeric ID. You can delete all orders from a specific creation round.
+                </p>
+
+                {loadingCreationIds ? (
+                    <div style={{ padding: '1rem', textAlign: 'center', color: 'var(--text-secondary)' }}>
+                        <RefreshCw className="spin" size={20} style={{ display: 'inline-block', marginRight: '0.5rem' }} />
+                        Loading creation IDs...
+                    </div>
+                ) : creationIds.length === 0 ? (
+                    <div style={{ padding: '1rem', textAlign: 'center', color: 'var(--text-secondary)' }}>
+                        No orders with creation IDs found.
+                    </div>
+                ) : (
+                    <div style={{ marginTop: '1rem' }}>
+                        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                            <thead>
+                                <tr style={{ borderBottom: '1px solid var(--border-color)' }}>
+                                    <th style={{ padding: '0.75rem', textAlign: 'left', fontWeight: 600 }}>Creation ID</th>
+                                    <th style={{ padding: '0.75rem', textAlign: 'left', fontWeight: 600 }}>Order Count</th>
+                                    <th style={{ padding: '0.75rem', textAlign: 'left', fontWeight: 600 }}>Created At</th>
+                                    <th style={{ padding: '0.75rem', textAlign: 'right', fontWeight: 600 }}>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {creationIds.map((creation) => (
+                                    <tr key={creation.creation_id} style={{ borderBottom: '1px solid var(--border-color)' }}>
+                                        <td style={{ padding: '0.75rem' }}>{creation.creation_id}</td>
+                                        <td style={{ padding: '0.75rem' }}>{creation.count}</td>
+                                        <td style={{ padding: '0.75rem', color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
+                                            {new Date(creation.created_at).toLocaleString()}
+                                        </td>
+                                        <td style={{ padding: '0.75rem', textAlign: 'right' }}>
+                                            <button
+                                                className="btn btn-danger"
+                                                onClick={() => handleDeleteCreationId(creation.creation_id)}
+                                                disabled={deletingCreationId === creation.creation_id}
+                                                style={{
+                                                    display: 'inline-flex',
+                                                    alignItems: 'center',
+                                                    gap: '0.5rem',
+                                                    padding: '0.5rem 1rem',
+                                                    fontSize: '0.875rem'
+                                                }}
+                                            >
+                                                {deletingCreationId === creation.creation_id ? (
+                                                    <>
+                                                        <RefreshCw className="spin" size={14} />
+                                                        Deleting...
+                                                    </>
+                                                ) : (
+                                                    <>
+                                                        <Trash2 size={14} />
+                                                        Delete All
+                                                    </>
+                                                )}
+                                            </button>
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                        <div style={{ marginTop: '1rem', padding: '0.75rem', backgroundColor: 'var(--bg-panel)', borderRadius: '0.5rem', fontSize: '0.875rem', color: 'var(--text-secondary)' }}>
+                            <AlertTriangle size={16} style={{ display: 'inline-block', marginRight: '0.5rem', verticalAlign: 'middle' }} />
+                            <strong>Warning:</strong> Deleting orders by creation ID will permanently remove all orders, order items, vendor selections, box selections, and related billing records for that creation round. This action cannot be undone.
+                        </div>
+                    </div>
+                )}
+            </div>
 
         </div >
     );
