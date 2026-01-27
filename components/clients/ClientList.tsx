@@ -312,78 +312,29 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
             // Show clients whose status does NOT allow deliveries
             matchesView = status ? !status.deliveriesAllowed : false;
         } else if (currentView === 'needs-attention') {
-            // First, check if client is eligible (status allows deliveries)
-            const status = statuses.find(s => s.id === c.statusId);
-            const isEligible = status ? status.deliveriesAllowed : false;
-
-            // Only show eligible clients that need attention
-            if (!isEligible) {
-                matchesView = false;
-            } else {
-                // Show clients that need attention based on specific criteria:
-                // 1. Clients with boxes that do not have a vendor assigned
-                // 2. Clients whose expiration date is within the current month
-                // 3. Clients with boxes whose authorized amount is less than 584
-                // 4. Clients with food whose authorized amount is less than 1344
-
-                const now = new Date();
-                const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-                const firstDayOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-                const lastDayOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0);
-
-                // 1. Check if client with boxes doesn't have vendor assigned
-                let boxesNeedsVendor = false;
-                if (c.serviceType === 'Boxes') {
-                    // Check actual box orders from client_box_orders table
-                    const clientDetails = detailsCache[c.id];
-                    
-                    // Only check if we have cached details (to avoid false positives)
-                    if (clientDetails) {
-                        const boxOrders = clientDetails.boxOrders || [];
-                        
-                        if (boxOrders.length === 0) {
-                            boxesNeedsVendor = true; // No box orders means needs vendor
-                        } else {
-                            // Check if any box order is missing a vendor
-                            boxesNeedsVendor = boxOrders.some(boxOrder => {
-                                // Check vendorId on the box order itself, or fall back to box type's vendor
-                                if (boxOrder.vendorId) {
-                                    return false; // Has vendor
-                                }
-                                // Fall back to box type's vendor if box order doesn't have one
-                                const box = boxTypes.find(b => b.id === boxOrder.boxTypeId);
-                                return !box?.vendorId; // Missing vendor if box type also doesn't have one
-                            });
+            // Show clients with box orders that do not have a vendor assigned
+            let boxesNeedsVendor = false;
+            if (c.serviceType === 'Boxes') {
+                // Check box orders from activeOrder (available on all clients)
+                const boxOrders = c.activeOrder?.boxOrders || [];
+                
+                if (boxOrders.length === 0) {
+                    boxesNeedsVendor = true; // No box orders means needs vendor
+                } else {
+                    // Check if any box order is missing a vendor
+                    boxesNeedsVendor = boxOrders.some(boxOrder => {
+                        // Check vendorId on the box order itself, or fall back to box type's vendor
+                        if (boxOrder.vendorId) {
+                            return false; // Has vendor
                         }
-                    }
-                    // If cache entry doesn't exist, we can't determine vendor status, so skip this check
+                        // Fall back to box type's vendor if box order doesn't have one
+                        const box = boxTypes.find(b => b.id === boxOrder.boxTypeId);
+                        return !box?.vendorId; // Missing vendor if box type also doesn't have one
+                    });
                 }
-
-                // 2. Check if expiration date is within current month
-                let expirationInCurrentMonth = false;
-                if (c.expirationDate) {
-                    const expDate = new Date(c.expirationDate);
-                    expirationInCurrentMonth = expDate >= firstDayOfMonth && expDate <= lastDayOfMonth;
-                }
-
-                // 3. Check if boxes client has authorized amount < 584 or is null/undefined
-                const boxesLowOrNoAmount = c.serviceType === 'Boxes' && (c.authorizedAmount === null || c.authorizedAmount === undefined || c.authorizedAmount < 584);
-
-                // 4. Check if food client has authorized amount < 1344 or is null/undefined
-                const foodLowOrNoAmount = c.serviceType === 'Food' && (c.authorizedAmount === null || c.authorizedAmount === undefined || c.authorizedAmount < 1344);
-
-                // 5. Check if meal orders exist but no vendor is assigned
-                let mealNeedsVendor = false;
-                const mealSelections = c.mealOrder?.mealSelections || c.activeOrder?.mealSelections;
-                if (mealSelections) {
-                    const mealTypes = Object.keys(mealSelections);
-                    if (mealTypes.length > 0) {
-                        mealNeedsVendor = mealTypes.some(type => !mealSelections[type].vendorId);
-                    }
-                }
-
-                matchesView = boxesNeedsVendor || expirationInCurrentMonth || boxesLowOrNoAmount || foodLowOrNoAmount || mealNeedsVendor;
             }
+
+            matchesView = boxesNeedsVendor;
         }
         // 'billing' might just show all clients but with different columns?
 
@@ -1096,76 +1047,29 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
 
     function getNeedsAttentionReason(client: ClientProfile): string {
         const reasons: string[] = [];
-        const now = new Date();
-        const firstDayOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-        const lastDayOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0);
 
-        // 1. Check if client with boxes doesn't have vendor assigned
+        // Check if client with boxes doesn't have vendor assigned
         if (client.serviceType === 'Boxes') {
-            // Check actual box orders from client_box_orders table
-            const clientDetails = detailsCache[client.id];
+            // Check box orders from activeOrder (available on all clients)
+            const boxOrders = client.activeOrder?.boxOrders || [];
             
-            // Only check if we have cached details (to avoid false positives)
-            if (clientDetails) {
-                const boxOrders = clientDetails.boxOrders || [];
-                
-                if (boxOrders.length === 0) {
-                    // No box orders means needs vendor
-                    reasons.push('Boxes: No vendor assigned');
-                } else {
-                    // Check if any box order is missing a vendor
-                    const hasMissingVendor = boxOrders.some(boxOrder => {
-                        // Check vendorId on the box order itself, or fall back to box type's vendor
-                        if (boxOrder.vendorId) {
-                            return false; // Has vendor
-                        }
-                        // Fall back to box type's vendor if box order doesn't have one
-                        const box = boxTypes.find(b => b.id === boxOrder.boxTypeId);
-                        return !box?.vendorId; // Missing vendor if box type also doesn't have one
-                    });
-                    
-                    if (hasMissingVendor) {
-                        reasons.push('Boxes: No vendor assigned');
+            if (boxOrders.length === 0) {
+                // No box orders means needs vendor
+                reasons.push('Boxes: No vendor assigned');
+            } else {
+                // Check if any box order is missing a vendor
+                const hasMissingVendor = boxOrders.some(boxOrder => {
+                    // Check vendorId on the box order itself, or fall back to box type's vendor
+                    if (boxOrder.vendorId) {
+                        return false; // Has vendor
                     }
-                }
-            }
-            // If cache entry doesn't exist, we can't determine vendor status, so skip this check
-        }
-
-        // 2. Check if expiration date is within current month
-        if (client.expirationDate) {
-            const expDate = new Date(client.expirationDate);
-            if (expDate >= firstDayOfMonth && expDate <= lastDayOfMonth) {
-                reasons.push('Expiration date this month');
-            }
-        }
-
-        // 3. Check if boxes client has authorized amount < 584 or is null/undefined
-        if (client.serviceType === 'Boxes') {
-            if (client.authorizedAmount === null || client.authorizedAmount === undefined) {
-                reasons.push('Boxes: No authorized amount');
-            } else if (client.authorizedAmount < 584) {
-                reasons.push(`Boxes: Auth amount $${client.authorizedAmount} < $584`);
-            }
-        }
-
-        // 4. Check if food client has authorized amount < 1344 or is null/undefined
-        if (client.serviceType === 'Food') {
-            if (client.authorizedAmount === null || client.authorizedAmount === undefined) {
-                reasons.push('Food: No authorized amount');
-            } else if (client.authorizedAmount < 1344) {
-                reasons.push(`Food: Auth amount $${client.authorizedAmount} < $1344`);
-            }
-        }
-
-        // 5. Check if meal orders exist but no vendor is assigned
-        const mealSelections = client.mealOrder?.mealSelections || client.activeOrder?.mealSelections;
-        if (mealSelections) {
-            const mealTypes = Object.keys(mealSelections);
-            if (mealTypes.length > 0) {
-                const missingVendorMeals = mealTypes.filter(type => !mealSelections[type].vendorId);
-                if (missingVendorMeals.length > 0) {
-                    reasons.push(`Meal: No vendor assigned (${missingVendorMeals.join(', ')})`);
+                    // Fall back to box type's vendor if box order doesn't have one
+                    const box = boxTypes.find(b => b.id === boxOrder.boxTypeId);
+                    return !box?.vendorId; // Missing vendor if box type also doesn't have one
+                });
+                
+                if (hasMissingVendor) {
+                    reasons.push('Boxes: No vendor assigned');
                 }
             }
         }
@@ -1177,36 +1081,29 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
     const availableReasons = Array.from(new Set(
         clients
             .filter(c => {
-                // Re-apply specific needs-attention logic to get the base set of clients
-                // This is a bit duplicative but ensures we get all reasons even when other filters are active
-                // However, usually filters should narrow down options. 
-                // Let's stick to showing ALL reasons present in the "needs-attention" view (ignoring other filters for the list generation if possible, 
-                // but for simplicity and standard UI patterns, usually facets update based on current view.
-                // The user request said: "generate it from all of the reasons that are currently available"
-                // which implies looking at the *current data*.
-                // To be safe and helpful, we'll calculate it from the clients that MATCH the 'needs-attention' view criteria
-                // regardless of the search/status filters, so users can see what's possible.
-
-                // Matches View Logic (Needs Attention)
-                let matchesView = false;
-                const status = statuses.find(s => s.id === c.statusId);
-                const isEligible = status ? status.deliveriesAllowed : false;
-
-                if (isEligible) {
-                    const boxNeedsVendor = c.serviceType === 'Boxes' && (!c.activeOrder || (c.activeOrder.serviceType === 'Boxes' && !c.activeOrder.vendorId && !boxTypes.find(bt => bt.id === c.activeOrder?.boxTypeId)?.vendorId));
-                    // ... (rest of logic) ...
-                    // To avoid duplicating ALL the complex logic above, let's assume if it produces a reason string != "No reason specified"
-                    // AND it is eligible, it's in the list.
-                    // Actually, 'getNeedsAttentionReason' handles the reason generation.
-                    // The view logic also checks eligibility.
-
-                    // Basic eligibility check reused
-                    // We can just rely on 'getNeedsAttentionReason' returning something meaningful?
-                    // No, because getNeedsAttentionReason calculates reasons for ANY client.
-                    // The view only shows ELIGIBLE clients.
-                    return isEligible;
+                // Re-apply needs-attention logic to get the base set of clients
+                // Show clients with box orders that do not have a vendor assigned
+                let boxesNeedsVendor = false;
+                if (c.serviceType === 'Boxes') {
+                    // Check box orders from activeOrder (available on all clients)
+                    const boxOrders = c.activeOrder?.boxOrders || [];
+                    
+                    if (boxOrders.length === 0) {
+                        boxesNeedsVendor = true; // No box orders means needs vendor
+                    } else {
+                        // Check if any box order is missing a vendor
+                        boxesNeedsVendor = boxOrders.some(boxOrder => {
+                            // Check vendorId on the box order itself, or fall back to box type's vendor
+                            if (boxOrder.vendorId) {
+                                return false; // Has vendor
+                            }
+                            // Fall back to box type's vendor if box order doesn't have one
+                            const box = boxTypes.find(b => b.id === boxOrder.boxTypeId);
+                            return !box?.vendorId; // Missing vendor if box type also doesn't have one
+                        });
+                    }
                 }
-                return false;
+                return boxesNeedsVendor;
             })
             .flatMap(c => {
                 const r = getNeedsAttentionReason(c);

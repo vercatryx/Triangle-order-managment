@@ -2253,9 +2253,19 @@ export interface BillingRequest {
 }
 
 export async function getBillingRequestsByWeek(weekStartDate?: Date): Promise<BillingRequest[]> {
+    // Use Service Role if available to bypass RLS so all users see the same billing data
+    let supabaseClient = supabase;
+    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    if (serviceRoleKey) {
+        supabaseClient = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, serviceRoleKey, {
+            auth: { persistSession: false }
+        });
+    } else {
+        console.warn('[getBillingRequestsByWeek] Service role key not found - using regular client (may be blocked by RLS)');
+    }
     
     // Build query to get all orders (we'll filter by week in JavaScript)
-    const { data: allOrdersData, error: ordersError } = await supabase
+    const { data: allOrdersData, error: ordersError } = await supabaseClient
         .from('orders')
         .select(`
             *,
@@ -2271,7 +2281,7 @@ export async function getBillingRequestsByWeek(weekStartDate?: Date): Promise<Bi
     }
 
     // Get billing records with status "success" to check which orders are billed
-    const { data: billingRecords, error: billingError } = await supabase
+    const { data: billingRecords, error: billingError } = await supabaseClient
         .from('billing_records')
         .select(`
             order_id,
