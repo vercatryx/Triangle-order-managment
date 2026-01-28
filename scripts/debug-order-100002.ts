@@ -1,6 +1,22 @@
 import { createClient } from '@supabase/supabase-js';
+import fs from 'fs';
+import path from 'path';
 
-const supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
+// Load env manually to ensure we have keys
+const envPath = path.resolve(process.cwd(), '.env.local');
+const envFile = fs.readFileSync(envPath, 'utf8');
+const envConfig: Record<string, string> = {};
+envFile.split('\n').forEach(line => {
+    const [key, ...values] = line.split('=');
+    if (key && values) {
+        envConfig[key.trim()] = values.join('=').trim().replace(/(^"|"$)/g, '');
+    }
+});
+
+const supabase = createClient(
+    envConfig['NEXT_PUBLIC_SUPABASE_URL'],
+    envConfig['SUPABASE_SERVICE_ROLE_KEY']
+);
 
 async function checkOrder() {
     console.log('Checking order 100002...');
@@ -17,7 +33,7 @@ async function checkOrder() {
             id: order.id,
             status: order.status,
             client_id: order.client_id,
-            proof_of_delivery_image: order.proof_of_delivery_image,
+            delivery_proof_url: order.delivery_proof_url,
             scheduled_delivery_date: order.scheduled_delivery_date
         });
     }

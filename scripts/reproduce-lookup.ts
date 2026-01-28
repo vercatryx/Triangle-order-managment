@@ -34,7 +34,7 @@ async function mockPageLookup(id: string) {
             order_number, 
             client_id, 
             scheduled_delivery_date,
-            proof_of_delivery_image
+            delivery_proof_url
         `);
 
     if (isUuid) {
@@ -56,7 +56,10 @@ async function mockPageLookup(id: string) {
     if (existingOrder) console.log('[MockLookup] Found in orders:', existingOrder.id);
     else console.log('[MockLookup] Not found in orders.');
 
-    let order = existingOrder;
+    let order = existingOrder ? {
+        ...existingOrder,
+        proof_of_delivery_image: existingOrder.delivery_proof_url
+    } : null;
 
     // --- 2. Check Upcoming Orders ---
     if (!order) {
@@ -66,7 +69,7 @@ async function mockPageLookup(id: string) {
                 id, 
                 order_number, 
                 client_id, 
-                scheduled_delivery_date,
+                delivery_day,
                 delivery_proof_url
             `);
 
@@ -91,7 +94,8 @@ async function mockPageLookup(id: string) {
             console.log('[MockLookup] Found in upcoming_orders:', upcomingOrder.id);
             order = {
                 ...upcomingOrder,
-                proof_of_delivery_image: upcomingOrder.delivery_proof_url
+                proof_of_delivery_image: upcomingOrder.delivery_proof_url,
+                scheduled_delivery_date: upcomingOrder.delivery_day
             };
         } else {
             console.log('[MockLookup] Not found in upcoming_orders.');

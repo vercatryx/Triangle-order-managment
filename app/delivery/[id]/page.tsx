@@ -44,7 +44,7 @@ export default async function OrderDeliveryPage({ params }: { params: Promise<{ 
         // Try upcoming_orders
         let upcomingQuery = supabaseAdmin
             .from('upcoming_orders')
-            .select('id, order_number, client_id, scheduled_delivery_date, delivery_proof_url');
+            .select('id, order_number, client_id, delivery_day, delivery_proof_url');
 
         if (isUuid) {
             upcomingQuery = upcomingQuery.eq('id', id);
@@ -61,7 +61,7 @@ export default async function OrderDeliveryPage({ params }: { params: Promise<{ 
         if (upcomingOrder) {
             order = {
                 ...upcomingOrder,
-                // delivery_proof_url matches column name now
+                scheduled_delivery_date: upcomingOrder.delivery_day,
             };
             isUpcoming = true;
         }

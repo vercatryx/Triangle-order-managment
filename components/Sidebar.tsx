@@ -33,7 +33,6 @@ export function Sidebar({
 }) {
     const pathname = usePathname();
     const [isLogoutVisible, setIsLogoutVisible] = useState(false);
-    const currentTime = new Date();
     const [todayUnits, setTodayUnits] = useState<number | null>(null);
     const [weekUnits, setWeekUnits] = useState<number | null>(null);
     const [isLoadingUnits, setIsLoadingUnits] = useState(false);
@@ -46,8 +45,8 @@ export function Sidebar({
         try {
             const logs = await getNavigatorLogs(userId);
 
-            // Get current time (using fake time if set)
-            const now = currentTime;
+            // Get current time
+            const now = new Date();
             const today = new Date(now);
             today.setHours(0, 0, 0, 0);
 
@@ -87,7 +86,7 @@ export function Sidebar({
         } finally {
             setIsLoadingUnits(false);
         }
-    }, [userId, currentTime]);
+    }, [userId]);
 
     useEffect(() => {
         if (userRole === 'navigator' && userId) {
