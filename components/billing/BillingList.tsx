@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Search, ChevronRight, Download, ChevronDown, ChevronUp, ExternalLink, Image } from 'lucide-react';
@@ -13,11 +13,16 @@ export function BillingList() {
     const [billingRequests, setBillingRequests] = useState<BillingRequest[]>([]);
     const [search, setSearch] = useState('');
     const [statusFilter, setStatusFilter] = useState<'all' | 'ready' | 'completed' | 'success' | 'failed'>('all');
-    const [selectedWeek, setSelectedWeek] = useState<Date | null>(null);
+    const [selectedWeek, setSelectedWeek] = useState<Date | 'all' | null>(null);
     const [expandedRequest, setExpandedRequest] = useState<string | null>(null);
     const [isLoading, setIsLoading] = useState(true);
     const [weekOptions, setWeekOptions] = useState<Date[]>([]);
     const [statusDropdownOpen, setStatusDropdownOpen] = useState<string | null>(null);
+    const selectedWeekRef = useRef<Date | 'all' | null>(null);
+
+    useEffect(() => {
+        selectedWeekRef.current = selectedWeek;
+    }, [selectedWeek]);
 
     useEffect(() => {
         // Initialize week options
@@ -35,13 +40,24 @@ export function BillingList() {
 
     async function loadData() {
         if (!selectedWeek) return;
+        const weekKey = selectedWeek === 'all' ? 'all' : selectedWeek.getTime();
         setIsLoading(true);
         try {
-            const data = await getBillingRequestsByWeek(selectedWeek);
+            const weekArg = selectedWeek === 'all' ? undefined : selectedWeek;
+            const data = await getBillingRequestsByWeek(weekArg);
+            const current = selectedWeekRef.current;
+            const currentKey = !current ? null : current === 'all' ? 'all' : current.getTime();
+            if (currentKey !== weekKey) return;
             setBillingRequests(data);
         } catch (error) {
+            const current = selectedWeekRef.current;
+            const currentKey = !current ? null : current === 'all' ? 'all' : current.getTime();
+            if (currentKey !== weekKey) return;
             console.error('Error loading billing requests:', error);
         } finally {
+            const current = selectedWeekRef.current;
+            const currentKey = !current ? null : current === 'all' ? 'all' : current.getTime();
+            if (currentKey !== weekKey) return;
             setIsLoading(false);
         }
     }
@@ -146,13 +162,14 @@ export function BillingList() {
                     <select
                         className="input"
                         style={{ width: '250px' }}
-                        value={selectedWeek ? selectedWeek.toISOString() : ''}
+                        value={selectedWeek === 'all' ? 'all' : selectedWeek ? selectedWeek.toISOString() : ''}
                         onChange={(e) => {
-                            if (e.target.value) {
-                                setSelectedWeek(new Date(e.target.value));
-                            }
+                            const v = e.target.value;
+                            if (!v) return;
+                            setSelectedWeek(v === 'all' ? 'all' : new Date(v));
                         }}
                     >
+                        <option value="all">All weeks</option>
                         {weekOptions.map((week, idx) => {
                             const weekStr = getWeekRangeString(week);
                             const isCurrentWeek = getWeekStart(new Date()).getTime() === week.getTime();
@@ -453,7 +470,7 @@ export function BillingList() {
                 })()}
                 {filteredRequests.length === 0 && !isLoading && (
                     <div className={styles.empty}>
-                        {selectedWeek
+                        {selectedWeek && selectedWeek !== 'all'
                             ? `No billing requests found for ${getWeekRangeString(selectedWeek)}.`
                             : 'No billing requests found.'}
                     </div>

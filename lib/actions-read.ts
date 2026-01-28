@@ -2227,11 +2227,17 @@ export async function getOrderById(orderId: string) {
                 })
             );
 
+            // Use stored value, but calculate from items if stored value is zero
+            const storedTotalValue = parseFloat(orderData.total_value || 0);
+            const calculatedTotalValue = vendorSelectionsWithItems.reduce((sum, vs) => {
+                return sum + vs.items.reduce((itemSum, item) => itemSum + item.totalValue, 0);
+            }, 0);
+
             orderDetails = {
                 serviceType: orderData.service_type,
                 vendorSelections: vendorSelectionsWithItems,
                 totalItems: orderData.total_items,
-                totalValue: parseFloat(orderData.total_value || 0)
+                totalValue: storedTotalValue > 0 ? storedTotalValue : calculatedTotalValue
             };
         }
     } else if (orderData.service_type === 'Custom') {
@@ -2268,11 +2274,17 @@ export async function getOrderById(orderId: string) {
                 })
             );
 
+            // Use stored value, but calculate from items if stored value is zero
+            const storedCustomTotalValue = parseFloat(orderData.total_value || 0);
+            const calculatedCustomTotalValue = vendorSelectionsWithItems.reduce((sum, vs) => {
+                return sum + vs.items.reduce((itemSum, item) => itemSum + item.totalValue, 0);
+            }, 0);
+
             orderDetails = {
                 serviceType: 'Custom',
                 vendorSelections: vendorSelectionsWithItems,
                 totalItems: orderData.total_items,
-                totalValue: parseFloat(orderData.total_value || 0),
+                totalValue: storedCustomTotalValue > 0 ? storedCustomTotalValue : calculatedCustomTotalValue,
                 notes: orderData.notes
             };
         }

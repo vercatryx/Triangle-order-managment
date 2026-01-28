@@ -2496,41 +2496,62 @@ export async function getBillingRequestsByWeek(weekStartDate?: Date): Promise<Bi
         console.warn('[getBillingRequestsByWeek] Service role key not found - using regular client (may be blocked by RLS)');
     }
 
-    // Build query to get all orders (we'll filter by week in JavaScript)
-    const { data: allOrdersData, error: ordersError } = await supabaseClient
-        .from('orders')
-        .select(`
-            *,
-            clients (
-                full_name
-            )
-        `)
-        .order('created_at', { ascending: false });
+    // Fetch ALL orders in pages (Supabase defaults to 1000 rows; we need every order for accurate billing).
+    const PAGE_SIZE = 1000;
+    const allOrdersData: any[] = [];
+    let ordersOffset = 0;
+    let ordersHasMore = true;
 
-    if (ordersError) {
-        console.error('Error fetching orders:', ordersError);
-        return [];
+    while (ordersHasMore) {
+        const { data: page, error: ordersError } = await supabaseClient
+            .from('orders')
+            .select(`
+                *,
+                clients (
+                    full_name
+                )
+            `)
+            .order('created_at', { ascending: false })
+            .range(ordersOffset, ordersOffset + PAGE_SIZE - 1);
+
+        if (ordersError) {
+            console.error('Error fetching orders:', ordersError);
+            return [];
+        }
+        const rows = page || [];
+        allOrdersData.push(...rows);
+        ordersHasMore = rows.length >= PAGE_SIZE;
+        ordersOffset += PAGE_SIZE;
     }
 
-    // Get billing records with status "success" to check which orders are billed
-    const { data: billingRecords, error: billingError } = await supabaseClient
-        .from('billing_records')
-        .select(`
-            order_id,
-            status
-        `)
-        .eq('status', 'success');
+    // Fetch ALL billing records with status "success" in pages (same 1000-row limit).
+    const allBillingRecords: any[] = [];
+    let brOffset = 0;
+    let brHasMore = true;
 
-    if (billingError) {
-        console.error('Error fetching billing records:', billingError);
+    while (brHasMore) {
+        const { data: brPage, error: billingError } = await supabaseClient
+            .from('billing_records')
+            .select('order_id, status')
+            .eq('status', 'success')
+            .order('order_id', { ascending: true })
+            .range(brOffset, brOffset + PAGE_SIZE - 1);
+
+        if (billingError) {
+            console.error('Error fetching billing records:', billingError);
+        }
+        const rows = brPage || [];
+        allBillingRecords.push(...rows);
+        brHasMore = rows.length >= PAGE_SIZE;
+        brOffset += PAGE_SIZE;
     }
 
-    const successfulOrderIds = new Set((billingRecords || []).map((br: any) => br.order_id).filter(Boolean));
+    const successfulOrderIds = new Set(allBillingRecords.map((br: any) => br.order_id).filter(Boolean));
 
     // Map orders with client info and check billing status
     // Note: We include all orders here (including billing_successful/billing_failed) for UI display
     // The API route will filter them out separately
-    const allOrders = (allOrdersData || []).map((o: any) => {
+    const allOrders = allOrdersData.map((o: any) => {
         const hasProof = !!(o.proof_of_delivery_image || o.delivery_proof_url);
         const isBilled = successfulOrderIds.has(o.id);
 
@@ -2543,19 +2564,15 @@ export async function getBillingRequestsByWeek(weekStartDate?: Date): Promise<Bi
         };
     });
 
-    // Filter orders to only those in the specified week if provided
-    // Include billing_pending orders regardless of delivery date to ensure they show up
+    // Filter orders to the specified week if provided. When "All weeks", no filter.
+    // Use delivery date when available; otherwise created_at so we never drop orders.
     let filteredOrders = allOrders;
     if (weekStartDate) {
         filteredOrders = allOrders.filter(order => {
-            // Always include billing_pending orders
-            if (order.status === 'billing_pending') {
-                return true;
-            }
             const deliveryDateStr = order.actual_delivery_date || order.scheduled_delivery_date;
-            if (!deliveryDateStr) return false;
-            const deliveryDate = new Date(deliveryDateStr);
-            return isDateInWeek(deliveryDate, weekStartDate);
+            const dateToUse = deliveryDateStr ? new Date(deliveryDateStr) : (order.created_at ? new Date(order.created_at) : null);
+            if (!dateToUse) return false;
+            return isDateInWeek(dateToUse, weekStartDate);
         });
     }
 
@@ -2563,24 +2580,17 @@ export async function getBillingRequestsByWeek(weekStartDate?: Date): Promise<Bi
     const billingRequestsMap = new Map<string, BillingRequest>();
 
     for (const order of filteredOrders) {
-        // Use actual_delivery_date if available, otherwise scheduled_delivery_date
-        // For billing_pending orders without delivery dates, use the selected week or created_at
+        // Use delivery date when available; otherwise created_at so we never drop orders.
         let deliveryDateStr = order.actual_delivery_date || order.scheduled_delivery_date;
         let deliveryDate: Date;
 
-        if (!deliveryDateStr) {
-            // For billing_pending orders, use selected week or created_at as fallback
-            if (order.status === 'billing_pending' && weekStartDate) {
-                deliveryDate = weekStartDate;
-            } else if (order.created_at) {
-                deliveryDate = new Date(order.created_at);
-            } else {
-                // If no date at all, skip this order (can't determine which week it belongs to)
-                console.warn(`Order ${order.id} has no delivery date or created_at, skipping from billing requests`);
-                continue;
-            }
-        } else {
+        if (deliveryDateStr) {
             deliveryDate = new Date(deliveryDateStr);
+        } else if (order.created_at) {
+            deliveryDate = new Date(order.created_at);
+        } else {
+            console.warn(`Order ${order.id} has no delivery date or created_at, skipping from billing requests`);
+            continue;
         }
 
         // Normalize the date to avoid timezone issues when comparing weeks
@@ -6425,11 +6435,17 @@ export async function getOrderById(orderId: string) {
                 })
             );
 
+            // Use stored value, but calculate from items if stored value is zero
+            const storedTotalValue = parseFloat(orderData.total_value || 0);
+            const calculatedTotalValue = vendorSelectionsWithItems.reduce((sum, vs) => {
+                return sum + vs.items.reduce((itemSum, item) => itemSum + item.totalValue, 0);
+            }, 0);
+
             orderDetails = {
                 serviceType: orderData.service_type,
                 vendorSelections: vendorSelectionsWithItems,
                 totalItems: orderData.total_items,
-                totalValue: parseFloat(orderData.total_value || 0)
+                totalValue: storedTotalValue > 0 ? storedTotalValue : calculatedTotalValue
             };
         }
     } else if (orderData.service_type === 'Custom') {
@@ -6466,11 +6482,17 @@ export async function getOrderById(orderId: string) {
                 })
             );
 
+            // Use stored value, but calculate from items if stored value is zero
+            const storedCustomTotalValue = parseFloat(orderData.total_value || 0);
+            const calculatedCustomTotalValue = vendorSelectionsWithItems.reduce((sum, vs) => {
+                return sum + vs.items.reduce((itemSum, item) => itemSum + item.totalValue, 0);
+            }, 0);
+
             orderDetails = {
                 serviceType: 'Custom',
                 vendorSelections: vendorSelectionsWithItems,
                 totalItems: orderData.total_items,
-                totalValue: parseFloat(orderData.total_value || 0),
+                totalValue: storedCustomTotalValue > 0 ? storedCustomTotalValue : calculatedCustomTotalValue,
                 notes: orderData.notes
             };
         }
