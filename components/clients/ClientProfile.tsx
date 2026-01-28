@@ -3209,8 +3209,58 @@ export function ClientProfileDetail({
                                                 </div>
                                             )}
 
+                                            {/* Custom Orders */}
+                                            {entry.orderDetails.customOrder && (
+                                                <div style={{ backgroundColor: 'var(--bg-surface-hover)', padding: '0.8rem', borderRadius: '4px' }}>
+                                                    <div style={{ fontWeight: 600, marginBottom: '0.4rem', color: 'var(--color-primary)' }}>Custom Order Details</div>
+                                                    <div style={{ display: 'grid', gridTemplateColumns: '100px 1fr', gap: '0.4rem', fontSize: '0.9rem' }}>
+                                                        <span style={{ color: 'var(--text-tertiary)' }}>Vendor:</span>
+                                                        <span style={{ fontWeight: 500 }}>{entry.orderDetails.customOrder.vendorName}</span>
+
+                                                        <span style={{ color: 'var(--text-tertiary)' }}>Item:</span>
+                                                        <span>{entry.orderDetails.customOrder.description}</span>
+
+                                                        <span style={{ color: 'var(--text-tertiary)' }}>Price:</span>
+                                                        <span style={{ fontWeight: 600 }}>${entry.orderDetails.customOrder.price?.toFixed(2)}</span>
+
+                                                        <span style={{ color: 'var(--text-tertiary)' }}>Delivery:</span>
+                                                        <span>{entry.orderDetails.customOrder.deliveryDay}</span>
+                                                    </div>
+                                                </div>
+                                            )}
+
+                                            {/* Meal Selections */}
+                                            {entry.orderDetails.mealSelections && (
+                                                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.8rem' }}>
+                                                    {Object.entries(entry.orderDetails.mealSelections).map(([key, selection]: [string, any]) => (
+                                                        <div key={key} style={{ backgroundColor: 'var(--bg-surface-hover)', padding: '0.8rem', borderRadius: '4px' }}>
+                                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.4rem' }}>
+                                                                <span style={{ fontWeight: 600, color: 'var(--color-primary)' }}>{selection.mealType || key}</span>
+                                                                <span style={{ fontSize: '0.8rem', padding: '2px 8px', borderRadius: '12px', backgroundColor: 'var(--bg-surface)', fontWeight: 500 }}>
+                                                                    {selection.vendorName}
+                                                                </span>
+                                                            </div>
+                                                            {selection.itemsDetails && Array.isArray(selection.itemsDetails) ? (
+                                                                <ul style={{ margin: 0, paddingLeft: '1.2rem', fontSize: '0.9rem' }}>
+                                                                    {selection.itemsDetails.map((item: any, iIdx: number) => (
+                                                                        <li key={iIdx}>
+                                                                            <strong>{item.itemName}</strong> x{item.quantity}
+                                                                            {item.note && <span style={{ marginLeft: '0.5rem', fontStyle: 'italic', color: 'var(--text-tertiary)' }}>({item.note})</span>}
+                                                                        </li>
+                                                                    ))}
+                                                                </ul>
+                                                            ) : (
+                                                                <div style={{ fontSize: '0.85rem', fontStyle: 'italic', color: 'var(--text-tertiary)' }}>
+                                                                    Items: {Object.keys(selection.items || {}).length}
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            )}
+
                                             {/* Delivery Day Orders (Food Alternative Structure) */}
-                                            {entry.orderDetails.deliveryDayOrders && !entry.orderDetails.vendorSelections && (
+                                            {entry.orderDetails.deliveryDayOrders && !entry.orderDetails.vendorSelections && !entry.orderDetails.mealSelections && (
                                                 <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
                                                     {Object.entries(entry.orderDetails.deliveryDayOrders).map(([day, dayData]: [string, any]) => (
                                                         <div key={day}>
@@ -3257,6 +3307,23 @@ export function ClientProfileDetail({
                                                             )}
                                                         </div>
                                                     ))}
+                                                </div>
+                                            )}
+
+                                            {/* Render Snapshot for save_event or if orderDetails render was minimal */}
+                                            {entry.type === 'save_event' && entry.snapshot && (
+                                                <div style={{
+                                                    marginTop: '0.8rem',
+                                                    padding: '0.8rem',
+                                                    backgroundColor: 'var(--bg-surface)',
+                                                    borderLeft: '2px solid var(--color-primary-light)',
+                                                    fontSize: '0.85rem',
+                                                    whiteSpace: 'pre-wrap',
+                                                    fontFamily: 'monospace',
+                                                    color: 'var(--text-secondary)',
+                                                    borderRadius: '4px'
+                                                }}>
+                                                    {entry.snapshot}
                                                 </div>
                                             )}
                                         </div>
@@ -5687,7 +5754,8 @@ export function ClientProfileDetail({
                                 updatedClient.activeOrder.custom_name,
                                 Number(updatedClient.activeOrder.custom_price),
                                 updatedClient.activeOrder.deliveryDay,
-                                updatedClient.activeOrder.caseId
+                                updatedClient.activeOrder.caseId,
+                                { skipHistory: true }
                             );
                             // Skip syncCurrentOrderToUpcoming for Custom - saveClientCustomOrder already handles it
                         } else {
@@ -5711,7 +5779,7 @@ export function ClientProfileDetail({
                             await saveClientBoxOrder(updatedClient.id, boxesToSave.map((box: any) => ({
                                 ...box,
                                 caseId: updatedClient.activeOrder?.caseId
-                            })));
+                            })), { skipHistory: true });
                         }
 
                         // Still call legacy sync for backward compatibility during migration
@@ -5856,7 +5924,7 @@ export function ClientProfileDetail({
             };
 
 
-            await updateClient(clientId, updateData);
+            await updateClient(clientId, updateData, { skipHistory: true });
 
             // Sync to new independent tables if there's order data
             // Sync to new independent tables if there's order data OR if we need to clear data
@@ -5887,7 +5955,8 @@ export function ClientProfileDetail({
                                 updateData.activeOrder.custom_name,
                                 Number(updateData.activeOrder.custom_price),
                                 updateData.activeOrder.deliveryDay,
-                                updateData.activeOrder.caseId
+                                updateData.activeOrder.caseId,
+                                { skipHistory: true }
                             )
                         );
                     } else {
@@ -5908,7 +5977,7 @@ export function ClientProfileDetail({
                         saveClientFoodOrder(clientId, {
                             caseId: updateData.activeOrder.caseId,
                             deliveryDayOrders: updateData.activeOrder.deliveryDayOrders || {}
-                        })
+                        }, { skipHistory: true })
                     );
                 }
 
@@ -5919,7 +5988,7 @@ export function ClientProfileDetail({
                         saveClientMealOrder(clientId, {
                             caseId: updateData.activeOrder.caseId,
                             mealSelections: updateData.activeOrder.mealSelections || {}
-                        })
+                        }, { skipHistory: true })
                     );
                 }
 
@@ -5931,7 +6000,7 @@ export function ClientProfileDetail({
                         saveClientBoxOrder(clientId, boxesToSave.map((box: any) => ({
                             ...box,
                             caseId: updateData.activeOrder?.caseId
-                        })))
+                        })), { skipHistory: true })
                     );
                 }
 

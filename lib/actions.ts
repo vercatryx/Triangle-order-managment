@@ -1702,7 +1702,7 @@ export async function getDependentsByParentId(parentClientId: string) {
     }
 }
 
-export async function updateClient(id: string, data: Partial<ClientProfile>) {
+export async function updateClient(id: string, data: Partial<ClientProfile>, options?: { skipHistory?: boolean }) {
     console.log('[updateClient] Server Action Received:', id);
     if (data.activeOrder) {
         console.log('[updateClient] Payload activeOrder mealSelections:', JSON.stringify((data.activeOrder as any).mealSelections, null, 2));
@@ -1740,7 +1740,7 @@ export async function updateClient(id: string, data: Partial<ClientProfile>) {
         const mappedClient = mapClientFromDB(updatedData);
         // Don't sync if service type is Custom - saveClientCustomOrder already handles it
         if (mappedClient.serviceType !== 'Custom') {
-            await syncCurrentOrderToUpcoming(id, mappedClient, true);
+            await syncCurrentOrderToUpcoming(id, mappedClient, true, options?.skipHistory);
         }
     }
 
@@ -2865,7 +2865,8 @@ export async function syncSingleOrderForDeliveryDay(
     supabaseClientObj?: any,
     mealType: string = 'Lunch', // Default to 'Lunch' for backward compatibility
     settings?: AppSettings, // PERFORMANCE: Pass settings instead of fetching
-    currentTime?: Date // PERFORMANCE: Pass currentTime instead of fetching multiple times
+    currentTime?: Date, // PERFORMANCE: Pass currentTime instead of fetching multiple times
+    skipHistory: boolean = false
 ): Promise<void> {
     const supabaseClient = supabaseClientObj || supabase;
 
@@ -3812,7 +3813,9 @@ export async function syncSingleOrderForDeliveryDay(
             boxOrdersCount: historyEntry.orderDetails?.boxOrders?.length || 0
         });
 
-        await appendOrderHistory(clientId, historyEntry, supabaseClient);
+        if (!skipHistory) {
+            await appendOrderHistory(clientId, historyEntry, supabaseClient);
+        }
 
         console.log(`[ORDER_HISTORY] History entry saved successfully for client ${clientId}`);
         console.log('=== ORDER HISTORY ENRICHMENT END ===');
@@ -3828,7 +3831,7 @@ export async function syncSingleOrderForDeliveryDay(
  * This ensures upcoming_orders always reflects the latest order configuration
  * Now supports multiple orders per client (one per delivery day)
  */
-export async function syncCurrentOrderToUpcoming(clientId: string, client: ClientProfile, skipClientUpdate: boolean = false) {
+export async function syncCurrentOrderToUpcoming(clientId: string, client: ClientProfile, skipClientUpdate: boolean = false, skipHistory: boolean = false) {
     // console.log('[syncCurrentOrderToUpcoming] START', { clientId, serviceType: client.activeOrder?.serviceType });
 
     // 1. DRAFT PERSISTENCE: Save the raw activeOrder metadata to the clients table.
@@ -3977,7 +3980,8 @@ export async function syncCurrentOrderToUpcoming(clientId: string, client: Clien
                         supabaseClient,
                         'Lunch', // Default meal type for main selections
                         settings,
-                        currentTime
+                        currentTime,
+                        skipHistory
                     );
                 }
             }
@@ -4064,7 +4068,8 @@ export async function syncCurrentOrderToUpcoming(clientId: string, client: Clien
                         supabaseClient,
                         'Lunch',
                         settings,
-                        currentTime
+                        currentTime,
+                        skipHistory
                     )
                 )
             );
@@ -4086,7 +4091,8 @@ export async function syncCurrentOrderToUpcoming(clientId: string, client: Clien
                 supabaseClient,
                 'Lunch',
                 settings,
-                currentTime
+                currentTime,
+                skipHistory
             );
         }
     }
@@ -6971,7 +6977,7 @@ export async function getClientFoodOrder(clientId: string): Promise<ClientFoodOr
     };
 }
 
-export async function saveClientFoodOrder(clientId: string, data: Partial<ClientFoodOrder>) {
+export async function saveClientFoodOrder(clientId: string, data: Partial<ClientFoodOrder>, options?: { skipHistory?: boolean }) {
     const session = await getSession();
     const updatedBy = session?.userId || null;
 
@@ -7051,17 +7057,19 @@ export async function saveClientFoodOrder(clientId: string, data: Partial<Client
             });
         }
 
-        await appendOrderHistory(clientId, {
-            type: 'upcoming',
-            orderId: saved.id,
-            serviceType: 'Food',
-            caseId: data.caseId || null,
-            notes: data.notes || null,
-            updatedBy: updatedBy,
-            timestamp: new Date().toISOString(),
-            orderDetails: orderDetails,
-            orderData: data
-        }, supabaseAdmin);
+        if (!options?.skipHistory) {
+            await appendOrderHistory(clientId, {
+                type: 'upcoming',
+                orderId: saved.id,
+                serviceType: 'Food',
+                caseId: data.caseId || null,
+                notes: data.notes || null,
+                updatedBy: updatedBy,
+                timestamp: new Date().toISOString(),
+                orderDetails: orderDetails,
+                orderData: data
+            }, supabaseAdmin);
+        }
     } catch (historyError: any) {
         console.error('[saveClientFoodOrder] CRITICAL Error appending to order history:', historyError);
     }
@@ -7101,7 +7109,7 @@ export async function getClientMealOrder(clientId: string): Promise<ClientMealOr
     };
 }
 
-export async function saveClientMealOrder(clientId: string, data: Partial<ClientMealOrder>) {
+export async function saveClientMealOrder(clientId: string, data: Partial<ClientMealOrder>, options?: { skipHistory?: boolean }) {
     const session = await getSession();
     const updatedBy = session?.userId || null;
     const supabaseAdmin = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
@@ -7173,17 +7181,21 @@ export async function saveClientMealOrder(clientId: string, data: Partial<Client
             });
         }
 
-        await appendOrderHistory(clientId, {
-            type: 'upcoming',
-            orderId: saved.id,
-            serviceType: 'Meal',
-            caseId: data.caseId || null,
-            notes: data.notes || null,
-            updatedBy: updatedBy,
-            timestamp: new Date().toISOString(),
-            orderDetails: orderDetails,
-            orderData: data
-        }, supabaseAdmin);
+        if (!options?.skipHistory) {
+            await appendOrderHistory(clientId, {
+                type: 'upcoming',
+                orderId: saved.id,
+                serviceType: 'Meal',
+                caseId: data.caseId || null,
+                notes: data.notes || null,
+                updatedBy: updatedBy,
+                timestamp: new Date().toISOString(),
+                orderDetails: orderDetails,
+                orderData: data,
+                // Added for consistency in history display
+                summary: `Meal Selection Updated - ${Object.keys(data.mealSelections || {}).length} meals`
+            }, supabaseAdmin);
+        }
     } catch (historyError: any) {
         console.warn('[saveClientMealOrder] Error appending to order history:', historyError);
     }
@@ -7231,7 +7243,7 @@ export async function getClientBoxOrder(clientId: string): Promise<ClientBoxOrde
     }));
 }
 
-export async function saveClientBoxOrder(clientId: string, data: Partial<ClientBoxOrder>[]) {
+export async function saveClientBoxOrder(clientId: string, data: Partial<ClientBoxOrder>[], options?: { skipHistory?: boolean }) {
     const session = await getSession();
     const updatedBy = session?.userId || null;
     // if (!session || !session.userId) throw new Error('Unauthorized');
@@ -7296,47 +7308,49 @@ export async function saveClientBoxOrder(clientId: string, data: Partial<ClientB
         if (created && created.length > 0) {
             const [vendorsList, menuItemsList, boxTypesList] = await Promise.all([getVendors(), getMenuItems(), getBoxTypes()]);
 
-            for (const boxOrder of created) {
-                const boxType = boxTypesList.find(bt => bt.id === boxOrder.box_type_id);
-                const vendor = vendorsList.find(v => v.id === boxOrder.vendor_id);
-                const itemsDetails = Object.entries(boxOrder.items || {}).map(([itemId, qty]: [string, any]) => {
-                    const menuItem = menuItemsList.find(mi => mi.id === itemId);
-                    const itemData = typeof qty === 'object' ? qty : { quantity: qty };
-                    return {
-                        itemId,
-                        itemName: menuItem?.name || 'Unknown Item',
-                        quantity: itemData.quantity || qty,
-                        unitValue: itemData.price || menuItem?.priceEach || menuItem?.value || 0,
-                        totalValue: (itemData.price || menuItem?.priceEach || menuItem?.value || 0) * (itemData.quantity || qty as number),
-                        note: itemData.note || boxOrder.item_notes?.[itemId] || null
+            if (!options?.skipHistory) {
+                for (const boxOrder of created) {
+                    const boxType = boxTypesList.find(bt => bt.id === boxOrder.box_type_id);
+                    const vendor = vendorsList.find(v => v.id === boxOrder.vendor_id);
+                    const itemsDetails = Object.entries(boxOrder.items || {}).map(([itemId, qty]: [string, any]) => {
+                        const menuItem = menuItemsList.find(mi => mi.id === itemId);
+                        const itemData = typeof qty === 'object' ? qty : { quantity: qty };
+                        return {
+                            itemId,
+                            itemName: menuItem?.name || 'Unknown Item',
+                            quantity: itemData.quantity || qty,
+                            unitValue: itemData.price || menuItem?.priceEach || menuItem?.value || 0,
+                            totalValue: (itemData.price || menuItem?.priceEach || menuItem?.value || 0) * (itemData.quantity || qty as number),
+                            note: itemData.note || boxOrder.item_notes?.[itemId] || null
+                        };
+                    });
+
+                    const orderDetails: any = {
+                        serviceType: 'Boxes',
+                        caseId: boxOrder.case_id || null,
+                        boxOrders: [{
+                            boxTypeId: boxOrder.box_type_id,
+                            boxTypeName: boxType?.name || 'Unknown Box',
+                            vendorId: boxOrder.vendor_id,
+                            vendorName: vendor?.name || 'Unknown Vendor',
+                            quantity: boxOrder.quantity,
+                            items: boxOrder.items || {},
+                            itemNotes: boxOrder.item_notes || {},
+                            itemsDetails: itemsDetails
+                        }]
                     };
-                });
 
-                const orderDetails: any = {
-                    serviceType: 'Boxes',
-                    caseId: boxOrder.case_id || null,
-                    boxOrders: [{
-                        boxTypeId: boxOrder.box_type_id,
-                        boxTypeName: boxType?.name || 'Unknown Box',
-                        vendorId: boxOrder.vendor_id,
-                        vendorName: vendor?.name || 'Unknown Vendor',
-                        quantity: boxOrder.quantity,
-                        items: boxOrder.items || {},
-                        itemNotes: boxOrder.item_notes || {},
-                        itemsDetails: itemsDetails
-                    }]
-                };
-
-                await appendOrderHistory(clientId, {
-                    type: 'upcoming',
-                    orderId: boxOrder.id,
-                    serviceType: 'Boxes',
-                    caseId: boxOrder.case_id || null,
-                    updatedBy: updatedBy,
-                    timestamp: new Date().toISOString(),
-                    orderDetails: orderDetails,
-                    orderData: boxOrder
-                }, supabaseAdmin);
+                    await appendOrderHistory(clientId, {
+                        type: 'upcoming',
+                        orderId: boxOrder.id,
+                        serviceType: 'Boxes',
+                        caseId: boxOrder.case_id || null,
+                        updatedBy: updatedBy,
+                        timestamp: new Date().toISOString(),
+                        orderDetails: orderDetails,
+                        orderData: boxOrder
+                    }, supabaseAdmin);
+                }
             }
         }
     } catch (historyError: any) {
@@ -7384,7 +7398,7 @@ export async function updateMealCategoryOrder(updates: { id: string; sortOrder: 
     revalidatePath('/admin');
     return { success: true };
 }
-export async function saveClientCustomOrder(clientId: string, vendorId: string, itemDescription: string, price: number, deliveryDay: string, caseId?: string) {
+export async function saveClientCustomOrder(clientId: string, vendorId: string, itemDescription: string, price: number, deliveryDay: string, caseId?: string, options?: { skipHistory?: boolean }) {
     const session = await getSession();
     const currentUserName = session?.name || 'Admin';
 
@@ -7490,26 +7504,30 @@ export async function saveClientCustomOrder(clientId: string, vendorId: string, 
             }
         };
 
-        await appendOrderHistory(clientId, {
-            type: 'upcoming',
-            orderId: upcomingOrder.id,
-            serviceType: 'Custom',
-            deliveryDay: deliveryDay,
-            caseId: caseId || null,
-            totalValue: price,
-            totalItems: 1,
-            notes: `Custom Order: ${itemDescription}`,
-            updatedBy: currentUserName,
-            timestamp: (await getCurrentTime()).toISOString(),
-            orderDetails: orderDetails,
-            orderData: {
-                vendorId,
-                itemDescription,
-                price,
-                deliveryDay,
-                caseId
-            }
-        }, supabaseAdmin);
+        if (!options?.skipHistory) {
+            await appendOrderHistory(clientId, {
+                type: 'upcoming',
+                orderId: upcomingOrder.id,
+                serviceType: 'Custom',
+                deliveryDay: deliveryDay,
+                caseId: caseId || null,
+                totalValue: price,
+                totalItems: 1,
+                notes: `Custom Order: ${itemDescription}`,
+                updatedBy: currentUserName,
+                timestamp: (await getCurrentTime()).toISOString(),
+                orderDetails: orderDetails,
+                orderData: {
+                    vendorId,
+                    itemDescription,
+                    price,
+                    deliveryDay,
+                    caseId
+                },
+                // Added for consistency in history display
+                summary: `Custom Order Created: ${itemDescription} ($${price})`
+            }, supabaseAdmin);
+        }
     } catch (historyError: any) {
         console.warn('[saveClientCustomOrder] Error appending to order history:', historyError);
     }
