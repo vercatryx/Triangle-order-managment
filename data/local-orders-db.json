@@ -8407,25 +8407,6 @@
       "meal_type": "Lunch"
     },
     {
-      "id": "ad5778cd-b3d7-4e16-903c-a8ebe064525a",
-      "client_id": "CLIENT-076",
-      "service_type": "Custom",
-      "case_id": "https://app.uniteus.io/dashboard/cases/open/7dd98b48-65b6-4058-82db-0155e62957e6/contact/bcb52a94-72f9-462a-b9e4-dae102c32731",
-      "status": "scheduled",
-      "last_updated": "2026-01-19T22:05:22.495+00:00",
-      "updated_by": "abraham eger",
-      "created_at": "2026-01-19T22:05:32.242336+00:00",
-      "take_effect_date": null,
-      "total_value": 146,
-      "total_items": 1,
-      "notes": "1 pomegranate golden flow juice,\n2 orange juices,\n1 mango juice,\n1 glass grape juice,\n1 bunch of organic bananas,\n1 frozen strawberries,\n1 frozen mango,\n1 bunch grapes,\n3 oranges,\n1 frozen cauliflower gg,\n1 frozen brocolli gg,\n2 boxes grape tomatoes,\n1 tray persian cucumbers,\n1 bag mini peppers,\n1 bag lettuce romaine,\n6 regular tomatoes,\n1 bag ww wraps,\nquinoa,\n1 rice pasta,\nww matzoh,\nbrown rice,\n1 bag granola,\n1 bag farfel,\n2 bags ww franczos bread,\n2 ww frozen pizza,\n4 noodle soups,\n2 lb mozzarella shredded cheese,\n7 yogolite coffee yogurts,\n7 strawberry yogolite yogurts,\n7 vanilla yogolite yogurts,\n2 givat cottage cheese,\n1 farmer cheese,\nsliced mozzarella cheese,\ncase of choc lebens (12),\n3 marvid chicken cutlets,\n4 marvid chicken bottoms,\nchulent beans,\n1 container cheese delkilech,\n2 large honey potato chips,\n1 ketchup potato chips,\n1 pkg. tribabla candies,",
-      "processed_order_id": null,
-      "processed_at": null,
-      "delivery_day": "Thursday",
-      "order_number": 102616,
-      "meal_type": "Lunch"
-    },
-    {
       "id": "7420a941-f7a6-49a3-8b0f-85aaa26440c2",
       "client_id": "CLIENT-154",
       "service_type": "Custom",
@@ -11977,6 +11958,25 @@
       "delivery_day": "Tuesday",
       "order_number": 108111,
       "meal_type": "Triangle Breakfast/Lunch (12 Meals)_1769612105121"
+    },
+    {
+      "id": "fadfcacc-e7cd-4435-bec6-31595218a965",
+      "client_id": "CLIENT-076",
+      "service_type": "Custom",
+      "case_id": "sdf",
+      "status": "scheduled",
+      "last_updated": "2026-01-28T17:39:14+00:00",
+      "updated_by": "Avraham ",
+      "created_at": "2026-01-28T17:39:14.713886+00:00",
+      "take_effect_date": null,
+      "total_value": 1345,
+      "total_items": 1,
+      "notes": "Custom Order: test 1\ntest 2 ",
+      "processed_order_id": null,
+      "processed_at": null,
+      "delivery_day": "Tuesday",
+      "order_number": 108193,
+      "meal_type": "Lunch"
     }
   ],
   "orderVendorSelections": [],
@@ -12030,6 +12030,12 @@
       "upcoming_order_id": "f710542d-e915-484c-a955-0f5ef3ae4e2f",
       "vendor_id": "3152cbbc-662b-4cb4-bd70-6d4c505aee7c",
       "created_at": "2026-01-28T16:43:19.234702+00:00"
+    },
+    {
+      "id": "09e41705-1fa9-468b-a979-2653165d315e",
+      "upcoming_order_id": "fadfcacc-e7cd-4435-bec6-31595218a965",
+      "vendor_id": "a79212ac-c6da-4e5c-b945-6a555e71dd9d",
+      "created_at": "2026-01-28T17:39:14.866338+00:00"
     }
   ],
   "upcomingOrderItems": [
@@ -12256,6 +12262,20 @@
       "notes": null,
       "custom_name": null,
       "custom_price": null
+    },
+    {
+      "id": "5674adea-5d58-4011-b390-425541eaebdd",
+      "upcoming_order_id": "fadfcacc-e7cd-4435-bec6-31595218a965",
+      "vendor_selection_id": "09e41705-1fa9-468b-a979-2653165d315e",
+      "menu_item_id": null,
+      "quantity": 1,
+      "unit_value": 0,
+      "total_value": 0,
+      "created_at": "2026-01-28T17:39:15.001465+00:00",
+      "meal_item_id": null,
+      "notes": null,
+      "custom_name": "test 1\ntest 2 ",
+      "custom_price": 1345
     }
   ],
   "upcomingOrderBoxSelections": [],
@@ -19986,5 +20006,5 @@
       "item_notes": {}
     }
   ],
-  "lastSynced": "2026-01-28T16:43:20.559Z"
+  "lastSynced": "2026-01-28T17:39:16.352Z"
 }

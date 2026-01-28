@@ -782,6 +782,18 @@ export async function getUpcomingOrderForClientLocal(clientId: string) {
                         items: mealItems
                     };
                 }
+            } else if (data.service_type === 'Custom') {
+                const vendorSelections = db.upcomingOrderVendorSelections.filter(vs => vs.upcoming_order_id === data.id);
+                if (vendorSelections.length > 0) {
+                    const vs = vendorSelections[0];
+                    orderConfig.vendorId = vs.vendor_id;
+
+                    const items = db.upcomingOrderItems.filter(item => item.vendor_selection_id === vs.id);
+                    if (items.length > 0) {
+                        orderConfig.custom_name = items[0].custom_name;
+                        orderConfig.custom_price = items[0].custom_price;
+                    }
+                }
             }
             return orderConfig;
         }
@@ -891,9 +903,8 @@ export async function getUpcomingOrderForClientLocal(clientId: string) {
                     const items = db.upcomingOrderItems.filter(item => item.vendor_selection_id === vs.id);
                     if (items.length > 0) {
                         // Map stored fields back to form fields
-                        // We store description in 'notes' and price in 'total_value'/'unit_value'
-                        currentConfig.custom_name = items[0].notes;
-                        currentConfig.custom_price = items[0].total_value;
+                        currentConfig.custom_name = items[0].custom_name;
+                        currentConfig.custom_price = items[0].custom_price;
                     }
                 }
             } else if (data.service_type === 'Meal') {

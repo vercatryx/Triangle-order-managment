@@ -1736,25 +1736,20 @@ export async function updateClient(id: string, data: Partial<ClientProfile>) {
     const { data: updatedData, error } = await supabase.from('clients').update(payload).eq('id', id).select().single();
     handleError(error);
 
-    // PERFORMANCE: Only sync if activeOrder actually changed (not just profile fields)
-    // If activeOrder was updated, sync to upcoming_orders
-    // BUT: Skip sync for Custom service type - saveClientCustomOrder already handles it
-    if (data.activeOrder) {
-        if (updatedData) {
-            const mappedClient = mapClientFromDB(updatedData);
-            // Don't sync if service type is Custom - saveClientCustomOrder handles it
-            if (mappedClient.serviceType !== 'Custom') {
-                await syncCurrentOrderToUpcoming(id, mappedClient, true);
-            }
+    if (data.activeOrder && updatedData) {
+        const mappedClient = mapClientFromDB(updatedData);
+        // Don't sync if service type is Custom - saveClientCustomOrder already handles it
+        if (mappedClient.serviceType !== 'Custom') {
+            await syncCurrentOrderToUpcoming(id, mappedClient, true);
         }
-    } else {
-        // Targeted local DB sync for this client (non-blocking for better performance)
-        const { updateClientInLocalDB } = await import('./local-db');
-        // Don't await - let it run in background to avoid blocking the response
-        updateClientInLocalDB(id).catch(err => {
-            console.error('[updateClient] Error in background local DB sync:', err);
-        });
     }
+
+    // Targeted local DB sync for this client (non-blocking for better performance)
+    const { updateClientInLocalDB } = await import('./local-db');
+    // Don't await - let it run in background to avoid blocking the response
+    updateClientInLocalDB(id).catch(err => {
+        console.error('[updateClient] Error in background local DB sync:', err);
+    });
 
     try {
         revalidatePath('/clients');
@@ -7071,6 +7066,11 @@ export async function saveClientFoodOrder(clientId: string, data: Partial<Client
         console.error('[saveClientFoodOrder] CRITICAL Error appending to order history:', historyError);
     }
 
+    const { updateClientInLocalDB } = await import('./local-db');
+    updateClientInLocalDB(clientId).catch(err => {
+        console.error('[saveClientFoodOrder] Error in background local DB sync:', err);
+    });
+
     revalidatePath(`/client-portal/${clientId}`);
     revalidatePath(`/clients/${clientId}`);
     return saved;
@@ -7187,6 +7187,11 @@ export async function saveClientMealOrder(clientId: string, data: Partial<Client
     } catch (historyError: any) {
         console.warn('[saveClientMealOrder] Error appending to order history:', historyError);
     }
+
+    const { updateClientInLocalDB } = await import('./local-db');
+    updateClientInLocalDB(clientId).catch(err => {
+        console.error('[saveClientMealOrder] Error in background local DB sync:', err);
+    });
 
     revalidatePath(`/client-portal/${clientId}`);
     revalidatePath(`/clients/${clientId}`);
@@ -7338,6 +7343,11 @@ export async function saveClientBoxOrder(clientId: string, data: Partial<ClientB
         console.warn('[saveClientBoxOrder] Error appending to order history:', historyError);
     }
 
+    const { updateClientInLocalDB } = await import('./local-db');
+    updateClientInLocalDB(clientId).catch(err => {
+        console.error('[saveClientBoxOrder] Error in background local DB sync:', err);
+    });
+
     revalidatePath(`/client-portal/${clientId}`);
     revalidatePath(`/clients/${clientId}`);
     return created;
@@ -7415,7 +7425,7 @@ export async function saveClientCustomOrder(clientId: string, vendorId: string, 
             client_id: clientId,
             service_type: 'Custom',
             case_id: caseId || null,
-            status: 'pending',
+            status: 'scheduled',
             notes: `Custom Order: ${itemDescription}`,
             total_value: price,
             total_items: 1,
@@ -7506,7 +7516,12 @@ export async function saveClientCustomOrder(clientId: string, vendorId: string, 
 
     // Update client service type to Custom
     await supabase.from('clients').update({ service_type: 'Custom' }).eq('id', clientId);
+    const { updateClientInLocalDB } = await import('./local-db');
+    updateClientInLocalDB(clientId).catch(err => {
+        console.error('[saveClientCustomOrder] Error in background local DB sync:', err);
+    });
 
+    revalidatePath('/clients');
     revalidatePath(`/clients/${clientId}`);
-    return { success: true };
+    return { success: true, data: newUpcoming };
 }
