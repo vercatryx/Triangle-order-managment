@@ -7,9 +7,6 @@ import { useDataCache } from '@/lib/data-cache';
 import { Save, PlayCircle, RefreshCw, X, Calendar, Trash2, AlertTriangle } from 'lucide-react';
 import styles from './GlobalSettings.module.css';
 
-
-const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
-
 export function GlobalSettings() {
     const { getSettings, invalidateReferenceData } = useDataCache();
     const [settings, setSettings] = useState<AppSettings>({
@@ -118,11 +115,13 @@ export function GlobalSettings() {
 
         try {
             // Set the fake time cookie with the selected date (at start of day)
-            const selectedDateObj = new Date(selectedDate);
-            selectedDateObj.setHours(0, 0, 0, 0);
+            // Parse the date string (YYYY-MM-DD) and create a date in local timezone
+            // This ensures the date matches what the user selected
+            const [year, month, day] = selectedDate.split('-').map(Number);
+            const selectedDateObj = new Date(year, month - 1, day, 0, 0, 0, 0); // month is 0-indexed
             document.cookie = `x-fake-time=${selectedDateObj.toISOString()}; path=/; max-age=86400; SameSite=Lax`;
 
-            console.log('[Create Orders] Starting with date:', selectedDateObj.toISOString());
+            console.log('[Create Orders] Starting with date:', selectedDateObj.toISOString(), 'Local:', selectedDateObj.toLocaleDateString());
             const res = await fetch('/api/simulate-delivery-cycle', { method: 'POST' });
             const data = await res.json();
 
@@ -153,37 +152,9 @@ export function GlobalSettings() {
     return (
         <div className={styles.container}>
             <h2 className={styles.title}>Global Application Settings</h2>
-            <p className={styles.subtitle}>Configure system-wide rules and cutoff times.</p>
+            <p className={styles.subtitle}>Configure system-wide rules and settings.</p>
 
             <div className={styles.card}>
-                <h3 className={styles.sectionTitle}>Weekly Order Cutoff</h3>
-                <p className={styles.description}>
-                    Orders placed or modified after this time will apply to the following week's delivery cycle.
-                </p>
-
-                <div className={styles.row}>
-                    <div className={styles.formGroup}>
-                        <label className="label">Cutoff Day</label>
-                        <select
-                            className="input"
-                            value={settings.weeklyCutoffDay}
-                            onChange={e => setSettings({ ...settings, weeklyCutoffDay: e.target.value })}
-                        >
-                            {DAYS.map(day => <option key={day} value={day}>{day}</option>)}
-                        </select>
-                    </div>
-
-                    <div className={styles.formGroup}>
-                        <label className="label">Cutoff Time (24h)</label>
-                        <input
-                            type="time"
-                            className="input"
-                            value={settings.weeklyCutoffTime}
-                            onChange={e => setSettings({ ...settings, weeklyCutoffTime: e.target.value })}
-                        />
-                    </div>
-                </div>
-
                 <div className={styles.formGroup} style={{ marginBottom: 'var(--spacing-lg)' }}>
                     <label className="label">Report Email Address</label>
                     <input
@@ -398,7 +369,14 @@ export function GlobalSettings() {
                                         <td style={{ padding: '0.75rem' }}>{creation.creation_id}</td>
                                         <td style={{ padding: '0.75rem' }}>{creation.count}</td>
                                         <td style={{ padding: '0.75rem', color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
-                                            {new Date(creation.created_at).toLocaleString()}
+                                            {new Date(creation.created_at).toLocaleString('en-US', {
+                                                month: 'short',
+                                                day: 'numeric',
+                                                year: 'numeric',
+                                                hour: '2-digit',
+                                                minute: '2-digit',
+                                                hour12: true
+                                            })}
                                         </td>
                                         <td style={{ padding: '0.75rem', textAlign: 'right' }}>
                                             <button

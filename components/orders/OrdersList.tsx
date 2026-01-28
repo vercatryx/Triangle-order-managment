@@ -3,8 +3,8 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { Search, ChevronRight, Package, ArrowLeft, Loader2, ArrowUpDown } from 'lucide-react';
-import { getAllOrders } from '@/lib/actions';
+import { Search, ChevronRight, Package, ArrowLeft, Loader2, ArrowUpDown, Trash2 } from 'lucide-react';
+import { getAllOrders, deleteOrder } from '@/lib/actions';
 import styles from './OrdersList.module.css';
 
 export function OrdersList() {
@@ -12,8 +12,11 @@ export function OrdersList() {
     const [orders, setOrders] = useState<any[]>([]);
     const [search, setSearch] = useState('');
     const [statusFilter, setStatusFilter] = useState('all');
+    const [creationIdFilter, setCreationIdFilter] = useState('');
     const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'asc' | 'desc' } | null>(null);
     const [isLoading, setIsLoading] = useState(true);
+    const [selectedOrders, setSelectedOrders] = useState<Set<string>>(new Set());
+    const [isDeleting, setIsDeleting] = useState(false);
 
     useEffect(() => {
         loadData();
@@ -78,7 +81,11 @@ export function OrdersList() {
 
         const matchesStatus = statusFilter === 'all' || o.status === statusFilter;
 
-        return matchesSearch && matchesStatus;
+        const matchesCreationId = !creationIdFilter || 
+            (o.creation_id !== null && o.creation_id !== undefined && 
+             o.creation_id.toString() === creationIdFilter.trim());
+
+        return matchesSearch && matchesStatus && matchesCreationId;
     });
 
     const getStatusStyle = (status: string) => {
@@ -96,6 +103,64 @@ export function OrdersList() {
     const formatStatus = (status: string) => {
         if (!status) return 'UNKNOWN';
         return status.replace(/_/g, ' ').toUpperCase();
+    };
+
+    const handleSelectOrder = (orderId: string) => {
+        const newSelected = new Set(selectedOrders);
+        if (newSelected.has(orderId)) {
+            newSelected.delete(orderId);
+        } else {
+            newSelected.add(orderId);
+        }
+        setSelectedOrders(newSelected);
+    };
+
+    const handleSelectAll = () => {
+        if (selectedOrders.size === filteredOrders.length) {
+            setSelectedOrders(new Set());
+        } else {
+            setSelectedOrders(new Set(filteredOrders.map(o => o.id)));
+        }
+    };
+
+    const handleDeleteSelected = async () => {
+        if (selectedOrders.size === 0) return;
+
+        const count = selectedOrders.size;
+        if (!window.confirm(`Are you sure you want to delete ${count} order(s)? This action cannot be undone.`)) {
+            return;
+        }
+
+        setIsDeleting(true);
+        try {
+            const orderIds = Array.from(selectedOrders);
+            let successCount = 0;
+            let failCount = 0;
+
+            for (const orderId of orderIds) {
+                const result = await deleteOrder(orderId);
+                if (result.success) {
+                    successCount++;
+                } else {
+                    failCount++;
+                    console.error(`Failed to delete order ${orderId}:`, result.message);
+                }
+            }
+
+            setSelectedOrders(new Set());
+            await loadData();
+
+            if (failCount === 0) {
+                alert(`Successfully deleted ${successCount} order(s).`);
+            } else {
+                alert(`Deleted ${successCount} order(s). Failed to delete ${failCount} order(s).`);
+            }
+        } catch (error) {
+            console.error('Bulk delete error:', error);
+            alert('An error occurred while deleting orders.');
+        } finally {
+            setIsDeleting(false);
+        }
     };
 
     if (isLoading) {
@@ -176,59 +241,121 @@ export function OrdersList() {
                     <option value="completed">Completed</option>
                     <option value="cancelled">Cancelled</option>
                 </select>
+
+                <input
+                    className="input"
+                    type="number"
+                    placeholder="Creation ID (e.g., 1)"
+                    style={{ width: '180px' }}
+                    value={creationIdFilter}
+                    onChange={e => setCreationIdFilter(e.target.value)}
+                    min="1"
+                />
+
+                <button
+                    className="button"
+                    onClick={handleSelectAll}
+                    style={{ marginLeft: 'auto' }}
+                >
+                    {selectedOrders.size === filteredOrders.length && filteredOrders.length > 0
+                        ? 'Deselect All'
+                        : 'Select All'}
+                </button>
+
+                {selectedOrders.size > 0 && (
+                    <button
+                        className="button"
+                        onClick={handleDeleteSelected}
+                        disabled={isDeleting}
+                        style={{
+                            backgroundColor: 'var(--color-danger)',
+                            color: '#fff',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '0.5rem'
+                        }}
+                    >
+                        <Trash2 size={16} />
+                        {isDeleting ? 'Deleting...' : `Delete Selected (${selectedOrders.size})`}
+                    </button>
+                )}
             </div>
 
             <div className={styles.list}>
                 <div className={styles.listHeader}>
+                    <span style={{ width: '50px' }}></span>
                     <span
                         style={{ width: '40px', fontWeight: 'bold' }}
                     >#</span>
                     <span
-                        style={{ width: '100px', cursor: 'pointer', display: 'flex', alignItems: 'center' }}
+                        style={{ width: '100px', cursor: 'pointer', display: 'flex', alignItems: 'center', minWidth: 0 }}
                         onClick={() => handleSort('order_number')}
                     >
-                        Order # <ArrowUpDown size={14} style={{ marginLeft: '4px' }} />
+                        Order # <ArrowUpDown size={14} style={{ marginLeft: '4px', flexShrink: 0 }} />
                     </span>
                     <span
-                        style={{ flex: 2, cursor: 'pointer', display: 'flex', alignItems: 'center' }}
+                        style={{ flex: 2, cursor: 'pointer', display: 'flex', alignItems: 'center', minWidth: 0 }}
                         onClick={() => handleSort('clientName')}
                     >
-                        Client <ArrowUpDown size={14} style={{ marginLeft: '4px' }} />
+                        Client <ArrowUpDown size={14} style={{ marginLeft: '4px', flexShrink: 0 }} />
                     </span>
                     <span
-                        style={{ flex: 1, cursor: 'pointer', display: 'flex', alignItems: 'center' }}
+                        style={{ flex: 1, cursor: 'pointer', display: 'flex', alignItems: 'center', minWidth: 0 }}
                         onClick={() => handleSort('service_type')}
                     >
-                        Service <ArrowUpDown size={14} style={{ marginLeft: '4px' }} />
+                        Service <ArrowUpDown size={14} style={{ marginLeft: '4px', flexShrink: 0 }} />
                     </span>
                     <span
-                        style={{ flex: 1.5, cursor: 'pointer', display: 'flex', alignItems: 'center' }}
+                        style={{ flex: 1.5, cursor: 'pointer', display: 'flex', alignItems: 'center', minWidth: 0 }}
                         onClick={() => handleSort('vendors')}
                     >
-                        Vendors <ArrowUpDown size={14} style={{ marginLeft: '4px' }} />
+                        Vendors <ArrowUpDown size={14} style={{ marginLeft: '4px', flexShrink: 0 }} />
                     </span>
                     <span
-                        style={{ flex: 1, cursor: 'pointer', display: 'flex', alignItems: 'center' }}
+                        style={{ flex: 1, cursor: 'pointer', display: 'flex', alignItems: 'center', minWidth: 0 }}
                         onClick={() => handleSort('items')}
                     >
-                        Items <ArrowUpDown size={14} style={{ marginLeft: '4px' }} />
+                        Items <ArrowUpDown size={14} style={{ marginLeft: '4px', flexShrink: 0 }} />
                     </span>
                     <span
-                        style={{ flex: 1.5, cursor: 'pointer', display: 'flex', alignItems: 'center' }}
+                        style={{ flex: 1.5, cursor: 'pointer', display: 'flex', alignItems: 'center', minWidth: 0 }}
                         onClick={() => handleSort('status')}
                     >
-                        Status <ArrowUpDown size={14} style={{ marginLeft: '4px' }} />
+                        Status <ArrowUpDown size={14} style={{ marginLeft: '4px', flexShrink: 0 }} />
                     </span>
                     <span
-                        style={{ flex: 1.5, cursor: 'pointer', display: 'flex', alignItems: 'center' }}
+                        style={{ flex: 1.5, cursor: 'pointer', display: 'flex', alignItems: 'center', minWidth: 0 }}
                         onClick={() => handleSort('deliveryDate')}
                     >
-                        Delivery Date <ArrowUpDown size={14} style={{ marginLeft: '4px' }} />
+                        Delivery Date <ArrowUpDown size={14} style={{ marginLeft: '4px', flexShrink: 0 }} />
                     </span>
                     <span style={{ width: '40px' }}></span>
                 </div>
                 {filteredOrders.map((order, index) => (
-                    <Link key={order.id} href={`/orders/${order.id}`} className={styles.row}>
+                    <div 
+                        key={order.id} 
+                        className={styles.row} 
+                        onClick={() => router.push(`/orders/${order.id}`)}
+                        style={{ cursor: 'pointer' }}
+                    >
+                        <span 
+                            style={{ width: '50px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                handleSelectOrder(order.id);
+                            }}
+                        >
+                            <input
+                                type="checkbox"
+                                checked={selectedOrders.has(order.id)}
+                                onChange={(e) => {
+                                    e.stopPropagation();
+                                    handleSelectOrder(order.id);
+                                }}
+                                onClick={(e) => e.stopPropagation()}
+                                style={{ cursor: 'pointer', width: '18px', height: '18px' }}
+                            />
+                        </span>
                         <span style={{ width: '40px', fontWeight: 'bold', color: 'var(--text-secondary)' }}>{index + 1}</span>
                         <span style={{ width: '100px', fontWeight: 600 }}>{order.order_number || 'N/A'}</span>
                         <span style={{ flex: 2 }}>{order.clientName}</span>
@@ -248,7 +375,7 @@ export function OrdersList() {
                             {order.scheduled_delivery_date ? new Date(order.scheduled_delivery_date).toLocaleDateString('en-US', { timeZone: 'UTC' }) : '-'}
                         </span>
                         <span style={{ width: '40px' }}><ChevronRight size={16} /></span>
-                    </Link>
+                    </div>
                 ))}
                 {filteredOrders.length === 0 && (
                     <div className={styles.empty}>No orders found.</div>

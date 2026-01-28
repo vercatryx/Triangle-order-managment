@@ -74,8 +74,31 @@ export async function POST(request: NextRequest) {
     try {
         // --- 1. Load Global Context (Optimized) ---
         const currentTime = await getCurrentTime();
-        const today = new Date(currentTime);
-        today.setHours(0, 0, 0, 0);
+        // Ensure we're working with the date correctly
+        // The cookie stores the date as ISO string (UTC) when user selects a date in the modal
+        // The cookie is now set with the date at midnight in the browser's local timezone, then converted to ISO (UTC)
+        // When we read it back, we need to extract the UTC date components and interpret them correctly
+        // Since the cookie was set with local midnight, the UTC time represents that same date in UTC
+        // We'll use the UTC date components directly to avoid timezone conversion issues
+        const year = currentTime.getUTCFullYear();
+        const month = currentTime.getUTCMonth();
+        const day = currentTime.getUTCDate();
+        // However, we need to account for the fact that the cookie might have been set in a different timezone
+        // So let's also check the EST representation to be safe
+        const estFormatter = new Intl.DateTimeFormat('en-US', {
+            timeZone: 'America/New_York',
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit'
+        });
+        const estParts = estFormatter.formatToParts(currentTime);
+        const estYear = parseInt(estParts.find(p => p.type === 'year')!.value);
+        const estMonth = parseInt(estParts.find(p => p.type === 'month')!.value) - 1; // 0-indexed
+        const estDay = parseInt(estParts.find(p => p.type === 'day')!.value);
+        
+        // Use EST date components (this is what the user selected)
+        // Create date at midnight in local timezone for date arithmetic
+        const today = new Date(estYear, estMonth, estDay, 0, 0, 0, 0);
 
         // Fetch Reference Data (Optimized Selects)
         const [
@@ -735,7 +758,7 @@ export async function POST(request: NextRequest) {
                         total_value: totalValue,
                         total_items: totalItems,
                         order_number: assignedOrderNumber,
-                        created_at: currentTime.toISOString(),
+                        // Don't set created_at - let database use NOW() for real server time (not affected by fake time)
                         last_updated: currentTime.toISOString(),
                         notes: notes,
                         case_id: caseId || `CASE-${Date.now()}`,
@@ -1439,7 +1462,7 @@ export async function POST(request: NextRequest) {
         // Get orders created in this run
         const { data: ordersThisWeekThisRun } = await supabase
             .from('orders')
-            .select('id, client_id, service_type, scheduled_delivery_date, creation_id')
+            .select('id, client_id, service_type, scheduled_delivery_date, creation_id, order_number')
             .gte('scheduled_delivery_date', weekStartStr)
             .lte('scheduled_delivery_date', weekEndStr)
             .eq('creation_id', creationId);
@@ -1447,13 +1470,13 @@ export async function POST(request: NextRequest) {
         // Get ALL existing orders for this week (from any creation run)
         const { data: allOrdersThisWeek } = await supabase
             .from('orders')
-            .select('id, client_id, service_type, scheduled_delivery_date, creation_id')
+            .select('id, client_id, service_type, scheduled_delivery_date, creation_id, order_number')
             .gte('scheduled_delivery_date', weekStartStr)
             .lte('scheduled_delivery_date', weekEndStr)
             .in('status', ['scheduled', 'pending', 'confirmed', 'processing']); // Only active orders
 
         // Group orders by client (use all orders to check if they already exist)
-        const ordersByClient = new Map<string, Array<{ type: string, date: string, isNew: boolean }>>();
+        const ordersByClient = new Map<string, Array<{ type: string, date: string, isNew: boolean, orderNumber: number | null }>>();
         (allOrdersThisWeek || []).forEach((order: any) => {
             if (!ordersByClient.has(order.client_id)) {
                 ordersByClient.set(order.client_id, []);
@@ -1462,7 +1485,8 @@ export async function POST(request: NextRequest) {
             ordersByClient.get(order.client_id)!.push({
                 type: order.service_type,
                 date: order.scheduled_delivery_date,
-                isNew
+                isNew,
+                orderNumber: order.order_number || null
             });
         });
 
@@ -1638,11 +1662,13 @@ export async function POST(request: NextRequest) {
             
             let ordersCreatedText = '';
             if (newOrders.length > 0 && existingOrders.length > 0) {
-                ordersCreatedText = `NEW: ${newOrders.map(o => `${o.type} on ${o.date}`).join(', ')} | EXISTING: ${existingOrders.map(o => `${o.type} on ${o.date}`).join(', ')}`;
+                const newText = newOrders.map(o => `${o.type} on ${o.date}${o.orderNumber ? ` (#${o.orderNumber})` : ''}`).join(', ');
+                const existingText = existingOrders.map(o => `${o.type} on ${o.date}${o.orderNumber ? ` (#${o.orderNumber})` : ''}`).join(', ');
+                ordersCreatedText = `NEW: ${newText} | EXISTING: ${existingText}`;
             } else if (newOrders.length > 0) {
-                ordersCreatedText = `NEW: ${newOrders.map(o => `${o.type} on ${o.date}`).join(', ')}`;
+                ordersCreatedText = `NEW: ${newOrders.map(o => `${o.type} on ${o.date}${o.orderNumber ? ` (#${o.orderNumber})` : ''}`).join(', ')}`;
             } else if (existingOrders.length > 0) {
-                ordersCreatedText = `EXISTING: ${existingOrders.map(o => `${o.type} on ${o.date}`).join(', ')}`;
+                ordersCreatedText = `EXISTING: ${existingOrders.map(o => `${o.type} on ${o.date}${o.orderNumber ? ` (#${o.orderNumber})` : ''}`).join(', ')}`;
             } else {
                 ordersCreatedText = entry.orderCreated ? 'Yes (but not found in DB)' : 'No';
             }
@@ -1666,6 +1692,7 @@ export async function POST(request: NextRequest) {
                 'Custom Orders': entry.customStatus || 'No upcoming custom orders scheduled',
                 'Is Order Expected This Week': expectedStatus,
                 'Orders Expected For This Week': expectedOrdersText,
+                'Expected Orders Count': expectedCount, // Number of expected orders this week
                 'Missed For This Week': isMissed ? 'Yes' : 'No',
                 'Creation ID': creationId
             };
@@ -1688,6 +1715,7 @@ export async function POST(request: NextRequest) {
             { wch: 40 }, // Custom Orders
             { wch: 70 }, // Is Order Expected This Week (wider for clearer messages)
             { wch: 80 }, // Orders Expected For This Week
+            { wch: 20 }, // Expected Orders Count
             { wch: 20 }, // Missed For This Week
             { wch: 12 }  // Creation ID
         ];
@@ -1701,10 +1729,20 @@ export async function POST(request: NextRequest) {
             contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
         };
 
-        // Include creation_id in the report
+        // Format the date used for order creation
+        const orderCreationDateStr = today.toLocaleDateString('en-US', { 
+            year: 'numeric', 
+            month: 'long', 
+            day: 'numeric' 
+        });
+        const orderCreationDayStr = today.toLocaleDateString('en-US', { weekday: 'long' });
+        
+        // Include creation_id and order creation date in the report
         const reportWithCreationId = {
             ...report,
-            creationId: creationId
+            creationId: creationId,
+            orderCreationDate: orderCreationDateStr,
+            orderCreationDay: orderCreationDayStr
         };
         const emailResult = await sendSchedulingReport(reportWithCreationId, reportEmail, [excelAttachment]);
 

@@ -15,6 +15,8 @@ interface SimulationReport {
         reason: string;
     }[];
     creationId?: number; // Optional creation_id for this batch
+    orderCreationDate?: string; // Date used for order creation (from fake time)
+    orderCreationDay?: string; // Day name used for order creation
 }
 
 /**
@@ -41,13 +43,13 @@ export async function sendSchedulingReport(report: SimulationReport, recipient: 
         return;
     }
 
-    const { totalCreated, breakdown, unexpectedFailures, creationId } = report;
+    const { totalCreated, breakdown, unexpectedFailures, creationId, orderCreationDate, orderCreationDay } = report;
 
     const subject = `Order Scheduling Report - ${new Date().toLocaleDateString()}${creationId ? ` (Creation ID: ${creationId})` : ''}`;
 
     let html = `
     <h1>Order Scheduling Execution Report</h1>
-    <p><strong>Date:</strong> ${new Date().toLocaleString()}</p>
+    ${orderCreationDate ? `<p><strong>Date Used for Order Creation:</strong> ${orderCreationDate}${orderCreationDay ? ` (${orderCreationDay})` : ''}</p>` : `<p><strong>Report Generated:</strong> ${new Date().toLocaleString()}</p>`}
     ${creationId ? `<p><strong>Creation ID:</strong> ${creationId}</p>` : ''}
     
     <h2>Summary</h2>

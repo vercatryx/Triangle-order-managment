@@ -48,12 +48,12 @@ export async function getNextCreationId(): Promise<number> {
 /**
  * Get all creation_ids with their order counts
  * Returns array of { creation_id, count, created_at } sorted by creation_id descending
- * Uses last_updated to show the real time when orders were created, not fake time
+ * Uses created_at (database timestamp) to show the real time when orders were created, not fake time
  */
 export async function getCreationIds(): Promise<Array<{ creation_id: number; count: number; created_at: string }>> {
     const { data, error } = await supabase
         .from('orders')
-        .select('creation_id, last_updated')
+        .select('creation_id, created_at')
         .not('creation_id', 'is', null);
 
     if (error) {
@@ -74,13 +74,13 @@ export async function getCreationIds(): Promise<Array<{ creation_id: number; cou
     for (const order of data) {
         const id = order.creation_id;
         if (!grouped.has(id)) {
-            grouped.set(id, { count: 0, created_at: order.last_updated });
+            grouped.set(id, { count: 0, created_at: order.created_at });
         }
         const entry = grouped.get(id)!;
         entry.count++;
-        // Use most recent last_updated for this creation_id (shows real time, not fake time)
-        if (order.last_updated > entry.created_at) {
-            entry.created_at = order.last_updated;
+        // Use most recent created_at for this creation_id (shows real database time, not fake time)
+        if (order.created_at > entry.created_at) {
+            entry.created_at = order.created_at;
         }
     }
 

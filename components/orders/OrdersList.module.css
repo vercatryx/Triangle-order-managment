@@ -56,6 +56,17 @@
     display: flex;
     gap: var(--spacing-md);
     margin-bottom: var(--spacing-lg);
+    align-items: center;
+}
+
+.filters input[type="number"] {
+    -moz-appearance: textfield;
+}
+
+.filters input[type="number"]::-webkit-outer-spin-button,
+.filters input[type="number"]::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
 }
 
 .searchBox {
@@ -79,28 +90,41 @@
 }
 
 .listHeader {
-    display: flex;
+    display: grid;
+    grid-template-columns: 50px 40px 100px 2fr 1fr 1.5fr 1fr 1.5fr 1.5fr 40px;
     padding: var(--spacing-md);
     background-color: var(--bg-surface-hover);
     border-bottom: 1px solid var(--border-color);
     font-weight: 600;
     color: var(--text-secondary);
     font-size: 0.875rem;
-    min-width: 1000px;
+    min-width: 1050px;
     gap: 1rem;
+    align-items: center;
+}
+
+.listHeader > span {
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .row {
-    display: flex;
+    display: grid;
+    grid-template-columns: 50px 40px 100px 2fr 1fr 1.5fr 1fr 1.5fr 1.5fr 40px;
     padding: var(--spacing-md);
     border-bottom: 1px solid var(--border-color);
     align-items: center;
     color: var(--text-primary);
     text-decoration: none;
     transition: background-color 0.2s;
-    min-width: 1000px;
+    min-width: 1050px;
     white-space: nowrap;
     gap: 1rem;
+}
+
+.row > span {
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .row:last-child {
