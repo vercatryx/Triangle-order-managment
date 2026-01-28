@@ -1602,7 +1602,6 @@ export async function addClient(data: Omit<ClientProfile, 'id' | 'createdAt' | '
         approved_meals_per_week: data.approvedMealsPerWeek || 0,
         authorized_amount: data.authorizedAmount !== null && data.authorizedAmount !== undefined ? roundCurrency(data.authorizedAmount) : null,
         expiration_date: data.expirationDate || null,
-        expiration_date: data.expirationDate || null,
         location_id: data.locationId || null,
         id: await generateNextClientId()
     };
@@ -1666,8 +1665,6 @@ export async function addDependent(name: string, parentClientId: string, dob?: s
         authorized_amount: null,
         expiration_date: null,
         active_order: {},
-        parent_client_id: parentClientId,
-        dob: dob || null,
         parent_client_id: parentClientId,
         dob: dob || null,
         cin: cin ?? null,
@@ -4222,7 +4219,7 @@ export async function syncCurrentOrderToUpcoming(clientId: string, client: Clien
                     snapshot: undefined, // Strip large snapshot
                     items: undefined // Strip raw items if they are too big
                 },
-                snapshot: orderConfig.snapshot || null
+                snapshot: (orderConfig as any).snapshot || null
             };
 
             await appendOrderHistory(clientId, historyEntry, supabaseClient);
