@@ -745,6 +745,9 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
                 cleanedOrderConfig.itemPrices = orderConfig.itemPrices || {};
             }
 
+            // Generate the order snapshot for the history
+            const orderSnapshot = generateOrderSnapshot(cleanedOrderConfig as any);
+
             // Create a temporary client object for syncCurrentOrderToUpcoming
             const tempClient: ClientProfile = {
                 ...client,
@@ -752,7 +755,8 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
                     ...cleanedOrderConfig,
                     serviceType: serviceType,
                     lastUpdated: new Date().toISOString(),
-                    updatedBy: 'Client'
+                    updatedBy: `Client: ${client.fullName}`,
+                    snapshot: orderSnapshot // Pass snapshot to syncCurrentOrderToUpcoming
                 }
             } as ClientProfile;
 
@@ -764,7 +768,7 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
                 await saveClientFoodOrder(client.id, {
                     caseId: cleanedOrderConfig.caseId,
                     deliveryDayOrders: cleanedOrderConfig.deliveryDayOrders || {}
-                });
+                }, { skipHistory: true });
             }
 
             // Save meal orders independently (if exists) - allowing Food + Breakfast combo
@@ -776,7 +780,7 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
                     await saveClientMealOrder(client.id, {
                         caseId: cleanedOrderConfig.caseId,
                         mealSelections: cleanedOrderConfig.mealSelections
-                    });
+                    }, { skipHistory: true });
                 }
             }
 
@@ -784,7 +788,7 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
                 await saveClientBoxOrder(client.id, (cleanedOrderConfig.boxOrders || []).map((box: any) => ({
                     ...box,
                     caseId: cleanedOrderConfig.caseId
-                })));
+                })), { skipHistory: true });
             }
 
             // Sync to upcoming_orders table
@@ -862,6 +866,98 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
 
 
     // -- LOGIC HELPERS --
+
+    function generateOrderSnapshot(config: any | undefined): string {
+        if (!config) return 'No order configuration';
+        let snapshot = `Service: ${config.serviceType || 'Not Set'}${config.caseId ? ` | Case ID: ${config.caseId}` : ''}\n`;
+
+        // Helper to get item name
+        const getItemName = (id: string, isMeal = false) => {
+            if (isMeal) return (mealItems || []).find(i => i.id === id)?.name || id;
+            return (menuItems || []).find(i => i.id === id)?.name || id;
+        };
+
+        // Helper to get vendor name
+        const getVendorName = (id: string) => (vendors || []).find(v => v.id === id)?.name || id;
+
+        // Helper to get box type name
+        const getBoxTypeName = (id: string) => (boxTypes || []).find(b => b.id === id)?.name || id;
+
+        // 1. PRIMARY SERVICE SECTION
+        let primarySection = '';
+        if (config.serviceType === 'Boxes') {
+            const boxes = config.boxOrders || [];
+            if (boxes.length > 0) {
+                primarySection = boxes.map((box: any, i: number) => {
+                    const items = box.items || {};
+                    const itemDetails = Object.keys(items)
+                        .map(itemId => `  - ${items[itemId]}x ${getItemName(itemId)}`)
+                        .join('\n');
+                    const vendorName = getVendorName(box.vendorId);
+                    const boxTypeName = getBoxTypeName(box.boxTypeId);
+                    return `Box ${i + 1}: ${boxTypeName} (Qty: ${box.quantity || 1}) [Vendor: ${vendorName}]\n${itemDetails || '  - No items'}`;
+                }).join('\n');
+            } else if (config.boxTypeId) {
+                const items = (config as any).items || {};
+                const itemDetails = Object.keys(items)
+                    .map(itemId => `  - ${items[itemId]}x ${getItemName(itemId)}`)
+                    .join('\n');
+                const vendorName = getVendorName((config as any).vendorId);
+                const boxTypeName = getBoxTypeName(config.boxTypeId);
+                primarySection = `Box: ${boxTypeName} (Qty: ${(config as any).boxQuantity || 1}) [Vendor: ${vendorName}]\n${itemDetails || '  - No items'}`;
+            }
+        } else if (config.serviceType === 'Food') {
+            const days = (config as any).deliveryDayOrders || {};
+            const dayKeys = Object.keys(days).sort();
+
+            if (dayKeys.length > 0) {
+                primarySection = dayKeys.map(day => {
+                    const selections = days[day]?.vendorSelections || [];
+                    const vendorDetails = selections.map((vs: any) => {
+                        const items = vs.items || {};
+                        const itemDetails = Object.keys(items)
+                            .map(itemId => `    - ${items[itemId]}x ${getItemName(itemId)}`)
+                            .join('\n');
+                        return `  Vendor [${getVendorName(vs.vendorId)}]:\n${itemDetails || '    - No items'}`;
+                    }).join('\n');
+                    return `${day}:\n${vendorDetails || '  - No vendors'}`;
+                }).join('\n');
+            } else if ((config as any).vendorSelections && (config as any).vendorSelections.length > 0) {
+                primarySection = (config as any).vendorSelections.map((vs: any) => {
+                    const items = vs.items || {};
+                    const itemDetails = Object.keys(items)
+                        .map(itemId => `  - ${items[itemId]}x ${getItemName(itemId)}`)
+                        .join('\n');
+                    return `Vendor [${getVendorName(vs.vendorId)}]:\n${itemDetails || '  - No items'}`;
+                }).join('\n');
+            }
+        } else if (config.serviceType === 'Custom') {
+            primarySection = `Custom Order: ${(config as any).custom_name || (config as any).description || 'Unnamed'}\n`;
+            primarySection += `Price: $${(config as any).custom_price || (config as any).totalValue || 0}\n`;
+            primarySection += `Vendor: ${getVendorName((config as any).vendorId)}`;
+        }
+
+        if (primarySection) {
+            snapshot += primarySection + '\n';
+        }
+
+        // 2. MEAL SELECTIONS SECTION (CUMULATIVE)
+        const meals = (config as any).mealSelections || {};
+        const mealTypes = Object.keys(meals).sort();
+        if (mealTypes.length > 0) {
+            const mealSection = `\nMeal Selections:\n` + mealTypes.map(mKey => {
+                const meal = meals[mKey];
+                const items = meal.items || {};
+                const itemDetails = Object.keys(items)
+                    .map(itemId => `  - ${items[itemId]}x ${getItemName(itemId, true)}`)
+                    .join('\n');
+                return `${meal.mealType || mKey} [${getVendorName(meal.vendorId)}]:\n${itemDetails || '  - No items'}`;
+            }).join('\n');
+            snapshot += mealSection;
+        }
+
+        return snapshot.trim();
+    }
 
     function handleBoxItemChange(itemId: string, qty: number) {
         // Legacy/Fallback for flat items if needed, but we are moving to multi-box

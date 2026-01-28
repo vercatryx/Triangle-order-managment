@@ -595,23 +595,6 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate, isVendorView }: P
                     continue;
                 }
 
-                // Check if order belongs to this vendor
-                setImportProgress(prev => ({
-                    ...prev,
-                    currentStatus: `Row ${i + 1}: Verifying order ${orderId}...`
-                }));
-                const belongsToVendor = await isOrderUnderVendor(orderId, vendorId);
-                if (!belongsToVendor) {
-                    errorCount++;
-                    const errorMsg = `Row ${i + 1} (Order ${orderIdentifier}): Order does not belong to this vendor`;
-                    errors.push(errorMsg);
-                    setImportProgress(prev => ({
-                        ...prev,
-                        errorCount,
-                        errors: [...prev.errors, errorMsg]
-                    }));
-                    continue;
-                }
 
                 // Check if order matches the delivery date
                 // Note: In delivery view, we're strict about the date.

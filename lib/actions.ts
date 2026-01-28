@@ -3802,7 +3802,9 @@ export async function syncSingleOrderForDeliveryDay(
             // Include comprehensive order details with names
             orderDetails: orderDetails,
             // Include full order config for reference
-            orderConfig: orderConfig
+            orderConfig: orderConfig,
+            // Include snapshot if provided
+            snapshot: orderConfig.snapshot || null
         };
 
         console.log(`[ORDER_HISTORY] History entry built for client ${clientId}:`, {
