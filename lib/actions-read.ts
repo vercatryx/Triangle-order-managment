@@ -11,7 +11,7 @@ import { randomUUID } from 'crypto';
 import { getSession } from './session';
 import { createClient } from '@supabase/supabase-js';
 import { roundCurrency } from './utils';
-import { mapClientFromDB, handleError } from './actions-shared';
+import { mapClientFromDB, handleError } from './client-mappers';
 import { processVendorOrderDetails } from './actions';
 
 function mapVendorRow(v: { id: string; name: string; email: string | null; service_type: string; delivery_days: string[]; delivery_frequency: string; is_active: boolean; minimum_meals: number | null; cutoff_hours: number | null }) {
@@ -2227,17 +2227,11 @@ export async function getOrderById(orderId: string) {
                 })
             );
 
-            // Use stored value, but calculate from items if stored value is zero
-            const storedTotalValue = parseFloat(orderData.total_value || 0);
-            const calculatedTotalValue = vendorSelectionsWithItems.reduce((sum, vs) => {
-                return sum + vs.items.reduce((itemSum, item) => itemSum + item.totalValue, 0);
-            }, 0);
-
             orderDetails = {
                 serviceType: orderData.service_type,
                 vendorSelections: vendorSelectionsWithItems,
                 totalItems: orderData.total_items,
-                totalValue: storedTotalValue > 0 ? storedTotalValue : calculatedTotalValue
+                totalValue: parseFloat(orderData.total_value || 0)
             };
         }
     } else if (orderData.service_type === 'Custom') {
@@ -2274,17 +2268,11 @@ export async function getOrderById(orderId: string) {
                 })
             );
 
-            // Use stored value, but calculate from items if stored value is zero
-            const storedCustomTotalValue = parseFloat(orderData.total_value || 0);
-            const calculatedCustomTotalValue = vendorSelectionsWithItems.reduce((sum, vs) => {
-                return sum + vs.items.reduce((itemSum, item) => itemSum + item.totalValue, 0);
-            }, 0);
-
             orderDetails = {
                 serviceType: 'Custom',
                 vendorSelections: vendorSelectionsWithItems,
                 totalItems: orderData.total_items,
-                totalValue: storedCustomTotalValue > 0 ? storedCustomTotalValue : calculatedCustomTotalValue,
+                totalValue: parseFloat(orderData.total_value || 0),
                 notes: orderData.notes
             };
         }

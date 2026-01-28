@@ -51,7 +51,7 @@ function calculateScheduledDeliveryDate(vendorId: string, vendors: any[]): Date 
  * Precheck function: Transfer upcoming orders for clients who have no orders yet
  * This checks each client in upcoming_orders and transfers their orders if they don't exist in orders table
  */
-async function precheckAndTransferUpcomingOrders() {
+async function precheckAndTransferUpcomingOrders(creationId: number) {
     const transferResults = {
         transferred: 0,
         skipped: 0,
@@ -210,23 +210,30 @@ async function precheckAndTransferUpcomingOrders() {
                                     }
                                 }
 
-                                // Recalculate total from all items and add as a separate item
+                                // Recalculate total from all items using unit_value * quantity (more reliable)
                                 const { data: allOrderItems } = await supabase
                                     .from('order_items')
-                                    .select('total_value')
-                                    .eq('order_id', newOrder.id)
-                                    .not('menu_item_id', 'is', null);
+                                    .select('unit_value, quantity, custom_price')
+                                    .eq('order_id', newOrder.id);
 
-                                if (allOrderItems) {
+                                if (allOrderItems && allOrderItems.length > 0) {
+                                    // Calculate from unit_value * quantity (same logic as getOrderById)
                                     const calculatedTotal = allOrderItems.reduce((sum, item) => {
-                                        return sum + parseFloat(item.total_value?.toString() || '0');
+                                        // Use custom_price if available, otherwise use unit_value * quantity
+                                        const itemPrice = item.custom_price 
+                                            ? parseFloat(item.custom_price.toString() || '0')
+                                            : parseFloat(item.unit_value?.toString() || '0');
+                                        const quantity = parseFloat(item.quantity?.toString() || '0');
+                                        return sum + (itemPrice * quantity);
                                     }, 0);
 
-                                    // Update order total_value
-                                    await supabase
-                                        .from('orders')
-                                        .update({ total_value: calculatedTotal })
-                                        .eq('id', newOrder.id);
+                                    // Update order total_value if it differs
+                                    if (Math.abs(calculatedTotal - parseFloat(newOrder.total_value || 0)) > 0.01) {
+                                        await supabase
+                                            .from('orders')
+                                            .update({ total_value: calculatedTotal })
+                                            .eq('id', newOrder.id);
+                                    }
 
                                     // Add total as a separate item (use first vendor selection from new order)
                                     const { data: firstNewVs } = await supabase
@@ -406,7 +413,7 @@ export async function GET(request: NextRequest) {
         const creationId = await getNextCreationId();
         
         // Precheck: Transfer upcoming orders for clients with no existing orders
-        const precheckResults = await precheckAndTransferUpcomingOrders();
+        const precheckResults = await precheckAndTransferUpcomingOrders(creationId);
 
         // First, check if orders table is completely empty
         const { count: ordersCount, error: countError } = await supabase
@@ -876,23 +883,30 @@ export async function GET(request: NextRequest) {
                                     }
                                 }
 
-                                // Recalculate total from all items and add as a separate item
+                                // Recalculate total from all items using unit_value * quantity (more reliable)
                                 const { data: allOrderItems } = await supabase
                                     .from('order_items')
-                                    .select('total_value')
-                                    .eq('order_id', newOrder.id)
-                                    .not('menu_item_id', 'is', null);
+                                    .select('unit_value, quantity, custom_price')
+                                    .eq('order_id', newOrder.id);
 
-                                if (allOrderItems) {
+                                if (allOrderItems && allOrderItems.length > 0) {
+                                    // Calculate from unit_value * quantity (same logic as getOrderById)
                                     const calculatedTotal = allOrderItems.reduce((sum, item) => {
-                                        return sum + parseFloat(item.total_value?.toString() || '0');
+                                        // Use custom_price if available, otherwise use unit_value * quantity
+                                        const itemPrice = item.custom_price 
+                                            ? parseFloat(item.custom_price.toString() || '0')
+                                            : parseFloat(item.unit_value?.toString() || '0');
+                                        const quantity = parseFloat(item.quantity?.toString() || '0');
+                                        return sum + (itemPrice * quantity);
                                     }, 0);
 
-                                    // Update order total_value
-                                    await supabase
-                                        .from('orders')
-                                        .update({ total_value: calculatedTotal })
-                                        .eq('id', newOrder.id);
+                                    // Update order total_value if it differs
+                                    if (Math.abs(calculatedTotal - parseFloat(newOrder.total_value || 0)) > 0.01) {
+                                        await supabase
+                                            .from('orders')
+                                            .update({ total_value: calculatedTotal })
+                                            .eq('id', newOrder.id);
+                                    }
 
                                     // Add total as a separate item (use first vendor selection from new order)
                                     const { data: firstNewVs } = await supabase

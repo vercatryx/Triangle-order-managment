@@ -10,7 +10,7 @@ import { randomUUID } from 'crypto';
 import { getSession } from './session';
 import { createClient } from '@supabase/supabase-js';
 import { roundCurrency } from './utils';
-import { handleError, mapClientFromDB } from './actions-shared';
+import { handleError, mapClientFromDB } from './client-mappers';
 import { getVendors, getMenuItems, getMealItems, getEquipment, getBoxTypes, getClient, getVendorSession } from './actions-read';
 import { syncSingleOrderForDeliveryDay } from './actions';
 import { getNextDeliveryDateForDay } from './order-dates';
@@ -1729,6 +1729,35 @@ export async function processUpcomingOrders() {
                                 console.error(`[processUpcomingOrders] Error inserting item ${item.id} (menu: ${item.menu_item_id}):`, insertError);
                             }
                         }
+                    }
+                }
+            }
+
+            // Recalculate total_value from all items for Food/Meal orders
+            // Use unit_value * quantity (same logic as getOrderById and the fix script)
+            if (upcomingOrder.service_type === 'Food' || upcomingOrder.service_type === 'Meal') {
+                const { data: allOrderItems } = await supabaseClient
+                    .from('order_items')
+                    .select('unit_value, quantity, custom_price')
+                    .eq('order_id', newOrder.id);
+
+                if (allOrderItems && allOrderItems.length > 0) {
+                    // Calculate from unit_value * quantity (more reliable than using total_value from items)
+                    const calculatedTotal = allOrderItems.reduce((sum, item) => {
+                        // Use custom_price if available, otherwise use unit_value * quantity
+                        const itemPrice = item.custom_price 
+                            ? parseFloat(item.custom_price.toString() || '0')
+                            : parseFloat(item.unit_value?.toString() || '0');
+                        const quantity = parseFloat(item.quantity?.toString() || '0');
+                        return sum + (itemPrice * quantity);
+                    }, 0);
+
+                    // Update order total_value if it differs
+                    if (Math.abs(calculatedTotal - parseFloat(newOrder.total_value || 0)) > 0.01) {
+                        await supabaseClient
+                            .from('orders')
+                            .update({ total_value: calculatedTotal })
+                            .eq('id', newOrder.id);
                     }
                 }
             }

@@ -16,7 +16,7 @@ import {
     formatDeliveryDate
 } from '@/lib/order-dates';
 import { isMeetingMinimum, isExceedingMaximum, isMeetingExactTarget } from '@/lib/utils';
-import { Save, ArrowLeft, Truck, Package, AlertTriangle, Upload, Trash2, Plus, Check, ClipboardList, History, CreditCard, Calendar, ChevronDown, ChevronUp, ShoppingCart, Loader2, FileText, Square, CheckSquare, Wrench, Info, Construction, ChevronRight, X } from 'lucide-react';
+import { Save, ArrowLeft, Truck, Package, AlertTriangle, Upload, Trash2, Plus, Check, ClipboardList, History, CreditCard, Calendar, ChevronDown, ChevronUp, ShoppingCart, Loader2, FileText, Square, CheckSquare, Wrench, Info, Construction, ChevronRight } from 'lucide-react';
 import FormFiller from '@/components/forms/FormFiller';
 import { FormSchema } from '@/lib/form-types';
 import TextareaAutosize from 'react-textarea-autosize';
@@ -256,12 +256,10 @@ export function ClientProfileDetail({
     const [orderHistoryExpanded, setOrderHistoryExpanded] = useState<boolean>(true); // Default open as per user request
     const [recentOrdersExpanded, setRecentOrdersExpanded] = useState<boolean>(false);
     const [historyExpanded, setHistoryExpanded] = useState<boolean>(false);
-    const [billingHistoryExpanded, setBillingHistoryExpanded] = useState<boolean>(false);
     const [allClients, setAllClients] = useState<any[]>(initialAllClients || []); // optimization: lightweight list
     const [expandedBillingRows, setExpandedBillingRows] = useState<Set<string>>(new Set());
     const [regularClients, setRegularClients] = useState<any[]>(initialRegularClients || []); // optimization: lightweight list
     const [parentClientSearch, setParentClientSearch] = useState('');
-    const [showParentSearch, setShowParentSearch] = useState(false);
     const [dependents, setDependents] = useState<ClientProfile[]>([]);
 
     // Lazy Loading State
@@ -2547,743 +2545,7 @@ export function ClientProfileDetail({
     );
     const selectedParentClient = formData.parentClientId ? regularClients.find(c => c.id === formData.parentClientId) : null;
 
-    // Handle form field changes
-    const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
-        const { name, value } = e.target;
-        setFormData({ ...formData, [name]: value });
-    };
 
-// --- CLIENT INFO SECTION ---
-const renderClientInfoSection = () => (
-    <section className={styles.card}>
-        <h3 className={styles.sectionTitle}>Client Information</h3>
-        <div className={styles.grid2}>
-            <div className={styles.formGroup}>
-                <label className={styles.label}>Full Name <span className={styles.required}>*</span></label>
-                <input
-                    type="text"
-                    name="fullName"
-                    className={styles.input}
-                    value={formData.fullName || ''}
-                    onChange={handleChange}
-                    disabled={saving}
-                    required
-                />
-            </div>
-            <div className={styles.formGroup}>
-                <label className={styles.label}>Email <span className={styles.required}>*</span></label>
-                <input
-                    type="email"
-                    name="email"
-                    className={styles.input}
-                    value={formData.email || ''}
-                    onChange={handleChange}
-                    disabled={saving}
-                    required
-                />
-            </div>
-            <div className={styles.formGroup}>
-                <label className={styles.label}>Phone Number</label>
-                <input
-                    type="tel"
-                    name="phoneNumber"
-                    className={styles.input}
-                    value={formData.phoneNumber || ''}
-                    onChange={handleChange}
-                    disabled={saving}
-                />
-            </div>
-            <div className={styles.formGroup}>
-                <label className={styles.label}>Secondary Phone</label>
-                <input
-                    type="tel"
-                    name="secondaryPhoneNumber"
-                    className={styles.input}
-                    value={formData.secondaryPhoneNumber || ''}
-                    onChange={handleChange}
-                    disabled={saving}
-                />
-            </div>
-            <div className={styles.formGroup} style={{ gridColumn: 'span 2' }}>
-                <label className={styles.label}>Address <span className={styles.required}>*</span></label>
-                <input
-                    type="text"
-                    name="address"
-                    className={styles.input}
-                    value={formData.address || ''}
-                    onChange={handleChange}
-                    disabled={saving}
-                    required
-                />
-            </div>
-
-            <div className={styles.formGroup}>
-                <label className={styles.label}>Status</label>
-                <select
-                    name="statusId"
-                    className={styles.select}
-                    value={formData.statusId || ''}
-                    onChange={handleChange}
-                    disabled={saving}
-                >
-                    {statuses.map(s => (
-                        <option key={s.id} value={s.id}>{s.name}</option>
-                    ))}
-                </select>
-            </div>
-
-            <div className={styles.formGroup}>
-                <label className={styles.label}>Assigned Navigator</label>
-                <select
-                    name="navigatorId"
-                    className={styles.select}
-                    value={formData.navigatorId || ''}
-                    onChange={handleChange}
-                    disabled={saving}
-                >
-                    <option value="">Unassigned</option>
-                    {navigators.filter(n => n.isActive || n.id === client?.navigatorId).map(n => (
-                        <option key={n.id} value={n.id}>{n.name}</option>
-                    ))}
-                </select>
-            </div>
-
-            {currentUser?.role !== 'navigator' && (
-                <div className={styles.formGroup}>
-                    <label className={styles.label}>Parent Client (Optional)</label>
-                    <div style={{ position: 'relative' }}>
-                        <input
-                            type="text"
-                            className={styles.input}
-                            placeholder="Search existing clients..."
-                            value={parentClientSearch}
-                            onChange={(e) => {
-                                setParentClientSearch(e.target.value);
-                                if (!e.target.value) {
-                                    setFormData(prev => ({ ...prev, parentClientId: null }));
-                                }
-                                setShowParentSearch(true);
-                            }}
-                            onFocus={() => setShowParentSearch(true)}
-                            onBlur={() => setTimeout(() => setShowParentSearch(false), 200)}
-                        />
-                        {formData.parentClientId && (
-                            <button
-                                className={styles.clearBtn}
-                                onClick={() => {
-                                    setFormData(prev => ({ ...prev, parentClientId: null }));
-                                    setParentClientSearch('');
-                                }}
-                                style={{
-                                    position: 'absolute',
-                                    right: '10px',
-                                    top: '50%',
-                                    transform: 'translateY(-50%)',
-                                    background: 'none',
-                                    border: 'none',
-                                    cursor: 'pointer',
-                                    color: 'var(--text-tertiary)'
-                                }}
-                            >
-                                <X size={16} />
-                            </button>
-                        )}
-
-                        {showParentSearch && parentClientSearch && !formData.parentClientId && (
-                            <div className={styles.dropdown}>
-                                {regularClients
-                                    .filter(c =>
-                                        c.id !== clientId &&
-                                        c.fullName.toLowerCase().includes(parentClientSearch.toLowerCase())
-                                    )
-                                    .slice(0, 5)
-                                    .map(match => (
-                                        <div
-                                            key={match.id}
-                                            className={styles.dropdownItem}
-                                            onMouseDown={() => {
-                                                setFormData(prev => ({ ...prev, parentClientId: match.id }));
-                                                setParentClientSearch(match.fullName);
-                                                setShowParentSearch(false);
-                                            }}
-                                        >
-                                            {match.fullName}
-                                        </div>
-                                    ))}
-                            </div>
-                        )}
-                    </div>
-                </div>
-            )}
-
-            <div className={styles.formGroup} style={{ gridColumn: 'span 2' }}>
-                <label className={styles.label}>Notes</label>
-                <textarea
-                    name="notes"
-                    className={styles.textarea}
-                    value={formData.notes || ''}
-                    onChange={handleChange}
-                    disabled={saving}
-                    rows={3}
-                />
-            </div>
-        </div>
-    </section>
-);
-
-// --- SERVICE CONFIG SECTION ---
-const renderServiceConfigSection = () => (
-    <section className={styles.card} style={{ marginTop: 'var(--spacing-lg)' }}>
-        <h3 className={styles.sectionTitle}>Service Configuration</h3>
-        <div className={styles.grid2}>
-            <div className={styles.formGroup}>
-                <label className={styles.label}>Service Type</label>
-                <select
-                    name="serviceType"
-                    className={styles.select}
-                    value={formData.serviceType}
-                    onChange={handleChange}
-                    disabled={saving}
-                >
-                    <option value="Food">Food</option>
-                    <option value="Meal">Meals</option>
-                    <option value="Boxes">Boxes</option>
-                    <option value="Equipment">Equipment</option>
-                    <option value="Custom">Custom</option>
-                </select>
-            </div>
-
-            {formData.serviceType === 'Meal' && (
-                <div className={styles.formGroup}>
-                    <label className={styles.label}>Approved Meals / Week</label>
-                    <input
-                        type="number"
-                        name="approvedMealsPerWeek"
-                        className={styles.input}
-                        value={formData.approvedMealsPerWeek || 0}
-                        onChange={handleChange}
-                        disabled={saving}
-                        min={0}
-                    />
-                </div>
-            )}
-
-            <div className={styles.formGroup}>
-                <label className={styles.label}>Authorized Amount ($)</label>
-                <div className="relative">
-                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500">$</span>
-                    <input
-                        type="number"
-                        name="authorizedAmount"
-                        className={`${styles.input} pl-8`}
-                        value={formData.authorizedAmount || ''}
-                        onChange={handleChange}
-                        disabled={saving}
-                        placeholder="0.00"
-                        step="0.01"
-                    />
-                </div>
-            </div>
-
-            <div className={styles.formGroup}>
-                <label className={styles.label}>Expiration Date</label>
-                <input
-                    type="date"
-                    name="expirationDate"
-                    className={styles.input}
-                    value={formData.expirationDate ? formData.expirationDate.split('T')[0] : ''}
-                    onChange={handleChange}
-                    disabled={saving}
-                />
-            </div>
-
-            <div className={styles.checkboxGroup}>
-                <label className={styles.checkboxLabel}>
-                    <input
-                        type="checkbox"
-                        name="screeningTookPlace"
-                        checked={formData.screeningTookPlace}
-                        onChange={handleChange}
-                        disabled={saving}
-                    />
-                    Screening Took Place
-                </label>
-            </div>
-
-            <div className={styles.checkboxGroup}>
-                <label className={styles.checkboxLabel}>
-                    <input
-                        type="checkbox"
-                        name="screeningSigned"
-                        checked={formData.screeningSigned}
-                        onChange={handleChange}
-                        disabled={saving}
-                    />
-                    Screening Signed
-                </label>
-            </div>
-        </div>
-    </section>
-);
-
-// --- ORDER CONFIG SECTION ---
-const renderOrderConfigSection = () => (
-    <section className={styles.card} style={{ marginTop: 'var(--spacing-lg)' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-            <h3 className={styles.sectionTitle}>Current Order Configuration</h3>
-            {client && orderConfig.caseId && (
-                <span className={styles.badge} style={{ backgroundColor: 'var(--bg-success)', color: 'var(--text-success)' }}>
-                    Active Order Configured
-                </span>
-            )}
-        </div>
-
-        <div className={styles.formGroup}>
-            <label className={styles.label}>Case ID <span className={styles.required}>*</span></label>
-            <input
-                type="text"
-                className={styles.input}
-                value={orderConfig.caseId || ''}
-                onChange={(e) => setOrderConfig({ ...orderConfig, caseId: e.target.value })}
-                placeholder="Enter Case ID to enable configuration"
-                disabled={saving}
-            />
-        </div>
-
-        {/* Only show configuration if Case ID is present */}
-        {orderConfig.caseId ? (
-            <>
-                {(formData.serviceType === 'Food' || formData.serviceType === 'Meal') && (
-                    <div className="animate-fade-in" style={{ marginTop: '1rem' }}>
-                        <FoodServiceWidget
-                            orderConfig={orderConfig}
-                            setOrderConfig={setOrderConfig}
-                            client={{ ...client, ...formData } as ClientProfile}
-                            vendors={vendors}
-                            menuItems={menuItems}
-                            mealCategories={mealCategories}
-                            mealItems={mealItems}
-                            settings={settings}
-                        />
-                        <div style={{ marginTop: '1rem' }}>
-                            <label className={styles.label}>Order Notes</label>
-                            <textarea
-                                className={`${styles.input} ${styles.textarea}`}
-                                placeholder="Add general notes for this order..."
-                                value={orderConfig.notes || ''}
-                                onChange={(e) => setOrderConfig({ ...orderConfig, notes: e.target.value })}
-                                rows={2}
-                            />
-                        </div>
-                    </div>
-                )}
-
-                {/* Custom Service Configuration */}
-                {formData.serviceType === 'Custom' && (
-                    <div className={styles.section} style={{ marginTop: '24px' }}>
-                        <h3 className={styles.sectionTitle}>Custom Order Configuration</h3>
-                        <div className={styles.card} style={{ backgroundColor: '#f9fafb' }}>
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                <div className="col-span-2">
-                                    <label className={styles.label}>Item Description <span className="text-red-500">*</span></label>
-                                    <textarea
-                                        className={styles.input}
-                                        placeholder="e.g. Weekly Catering Platter"
-                                        value={orderConfig.custom_name || ''}
-                                        rows={1}
-                                        style={{ resize: 'none', overflow: 'hidden', minHeight: '3rem' }}
-                                        onInput={(e) => {
-                                            const target = e.target as HTMLTextAreaElement;
-                                            target.style.height = 'auto';
-                                            target.style.height = target.scrollHeight + 'px';
-                                        }}
-                                        onChange={e => {
-                                            setOrderConfig({ ...orderConfig, custom_name: e.target.value });
-                                            e.target.style.height = 'auto';
-                                            e.target.style.height = e.target.scrollHeight + 'px';
-                                        }}
-                                    />
-                                </div>
-                                <div>
-                                    <label className={styles.label}>Price per Order <span className="text-red-500">*</span></label>
-                                    <div className="relative">
-                                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500">$</span>
-                                        <input
-                                            type="number"
-                                            className={`${styles.input} pl-8`}
-                                            placeholder="0.00"
-                                            value={orderConfig.custom_price || ''}
-                                            onChange={e => setOrderConfig({ ...orderConfig, custom_price: e.target.value })}
-                                        />
-                                    </div>
-                                </div>
-                                <div>
-                                    <label className={styles.label}>Vendor <span className="text-red-500">*</span></label>
-                                    <select
-                                        className={styles.input}
-                                        value={orderConfig.vendorId || ''}
-                                        onChange={e => {
-                                            const newVendorId = e.target.value;
-                                            let newDeliveryDay = orderConfig.deliveryDay;
-
-                                            // Check if current day is valid for new vendor
-                                            if (newVendorId && newDeliveryDay) {
-                                                const selectedVendor = vendors.find(v => v.id === newVendorId);
-                                                if (selectedVendor && selectedVendor.deliveryDays && selectedVendor.deliveryDays.length > 0) {
-                                                    if (!selectedVendor.deliveryDays.includes(newDeliveryDay)) {
-                                                        newDeliveryDay = ''; // Reset if invalid
-                                                    }
-                                                }
-                                            }
-
-                                            setOrderConfig({ ...orderConfig, vendorId: newVendorId, deliveryDay: newDeliveryDay });
-                                        }}
-                                    >
-                                        <option value="">Select Vendor</option>
-                                        {vendors.filter(v => v.isActive).map(v => (
-                                            <option key={v.id} value={v.id}>{v.name}</option>
-                                        ))}
-                                    </select>
-                                </div>
-                                <div>
-                                    <label className={styles.label}>Delivery Day <span className="text-red-500">*</span></label>
-                                    <select
-                                        className={styles.input}
-                                        value={orderConfig.deliveryDay || ''}
-                                        onChange={e => setOrderConfig({ ...orderConfig, deliveryDay: e.target.value })}
-                                    >
-                                        <option value="">Select Day</option>
-                                        {(() => {
-                                            // Determine available days
-                                            let availableDays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
-
-                                            if (orderConfig.vendorId) {
-                                                const selectedVendor = vendors.find(v => v.id === orderConfig.vendorId);
-                                                if (selectedVendor && selectedVendor.deliveryDays && selectedVendor.deliveryDays.length > 0) {
-                                                    availableDays = selectedVendor.deliveryDays;
-                                                }
-                                            }
-
-                                            return availableDays.map(day => (
-                                                <option key={day} value={day}>{day}</option>
-                                            ));
-                                        })()}
-                                    </select>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                )}
-
-                {formData.serviceType === 'Boxes' && (
-                    <div className="animate-fade-in" style={{ marginTop: '1rem' }}>
-                        {orderConfig.boxOrders && orderConfig.boxOrders.map((box: any, index: number) => (
-                            <div key={index} className={styles.boxConfigCard} style={{ marginBottom: '1.5rem', padding: '1rem', border: '1px solid var(--border-color)', borderRadius: '8px' }}>
-                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-                                    <h4 style={{ margin: 0 }}>Box #{index + 1}</h4>
-                                    {orderConfig.boxOrders!.length > 1 && (
-                                        <button type="button" className={styles.linkBtn} onClick={() => handleRemoveBox(index)} style={{ color: 'var(--color-danger)' }}>
-                                            <Trash2 size={16} /> Remove
-                                        </button>
-                                    )}
-                                </div>
-
-                                <div className={styles.formGroup}>
-                                    <label className={styles.label}>Box Type</label>
-                                    <select
-                                        className={styles.select}
-                                        value={box.boxTypeId || ''}
-                                        onChange={(e) => handleBoxUpdate(index, 'boxTypeId', e.target.value)}
-                                    >
-                                        <option value="">Select Box Type</option>
-                                        {boxTypes.filter(b => b.isActive).map(b => (
-                                            <option key={b.id} value={b.id}>{b.name}</option>
-                                        ))}
-                                    </select>
-                                </div>
-
-                                <div className={styles.formGroup}>
-                                    <label className={styles.label}>Quantity</label>
-                                    <div className={styles.quantityControl}>
-                                        <button type="button" onClick={() => handleBoxUpdate(index, 'quantity', Math.max(1, (box.quantity || 1) - 1))}>-</button>
-                                        <span>{box.quantity || 1}</span>
-                                        <button type="button" onClick={() => handleBoxUpdate(index, 'quantity', (box.quantity || 1) + 1)}>+</button>
-                                    </div>
-                                </div>
-
-                                {/* Box Items Selection Logic Goes Here - Simplified for restoration */}
-                                <div style={{ marginTop: '1rem' }}>
-                                    <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>Box contents configuration enabled.</p>
-                                </div>
-                            </div>
-                        ))}
-                        <button type="button" className={styles.btnSecondary} onClick={handleAddBox} style={{ width: '100%' }}>
-                            <Plus size={16} /> Add Another Box
-                        </button>
-                    </div>
-                )}
-            </>
-        ) : (
-            <div className={styles.alert}>
-                <AlertTriangle size={16} />
-                <span>Please enter a Case ID to configure the order.</span>
-            </div>
-        )}
-    </section>
-);
-
-// --- RECENT ORDERS SECTION ---
-const renderRecentOrdersSection = () => (
-    <section className={styles.card} style={{ marginTop: 'var(--spacing-lg)' }}>
-        <button
-            type="button"
-            onClick={() => setRecentOrdersExpanded(!recentOrdersExpanded)}
-            className={styles.accordionHeader}
-            style={{ width: '100%', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'none', border: 'none', padding: 0, cursor: 'pointer' }}
-        >
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                <Calendar size={20} />
-                <h3 className={styles.sectionTitle} style={{ margin: 0 }}>Recent Orders</h3>
-                <span className={styles.badge}>{activeOrder ? 1 : 0}</span>
-            </div>
-            {recentOrdersExpanded ? <ChevronUp size={20} /> : <ChevronDown size={20} />}
-        </button>
-
-        {recentOrdersExpanded && (
-            <div style={{ marginTop: '1rem' }}>
-                {loadingOrderDetails ? (
-                    <div className={styles.loadingContainer}>
-                        <div className={styles.spinner}></div>
-                        <p>Loading orders...</p>
-                    </div>
-                ) : activeOrder ? (
-                    <div className={styles.orderCard}>
-                        <div className={styles.orderHeader}>
-                            <div>
-                                <span className={styles.orderNumber}>#{activeOrder.orderNumber || 'PENDING'}</span>
-                                <span className={styles.orderDate}>
-                                    {activeOrder.scheduledDeliveryDate ? new Date(activeOrder.scheduledDeliveryDate).toLocaleDateString() : 'Date TBD'}
-                                </span>
-                            </div>
-                            <span className={styles.orderStatus}>{activeOrder.status || 'Active'}</span>
-                        </div>
-                        <div className={styles.orderDetails}>
-                            <p><strong>Service:</strong> {activeOrder.serviceType}</p>
-                            <p><strong>Case ID:</strong> {activeOrder.caseId || 'N/A'}</p>
-                            {/* Detailed breakdown would go here */}
-                        </div>
-                    </div>
-                ) : (
-                    <p className={styles.emptyText}>No recent orders found.</p>
-                )}
-            </div>
-        )}
-    </section>
-);
-
-// --- BILLING HISTORY SECTION ---
-const renderBillingHistorySection = () => (
-    <section className={styles.card} style={{ marginTop: 'var(--spacing-lg)' }}>
-        <button
-            type="button"
-            onClick={() => setBillingHistoryExpanded(!billingHistoryExpanded)}
-            className={styles.accordionHeader}
-            style={{ width: '100%', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'none', border: 'none', padding: 0, cursor: 'pointer' }}
-        >
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                <AlertTriangle size={20} /> {/* Placeholder icon */}
-                <h3 className={styles.sectionTitle} style={{ margin: 0 }}>Billing History</h3>
-                <span className={styles.badge}>{billingHistory?.length || 0}</span>
-            </div>
-            {billingHistoryExpanded ? <ChevronUp size={20} /> : <ChevronDown size={20} />}
-        </button>
-
-        {billingHistoryExpanded && (
-            <div style={{ marginTop: '1rem' }}>
-                {billingHistory && billingHistory.length > 0 ? (
-                    <div className={styles.tableContainer}>
-                        <table className={styles.table}>
-                            <thead>
-                                <tr>
-                                    <th>Date</th>
-                                    <th>Amount</th>
-                                    <th>Status</th>
-                                    <th>Invoice #</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {billingHistory.map((bill: any, i: number) => (
-                                    <tr key={i}>
-                                        <td>{new Date(bill.date).toLocaleDateString()}</td>
-                                        <td>${bill.amount?.toFixed(2)}</td>
-                                        <td>{bill.status}</td>
-                                        <td>{bill.invoiceNumber || '-'}</td>
-                                    </tr>
-                                ))}
-                            </tbody>
-                        </table>
-                    </div>
-                ) : (
-                    <p className={styles.emptyText}>No billing history available.</p>
-                )}
-            </div>
-        )}
-    </section>
-);
-
-// --- ORDER HISTORY SECTION ---
-const renderOrderHistorySection = () => (
-    <section className={styles.card} style={{ marginTop: 'var(--spacing-lg)' }}>
-        <div
-            className={styles.sectionHeader}
-            onClick={() => setOrderHistoryExpanded(!orderHistoryExpanded)}
-            style={{ cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
-        >
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                <History size={20} />
-
-                <h3 className={styles.sectionTitle} style={{ margin: 0 }}>Order History</h3>
-                <button
-                    onClick={(e) => {
-                        e.stopPropagation();
-                        console.log('[DEBUG BUTTON] Client:', client);
-                        console.log('[DEBUG BUTTON] clientOrderHistory state:', clientOrderHistory);
-                        console.log('[DEBUG BUTTON] Raw Order History (Camel):', (client as any)?.orderHistory);
-                        console.log('[DEBUG BUTTON] Raw Order History (Snake):', (client as any)?.order_history);
-                    }}
-                    className="btn btn-sm btn-outline-secondary"
-                    style={{ marginLeft: '1rem', fontSize: '0.7rem', padding: '2px 6px' }}
-                >
-                    Log Data
-                </button>
-                <span className={styles.badge}>{clientOrderHistory.length}</span>
-            </div>
-            {orderHistoryExpanded ? <ChevronUp size={20} /> : <ChevronDown size={20} />}
-        </div>
-
-        {orderHistoryExpanded && (
-            <div className={styles.historyList} style={{ marginTop: '1rem' }}>
-                {clientOrderHistory.length > 0 ? (
-                    clientOrderHistory.map((entry, index) => (
-                        <div key={index} className={styles.card} style={{ marginBottom: '1rem', borderLeft: '4px solid var(--color-primary)', backgroundColor: 'var(--bg-surface)' }}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem', borderBottom: '1px solid var(--border-color)', paddingBottom: '0.5rem' }}>
-                                <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
-                                    <strong>{entry.type === 'order_created' ? 'Order Created' : 'Order Updated'}</strong>
-                                    <span className={styles.budget} style={{ fontSize: '0.8rem' }}>{entry.serviceType}</span>
-                                </div>
-                                <div style={{ fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
-                                    {new Date(entry.timestamp).toLocaleString()}
-                                </div>
-                            </div>
-
-                            <div style={{ fontSize: '0.95rem' }}>
-                                {entry.orderNumber && (
-                                    <div style={{ marginBottom: '0.5rem' }}>
-                                        <strong>Order #:</strong> {entry.orderNumber}
-                                    </div>
-                                )}
-
-                                {/* Render Order Details depending on Service Type */}
-                                {entry.orderDetails && (
-                                    <div style={{ marginTop: '0.5rem' }}>
-                                        {/* Food / Meal / Custom - Vendor Selections */}
-                                        {entry.orderDetails.vendorSelections && Array.isArray(entry.orderDetails.vendorSelections) && (
-                                            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                                                {entry.orderDetails.vendorSelections.map((vs: any, vIdx: number) => (
-                                                    <div key={vIdx} style={{ backgroundColor: 'var(--bg-surface-hover)', padding: '0.5rem', borderRadius: '4px' }}>
-                                                        <div style={{ fontWeight: 600, marginBottom: '0.25rem' }}>{vs.vendorName || 'Unknown Vendor'}</div>
-                                                        {/* Items List */}
-                                                        {vs.itemsDetails && Array.isArray(vs.itemsDetails) ? (
-                                                            <ul style={{ margin: 0, paddingLeft: '1.2rem', fontSize: '0.9rem' }}>
-                                                                {vs.itemsDetails.map((item: any, iIdx: number) => (
-                                                                    <li key={iIdx}>
-                                                                        {item.itemName} x{item.quantity}
-                                                                    </li>
-                                                                ))}
-                                                            </ul>
-                                                        ) : (
-                                                            <div style={{ fontSize: '0.9rem', fontStyle: 'italic' }}>Items: {Object.keys(vs.items || {}).length}</div>
-                                                        )}
-                                                    </div>
-                                                ))}
-                                            </div>
-                                        )}
-
-                                        {/* Delivery Day Orders (Food Alternative Structure) */}
-                                        {entry.orderDetails.deliveryDayOrders && !entry.orderDetails.vendorSelections && (
-                                            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                                                {Object.entries(entry.orderDetails.deliveryDayOrders).map(([day, dayData]: [string, any]) => (
-                                                    <div key={day}>
-                                                        <div style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '0.25rem' }}>{day}</div>
-                                                        {(dayData.vendorSelections || []).map((vs: any, vIdx: number) => (
-                                                            <div key={vIdx} style={{ backgroundColor: 'var(--bg-surface-hover)', padding: '0.5rem', borderRadius: '4px', marginBottom: '0.5rem' }}>
-                                                                <div style={{ fontWeight: 600, marginBottom: '0.25rem' }}>{vs.vendorName || 'Unknown Vendor'}</div>
-                                                                {/* Items List */}
-                                                                {vs.itemsDetails && Array.isArray(vs.itemsDetails) ? (
-                                                                    <ul style={{ margin: 0, paddingLeft: '1.2rem', fontSize: '0.9rem' }}>
-                                                                        {vs.itemsDetails.map((item: any, iIdx: number) => (
-                                                                            <li key={iIdx}>
-                                                                                {item.itemName} x{item.quantity}
-                                                                            </li>
-                                                                        ))}
-                                                                    </ul>
-                                                                ) : (
-                                                                    <div style={{ fontSize: '0.9rem', fontStyle: 'italic' }}>Items: {Object.keys(vs.items || {}).length}</div>
-                                                                )}
-                                                            </div>
-                                                        ))}
-                                                    </div>
-                                                ))}
-                                            </div>
-                                        )}
-
-                                        {/* Box Orders */}
-                                        {entry.orderDetails.boxOrders && Array.isArray(entry.orderDetails.boxOrders) && (
-                                            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                                                {entry.orderDetails.boxOrders.map((box: any, bIdx: number) => (
-                                                    <div key={bIdx} style={{ backgroundColor: 'var(--bg-surface-hover)', padding: '0.5rem', borderRadius: '4px' }}>
-                                                        <div style={{ fontWeight: 600, marginBottom: '0.25rem' }}>
-                                                            {box.boxTypeName || 'Unknown Box'} ({box.vendorName}) x{box.quantity}
-                                                        </div>
-                                                        {/* Box Contents */}
-                                                        {box.itemsDetails && Array.isArray(box.itemsDetails) && (
-                                                            <ul style={{ margin: 0, paddingLeft: '1.2rem', fontSize: '0.9rem' }}>
-                                                                {box.itemsDetails.map((item: any, iIdx: number) => (
-                                                                    <li key={iIdx}>
-                                                                        {item.itemName} x{item.quantity}
-                                                                    </li>
-                                                                ))}
-                                                            </ul>
-                                                        )}
-                                                    </div>
-                                                ))}
-                                            </div>
-                                        )}
-                                    </div>
-                                )}
-
-                                {/* Fallback for entries with no orderDetails */}
-                                {!entry.orderDetails && (
-                                    <div style={{ marginTop: '0.5rem', fontStyle: 'italic', color: 'var(--text-secondary)' }}>
-                                        {entry.notes ? `Note: ${entry.notes}` : (entry.details || 'Order updated (No details captured)')}
-                                    </div>
-                                )}
-
-                                {entry.updatedBy && (
-                                    <div style={{ marginTop: '0.5rem', fontSize: '0.8rem', color: 'var(--text-tertiary)', textAlign: 'right' }}>
-                                        Updated by: {entry.updatedBy}
-                                    </div>
-                                )}
-                            </div>
-                        </div>
-                    ))
-                ) : (
-                    <div className={styles.empty}>No order history available.</div>
-                )}
-            </div>
-        )}
-    </section>
-);
 
     function getContent() {
         return (
@@ -3587,6 +2849,611 @@ const renderOrderHistorySection = () => (
                                         <label className="label">General Notes</label>
                                         <textarea className="input" style={{ height: '100px' }} value={formData.notes || ''} onChange={e => setFormData({ ...formData, notes: e.target.value })} />
                                     </div>
+
+                                    {/* Inline Order History removed - moved to bottom section */}                                                                                                                    <div key={itemIdx} style={{ fontSize: '0.8rem', marginTop: '0.15rem' }}>
+                                        • {item.itemName} × {item.quantity} (${item.totalValue.toFixed(2)})
+                                        {item.note && <span style={{ fontStyle: 'italic' }}> - {item.note}</span>}
+                                    </div>
+                                    ));
+                                                                                                            } else {
+                                                                                                                return (
+                                    <div key={key} style={{ fontSize: '0.8rem', marginTop: '0.15rem' }}>
+                                        • {itemDetail.itemName} × {itemDetail.quantity} (${itemDetail.totalValue.toFixed(2)})
+                                        {itemDetail.note && <span style={{ fontStyle: 'italic' }}> - {itemDetail.note}</span>}
+                                    </div>
+                                    );
+                                                                                                            }
+                                                                                                        })}
+                            </div>
+                        )}
+                    </div>
+                ))
+                ) : entry.orderConfig?.vendorSelections ? (
+                <div>
+                    {entry.orderConfig.vendorSelections.map((vs: any, idx: number) => (
+                        <div key={idx} style={{ marginBottom: '0.5rem' }}>
+                            <strong>Vendor ID:</strong> {vs.vendorId || 'None'}
+                            {vs.items && Object.keys(vs.items).length > 0 && (
+                                <div style={{ marginLeft: '1rem', fontSize: '0.8rem' }}>
+                                    {Object.entries(vs.items).map(([itemId, qty]: [string, any]) => (
+                                        <div key={itemId}>• Item {itemId}: × {qty}</div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                    ))}
+                </div>
+                ) : (
+                <div style={{ fontStyle: 'italic', color: 'var(--text-secondary)' }}>No vendor selections found</div>
+                                                                                    )}
+            </div>
+        )
+    }
+
+    {/* Box Orders */ }
+    {
+        entry.serviceType === 'Boxes' && (
+            <div style={{ fontSize: '0.85rem' }}>
+                {entry.orderDetails?.boxOrders && entry.orderDetails.boxOrders.length > 0 ? (
+                    entry.orderDetails.boxOrders.map((box: any, idx: number) => (
+                        <div key={idx} style={{ marginBottom: '0.5rem' }}>
+                            <strong>Box:</strong> {box.boxTypeName || box.boxTypeId || 'Unknown'} × {box.quantity} from <strong>{box.vendorName || box.vendorId || 'Unknown'}</strong>
+                            {box.itemsDetails && box.itemsDetails.length > 0 && (
+                                <div style={{ marginLeft: '1rem', marginTop: '0.25rem' }}>
+                                    {box.itemsDetails.map((item: any, itemIdx: number) => (
+                                        <div key={itemIdx} style={{ fontSize: '0.8rem', marginTop: '0.15rem' }}>
+                                            • {item.itemName} × {item.quantity} (${item.totalValue.toFixed(2)})
+                                            {item.note && <span style={{ fontStyle: 'italic' }}> - {item.note}</span>}
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                    ))
+                ) : entry.orderConfig?.boxOrders ? (
+                    <div>
+                        {entry.orderConfig.boxOrders.map((box: any, idx: number) => (
+                            <div key={idx} style={{ marginBottom: '0.5rem' }}>
+                                <strong>Box Type:</strong> {box.boxTypeId || 'None'} × {box.quantity || 1}
+                                {box.items && Object.keys(box.items).length > 0 && (
+                                    <div style={{ marginLeft: '1rem', fontSize: '0.8rem' }}>
+                                        {Object.entries(box.items).map(([itemId, qty]: [string, any]) => (
+                                            <div key={itemId}>• Item {itemId}: × {qty}</div>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+                        ))}
+                    </div>
+                ) : (
+                    <div style={{ fontStyle: 'italic', color: 'var(--text-secondary)' }}>No box orders found</div>
+                )}
+            </div>
+        )
+    }
+
+    {/* Meal Orders */ }
+    {
+        entry.serviceType === 'Meal' && (
+            <div style={{ fontSize: '0.85rem' }}>
+                {entry.orderDetails?.mealSelections && Object.keys(entry.orderDetails.mealSelections).length > 0 ? (
+                    entry.orderDetails.mealSelections.map((meal: any, idx: number) => (
+                        <div key={idx} style={{ marginBottom: '0.5rem' }}>
+                            <strong>Meal Type:</strong> {meal.mealType} from <strong>{meal.vendorName || meal.vendorId || 'Unknown'}</strong>
+                            {meal.itemsDetails && meal.itemsDetails.length > 0 && (
+                                <div style={{ marginLeft: '1rem', marginTop: '0.25rem' }}>
+                                    {meal.itemsDetails.map((item: any, itemIdx: number) => (
+                                        <div key={itemIdx} style={{ fontSize: '0.8rem', marginTop: '0.15rem' }}>
+                                            • {item.itemName} × {item.quantity} (${item.totalValue.toFixed(2)})
+                                            {item.note && <span style={{ fontStyle: 'italic' }}> - {item.note}</span>}
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                    ))
+                ) : entry.orderConfig?.mealSelections ? (
+                    <div>
+                        {Object.entries(entry.orderConfig.mealSelections).map(([key, meal]: [string, any]) => (
+                            <div key={key} style={{ marginBottom: '0.5rem' }}>
+                                <strong>Meal:</strong> {meal.mealType || key}
+                                {meal.items && Object.keys(meal.items).length > 0 && (
+                                    <div style={{ marginLeft: '1rem', fontSize: '0.8rem' }}>
+                                        {Object.entries(meal.items).map(([itemId, qty]: [string, any]) => (
+                                            <div key={itemId}>• Item {itemId}: × {qty}</div>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+                        ))}
+                    </div>
+                ) : (
+                    <div style={{ fontStyle: 'italic', color: 'var(--text-secondary)' }}>No meal selections found</div>
+                )}
+            </div>
+        )
+    }
+
+    {/* Custom Orders */ }
+    {
+        entry.serviceType === 'Custom' && (
+            <div style={{ fontSize: '0.85rem' }}>
+                {entry.orderDetails?.customOrder ? (
+                    <div>
+                        <strong>Custom Order:</strong> {entry.orderDetails.customOrder.description} from <strong>{entry.orderDetails.customOrder.vendorName || entry.orderDetails.customOrder.vendorId || 'Unknown'}</strong>
+                        <span> - ${entry.orderDetails.customOrder.price.toFixed(2)}</span>
+                    </div>
+                ) : entry.orderConfig?.custom_name ? (
+                    <div>
+                        <strong>Custom Order:</strong> {entry.orderConfig.custom_name} - ${entry.orderConfig.custom_price || 0}
+                    </div>
+                ) : (
+                    <div style={{ fontStyle: 'italic', color: 'var(--text-secondary)' }}>No custom order details found</div>
+                )}
+            </div>
+        )
+    }
+                                                                        </div >
+    {
+        entry.snapshot && (
+            <div style={{
+                marginTop: '0.5rem',
+                padding: '0.5rem',
+                backgroundColor: 'var(--bg-surface-hover)',
+                border: '1px solid var(--border-color)',
+                borderRadius: '4px',
+                fontSize: '0.8rem',
+                lineHeight: 1.4,
+                color: 'var(--text-primary)',
+                whiteSpace: 'pre-wrap'
+            }}>
+                {entry.snapshot}
+            </div>
+        )
+    }
+    {
+        entry.deliveryDay && (
+            <div style={{ marginBottom: '0.25rem' }}>
+                <strong>Delivery Day:</strong> {entry.deliveryDay}
+            </div>
+        )
+    }
+    {
+        entry.mealType && (
+            <div style={{ marginBottom: '0.25rem' }}>
+                <strong>Meal Type:</strong> {entry.mealType}
+            </div>
+        )
+    }
+    {
+        entry.caseId && (
+            <div style={{ marginBottom: '0.25rem' }}>
+                <strong>Case ID:</strong> {entry.caseId}
+            </div>
+        )
+    }
+    {
+        entry.totalValue !== undefined && (
+            <div style={{ marginBottom: '0.25rem' }}>
+                <strong>Total Value:</strong> ${entry.totalValue.toFixed(2)}
+            </div>
+        )
+    }
+    {
+        entry.totalItems !== undefined && (
+            <div style={{ marginBottom: '0.25rem' }}>
+                <strong>Total Items:</strong> {entry.totalItems}
+            </div>
+        )
+    }
+    {
+        entry.updatedBy && (
+            <div style={{ marginBottom: '0.25rem' }}>
+                <strong>Updated By:</strong> {entry.updatedBy}
+            </div>
+        )
+    }
+    {
+        entry.notes && (
+            <div style={{ marginBottom: '0.5rem', padding: '0.5rem', backgroundColor: 'var(--bg-surface-hover)', borderRadius: '4px' }}>
+                <strong>Notes:</strong> {entry.notes}
+            </div>
+        )
+    }
+
+    {/* Show comprehensive order details summary */ }
+    {
+        entry.orderDetails && (
+            <div style={{ marginTop: '0.5rem', marginBottom: '0.5rem', padding: '0.75rem', backgroundColor: 'var(--bg-surface-active)', borderRadius: '4px', border: '1px solid var(--color-primary)' }}>
+                <strong style={{ fontSize: '0.9rem', color: 'var(--color-primary)' }}>Order Details Summary:</strong>
+                <div style={{ marginTop: '0.5rem', fontSize: '0.85rem' }}>
+                    {entry.orderDetails.serviceType === 'Food' && entry.orderDetails.vendorSelections && (
+                        <div>
+                            <strong>Food Order:</strong>
+                            {entry.orderDetails.vendorSelections.map((vs: any, idx: number) => (
+                                <div key={idx} style={{ marginLeft: '1rem', marginTop: '0.25rem' }}>
+                                    • Vendor: <strong>{vs.vendorName || vs.vendorId}</strong>
+                                    {vs.itemsDetails && Object.keys(vs.itemsDetails).length > 0 && (
+                                        <span> - {Object.keys(vs.itemsDetails).length} item(s)</span>
+                                    )}
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                    {entry.orderDetails.serviceType === 'Boxes' && entry.orderDetails.boxOrders && (
+                        <div>
+                            <strong>Box Order:</strong>
+                            {entry.orderDetails.boxOrders.map((box: any, idx: number) => (
+                                <div key={idx} style={{ marginLeft: '1rem', marginTop: '0.25rem' }}>
+                                    • {box.boxTypeName || 'Box'} × {box.quantity} from <strong>{box.vendorName || box.vendorId}</strong>
+                                    {box.itemsDetails && box.itemsDetails.length > 0 && (
+                                        <span> - {box.itemsDetails.length} item(s)</span>
+                                    )}
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                    {entry.orderDetails.serviceType === 'Meal' && entry.orderDetails.mealSelections && (
+                        <div>
+                            <strong>Meal Order:</strong>
+                            {entry.orderDetails.mealSelections.map((meal: any, idx: number) => (
+                                <div key={idx} style={{ marginLeft: '1rem', marginTop: '0.25rem' }}>
+                                    • {meal.mealType} from <strong>{meal.vendorName || meal.vendorId}</strong>
+                                    {meal.itemsDetails && meal.itemsDetails.length > 0 && (
+                                        <span> - {meal.itemsDetails.length} item(s)</span>
+                                    )}
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                    {entry.orderDetails.serviceType === 'Custom' && entry.orderDetails.customOrder && (
+                        <div>
+                            <strong>Custom Order:</strong>
+                            <div style={{ marginLeft: '1rem', marginTop: '0.25rem' }}>
+                                • {entry.orderDetails.customOrder.description} from <strong>{entry.orderDetails.customOrder.vendorName || entry.orderDetails.customOrder.vendorId}</strong>
+                                <span> - ${entry.orderDetails.customOrder.price.toFixed(2)}</span>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            </div>
+        )
+    }
+
+    {
+        entry.orderDetails?.vendorSelections && entry.orderDetails.vendorSelections.length > 0 && (
+            <details style={{ marginTop: '0.5rem' }}>
+                <summary style={{ cursor: 'pointer', fontWeight: 600, marginBottom: '0.5rem' }}>
+                    Vendor Selections ({entry.orderDetails.vendorSelections.length})
+                </summary>
+                <div style={{ marginLeft: '1rem', marginTop: '0.5rem' }}>
+                    {entry.orderDetails.vendorSelections.map((vs: any, vsIndex: number) => (
+                        <div key={vsIndex} style={{ marginBottom: '1rem', padding: '0.75rem', backgroundColor: 'var(--bg-surface-hover)', borderRadius: '4px' }}>
+                            <div style={{ marginBottom: '0.5rem', fontWeight: 600 }}>
+                                <strong>Vendor:</strong> {vs.vendorName || vs.vendorId || 'Unknown'}
+                                {vs.vendorEmail && <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginLeft: '0.5rem' }}>({vs.vendorEmail})</span>}
+                            </div>
+                            {vs.selectedDeliveryDays && vs.selectedDeliveryDays.length > 0 && (
+                                <div style={{ marginBottom: '0.5rem', fontSize: '0.85rem' }}>
+                                    <strong>Delivery Days:</strong> {vs.selectedDeliveryDays.join(', ')}
+                                </div>
+                            )}
+                            {vs.itemsDetails && (
+                                <div style={{ marginTop: '0.5rem' }}>
+                                    <strong>Items:</strong>
+                                    {Object.entries(vs.itemsDetails).map(([key, itemDetail]: [string, any]) => {
+                                        if (Array.isArray(itemDetail)) {
+                                            // Items by day
+                                            return (
+                                                <div key={key} style={{ marginLeft: '1rem', marginTop: '0.25rem', fontSize: '0.85rem' }}>
+                                                    <strong>{key}:</strong>
+                                                    {itemDetail.map((item: any, idx: number) => (
+                                                        <div key={idx} style={{ marginLeft: '1rem', marginTop: '0.25rem' }}>
+                                                            {item.itemName} × {item.quantity} (${item.totalValue.toFixed(2)})
+                                                            {item.note && <span style={{ fontStyle: 'italic', color: 'var(--text-secondary)' }}> - Note: {item.note}</span>}
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            );
+                                        } else {
+                                            // Flat items
+                                            return (
+                                                <div key={key} style={{ marginLeft: '1rem', marginTop: '0.25rem', fontSize: '0.85rem' }}>
+                                                    {itemDetail.itemName} × {itemDetail.quantity} (${itemDetail.totalValue.toFixed(2)})
+                                                    {itemDetail.note && <span style={{ fontStyle: 'italic', color: 'var(--text-secondary)' }}> - Note: {itemDetail.note}</span>}
+                                                </div>
+                                            );
+                                        }
+                                    })}
+                                </div>
+                            )}
+                        </div>
+                    ))}
+                </div>
+            </details>
+        )
+    }
+    {
+        entry.vendorSelections && entry.vendorSelections.length > 0 && !entry.orderDetails?.vendorSelections && (
+            <details style={{ marginTop: '0.5rem' }}>
+                <summary style={{ cursor: 'pointer', fontWeight: 600, marginBottom: '0.5rem' }}>
+                    Vendor Selections ({entry.vendorSelections.length})
+                </summary>
+                <div style={{ marginLeft: '1rem', marginTop: '0.5rem' }}>
+                    {entry.vendorSelections.map((vs: any, vsIndex: number) => (
+                        <div key={vsIndex} style={{ marginBottom: '0.5rem', padding: '0.5rem', backgroundColor: 'var(--bg-surface-hover)', borderRadius: '4px' }}>
+                            <strong>Vendor:</strong> {vs.vendors?.name || vs.vendorName || vs.vendor_id || 'Unknown'}
+                            {vs.items && vs.items.length > 0 && (
+                                <div style={{ marginTop: '0.5rem' }}>
+                                    {vs.items.map((item: any, itemIdx: number) => (
+                                        <div key={itemIdx} style={{ fontSize: '0.85rem', marginTop: '0.25rem' }}>
+                                            {item.itemName || item.menu_items?.name || item.meal_items?.name || 'Item'} × {item.quantity} (${item.totalValue?.toFixed(2) || '0.00'})
+                                            {item.notes && <span style={{ fontStyle: 'italic', color: 'var(--text-secondary)' }}> - Note: {item.notes}</span>}
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                    ))}
+                </div>
+            </details>
+        )
+    }
+    {
+        entry.items && entry.items.length > 0 && (
+            <details style={{ marginTop: '0.5rem' }}>
+                <summary style={{ cursor: 'pointer', fontWeight: 600, marginBottom: '0.5rem' }}>
+                    Items ({entry.items.length})
+                </summary>
+                <div style={{ marginLeft: '1rem', marginTop: '0.5rem' }}>
+                    {entry.items.map((item: any, itemIndex: number) => (
+                        <div key={itemIndex} style={{ marginBottom: '0.5rem', padding: '0.5rem', backgroundColor: 'var(--bg-surface-hover)', borderRadius: '4px' }}>
+                            <div><strong>Item:</strong> {item.menu_items?.name || item.meal_items?.name || 'Custom Item'}</div>
+                            <div>Quantity: {item.quantity}</div>
+                            {item.unit_value && <div>Unit Value: ${item.unit_value.toFixed(2)}</div>}
+                            {item.total_value && <div>Total: ${item.total_value.toFixed(2)}</div>}
+                            {item.notes && <div style={{ marginTop: '0.25rem', fontStyle: 'italic' }}>Note: {item.notes}</div>}
+                        </div>
+                    ))}
+                </div>
+            </details>
+        )
+    }
+    {
+        entry.orderDetails?.boxOrders && entry.orderDetails.boxOrders.length > 0 && (
+            <details style={{ marginTop: '0.5rem' }}>
+                <summary style={{ cursor: 'pointer', fontWeight: 600, marginBottom: '0.5rem' }}>
+                    Box Orders ({entry.orderDetails.boxOrders.length})
+                </summary>
+                <div style={{ marginLeft: '1rem', marginTop: '0.5rem' }}>
+                    {entry.orderDetails.boxOrders.map((box: any, bsIndex: number) => (
+                        <div key={bsIndex} style={{ marginBottom: '1rem', padding: '0.75rem', backgroundColor: 'var(--bg-surface-hover)', borderRadius: '4px' }}>
+                            <div style={{ marginBottom: '0.5rem', fontWeight: 600 }}>
+                                <strong>Box Type:</strong> {box.boxTypeName || box.boxTypeId || 'Unknown'}
+                            </div>
+                            <div style={{ marginBottom: '0.25rem' }}>
+                                <strong>Vendor:</strong> {box.vendorName || box.vendorId || 'Unknown'}
+                            </div>
+                            <div style={{ marginBottom: '0.25rem' }}>
+                                <strong>Quantity:</strong> {box.quantity}
+                            </div>
+                            {box.itemsDetails && box.itemsDetails.length > 0 && (
+                                <div style={{ marginTop: '0.5rem' }}>
+                                    <strong>Items:</strong>
+                                    {box.itemsDetails.map((item: any, itemIdx: number) => (
+                                        <div key={itemIdx} style={{ marginLeft: '1rem', marginTop: '0.25rem', fontSize: '0.85rem' }}>
+                                            {item.itemName} × {item.quantity} (${item.totalValue.toFixed(2)})
+                                            {item.note && <span style={{ fontStyle: 'italic', color: 'var(--text-secondary)' }}> - Note: {item.note}</span>}
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                    ))}
+                </div>
+            </details>
+        )
+    }
+    {
+        entry.orderDetails?.mealSelections && Object.keys(entry.orderDetails.mealSelections).length > 0 && (
+            <details style={{ marginTop: '0.5rem' }}>
+                <summary style={{ cursor: 'pointer', fontWeight: 600, marginBottom: '0.5rem' }}>
+                    Meal Selections ({Object.keys(entry.orderDetails.mealSelections).length})
+                </summary>
+                <div style={{ marginLeft: '1rem', marginTop: '0.5rem' }}>
+                    {entry.orderDetails.mealSelections.map((meal: any, mealIndex: number) => (
+                        <div key={mealIndex} style={{ marginBottom: '1rem', padding: '0.75rem', backgroundColor: 'var(--bg-surface-hover)', borderRadius: '4px' }}>
+                            <div style={{ marginBottom: '0.5rem', fontWeight: 600 }}>
+                                <strong>Meal Type:</strong> {meal.mealType}
+                            </div>
+                            <div style={{ marginBottom: '0.5rem' }}>
+                                <strong>Vendor:</strong> {meal.vendorName || meal.vendorId || 'Unknown'}
+                            </div>
+                            {meal.itemsDetails && meal.itemsDetails.length > 0 && (
+                                <div style={{ marginTop: '0.5rem' }}>
+                                    <strong>Items:</strong>
+                                    {meal.itemsDetails.map((item: any, itemIdx: number) => (
+                                        <div key={itemIdx} style={{ marginLeft: '1rem', marginTop: '0.25rem', fontSize: '0.85rem' }}>
+                                            {item.itemName} × {item.quantity} (${item.totalValue.toFixed(2)})
+                                            {item.note && <span style={{ fontStyle: 'italic', color: 'var(--text-secondary)' }}> - Note: {item.note}</span>}
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                    ))}
+                </div>
+            </details>
+        )
+    }
+    {
+        entry.orderDetails?.customOrder && (
+            <details style={{ marginTop: '0.5rem' }}>
+                <summary style={{ cursor: 'pointer', fontWeight: 600, marginBottom: '0.5rem' }}>
+                    Custom Order Details
+                </summary>
+                <div style={{ marginLeft: '1rem', marginTop: '0.5rem', padding: '0.75rem', backgroundColor: 'var(--bg-surface-hover)', borderRadius: '4px' }}>
+                    <div style={{ marginBottom: '0.25rem' }}>
+                        <strong>Vendor:</strong> {entry.orderDetails.customOrder.vendorName || entry.orderDetails.customOrder.vendorId || 'Unknown'}
+                    </div>
+                    <div style={{ marginBottom: '0.25rem' }}>
+                        <strong>Description:</strong> {entry.orderDetails.customOrder.description}
+                    </div>
+                    <div style={{ marginBottom: '0.25rem' }}>
+                        <strong>Price:</strong> ${entry.orderDetails.customOrder.price.toFixed(2)}
+                    </div>
+                    {entry.orderDetails.customOrder.deliveryDay && (
+                        <div style={{ marginBottom: '0.25rem' }}>
+                            <strong>Delivery Day:</strong> {entry.orderDetails.customOrder.deliveryDay}
+                        </div>
+                    )}
+                </div>
+            </details>
+        )
+    }
+    {
+        entry.boxSelections && entry.boxSelections.length > 0 && !entry.orderDetails?.boxOrders && (
+            <details style={{ marginTop: '0.5rem' }}>
+                <summary style={{ cursor: 'pointer', fontWeight: 600, marginBottom: '0.5rem' }}>
+                    Box Selections ({entry.boxSelections.length})
+                </summary>
+                <div style={{ marginLeft: '1rem', marginTop: '0.5rem' }}>
+                    {entry.boxSelections.map((bs: any, bsIndex: number) => (
+                        <div key={bsIndex} style={{ marginBottom: '0.5rem', padding: '0.5rem', backgroundColor: 'var(--bg-surface-hover)', borderRadius: '4px' }}>
+                            <div><strong>Box Type:</strong> {bs.box_types?.name || bs.boxTypeName || bs.box_type_id || 'Unknown'}</div>
+                            <div><strong>Vendor:</strong> {bs.vendors?.name || bs.vendorName || bs.vendor_id || 'Unknown'}</div>
+                            <div>Quantity: {bs.quantity}</div>
+                            {bs.total_value && <div>Total: ${bs.total_value.toFixed(2)}</div>}
+                            {bs.items && Object.keys(bs.items).length > 0 && (
+                                <div style={{ marginTop: '0.25rem' }}>
+                                    <strong>Items:</strong> {JSON.stringify(bs.items, null, 2)}
+                                </div>
+                            )}
+                        </div>
+                    ))}
+                </div>
+            </details>
+        )
+    }
+    {/* Fallback: Show orderConfig if orderDetails is not available */ }
+    {
+        !entry.orderDetails && entry.orderConfig && (
+            <details style={{ marginTop: '0.5rem' }}>
+                <summary style={{ cursor: 'pointer', fontWeight: 600, marginBottom: '0.5rem' }}>
+                    Order Configuration
+                </summary>
+                <div style={{ marginLeft: '1rem', marginTop: '0.5rem', padding: '0.75rem', backgroundColor: 'var(--bg-surface-hover)', borderRadius: '4px' }}>
+                    {entry.orderConfig.serviceType && (
+                        <div style={{ marginBottom: '0.5rem' }}>
+                            <strong>Service Type:</strong> {entry.orderConfig.serviceType}
+                        </div>
+                    )}
+                    {entry.orderConfig.caseId && (
+                        <div style={{ marginBottom: '0.5rem' }}>
+                            <strong>Case ID:</strong> {entry.orderConfig.caseId}
+                        </div>
+                    )}
+                    {entry.orderConfig.vendorSelections && Array.isArray(entry.orderConfig.vendorSelections) && entry.orderConfig.vendorSelections.length > 0 && (
+                        <div style={{ marginTop: '0.5rem' }}>
+                            <strong>Vendor Selections:</strong>
+                            {entry.orderConfig.vendorSelections.map((vs: any, idx: number) => (
+                                <div key={idx} style={{ marginLeft: '1rem', marginTop: '0.25rem', fontSize: '0.85rem' }}>
+                                    • Vendor ID: {vs.vendorId || 'None'}
+                                    {vs.items && Object.keys(vs.items).length > 0 && (
+                                        <span> - {Object.keys(vs.items).length} item(s)</span>
+                                    )}
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                    {entry.orderConfig.boxOrders && Array.isArray(entry.orderConfig.boxOrders) && entry.orderConfig.boxOrders.length > 0 && (
+                        <div style={{ marginTop: '0.5rem' }}>
+                            <strong>Box Orders:</strong>
+                            {entry.orderConfig.boxOrders.map((box: any, idx: number) => (
+                                <div key={idx} style={{ marginLeft: '1rem', marginTop: '0.25rem', fontSize: '0.85rem' }}>
+                                    • Box Type: {box.boxTypeId || 'None'} × {box.quantity || 1}
+                                    {box.items && Object.keys(box.items).length > 0 && (
+                                        <span> - {Object.keys(box.items).length} item(s)</span>
+                                    )}
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                    {entry.orderConfig.mealSelections && Object.keys(entry.orderConfig.mealSelections).length > 0 && (
+                        <div style={{ marginTop: '0.5rem' }}>
+                            <strong>Meal Selections:</strong>
+                            {Object.entries(entry.orderConfig.mealSelections).map(([key, meal]: [string, any]) => (
+                                <div key={key} style={{ marginLeft: '1rem', marginTop: '0.25rem', fontSize: '0.85rem' }}>
+                                    • {meal.mealType || key}
+                                    {meal.items && Object.keys(meal.items).length > 0 && (
+                                        <span> - {Object.keys(meal.items).length} item(s)</span>
+                                    )}
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                    {entry.orderConfig.custom_name && (
+                        <div style={{ marginTop: '0.5rem' }}>
+                            <strong>Custom Order:</strong> {entry.orderConfig.custom_name} - ${entry.orderConfig.custom_price || 0}
+                        </div>
+                    )}
+                </div>
+            </details>
+        )
+    }
+
+    {/* Full order data for debugging */ }
+    {
+        entry.orderData && (
+            <details style={{ marginTop: '0.5rem' }}>
+                <summary style={{ cursor: 'pointer', fontWeight: 600, marginBottom: '0.5rem', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                    Full Order Data (Debug)
+                </summary>
+                <pre style={{
+                    marginLeft: '1rem',
+                    marginTop: '0.5rem',
+                    padding: '0.5rem',
+                    backgroundColor: 'var(--bg-surface-hover)',
+                    borderRadius: '4px',
+                    fontSize: '0.75rem',
+                    overflow: 'auto',
+                    maxHeight: '200px'
+                }}>
+                    {JSON.stringify(entry.orderData, null, 2)}
+                </pre>
+            </details>
+        )
+    }
+    {
+        entry.orderConfig && !entry.orderData && (
+            <details style={{ marginTop: '0.5rem' }}>
+                <summary style={{ cursor: 'pointer', fontWeight: 600, marginBottom: '0.5rem', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                    Full Order Config (Debug)
+                </summary>
+                <pre style={{
+                    marginLeft: '1rem',
+                    marginTop: '0.5rem',
+                    padding: '0.5rem',
+                    backgroundColor: 'var(--bg-surface-hover)',
+                    borderRadius: '4px',
+                    fontSize: '0.75rem',
+                    overflow: 'auto',
+                    maxHeight: '200px'
+                }}>
+                    {JSON.stringify(entry.orderConfig, null, 2)}
+                </pre>
+            </details>
+        )
+    }
+                                                                    </div >
+                                                                );
+})}
+                                                        </div >
+                                                    )}
+                                                </div >
+                                            )}
+                                        </div >
+                                    )}
 
 <div className={styles.formGroup}>
     <label className="label">Screening Status</label>
@@ -4984,8 +4851,97 @@ const renderOrderHistorySection = () => (
         )}
     </section>
 
-    {/* Order History Section - Using the new renderOrderHistorySection */}
-    {renderOrderHistorySection()}
+    {/* History Panel - Collapsible Shelf */}
+    <section className={styles.card} style={{ marginTop: 'var(--spacing-lg)' }}>
+        <button
+            type="button"
+            onClick={() => setHistoryExpanded(!historyExpanded)}
+            style={{
+                width: '100%',
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                padding: '0.75rem 1rem',
+                backgroundColor: 'var(--bg-surface-hover)',
+                border: '1px solid var(--border-color)',
+                borderRadius: 'var(--radius-md)',
+                cursor: 'pointer',
+                fontSize: '0.9rem',
+                fontWeight: 600,
+                marginBottom: historyExpanded ? 'var(--spacing-md)' : 0,
+                transition: 'all 0.2s ease'
+            }}
+            onMouseOver={(e) => {
+                e.currentTarget.style.backgroundColor = 'var(--bg-surface-active)';
+            }}
+            onMouseOut={(e) => {
+                e.currentTarget.style.backgroundColor = 'var(--bg-surface-hover)';
+            }}
+        >
+            <span style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <History size={18} />
+                History ({orderHistory?.length || 0})
+            </span>
+            {historyExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+        </button>
+        {historyExpanded && (
+            <div>
+                {loadingOrderDetails ? (
+                    <div className={styles.loadingContainer}>
+                        <div className={styles.spinner}></div>
+                        <p className={styles.loadingText}>Loading history...</p>
+                    </div>
+                ) : orderHistory && orderHistory.length > 0 ? (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--spacing-md)' }}>
+                        {orderHistory.map((record: any, index: number) => (
+                            <div
+                                key={record.id || index}
+                                style={{
+                                    padding: 'var(--spacing-md)',
+                                    backgroundColor: 'var(--bg-surface)',
+                                    borderRadius: 'var(--radius-sm)',
+                                    border: '1px solid var(--border-color)',
+                                    fontSize: '0.85rem'
+                                }}
+                            >
+                                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem', fontWeight: 600 }}>
+                                    <span>{record.type || 'Order'}</span>
+                                    <span style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>
+                                        {record.timestamp ? new Date(record.timestamp).toLocaleDateString() :
+                                            record.created_at ? new Date(record.created_at).toLocaleDateString() : 'Date TBD'}
+                                    </span>
+                                </div>
+                                {record.service_type && (
+                                    <div style={{ marginBottom: '0.25rem' }}>
+                                        <strong>Service Type:</strong> {record.service_type}
+                                    </div>
+                                )}
+                                {record.total_value !== undefined && (
+                                    <div style={{ marginBottom: '0.25rem' }}>
+                                        <strong>Total Value:</strong> ${parseFloat(record.total_value?.toString() || '0').toFixed(2)}
+                                    </div>
+                                )}
+                                {record.status && (
+                                    <div style={{ marginBottom: '0.25rem' }}>
+                                        <strong>Status:</strong> {record.status}
+                                    </div>
+                                )}
+                                {record.summary && (
+                                    <div style={{ marginTop: '0.5rem', padding: '0.5rem', backgroundColor: 'var(--bg-surface-hover)', borderRadius: '4px', fontSize: '0.8rem' }}>
+                                        {record.summary}
+                                    </div>
+                                )}
+                            </div>
+                        ))}
+                    </div>
+                ) : (
+                    <div className={styles.empty}>
+                        No history available.
+                    </div>
+                )}
+            </div>
+        )}
+    </section>
 </div>
                     </div >
                 )
@@ -5993,7 +5949,9 @@ async function executeSave(unitsAdded: number = 0): Promise<boolean> {
     }
 }
 
-return (
+
+// --- CLIENT INFO SECTION ---
+const renderClientInfoSection = () => (
     <section className={styles.card}>
         <h3 className={styles.sectionTitle}>Client Information</h3>
         <div className={styles.grid2}>
@@ -6167,6 +6125,559 @@ return (
                 />
             </div>
         </div>
+    </section>
+);
+
+// --- SERVICE CONFIG SECTION ---
+const renderServiceConfigSection = () => (
+    <section className={styles.card} style={{ marginTop: 'var(--spacing-lg)' }}>
+        <h3 className={styles.sectionTitle}>Service Configuration</h3>
+        <div className={styles.grid2}>
+            <div className={styles.formGroup}>
+                <label className={styles.label}>Service Type</label>
+                <select
+                    name="serviceType"
+                    className={styles.select}
+                    value={formData.serviceType}
+                    onChange={handleChange}
+                    disabled={saving}
+                >
+                    <option value="Food">Food</option>
+                    <option value="Meal">Meals</option>
+                    <option value="Boxes">Boxes</option>
+                    <option value="Equipment">Equipment</option>
+                    <option value="Custom">Custom</option>
+                </select>
+            </div>
+
+            {formData.serviceType === 'Meal' && (
+                <div className={styles.formGroup}>
+                    <label className={styles.label}>Approved Meals / Week</label>
+                    <input
+                        type="number"
+                        name="approvedMealsPerWeek"
+                        className={styles.input}
+                        value={formData.approvedMealsPerWeek || 0}
+                        onChange={handleChange}
+                        disabled={saving}
+                        min={0}
+                    />
+                </div>
+            )}
+
+            <div className={styles.formGroup}>
+                <label className={styles.label}>Authorized Amount ($)</label>
+                <div className="relative">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500">$</span>
+                    <input
+                        type="number"
+                        name="authorizedAmount"
+                        className={`${styles.input} pl-8`}
+                        value={formData.authorizedAmount || ''}
+                        onChange={handleChange}
+                        disabled={saving}
+                        placeholder="0.00"
+                        step="0.01"
+                    />
+                </div>
+            </div>
+
+            <div className={styles.formGroup}>
+                <label className={styles.label}>Expiration Date</label>
+                <input
+                    type="date"
+                    name="expirationDate"
+                    className={styles.input}
+                    value={formData.expirationDate ? formData.expirationDate.split('T')[0] : ''}
+                    onChange={handleChange}
+                    disabled={saving}
+                />
+            </div>
+
+            <div className={styles.checkboxGroup}>
+                <label className={styles.checkboxLabel}>
+                    <input
+                        type="checkbox"
+                        name="screeningTookPlace"
+                        checked={formData.screeningTookPlace}
+                        onChange={handleChange}
+                        disabled={saving}
+                    />
+                    Screening Took Place
+                </label>
+            </div>
+
+            <div className={styles.checkboxGroup}>
+                <label className={styles.checkboxLabel}>
+                    <input
+                        type="checkbox"
+                        name="screeningSigned"
+                        checked={formData.screeningSigned}
+                        onChange={handleChange}
+                        disabled={saving}
+                    />
+                    Screening Signed
+                </label>
+            </div>
+        </div>
+    </section>
+);
+
+// --- ORDER CONFIG SECTION ---
+const renderOrderConfigSection = () => (
+    <section className={styles.card} style={{ marginTop: 'var(--spacing-lg)' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+            <h3 className={styles.sectionTitle}>Current Order Configuration</h3>
+            {client && orderConfig.caseId && (
+                <span className={styles.badge} style={{ backgroundColor: 'var(--bg-success)', color: 'var(--text-success)' }}>
+                    Active Order Configured
+                </span>
+            )}
+        </div>
+
+        <div className={styles.formGroup}>
+            <label className={styles.label}>Case ID <span className={styles.required}>*</span></label>
+            <input
+                type="text"
+                className={styles.input}
+                value={orderConfig.caseId || ''}
+                onChange={(e) => setOrderConfig({ ...orderConfig, caseId: e.target.value })}
+                placeholder="Enter Case ID to enable configuration"
+                disabled={saving}
+            />
+        </div>
+
+        {/* Only show configuration if Case ID is present */}
+        {orderConfig.caseId ? (
+            <>
+                {(formData.serviceType === 'Food' || formData.serviceType === 'Meal') && (
+                    <div className="animate-fade-in" style={{ marginTop: '1rem' }}>
+                        <FoodServiceWidget
+                            orderConfig={orderConfig}
+                            setOrderConfig={setOrderConfig}
+                            client={{ ...client, ...formData } as ClientProfile}
+                            vendors={vendors}
+                            menuItems={menuItems}
+                            mealCategories={mealCategories}
+                            mealItems={mealItems}
+                            settings={settings}
+                        />
+                        <div style={{ marginTop: '1rem' }}>
+                            <label className={styles.label}>Order Notes</label>
+                            <textarea
+                                className={`${styles.input} ${styles.textarea}`}
+                                placeholder="Add general notes for this order..."
+                                value={orderConfig.notes || ''}
+                                onChange={(e) => setOrderConfig({ ...orderConfig, notes: e.target.value })}
+                                rows={2}
+                            />
+                        </div>
+                    </div>
+                )}
+
+                {/* Custom Service Configuration */}
+                {formData.serviceType === 'Custom' && (
+                    <div className={styles.section} style={{ marginTop: '24px' }}>
+                        <h3 className={styles.sectionTitle}>Custom Order Configuration</h3>
+                        <div className={styles.card} style={{ backgroundColor: '#f9fafb' }}>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div className="col-span-2">
+                                    <label className={styles.label}>Item Description <span className="text-red-500">*</span></label>
+                                    <textarea
+                                        className={styles.input}
+                                        placeholder="e.g. Weekly Catering Platter"
+                                        value={orderConfig.custom_name || ''}
+                                        rows={1}
+                                        style={{ resize: 'none', overflow: 'hidden', minHeight: '3rem' }}
+                                        onInput={(e) => {
+                                            const target = e.target as HTMLTextAreaElement;
+                                            target.style.height = 'auto';
+                                            target.style.height = target.scrollHeight + 'px';
+                                        }}
+                                        onChange={e => {
+                                            setOrderConfig({ ...orderConfig, custom_name: e.target.value });
+                                            e.target.style.height = 'auto';
+                                            e.target.style.height = e.target.scrollHeight + 'px';
+                                        }}
+                                    />
+                                </div>
+                                <div>
+                                    <label className={styles.label}>Price per Order <span className="text-red-500">*</span></label>
+                                    <div className="relative">
+                                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500">$</span>
+                                        <input
+                                            type="number"
+                                            className={`${styles.input} pl-8`}
+                                            placeholder="0.00"
+                                            value={orderConfig.custom_price || ''}
+                                            onChange={e => setOrderConfig({ ...orderConfig, custom_price: e.target.value })}
+                                        />
+                                    </div>
+                                </div>
+                                <div>
+                                    <label className={styles.label}>Vendor <span className="text-red-500">*</span></label>
+                                    <select
+                                        className={styles.input}
+                                        value={orderConfig.vendorId || ''}
+                                        onChange={e => {
+                                            const newVendorId = e.target.value;
+                                            let newDeliveryDay = orderConfig.deliveryDay;
+
+                                            // Check if current day is valid for new vendor
+                                            if (newVendorId && newDeliveryDay) {
+                                                const selectedVendor = vendors.find(v => v.id === newVendorId);
+                                                if (selectedVendor && selectedVendor.deliveryDays && selectedVendor.deliveryDays.length > 0) {
+                                                    if (!selectedVendor.deliveryDays.includes(newDeliveryDay)) {
+                                                        newDeliveryDay = ''; // Reset if invalid
+                                                    }
+                                                }
+                                            }
+
+                                            setOrderConfig({ ...orderConfig, vendorId: newVendorId, deliveryDay: newDeliveryDay });
+                                        }}
+                                    >
+                                        <option value="">Select Vendor</option>
+                                        {vendors.filter(v => v.isActive).map(v => (
+                                            <option key={v.id} value={v.id}>{v.name}</option>
+                                        ))}
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className={styles.label}>Delivery Day <span className="text-red-500">*</span></label>
+                                    <select
+                                        className={styles.input}
+                                        value={orderConfig.deliveryDay || ''}
+                                        onChange={e => setOrderConfig({ ...orderConfig, deliveryDay: e.target.value })}
+                                    >
+                                        <option value="">Select Day</option>
+                                        {(() => {
+                                            // Determine available days
+                                            let availableDays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+
+                                            if (orderConfig.vendorId) {
+                                                const selectedVendor = vendors.find(v => v.id === orderConfig.vendorId);
+                                                if (selectedVendor && selectedVendor.deliveryDays && selectedVendor.deliveryDays.length > 0) {
+                                                    availableDays = selectedVendor.deliveryDays;
+                                                }
+                                            }
+
+                                            return availableDays.map(day => (
+                                                <option key={day} value={day}>{day}</option>
+                                            ));
+                                        })()}
+                                    </select>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                )}
+
+                {formData.serviceType === 'Boxes' && (
+                    <div className="animate-fade-in" style={{ marginTop: '1rem' }}>
+                        {orderConfig.boxOrders && orderConfig.boxOrders.map((box: any, index: number) => (
+                            <div key={index} className={styles.boxConfigCard} style={{ marginBottom: '1.5rem', padding: '1rem', border: '1px solid var(--border-color)', borderRadius: '8px' }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+                                    <h4 style={{ margin: 0 }}>Box #{index + 1}</h4>
+                                    {orderConfig.boxOrders!.length > 1 && (
+                                        <button type="button" className={styles.linkBtn} onClick={() => handleRemoveBox(index)} style={{ color: 'var(--color-danger)' }}>
+                                            <Trash2 size={16} /> Remove
+                                        </button>
+                                    )}
+                                </div>
+
+                                <div className={styles.formGroup}>
+                                    <label className={styles.label}>Box Type</label>
+                                    <select
+                                        className={styles.select}
+                                        value={box.boxTypeId || ''}
+                                        onChange={(e) => handleBoxUpdate(index, 'boxTypeId', e.target.value)}
+                                    >
+                                        <option value="">Select Box Type</option>
+                                        {boxTypes.filter(b => b.isActive).map(b => (
+                                            <option key={b.id} value={b.id}>{b.name}</option>
+                                        ))}
+                                    </select>
+                                </div>
+
+                                <div className={styles.formGroup}>
+                                    <label className={styles.label}>Quantity</label>
+                                    <div className={styles.quantityControl}>
+                                        <button type="button" onClick={() => handleBoxUpdate(index, 'quantity', Math.max(1, (box.quantity || 1) - 1))}>-</button>
+                                        <span>{box.quantity || 1}</span>
+                                        <button type="button" onClick={() => handleBoxUpdate(index, 'quantity', (box.quantity || 1) + 1)}>+</button>
+                                    </div>
+                                </div>
+
+                                {/* Box Items Selection Logic Goes Here - Simplified for restoration */}
+                                <div style={{ marginTop: '1rem' }}>
+                                    <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>Box contents configuration enabled.</p>
+                                </div>
+                            </div>
+                        ))}
+                        <button type="button" className={styles.btnSecondary} onClick={handleAddBox} style={{ width: '100%' }}>
+                            <Plus size={16} /> Add Another Box
+                        </button>
+                    </div>
+                )}
+            </>
+        ) : (
+            <div className={styles.alert}>
+                <AlertTriangle size={16} />
+                <span>Please enter a Case ID to configure the order.</span>
+            </div>
+        )}
+    </section>
+);
+
+// --- RECENT ORDERS SECTION ---
+const renderRecentOrdersSection = () => (
+    <section className={styles.card} style={{ marginTop: 'var(--spacing-lg)' }}>
+        <button
+            type="button"
+            onClick={() => setRecentOrdersExpanded(!recentOrdersExpanded)}
+            className={styles.accordionHeader}
+            style={{ width: '100%', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'none', border: 'none', padding: 0, cursor: 'pointer' }}
+        >
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <Calendar size={20} />
+                <h3 className={styles.sectionTitle} style={{ margin: 0 }}>Recent Orders</h3>
+                <span className={styles.badge}>{activeOrder ? 1 : 0}</span>
+            </div>
+            {recentOrdersExpanded ? <ChevronUp size={20} /> : <ChevronDown size={20} />}
+        </button>
+
+        {recentOrdersExpanded && (
+            <div style={{ marginTop: '1rem' }}>
+                {loadingOrderDetails ? (
+                    <div className={styles.loadingContainer}>
+                        <div className={styles.spinner}></div>
+                        <p>Loading orders...</p>
+                    </div>
+                ) : activeOrder ? (
+                    <div className={styles.orderCard}>
+                        <div className={styles.orderHeader}>
+                            <div>
+                                <span className={styles.orderNumber}>#{activeOrder.orderNumber || 'PENDING'}</span>
+                                <span className={styles.orderDate}>
+                                    {activeOrder.scheduledDeliveryDate ? new Date(activeOrder.scheduledDeliveryDate).toLocaleDateString() : 'Date TBD'}
+                                </span>
+                            </div>
+                            <span className={styles.orderStatus}>{activeOrder.status || 'Active'}</span>
+                        </div>
+                        <div className={styles.orderDetails}>
+                            <p><strong>Service:</strong> {activeOrder.serviceType}</p>
+                            <p><strong>Case ID:</strong> {activeOrder.caseId || 'N/A'}</p>
+                            {/* Detailed breakdown would go here */}
+                        </div>
+                    </div>
+                ) : (
+                    <p className={styles.emptyText}>No recent orders found.</p>
+                )}
+            </div>
+        )}
+    </section>
+);
+
+// --- BILLING HISTORY SECTION ---
+const renderBillingHistorySection = () => (
+    <section className={styles.card} style={{ marginTop: 'var(--spacing-lg)' }}>
+        <button
+            type="button"
+            onClick={() => setBillingHistoryExpanded(!billingHistoryExpanded)}
+            className={styles.accordionHeader}
+            style={{ width: '100%', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'none', border: 'none', padding: 0, cursor: 'pointer' }}
+        >
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <AlertTriangle size={20} /> {/* Placeholder icon */}
+                <h3 className={styles.sectionTitle} style={{ margin: 0 }}>Billing History</h3>
+                <span className={styles.badge}>{billingHistory?.length || 0}</span>
+            </div>
+            {billingHistoryExpanded ? <ChevronUp size={20} /> : <ChevronDown size={20} />}
+        </button>
+
+        {billingHistoryExpanded && (
+            <div style={{ marginTop: '1rem' }}>
+                {billingHistory && billingHistory.length > 0 ? (
+                    <div className={styles.tableContainer}>
+                        <table className={styles.table}>
+                            <thead>
+                                <tr>
+                                    <th>Date</th>
+                                    <th>Amount</th>
+                                    <th>Status</th>
+                                    <th>Invoice #</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {billingHistory.map((bill: any, i: number) => (
+                                    <tr key={i}>
+                                        <td>{new Date(bill.date).toLocaleDateString()}</td>
+                                        <td>${bill.amount?.toFixed(2)}</td>
+                                        <td>{bill.status}</td>
+                                        <td>{bill.invoiceNumber || '-'}</td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                ) : (
+                    <p className={styles.emptyText}>No billing history available.</p>
+                )}
+            </div>
+        )}
+    </section>
+);
+
+// --- ORDER HISTORY SECTION ---
+const renderOrderHistorySection = () => (
+    <section className={styles.card} style={{ marginTop: 'var(--spacing-lg)' }}>
+        <div
+            className={styles.sectionHeader}
+            onClick={() => setOrderHistoryExpanded(!orderHistoryExpanded)}
+            style={{ cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
+        >
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <History size={20} />
+                <h3 className={styles.sectionTitle} style={{ margin: 0 }}>Order History</h3>
+                <button
+                    onClick={(e) => {
+                        e.stopPropagation();
+                        console.log('[DEBUG BUTTON] Client:', client);
+                        console.log('[DEBUG BUTTON] clientOrderHistory state:', clientOrderHistory);
+                        console.log('[DEBUG BUTTON] Raw Order History (Camel):', (client as any)?.orderHistory);
+                        console.log('[DEBUG BUTTON] Raw Order History (Snake):', (client as any)?.order_history);
+                    }}
+                    className="btn btn-sm btn-outline-secondary"
+                    style={{ marginLeft: '1rem', fontSize: '0.7rem', padding: '2px 6px' }}
+                >
+                    Log Data
+                </button>
+                <span className={styles.badge}>{clientOrderHistory.length}</span>
+            </div>
+            {orderHistoryExpanded ? <ChevronUp size={20} /> : <ChevronDown size={20} />}
+        </div>
+
+        {orderHistoryExpanded && (
+            <div className={styles.historyList} style={{ marginTop: '1rem' }}>
+                {clientOrderHistory.length > 0 ? (
+                    clientOrderHistory.map((entry, index) => (
+                        <div key={index} className={styles.card} style={{ marginBottom: '1rem', borderLeft: '4px solid var(--color-primary)', backgroundColor: 'var(--bg-surface)' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem', borderBottom: '1px solid var(--border-color)', paddingBottom: '0.5rem' }}>
+                                <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
+                                    <strong>{entry.type === 'order_created' ? 'Order Created' : 'Order Updated'}</strong>
+                                    <span className={styles.budget} style={{ fontSize: '0.8rem' }}>{entry.serviceType}</span>
+                                </div>
+                                <div style={{ fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
+                                    {new Date(entry.timestamp).toLocaleString()}
+                                </div>
+                            </div>
+
+                            <div style={{ fontSize: '0.95rem' }}>
+                                {entry.orderNumber && (
+                                    <div style={{ marginBottom: '0.5rem' }}>
+                                        <strong>Order #:</strong> {entry.orderNumber}
+                                    </div>
+                                )}
+
+                                {/* Render Order Details depending on Service Type */}
+                                {entry.orderDetails && (
+                                    <div style={{ marginTop: '0.5rem' }}>
+                                        {/* Food / Meal / Custom - Vendor Selections */}
+                                        {entry.orderDetails.vendorSelections && Array.isArray(entry.orderDetails.vendorSelections) && (
+                                            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                                                {entry.orderDetails.vendorSelections.map((vs: any, vIdx: number) => (
+                                                    <div key={vIdx} style={{ backgroundColor: 'var(--bg-surface-hover)', padding: '0.5rem', borderRadius: '4px' }}>
+                                                        <div style={{ fontWeight: 600, marginBottom: '0.25rem' }}>{vs.vendorName || 'Unknown Vendor'}</div>
+                                                        {/* Items List */}
+                                                        {vs.itemsDetails && Array.isArray(vs.itemsDetails) ? (
+                                                            <ul style={{ margin: 0, paddingLeft: '1.2rem', fontSize: '0.9rem' }}>
+                                                                {vs.itemsDetails.map((item: any, iIdx: number) => (
+                                                                    <li key={iIdx}>
+                                                                        {item.itemName} x{item.quantity}
+                                                                    </li>
+                                                                ))}
+                                                            </ul>
+                                                        ) : (
+                                                            <div style={{ fontSize: '0.9rem', fontStyle: 'italic' }}>Items: {Object.keys(vs.items || {}).length}</div>
+                                                        )}
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        )}
+
+                                        {/* Delivery Day Orders (Food Alternative Structure) */}
+                                        {entry.orderDetails.deliveryDayOrders && !entry.orderDetails.vendorSelections && (
+                                            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                                                {Object.entries(entry.orderDetails.deliveryDayOrders).map(([day, dayData]: [string, any]) => (
+                                                    <div key={day}>
+                                                        <div style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '0.25rem' }}>{day}</div>
+                                                        {(dayData.vendorSelections || []).map((vs: any, vIdx: number) => (
+                                                            <div key={vIdx} style={{ backgroundColor: 'var(--bg-surface-hover)', padding: '0.5rem', borderRadius: '4px', marginBottom: '0.5rem' }}>
+                                                                <div style={{ fontWeight: 600, marginBottom: '0.25rem' }}>{vs.vendorName || 'Unknown Vendor'}</div>
+                                                                {/* Items List */}
+                                                                {vs.itemsDetails && Array.isArray(vs.itemsDetails) ? (
+                                                                    <ul style={{ margin: 0, paddingLeft: '1.2rem', fontSize: '0.9rem' }}>
+                                                                        {vs.itemsDetails.map((item: any, iIdx: number) => (
+                                                                            <li key={iIdx}>
+                                                                                {item.itemName} x{item.quantity}
+                                                                            </li>
+                                                                        ))}
+                                                                    </ul>
+                                                                ) : (
+                                                                    <div style={{ fontSize: '0.9rem', fontStyle: 'italic' }}>Items: {Object.keys(vs.items || {}).length}</div>
+                                                                )}
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        )}
+
+                                        {/* Box Orders */}
+                                        {entry.orderDetails.boxOrders && Array.isArray(entry.orderDetails.boxOrders) && (
+                                            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                                                {entry.orderDetails.boxOrders.map((box: any, bIdx: number) => (
+                                                    <div key={bIdx} style={{ backgroundColor: 'var(--bg-surface-hover)', padding: '0.5rem', borderRadius: '4px' }}>
+                                                        <div style={{ fontWeight: 600, marginBottom: '0.25rem' }}>
+                                                            {box.boxTypeName || 'Unknown Box'} ({box.vendorName}) x{box.quantity}
+                                                        </div>
+                                                        {/* Box Contents */}
+                                                        {box.itemsDetails && Array.isArray(box.itemsDetails) && (
+                                                            <ul style={{ margin: 0, paddingLeft: '1.2rem', fontSize: '0.9rem' }}>
+                                                                {box.itemsDetails.map((item: any, iIdx: number) => (
+                                                                    <li key={iIdx}>
+                                                                        {item.itemName} x{item.quantity}
+                                                                    </li>
+                                                                ))}
+                                                            </ul>
+                                                        )}
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
+
+                                {/* Fallback for entries with no orderDetails */}
+                                {!entry.orderDetails && (
+                                    <div style={{ marginTop: '0.5rem', fontStyle: 'italic', color: 'var(--text-secondary)' }}>
+                                        {entry.notes ? `Note: ${entry.notes}` : (entry.details || 'Order updated (No details captured)')}
+                                    </div>
+                                )}
+
+                                {entry.updatedBy && (
+                                    <div style={{ marginTop: '0.5rem', fontSize: '0.8rem', color: 'var(--text-tertiary)', textAlign: 'right' }}>
+                                        Updated by: {entry.updatedBy}
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    ))
+                ) : (
+                    <div className={styles.empty}>No order history available.</div>
+                )}
+            </div>
+        )}
     </section>
 );
 

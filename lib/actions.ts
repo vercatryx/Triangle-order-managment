@@ -161,7 +161,7 @@ export async function deleteOrdersByCreationId(creationId: number): Promise<{ su
 export async function appendOrderHistory(
     clientId: string,
     orderDetails: {
-        type: 'upcoming' | 'order';
+        type: 'upcoming' | 'order' | 'order_created';
         orderId: string;
         serviceType: ServiceType;
         deliveryDay?: string | null;
@@ -179,63 +179,63 @@ export async function appendOrderHistory(
     },
     supabaseClientObj?: any
 ): Promise<void> {
-    try {
-        const supabaseClient = supabaseClientObj || supabase;
+    const sb = supabaseClientObj || supabase;
+    // console.log(`[appendOrderHistory] Called for client ${clientId}`);
 
-        // Get current order history
-        const { data: clientData, error: fetchError } = await supabaseClient
+    try {
+        const { data: client, error: fetchError } = await sb
             .from('clients')
             .select('order_history')
             .eq('id', clientId)
             .single();
 
         if (fetchError) {
-            console.error(`[ORDER_HISTORY] ERROR fetching client order_history for client ${clientId}:`, fetchError);
-            return; // Don't throw, just log - order history is not critical
+            console.error('[appendOrderHistory] Error fetching client history:', fetchError);
+            return;
         }
 
-        // Parse existing history or initialize empty array
-        let orderHistory: any[] = [];
-        if (clientData?.order_history) {
+        let currentHistory = client.order_history;
+
+        // Ensure array
+        if (typeof currentHistory === 'string') {
             try {
-                orderHistory = Array.isArray(clientData.order_history)
-                    ? clientData.order_history
-                    : JSON.parse(clientData.order_history as string);
+                currentHistory = JSON.parse(currentHistory);
             } catch (e) {
-                console.warn(`[ORDER_HISTORY] Error parsing existing order_history for client ${clientId}, starting fresh:`, e);
-                orderHistory = [];
+                console.warn('[appendOrderHistory] JSON parse error, resetting.', e);
+                currentHistory = [];
             }
         }
 
-        // Append new order entry
-        orderHistory.push(orderDetails);
+        if (!Array.isArray(currentHistory)) {
+            currentHistory = [];
+        }
 
-        console.log(`[ORDER_HISTORY] About to save to DB for client ${clientId}:`, {
-            entryType: orderDetails.type,
-            serviceType: orderDetails.serviceType,
-            hasOrderDetails: !!orderDetails.orderDetails,
-            orderDetailsKeys: orderDetails.orderDetails ? Object.keys(orderDetails.orderDetails) : [],
-            hasBoxOrders: !!orderDetails.orderDetails?.boxOrders,
-            boxOrdersCount: orderDetails.orderDetails?.boxOrders?.length || 0,
-            totalHistoryEntries: orderHistory.length
-        });
+        // New Entry
+        const newEntry = {
+            ...orderDetails,
+            timestamp: orderDetails.timestamp || new Date().toISOString(),
+            // Add unique action ID just in case
+            actionId: crypto.randomUUID()
+        };
 
-        // Update client's order_history
-        const { error: updateError } = await supabaseClient
+        // Prepend (latest first)
+        const updatedHistory = [newEntry, ...currentHistory];
+
+        // Slice to keep size manageable
+        const trimmedHistory = updatedHistory.slice(0, 50);
+
+        const { error: updateError } = await sb
             .from('clients')
-            .update({ order_history: orderHistory })
+            .update({ order_history: trimmedHistory })
             .eq('id', clientId);
 
         if (updateError) {
-            console.error(`[ORDER_HISTORY] ERROR updating order_history for client ${clientId}:`, updateError);
-            // Don't throw - order history is supplementary data
+            console.error('[appendOrderHistory] Update failed:', updateError);
         } else {
-            console.log(`[ORDER_HISTORY] Successfully saved order history entry for client ${clientId}`);
-            console.log(`[ORDER_HISTORY] Entry saved with orderDetails: ${!!orderDetails.orderDetails}, boxOrders: ${orderDetails.orderDetails?.boxOrders?.length || 0}`);
+            console.log(`[appendOrderHistory] Success. Count: ${trimmedHistory.length} for ${clientId}`);
         }
-    } catch (error: any) {
-        console.error(`[ORDER_HISTORY] Unexpected error for client ${clientId}:`, error);
-        // Don't throw - order history is supplementary data, shouldn't break order creation
+    } catch (err) {
+        console.error('[appendOrderHistory] Crash:', err);
     }
 }
 
@@ -3078,7 +3078,8 @@ export async function syncSingleOrderForDeliveryDay(
                 const quantity = qty as number;
 
                 if (item && quantity > 0) {
-                    const itemPrice = item.priceEach ?? 0; // Meal items usually have 0 value unless priced
+                    // Use priceEach if available, otherwise use value/quotaValue, but don't default to 0
+                    const itemPrice = item.priceEach ?? item.value ?? item.quotaValue ?? 0;
                     const itemTotal = itemPrice * quantity;
 
                     console.log(`[syncSingleOrderForDeliveryDay] Meal Item Found: ${item.name}`, {
@@ -3377,6 +3378,7 @@ export async function syncSingleOrderForDeliveryDay(
 
         if (vendorSelection) {
             const mealItemsToInsert: any[] = [];
+            let calculatedTotalFromMealItems = 0;
 
             for (const selection of orderConfig.vendorSelections) {
                 if (!selection.items) continue;
@@ -3384,8 +3386,10 @@ export async function syncSingleOrderForDeliveryDay(
                     const item = menuItems.find(i => i.id === itemId);
                     const quantity = qty as number;
                     if (item && quantity > 0) {
-                        const itemPrice = item.priceEach ?? 0;
+                        // Use priceEach if available, otherwise use value/quotaValue, but don't default to 0
+                        const itemPrice = item.priceEach ?? item.value ?? item.quotaValue ?? 0;
                         const itemTotal = itemPrice * quantity;
+                        calculatedTotalFromMealItems += itemTotal;
 
                         mealItemsToInsert.push({
                             upcoming_order_id: upcomingOrderId,
@@ -3409,6 +3413,19 @@ export async function syncSingleOrderForDeliveryDay(
                 if (itemsBatchError) {
                     console.error(`[syncSingleOrderForDeliveryDay] Error batch inserting meal items:`, itemsBatchError);
                     throw new Error(`Failed to insert meal items: ${itemsBatchError.message}`);
+                }
+            }
+
+            // Update total_value to match calculated total from items
+            if (calculatedTotalFromMealItems !== totalValue) {
+                totalValue = calculatedTotalFromMealItems;
+                const updateResult = await supabaseClient
+                    .from('upcoming_orders')
+                    .update({ total_value: totalValue })
+                    .eq('id', upcomingOrderId);
+
+                if (updateResult.error) {
+                    console.error(`[syncSingleOrderForDeliveryDay] Error updating total_value for Meal order:`, updateResult.error);
                 }
             }
         }
@@ -4188,6 +4205,8 @@ export async function processUpcomingOrders() {
     }
 
     const menuItems = await getMenuItems();
+    const vendors = await getVendors();
+    const boxTypes = await getBoxTypes();
     const errors: string[] = [];
     let processedCount = 0;
 
@@ -4244,6 +4263,9 @@ export async function processUpcomingOrders() {
                 continue;
             }
 
+            // Track for history snapshot
+            const historyVendorSelections: any[] = [];
+
             // Copy vendor selections and items (for Food orders)
             const { data: vendorSelections } = await supabaseClient
                 .from('upcoming_order_vendor_selections')
@@ -4267,6 +4289,8 @@ export async function processUpcomingOrders() {
 
                     if (vsError || !newVs) continue;
 
+                    const snapshotItems: any[] = [];
+
                     // Copy items
                     const { data: items } = await supabaseClient
                         .from('upcoming_order_items')
@@ -4289,10 +4313,39 @@ export async function processUpcomingOrders() {
                             if (insertError) {
                                 console.error(`[processUpcomingOrders] Error inserting item ${item.id} (menu: ${item.menu_item_id}):`, insertError);
                             }
+
+                            // --- HISTORY SNAPSHOT ITEM ---
+                            const menuItem = menuItems.find(mi => mi.id === item.menu_item_id);
+                            const mealItem = menuItems.find(mi => mi.id === item.meal_item_id); // Fallback to menuItems list if needed (though getMenuItems return menu_items table)
+                            // We don't have getMealItems here easily unless we fetch. 
+                            // Usually upcoming orders use menu_items for food. If meal_item_id is used, it might be separate.
+                            // For now, use menuItem resolution.
+
+                            snapshotItems.push({
+                                itemId: item.menu_item_id || item.meal_item_id, // prioritize menu_item for now
+                                itemName: menuItem?.name || 'Unknown Item',
+                                quantity: item.quantity,
+                                unitValue: item.unit_value,
+                                totalValue: item.total_value,
+                                note: item.notes
+                            });
                         }
+
+                        // --- HISTORY SNAPSHOT VS ---
+                        const vendor = vendors.find(v => v.id === vs.vendor_id);
+                        historyVendorSelections.push({
+                            vendorId: vs.vendor_id,
+                            vendorName: vendor?.name || 'Unknown Vendor',
+                            items: {}, // generic map if needed
+                            itemsDetails: snapshotItems, // Detailed list
+                            itemNotes: {}
+                        });
                     }
                 }
             }
+
+            // Track for history
+            const historyBoxSelections: any[] = [];
 
             // Copy box selections (for Box orders)
             const { data: boxSelections } = await supabaseClient
@@ -4321,6 +4374,40 @@ export async function processUpcomingOrders() {
                     if (boxInsertError) {
                         console.error('[processUpcomingOrders] Error inserting box selection:', boxInsertError);
                     }
+
+                    // --- HISTORY SNAPSHOT BOX ---
+                    // Resolve names
+                    const boxType = boxTypes.find(bt => bt.id === bs.box_type_id);
+                    const vendor = vendors.find(v => v.id === bs.vendor_id);
+
+                    // Resolve items inside box if any
+                    // bs.items is likely { itemId: qty }
+                    const itemsDetailsSnapshot: any[] = [];
+                    if (bs.items) {
+                        Object.entries(bs.items).forEach(([itemId, qty]: [string, any]) => {
+                            const mi = menuItems.find(m => m.id === itemId);
+                            const q = typeof qty === 'object' ? qty.quantity : qty;
+                            itemsDetailsSnapshot.push({
+                                itemId,
+                                itemName: mi?.name || 'Unknown Item',
+                                quantity: q,
+                                unitValue: mi?.priceEach || 0,
+                                totalValue: 0 // rough estimate or 0
+                            });
+                        });
+                    }
+
+                    historyBoxSelections.push({
+                        boxTypeId: bs.box_type_id,
+                        boxTypeName: boxType?.name || 'Unknown Box',
+                        vendorId: bs.vendor_id,
+                        vendorName: vendor?.name || 'Unknown Vendor',
+                        quantity: bs.quantity,
+                        items: bs.items,
+                        itemsDetails: itemsDetailsSnapshot,
+                        unitValue: bs.unit_value,
+                        totalValue: bs.total_value
+                    });
                 }
             }
 
@@ -4335,6 +4422,57 @@ export async function processUpcomingOrders() {
                 .eq('id', upcomingOrder.id);
 
             processedCount++;
+
+            // --- APPEND TO ORDER HISTORY ---
+            try {
+                // Construct the snapshot for history
+                const historyOrderDetails: any = {
+                    serviceType: upcomingOrder.service_type,
+                    caseId: upcomingOrder.case_id,
+                    orderNumber: newOrder.order_number
+                };
+
+                if (historyVendorSelections.length > 0) {
+                    historyOrderDetails.vendorSelections = historyVendorSelections;
+                    // Also restructure for "deliveryDayOrders" if it was a food order (heuristic)
+                    // Since upcoming orders are usually single-day delivery events (processed per day), 
+                    // we can wrap it in a single day entry or just leave as vendorSelections which isValid for history view
+                    if (upcomingOrder.service_type === 'Food') {
+                        // Create a synthetic delivery day structure for consistency with "Food" view
+                        const dayName = upcomingOrder.delivery_day || 'Scheduled';
+                        historyOrderDetails.deliveryDayOrders = {
+                            [dayName]: {
+                                vendorSelections: historyVendorSelections
+                            }
+                        };
+                    }
+                }
+
+                if (historyBoxSelections.length > 0) {
+                    // For boxes, we need to match the structure expected by appendOrderHistory/history viewer
+                    // which is often OrderDetails.boxOrders array
+                    historyOrderDetails.boxOrders = historyBoxSelections;
+                }
+
+                await appendOrderHistory(upcomingOrder.client_id, {
+                    type: 'order_created',
+                    orderId: newOrder.id,
+                    serviceType: upcomingOrder.service_type,
+                    caseId: upcomingOrder.case_id,
+                    notes: upcomingOrder.notes,
+                    updatedBy: upcomingOrder.updated_by,
+                    timestamp: new Date().toISOString(),
+                    orderDetails: historyOrderDetails,
+                    // Add resolved names for top-level quick access if needed
+                    totalValue: upcomingOrder.total_value,
+                    totalItems: upcomingOrder.total_items
+                }, supabaseClient);
+
+            } catch (histError) {
+                console.warn('[processUpcomingOrders] Failed to append history:', histError);
+            }
+            // -------------------------------
+
         } catch (error: any) {
             errors.push(`Error processing upcoming order ${upcomingOrder.id}: ${error.message} `);
         }
@@ -6435,17 +6573,11 @@ export async function getOrderById(orderId: string) {
                 })
             );
 
-            // Use stored value, but calculate from items if stored value is zero
-            const storedTotalValue = parseFloat(orderData.total_value || 0);
-            const calculatedTotalValue = vendorSelectionsWithItems.reduce((sum, vs) => {
-                return sum + vs.items.reduce((itemSum, item) => itemSum + item.totalValue, 0);
-            }, 0);
-
             orderDetails = {
                 serviceType: orderData.service_type,
                 vendorSelections: vendorSelectionsWithItems,
                 totalItems: orderData.total_items,
-                totalValue: storedTotalValue > 0 ? storedTotalValue : calculatedTotalValue
+                totalValue: parseFloat(orderData.total_value || 0)
             };
         }
     } else if (orderData.service_type === 'Custom') {
@@ -6482,17 +6614,11 @@ export async function getOrderById(orderId: string) {
                 })
             );
 
-            // Use stored value, but calculate from items if stored value is zero
-            const storedCustomTotalValue = parseFloat(orderData.total_value || 0);
-            const calculatedCustomTotalValue = vendorSelectionsWithItems.reduce((sum, vs) => {
-                return sum + vs.items.reduce((itemSum, item) => itemSum + item.totalValue, 0);
-            }, 0);
-
             orderDetails = {
                 serviceType: 'Custom',
                 vendorSelections: vendorSelectionsWithItems,
                 totalItems: orderData.total_items,
-                totalValue: storedCustomTotalValue > 0 ? storedCustomTotalValue : calculatedCustomTotalValue,
+                totalValue: parseFloat(orderData.total_value || 0),
                 notes: orderData.notes
             };
         }
@@ -6942,7 +7068,7 @@ export async function saveClientFoodOrder(clientId: string, data: Partial<Client
             orderData: data
         }, supabaseAdmin);
     } catch (historyError: any) {
-        console.warn('[saveClientFoodOrder] Error appending to order history:', historyError);
+        console.error('[saveClientFoodOrder] CRITICAL Error appending to order history:', historyError);
     }
 
     revalidatePath(`/client-portal/${clientId}`);
