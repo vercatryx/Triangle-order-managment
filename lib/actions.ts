@@ -6532,12 +6532,18 @@ export async function getAllOrders() {
 }
 
 export async function getOrderById(orderId: string) {
-    if (!orderId) return null;
+    console.log(`[getOrderById] Starting lookup for orderId: ${orderId}`);
+
+    if (!orderId) {
+        console.error('[getOrderById] Aborting: No orderId provided');
+        return null;
+    }
 
     // Use Service Role if available to bypass RLS
     let supabaseClient = supabase;
     const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
     if (serviceRoleKey) {
+        console.log('[getOrderById] Using service role for lookup');
         supabaseClient = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, serviceRoleKey, {
             auth: { persistSession: false }
         });
@@ -6550,10 +6556,17 @@ export async function getOrderById(orderId: string) {
         .eq('id', orderId)
         .single();
 
-    if (orderError || !orderData) {
-        console.error('Error fetching order:', orderError);
+    if (orderError) {
+        console.error(`[getOrderById] DB Error fetching order ${orderId}:`, orderError);
         return null;
     }
+
+    if (!orderData) {
+        console.error(`[getOrderById] No order data found for ID: ${orderId}`);
+        return null; // Should be covered by error usually but just in case
+    }
+
+    console.log(`[getOrderById] Found basic order data for ${orderId}. Service Type: ${orderData.service_type}`);
 
     // Fetch client information
     const { data: clientData } = await supabaseClient
@@ -6701,6 +6714,8 @@ export async function getOrderById(orderId: string) {
             .select('*')
             .eq('order_id', orderId)
             .maybeSingle();
+
+        console.log(`[getOrderById] Box selection result for ${orderId}:`, boxSelection ? 'Found' : 'Not Found');
 
         if (boxSelection) {
             const vendor = vendors.find(v => v.id === boxSelection.vendor_id);
