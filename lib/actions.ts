@@ -180,59 +180,37 @@ export async function appendOrderHistory(
     supabaseClientObj?: any
 ): Promise<void> {
     const sb = supabaseClientObj || supabase;
-    // console.log(`[appendOrderHistory] Called for client ${clientId}`);
+
+    // Check if we should skip history (e.g. for testing)
+    if (process.env.SKIP_HISTORY === 'true') {
+        return;
+    }
 
     try {
-        const { data: client, error: fetchError } = await sb
-            .from('clients')
-            .select('order_history')
-            .eq('id', clientId)
-            .single();
-
-        if (fetchError) {
-            console.error('[appendOrderHistory] Error fetching client history:', fetchError);
-            return;
-        }
-
-        let currentHistory = client.order_history;
-
-        // Ensure array
-        if (typeof currentHistory === 'string') {
-            try {
-                currentHistory = JSON.parse(currentHistory);
-            } catch (e) {
-                console.warn('[appendOrderHistory] JSON parse error, resetting.', e);
-                currentHistory = [];
-            }
-        }
-
-        if (!Array.isArray(currentHistory)) {
-            currentHistory = [];
-        }
-
         // New Entry
         const newEntry = {
             ...orderDetails,
             timestamp: orderDetails.timestamp || new Date().toISOString(),
-            // Add unique action ID just in case
             actionId: crypto.randomUUID()
         };
 
-        // Prepend (latest first)
-        const updatedHistory = [newEntry, ...currentHistory];
+        // Use RPC for atomic append and trim
+        const { error } = await sb.rpc('append_client_order_history', {
+            p_client_id: clientId,
+            p_new_entry: newEntry,
+            p_max_entries: 50
+        });
 
-        // Slice to keep size manageable
-        const trimmedHistory = updatedHistory.slice(0, 50);
-
-        const { error: updateError } = await sb
-            .from('clients')
-            .update({ order_history: trimmedHistory })
-            .eq('id', clientId);
-
-        if (updateError) {
-            console.error('[appendOrderHistory] Update failed:', updateError);
+        if (error) {
+            console.error('[appendOrderHistory] RPC failed:', error);
+            // Fallback to old method if RPC fails (e.g. not migrated yet)
+            console.log('[appendOrderHistory] Falling back to manual update...');
+            const { data: client } = await sb.from('clients').select('order_history').eq('id', clientId).single();
+            const currentHistory = Array.isArray(client?.order_history) ? client.order_history : [];
+            const updatedHistory = [newEntry, ...currentHistory].slice(0, 50);
+            await sb.from('clients').update({ order_history: updatedHistory }).eq('id', clientId);
         } else {
-            console.log(`[appendOrderHistory] Success. Count: ${trimmedHistory.length} for ${clientId}`);
+            // console.log(`[appendOrderHistory] RPC Success for ${clientId}`);
         }
     } catch (err) {
         console.error('[appendOrderHistory] Crash:', err);
@@ -1460,6 +1438,60 @@ export async function deleteNutritionist(id: string) {
 
 // --- CLIENT ACTIONS ---
 
+// Helper to generate next client ID manually to avoid sequence issues
+async function generateNextClientId() {
+    // Use Service Role to ensure we see ALL clients regardless of RLS
+    // Create a local admin client just for this operation
+    const supabaseAdmin = createClient(
+        process.env.NEXT_PUBLIC_SUPABASE_URL!,
+        process.env.SUPABASE_SERVICE_ROLE_KEY!,
+        { auth: { persistSession: false } }
+    );
+
+    // Fetch IDs with a high limit to ensure we get all of them
+    const { data } = await supabaseAdmin
+        .from('clients')
+        .select('id')
+        .limit(5000);
+
+    if (!data || data.length === 0) return 'CLIENT-001';
+
+    let maxNum = 0;
+    for (const row of data) {
+        if (!row.id) continue;
+        const match = row.id.match(/CLIENT-(\d+)/);
+        if (match) {
+            const num = parseInt(match[1], 10);
+            if (num > maxNum) maxNum = num;
+        }
+    }
+
+    const nextNum = maxNum + 1;
+    let candidateId = `CLIENT-${nextNum.toString().padStart(3, '0')}`;
+
+    // Double check existence to be absolutely sure
+    // Loop until we find a free one (safety valve for race conditions)
+    let tries = 0;
+    while (tries < 10) {
+        const { data: exists } = await supabaseAdmin
+            .from('clients')
+            .select('id')
+            .eq('id', candidateId)
+            .maybeSingle();
+
+        if (!exists) {
+            return candidateId;
+        }
+
+        // If exists, try next
+        const currentNum = parseInt(candidateId.replace('CLIENT-', ''), 10);
+        candidateId = `CLIENT-${(currentNum + 1).toString().padStart(3, '0')}`;
+        tries++;
+    }
+
+    return candidateId;
+}
+
 function mapClientFromDB(c: any): ClientProfile {
     return {
         id: c.id,
@@ -1570,7 +1602,9 @@ export async function addClient(data: Omit<ClientProfile, 'id' | 'createdAt' | '
         approved_meals_per_week: data.approvedMealsPerWeek || 0,
         authorized_amount: data.authorizedAmount !== null && data.authorizedAmount !== undefined ? roundCurrency(data.authorizedAmount) : null,
         expiration_date: data.expirationDate || null,
-        location_id: data.locationId || null
+        expiration_date: data.expirationDate || null,
+        location_id: data.locationId || null,
+        id: await generateNextClientId()
     };
 
     // Save active_order if provided (ClientProfile component handles validation)
@@ -1634,7 +1668,10 @@ export async function addDependent(name: string, parentClientId: string, dob?: s
         active_order: {},
         parent_client_id: parentClientId,
         dob: dob || null,
-        cin: cin ?? null
+        parent_client_id: parentClientId,
+        dob: dob || null,
+        cin: cin ?? null,
+        id: await generateNextClientId()
     };
 
     const { data: res, error } = await supabase.from('clients').insert([payload]).select().single();
@@ -3795,15 +3832,19 @@ export async function syncSingleOrderForDeliveryDay(
             notes: orderConfig.notes || null,
             updatedBy: updatedBy,
             timestamp: now.toISOString(),
-            // Include enriched data from database
-            vendorSelections: enrichedVendorSelections,
-            items: itemsData.data || [],
-            boxSelections: enrichedBoxSelections,
-            // Include comprehensive order details with names
+            // Only keep the comprehensive order details which has names and items
             orderDetails: orderDetails,
-            // Include full order config for reference
-            orderConfig: orderConfig,
-            // Include snapshot if provided
+            // Strip redundant snapshot from orderConfig if keeping it for reference
+            orderConfig: {
+                ...orderConfig,
+                snapshot: undefined,
+                // Also strip items from orderConfig as they are in orderDetails.itemsDetails
+                items: undefined,
+                boxOrders: undefined,
+                mealSelections: undefined,
+                vendorSelections: undefined
+            },
+            // Include snapshot separately
             snapshot: orderConfig.snapshot || null
         };
 
@@ -3884,7 +3925,9 @@ export async function syncCurrentOrderToUpcoming(clientId: string, client: Clien
             console.error('[syncCurrentOrderToUpcoming] Error updating clients.active_order:', updateError);
             throw new Error(`Failed to save order: ${updateError.message}`);
         }
-        revalidatePath('/clients');
+        try {
+            revalidatePath('/clients');
+        } catch (e) { }
     }
 
     // 2. NUCLEAR OPTION: Delete ALL existing upcoming orders for this client
@@ -3983,7 +4026,7 @@ export async function syncCurrentOrderToUpcoming(clientId: string, client: Clien
                         'Lunch', // Default meal type for main selections
                         settings,
                         currentTime,
-                        skipHistory
+                        true // Skip history here, handled at the end of syncCurrentOrderToUpcoming
                     );
                 }
             }
@@ -4071,7 +4114,7 @@ export async function syncCurrentOrderToUpcoming(clientId: string, client: Clien
                         'Lunch',
                         settings,
                         currentTime,
-                        skipHistory
+                        true // Skip history here, handled at the end of syncCurrentOrderToUpcoming
                     )
                 )
             );
@@ -4094,7 +4137,7 @@ export async function syncCurrentOrderToUpcoming(clientId: string, client: Clien
                 'Lunch',
                 settings,
                 currentTime,
-                skipHistory
+                true // Skip history here, handled at the end of syncCurrentOrderToUpcoming
             );
         }
     }
@@ -4135,7 +4178,6 @@ export async function syncCurrentOrderToUpcoming(clientId: string, client: Clien
                 }]
             };
 
-            // Updates: Check if we have deliveryDayOrders.
             if (orderConfig.deliveryDayOrders) {
                 // PERFORMANCE: Sync for each day in parallel since they're independent
                 const mealDayPromises = Object.keys(orderConfig.deliveryDayOrders).map(async (day) => {
@@ -4144,7 +4186,8 @@ export async function syncCurrentOrderToUpcoming(clientId: string, client: Clien
                         ...mealOrderConfig,
                         serviceType: 'Meal' as ServiceType
                     };
-                    await syncSingleOrderForDeliveryDay(clientId, dayMealOrderConfig, day, vendors, mappedMealItems, boxTypes, supabaseClient, mealType, settings, currentTime);
+                    // Always skip history here as we'll handle it at the end of syncCurrentOrderToUpcoming if needed
+                    await syncSingleOrderForDeliveryDay(clientId, dayMealOrderConfig, day, vendors, mappedMealItems, boxTypes, supabaseClient, mealType, settings, currentTime, true);
                 });
                 await Promise.all(mealDayPromises);
             } else {
@@ -4154,8 +4197,37 @@ export async function syncCurrentOrderToUpcoming(clientId: string, client: Clien
                     serviceType: 'Meal' as ServiceType
                 };
                 // Pass null as delivery day to rely on default or allow draft
-                await syncSingleOrderForDeliveryDay(clientId, singleMealOrderConfig, null, vendors, mappedMealItems, boxTypes, supabaseClient, mealType, settings, currentTime);
+                // Always skip history here as we'll handle it at the end of syncCurrentOrderToUpcoming if needed
+                await syncSingleOrderForDeliveryDay(clientId, singleMealOrderConfig, null, vendors, mappedMealItems, boxTypes, supabaseClient, mealType, settings, currentTime, true);
             }
+        }
+    }
+
+    // 4. SUMMARY HISTORY UPDATE
+    // Instead of each delivery day adding its own history entry (causing race conditions and bloat),
+    // we add a single entry for the entire "Save" action if history isn't skipped.
+    if (!skipHistory) {
+        try {
+            const historyEntry: any = {
+                type: 'upcoming',
+                orderId: 'sync-' + Date.now(),
+                serviceType: orderConfig.serviceType,
+                caseId: orderConfig.caseId || null,
+                timestamp: currentTime.toISOString(),
+                updatedBy: orderConfig.updatedBy || 'Admin',
+                // For the history entry, we store a summary and a pointer to the config
+                summary: `Order Sync: Updated ${orderConfig.serviceType} order details`,
+                orderConfig: {
+                    ...orderConfig,
+                    snapshot: undefined, // Strip large snapshot
+                    items: undefined // Strip raw items if they are too big
+                },
+                snapshot: orderConfig.snapshot || null
+            };
+
+            await appendOrderHistory(clientId, historyEntry, supabaseClient);
+        } catch (hError) {
+            console.warn('[syncCurrentOrderToUpcoming] Error saving summary history:', hError);
         }
     }
 

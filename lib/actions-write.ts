@@ -15,6 +15,63 @@ import { getVendors, getMenuItems, getMealItems, getEquipment, getBoxTypes, getC
 import { syncSingleOrderForDeliveryDay } from './actions';
 import { getNextDeliveryDateForDay } from './order-dates';
 
+// Helper to generate next client ID manually to avoid sequence issues
+// Helper to generate next client ID manually to avoid sequence issues
+async function generateNextClientId() {
+    // Use Service Role to ensure we see ALL clients regardless of RLS
+    // Create a local admin client just for this operation
+    const supabaseAdmin = createClient(
+        process.env.NEXT_PUBLIC_SUPABASE_URL!,
+        process.env.SUPABASE_SERVICE_ROLE_KEY!,
+        { auth: { persistSession: false } }
+    );
+
+    // Fetch IDs with a high limit to ensure we get all of them
+    // Ordering by ID might help getting the latest, but since they are text (CLIENT-100 vs CLIENT-99)
+    // simple sorting isn't perfect for "max number". We'll fetch all.
+    const { data } = await supabaseAdmin
+        .from('clients')
+        .select('id')
+        .limit(5000);
+
+    if (!data || data.length === 0) return 'CLIENT-001';
+
+    let maxNum = 0;
+    for (const row of data) {
+        if (!row.id) continue;
+        const match = row.id.match(/CLIENT-(\d+)/);
+        if (match) {
+            const num = parseInt(match[1], 10);
+            if (num > maxNum) maxNum = num;
+        }
+    }
+
+    const nextNum = maxNum + 1;
+    let candidateId = `CLIENT-${nextNum.toString().padStart(3, '0')}`;
+
+    // Double check existence to be absolutely sure
+    // Loop until we find a free one (safety valve for race conditions)
+    let tries = 0;
+    while (tries < 10) {
+        const { data: exists } = await supabaseAdmin
+            .from('clients')
+            .select('id')
+            .eq('id', candidateId)
+            .maybeSingle();
+
+        if (!exists) {
+            return candidateId;
+        }
+
+        // If exists, try next
+        const currentNum = parseInt(candidateId.replace('CLIENT-', ''), 10);
+        candidateId = `CLIENT-${(currentNum + 1).toString().padStart(3, '0')}`;
+        tries++;
+    }
+
+    return candidateId;
+}
+
 export async function addStatus(name: string) {
     const { data, error } = await supabase
         .from('client_statuses')
@@ -963,7 +1020,8 @@ export async function addClient(data: Omit<ClientProfile, 'id' | 'createdAt' | '
         approved_meals_per_week: data.approvedMealsPerWeek || 0,
         authorized_amount: data.authorizedAmount !== null && data.authorizedAmount !== undefined ? roundCurrency(data.authorizedAmount) : null,
         expiration_date: data.expirationDate || null,
-        location_id: data.locationId || null
+        location_id: data.locationId || null,
+        id: await generateNextClientId()
     };
 
     // Save active_order if provided (ClientProfile component handles validation)
@@ -1027,7 +1085,8 @@ export async function addDependent(name: string, parentClientId: string, dob?: s
         active_order: {},
         parent_client_id: parentClientId,
         dob: dob || null,
-        cin: cin ?? null
+        cin: cin ?? null,
+        id: await generateNextClientId()
     };
 
     const { data: res, error } = await supabase.from('clients').insert([payload]).select().single();
@@ -1745,7 +1804,7 @@ export async function processUpcomingOrders() {
                     // Calculate from unit_value * quantity (more reliable than using total_value from items)
                     const calculatedTotal = allOrderItems.reduce((sum, item) => {
                         // Use custom_price if available, otherwise use unit_value * quantity
-                        const itemPrice = item.custom_price 
+                        const itemPrice = item.custom_price
                             ? parseFloat(item.custom_price.toString() || '0')
                             : parseFloat(item.unit_value?.toString() || '0');
                         const quantity = parseFloat(item.quantity?.toString() || '0');
