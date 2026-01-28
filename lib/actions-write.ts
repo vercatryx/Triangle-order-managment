@@ -2174,6 +2174,19 @@ export async function saveClientFoodOrder(clientId: string, data: Partial<Client
         updated_by: updatedBy
     };
 
+    // VALIDATION: Ensure vendor is selected for all delivery days
+    if (data.deliveryDayOrders) {
+        Object.values(data.deliveryDayOrders).forEach((dayOrder: any) => {
+            if (dayOrder.vendorSelections) {
+                dayOrder.vendorSelections.forEach((selection: any) => {
+                    if (!selection.vendorId) {
+                        throw new Error('Vendor is required for Food orders');
+                    }
+                });
+            }
+        });
+    }
+
     // Check if order exists first
     const { data: existing } = await supabaseAdmin
         .from('client_food_orders')
@@ -2214,6 +2227,15 @@ export async function saveClientMealOrder(clientId: string, data: Partial<Client
         updated_at: new Date().toISOString(),
         updated_by: updatedBy
     };
+
+    // VALIDATION: Ensure vendor is selected for all meal selections
+    if (data.mealSelections) {
+        Object.values(data.mealSelections).forEach((selection: any) => {
+            if (!selection.vendorId) {
+                throw new Error('Vendor is required for Meal orders');
+            }
+        });
+    }
 
     // Check for existing order
     const { data: existing } = await supabaseAdmin
@@ -2279,6 +2301,12 @@ export async function saveClientBoxOrder(clientId: string, data: Partial<ClientB
 
             // notes: order.notes // Removed per user request
         };
+
+        // VALIDATION: Ensure vendor is selected
+        if (!payload.vendor_id) {
+            throw new Error('Vendor is required for Box orders');
+        }
+
         if (updatedBy) payload.updated_by = updatedBy;
         return payload;
     });

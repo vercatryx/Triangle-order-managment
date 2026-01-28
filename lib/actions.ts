@@ -3509,6 +3509,7 @@ export async function syncSingleOrderForDeliveryDay(
             const { error: boxSelectionError } = await supabaseClient.from('upcoming_order_box_selections').insert(boxSelectionData);
             if (boxSelectionError) {
                 console.error(`[syncSingleOrderForDeliveryDay] Error inserting box selection:`, boxSelectionError);
+                throw new Error(`Failed to insert box selection: ${boxSelectionError.message}`);
             }
         };
 

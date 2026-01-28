@@ -278,7 +278,12 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate, isVendorView }: P
     function formatOrderedItemsForCSV(order: any): string {
         const parsedItems = getParsedOrderItems(order);
         if (parsedItems.length === 0) {
-            if (order.service_type === 'Boxes' && order.boxSelection?.items && Object.keys(order.boxSelection.items).length === 0) return '(No items)';
+            if (order.service_type === 'Boxes') {
+                if (!order.boxSelection || Object.keys(order.boxSelection).length === 0) {
+                    return 'MISSING SELECTION DATA';
+                }
+                return '(No items)';
+            }
             if (order.service_type === 'Food' || order.service_type === 'Meal' || order.service_type === 'Custom') return 'No items';
             if (order.service_type === 'Equipment') return 'No items available'; // Fallback
             return 'No items available';

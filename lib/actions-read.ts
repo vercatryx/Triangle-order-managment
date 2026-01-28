@@ -2363,11 +2363,10 @@ export async function getOrderById(orderId: string) {
                 totalValue: boxTotalValue
             };
         } else {
-            // Fallback if box selection is missing
             orderDetails = {
                 serviceType: orderData.service_type,
                 vendorId: null,
-                vendorName: 'Unknown Vendor (Missing Selection Data)',
+                vendorName: `Unknown Vendor (ID: ${boxSelection.vendor_id || 'Missing'}) - Deleted?`,
                 boxTypeId: null,
                 boxTypeName: 'Unknown Box Type',
                 boxQuantity: 1,
