@@ -295,7 +295,6 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
         const searchLower = search.toLowerCase();
         // NEW: Extended Search (Vendor Names & Item Names)
         const getExtendedSearchTerms = (c: ClientProfile): string => {
-            if (!includeOrderDetails) return '';
             // Simplified: Search exactly what is displayed in the summary columns
             const orderSummary = getOrderSummaryText(c);
             const mealSummary = getMealOrderSummaryText(c);
@@ -735,37 +734,78 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
 
         if (st === 'Food') {
             const limit = client.approvedMealsPerWeek || 0;
-            const vendorsSummary = (conf.vendorSelections || [])
-                .map(v => {
-                    const vendorName = vendors.find(ven => ven.id === v.vendorId)?.name || 'Unknown';
-                    const itemCount = Object.values(v.items || {}).reduce((a: number, b: any) => a + Number(b), 0);
-                    return itemCount > 0 ? `${vendorName} (${itemCount})` : '';
-                }).filter(Boolean).join(', ');
+            const uniqueVendors = new Set<string>();
+            const isMultiDay = conf.deliveryDayOrders && typeof conf.deliveryDayOrders === 'object';
+
+            // Helper to process selections
+            const processSelections = (selections: any[]) => {
+                selections.forEach(v => {
+                    const vendorName = vendors.find(ven => ven.id === v.vendorId)?.name;
+                    if (vendorName) {
+                        const itemCount = Object.values(v.items || {}).reduce((a: number, b: any) => a + Number(b), 0);
+                        if (itemCount > 0) uniqueVendors.add(`${vendorName} (${itemCount})`);
+                    }
+                });
+            };
+
+            if (isMultiDay) {
+                Object.values(conf.deliveryDayOrders || {}).forEach((dayOrder: any) => {
+                    if (dayOrder?.vendorSelections) processSelections(dayOrder.vendorSelections);
+                });
+            } else if (conf.vendorSelections) {
+                processSelections(conf.vendorSelections);
+            }
+
+            const vendorsSummary = Array.from(uniqueVendors).join(', ');
 
             if (!vendorsSummary) return '';
             content = `: ${vendorsSummary} [Max ${limit}]`;
         } else if (st === 'Boxes') {
-            // Check vendorId from order config first, then fall back to boxType
-            const box = boxTypes.find(b => b.id === conf.boxTypeId);
-            const vendorId = conf.vendorId || box?.vendorId;
-            const vendorName = vendors.find(v => v.id === vendorId)?.name || '-';
+            const boxOrders = conf.boxOrders || [];
+            const uniqueVendors = new Set<string>();
+            const allItems: string[] = [];
 
-            console.log('[ClientList.getOrderSummaryText] Box order display:', {
-                clientId: client.id,
-                confVendorId: conf.vendorId,
-                boxTypeId: conf.boxTypeId,
-                boxVendorId: box?.vendorId,
-                resolvedVendorId: vendorId,
-                vendorName
-            });
+            if (boxOrders.length > 0) {
+                boxOrders.forEach((box: any) => {
+                    // Vendor
+                    const boxDef = boxTypes.find(b => b.id === box.boxTypeId);
+                    const vId = box.vendorId || boxDef?.vendorId;
+                    if (vId) {
+                        const vName = vendors.find(v => v.id === vId)?.name;
+                        if (vName) uniqueVendors.add(vName);
+                    }
 
-            const itemDetails = Object.entries(conf.items || {}).map(([id, qty]) => {
-                const item = menuItems.find(i => i.id === id);
-                return item ? `${item.name} x${qty}` : null;
-            }).filter(Boolean).join(', ');
+                    // Items
+                    if (box.items) {
+                        Object.entries(box.items).forEach(([itemId, qty]) => {
+                            if (Number(qty) > 0) {
+                                const item = menuItems.find(i => i.id === itemId);
+                                if (item) allItems.push(`${item.name} x${qty}`);
+                            }
+                        });
+                    }
+                });
+            }
 
-            const itemSuffix = itemDetails ? ` (${itemDetails})` : '';
-            content = `: ${vendorName}${itemSuffix}`;
+            // Legacy Fallback
+            if (boxOrders.length === 0) {
+                // Check vendorId from order config first, then fall back to boxType
+                const box = boxTypes.find(b => b.id === conf.boxTypeId);
+                const vendorId = conf.vendorId || box?.vendorId;
+                const vendorName = vendors.find(v => v.id === vendorId)?.name;
+                if (vendorName) uniqueVendors.add(vendorName);
+
+                const itemDetails = Object.entries(conf.items || {}).map(([id, qty]) => {
+                    const item = menuItems.find(i => i.id === id);
+                    return item ? `${item.name} x${qty}` : null;
+                }).filter(Boolean);
+                allItems.push(...(itemDetails as string[]));
+            }
+
+            const vendorsStr = Array.from(uniqueVendors).join(', ');
+            const itemsStr = allItems.join(', ');
+
+            content = `: ${vendorsStr} ${itemsStr ? `(${itemsStr})` : ''}`;
         }
 
         return `${st}${content}`;
