@@ -1375,7 +1375,7 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
             <div className={styles.header}>
                 <div>
                     <h1 className="title">Clients</h1>
-                    <p className="text-secondary">Manage and view all clients</p>
+                    <p className="text-secondary">Showing {filteredClients.length} of {clients.length} clients{!showDependents ? ' (Dependents Hidden)' : ''}</p>
                 </div>
 
                 {isRefreshing && (

@@ -1524,15 +1524,55 @@ function mapClientFromDB(c: any): ClientProfile {
 }
 
 export async function getClients() {
-    const { data, error } = await supabase.from('clients').select('*');
-    if (error) return [];
-    return data.map(mapClientFromDB);
+    let allClients: any[] = [];
+    let page = 0;
+    const pageSize = 1000;
+
+    while (true) {
+        const { data, error } = await supabase
+            .from('clients')
+            .select('*')
+            .order('created_at', { ascending: true })
+            .order('id', { ascending: true })
+            .range(page * pageSize, (page + 1) * pageSize - 1);
+
+        if (error) {
+            console.error('Error fetching clients:', error);
+            return [];
+        }
+
+        if (!data || data.length === 0) break;
+        allClients.push(...data);
+        if (data.length < pageSize) break;
+        page++;
+    }
+    return allClients.map(mapClientFromDB);
 }
 
 export async function getClientsLight() {
-    const { data, error } = await supabase.from('clients').select('id, full_name, parent_client_id').order('full_name');
-    if (error) return [];
-    return data.map((c: any) => ({
+    let allData: any[] = [];
+    let page = 0;
+    const pageSize = 1000;
+
+    while (true) {
+        const { data, error } = await supabase
+            .from('clients')
+            .select('id, full_name, parent_client_id')
+            .order('full_name')
+            .order('id')
+            .range(page * pageSize, (page + 1) * pageSize - 1);
+
+        if (error) {
+            console.error('Error fetching clients light:', error);
+            return [];
+        }
+
+        if (!data || data.length === 0) break;
+        allData.push(...data);
+        if (data.length < pageSize) break;
+        page++;
+    }
+    return allData.map((c: any) => ({
         id: c.id,
         fullName: c.full_name,
         parentClientId: c.parent_client_id
@@ -1688,27 +1728,62 @@ export async function addDependent(name: string, parentClientId: string, dob?: s
 }
 
 export async function getRegularClients() {
-    // Get all clients that are not dependents (parent_client_id is NULL)
-    // If the column doesn't exist yet (migration not run), return all clients
-    const { data, error } = await supabase
-        .from('clients')
-        .select('*')
-        .is('parent_client_id', null)
-        .order('full_name');
+    let allData: any[] = [];
+    let page = 0;
+    const pageSize = 1000;
 
-    if (error) {
-        // If error (e.g., column doesn't exist), fall back to getting all clients
-        // This handles the case where the migration hasn't been run yet
-        const { data: allData, error: allError } = await supabase
-            .from('clients')
-            .select('*')
-            .order('full_name');
+    try {
+        while (true) {
+            const { data, error } = await supabase
+                .from('clients')
+                .select('*')
+                .is('parent_client_id', null)
+                .order('full_name', { ascending: true })
+                .order('id', { ascending: true })
+                .range(page * pageSize, (page + 1) * pageSize - 1);
 
-        if (allError) return [];
+            if (error) {
+                if (page === 0) {
+                    // If first page fails, assumes column might be missing, try fallback
+                    throw new Error('TRY_FALLBACK');
+                }
+                console.error('Error fetching regular clients:', error);
+                return [];
+            }
+
+            if (!data || data.length === 0) break;
+            allData.push(...data);
+            if (data.length < pageSize) break;
+            page++;
+        }
         return allData.map(mapClientFromDB);
-    }
 
-    return data.map(mapClientFromDB);
+    } catch (e: any) {
+        if (e.message === 'TRY_FALLBACK') {
+            allData = [];
+            page = 0;
+            while (true) {
+                const { data, error } = await supabase
+                    .from('clients')
+                    .select('*')
+                    .order('full_name', { ascending: true })
+                    .order('id', { ascending: true })
+                    .range(page * pageSize, (page + 1) * pageSize - 1);
+
+                if (error) {
+                    console.error('Error fetching fallback clients:', error);
+                    return [];
+                }
+                if (!data || data.length === 0) break;
+                allData.push(...data);
+                if (data.length < pageSize) break;
+                page++;
+            }
+            return allData.map(mapClientFromDB);
+        }
+        console.error("Error in getRegularClients:", e);
+        return [];
+    }
 }
 
 export async function getDependentsByParentId(parentClientId: string) {
@@ -3501,7 +3576,7 @@ export async function syncSingleOrderForDeliveryDay(
                 unit_value: 0,
                 total_value: calculatedTotal,
                 items: boxItems,
-                box_type_id: boxData.boxTypeId || null
+                box_type_id: boxData.boxTypeId || undefined
             };
 
             const { error: boxSelectionError } = await supabaseClient.from('upcoming_order_box_selections').insert(boxSelectionData);
