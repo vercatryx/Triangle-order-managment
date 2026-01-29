@@ -1167,8 +1167,6 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
                     onAddMeal={handleAddMeal}
                     mealCategories={mealCategories}
                     orderConfig={orderConfig}
-                    searchTerm={searchTerm}
-                    onSearchChange={setSearchTerm}
                 />
 
                 {/* Scrollable Content */}
@@ -1206,7 +1204,6 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
                             mealItems={mealItems}
                             isClientPortal={true}
                             validationStatus={validationStatus}
-                            searchTerm={searchTerm}
                         />
                     )}
 
