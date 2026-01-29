@@ -187,17 +187,22 @@ async function cleanupTable(tableName: string, userIdColumn: string, validIds: S
 
     const validIdsArray = Array.from(validIds);
 
-    // Find bad IDs
-    const { data: badRecords, error } = await supabase
+    // Find bad IDs - fetch all records and filter in memory since Supabase doesn't support "not in" directly
+    const { data: allRecords, error } = await supabase
         .from(tableName)
         .select(`id, ${userIdColumn}`)
-        .not(userIdColumn, 'in', `(${validIdsArray.map(id => `"${id}"`).join(',')})`)
         .not(userIdColumn, 'is', null); // Ignore nulls if allowed? Usually assume vendor_id shouldn't be null if it exists, or handled elsewhere.
 
     if (error) {
         console.error(`Error querying ${tableName}:`, error);
         return;
     }
+
+    // Filter records where vendor_id is not in validIds
+    const badRecords = ((allRecords || []) as unknown as Array<{ id: string; [key: string]: unknown }>).filter(r => {
+        const vendorId = r[userIdColumn];
+        return typeof vendorId === 'string' && !validIds.has(vendorId);
+    });
 
     if (!badRecords || badRecords.length === 0) {
         console.log(`✅ No invalid references found in ${tableName}.`);

@@ -1145,6 +1145,9 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
         return headerEffectiveDate;
     }, [settings, client, orderConfig.deliveryDayOrders, orderConfig.vendorSelections, vendors]);
 
+    // --- SEARCH STATE ---
+    const [searchTerm, setSearchTerm] = useState('');
+
     return (
         <div className={stylesClientPortal.portalContainer}>
             {/* Left Sidebar */}
@@ -1164,6 +1167,8 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
                     onAddMeal={handleAddMeal}
                     mealCategories={mealCategories}
                     orderConfig={orderConfig}
+                    searchTerm={searchTerm}
+                    onSearchChange={setSearchTerm}
                 />
 
                 {/* Scrollable Content */}
@@ -1201,6 +1206,7 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
                             mealItems={mealItems}
                             isClientPortal={true}
                             validationStatus={validationStatus}
+                            searchTerm={searchTerm}
                         />
                     )}
 
@@ -1265,7 +1271,8 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
                                                                 const availableItems = menuItems.filter(i =>
                                                                     ((i.vendorId === null || i.vendorId === '') || i.vendorId === box.vendorId) &&
                                                                     i.isActive &&
-                                                                    i.categoryId === category.id
+                                                                    i.categoryId === category.id &&
+                                                                    (searchTerm === '' || i.name.toLowerCase().includes(searchTerm.toLowerCase()))
                                                                 );
                                                                 if (availableItems.length === 0) return null;
                                                                 const selectedItems = box.items || {};

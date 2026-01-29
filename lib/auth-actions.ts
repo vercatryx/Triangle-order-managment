@@ -157,6 +157,8 @@ export async function verifyOtp(email: string, code: string) {
             await createSession(id, nav?.name || 'Navigator', 'navigator');
             redirect('/clients');
         } else if (type === 'client' && id) {
+            const { data: client } = await supabase.from('clients').select('name').eq('id', id).single();
+            await createSession(id, client?.name || 'Client', 'client');
             redirect(`/client-portal/${id}`);
         }
 

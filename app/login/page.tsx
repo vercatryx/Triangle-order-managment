@@ -53,7 +53,7 @@ export default function LoginPage() {
                 }
 
                 if (result.type === 'client' && result.id) {
-                    // Check if passwordless is enabled for this user (which means global enabled + is client)
+                    // Clients always use OTP for secure access (session required for client portal)
                     if (result.enablePasswordless) {
                         setUseOtp(true);
 
@@ -70,10 +70,8 @@ export default function LoginPage() {
                             return;
                         }
                     } else {
-                        // Original flow for client without passwordless
-                        console.log('Redirecting to client portal:', result.id);
-                        router.push(`/client-portal/${result.id}`);
-                        // Don't turn off checkingIdentity so we show loading state during redirect
+                        setIdentityError('Email verification is required. Please contact support to enable login for your account.');
+                        setCheckingIdentity(false);
                         return;
                     }
                 } else {

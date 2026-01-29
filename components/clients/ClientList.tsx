@@ -57,8 +57,8 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
     const [search, setSearch] = useState('');
     const [isLoading, setIsLoading] = useState(true);
     const [isRefreshing, setIsRefreshing] = useState(false);
-    // Map of Client ID -> Client Name for background saving tasks
     const [backgroundTasks, setBackgroundTasks] = useState<Map<string, string>>(new Map());
+    const [includeOrderDetails, setIncludeOrderDetails] = useState(false);
 
     // Single Batch Loading State - No Pagination
     // All clients are loaded at once.
@@ -293,13 +293,26 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
 
     const baseFilteredClients = clients.filter(c => {
         const searchLower = search.toLowerCase();
+        // NEW: Extended Search (Vendor Names & Item Names)
+        const getExtendedSearchTerms = (c: ClientProfile): string => {
+            if (!includeOrderDetails) return '';
+            // Simplified: Search exactly what is displayed in the summary columns
+            const orderSummary = getOrderSummaryText(c);
+            const mealSummary = getMealOrderSummaryText(c);
+            return `${orderSummary} ${mealSummary}`.toLowerCase();
+        };
+
+
+        const extendedSearchLine = getExtendedSearchTerms(c);
+
         const matchesSearch =
             c.fullName.toLowerCase().includes(searchLower) ||
             (c.phoneNumber && c.phoneNumber.includes(searchLower)) ||
             (c.secondaryPhoneNumber && c.secondaryPhoneNumber.includes(searchLower)) ||
             (c.address && c.address.toLowerCase().includes(searchLower)) ||
             (c.email && c.email.toLowerCase().includes(searchLower)) ||
-            (c.notes && c.notes.toLowerCase().includes(searchLower));
+            (c.notes && c.notes.toLowerCase().includes(searchLower)) ||
+            extendedSearchLine.includes(searchLower);
 
         // Filter by View
         let matchesView = true;
@@ -336,11 +349,11 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
                 if (c.serviceType === 'Boxes') {
                     // Check actual box orders from client_box_orders table
                     const clientDetails = detailsCache[c.id];
-                    
+
                     // Only check if we have cached details (to avoid false positives)
                     if (clientDetails) {
                         const boxOrders = clientDetails.boxOrders || [];
-                        
+
                         if (boxOrders.length === 0) {
                             boxesNeedsVendor = true; // No box orders means needs vendor
                         } else {
@@ -390,7 +403,7 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
                 const cachedBoxOrders = clientDetails?.boxOrders || [];
                 // Combine both sources, prioritizing activeOrder
                 const allBoxOrders = activeBoxOrders.length > 0 ? activeBoxOrders : cachedBoxOrders;
-                
+
                 if (allBoxOrders.length > 0) {
                     boxOrderNeedsVendor = allBoxOrders.some(boxOrder => {
                         // Check vendorId on the box order itself, or fall back to box type's vendor
@@ -430,11 +443,11 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
             if (c.serviceType === 'Boxes') {
                 // Check actual box orders from client_box_orders table
                 const clientDetails = detailsCache[c.id];
-                
+
                 // Only check if we have cached details (to avoid false positives)
                 if (clientDetails) {
                     const boxOrders = clientDetails.boxOrders || [];
-                    
+
                     if (boxOrders.length === 0) {
                         needsBoxVendor = true; // No box orders means needs vendor
                     } else {
@@ -756,6 +769,41 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
         }
 
         return `${st}${content}`;
+    }
+
+    function getMealOrderSummaryText(client: ClientProfile): string {
+        const selections = client.mealOrder?.mealSelections || client.activeOrder?.mealSelections;
+        if (!selections) return '';
+
+        const mealTypes = Object.keys(selections);
+        const hasItems = mealTypes.some(type => {
+            const items = selections[type]?.items || {};
+            return Object.values(items).some((qty: any) => Number(qty) > 0);
+        });
+
+        if (mealTypes.length === 0 || !hasItems) return '';
+
+        const parts: string[] = [];
+        mealTypes.forEach(type => {
+            const data = selections[type];
+            const items = data?.items || {};
+            const itemEntries = Object.entries(items).filter(([_, qty]) => Number(qty) > 0);
+
+            if (itemEntries.length === 0) return;
+
+            const vendorName = data.vendorId ? vendors.find(v => v.id === data.vendorId)?.name : 'Not Set';
+
+            const itemDetails = itemEntries.map(([id, qty]) => {
+                const item = menuItems.find(i => i.id === id) || (mealItems as any[]).find((i: any) => i.id === id);
+                return item ? `${item.name} (${qty})` : null;
+            }).filter(Boolean).join(', ');
+
+            if (itemDetails) {
+                parts.push(`${type}: ${vendorName} - ${itemDetails}`);
+            }
+        });
+
+        return parts.join('; ');
     }
 
     function getMealOrderSummaryJSX(client: ClientProfile) {
@@ -1125,11 +1173,11 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
         if (client.serviceType === 'Boxes') {
             // Check actual box orders from client_box_orders table
             const clientDetails = detailsCache[client.id];
-            
+
             // Only check if we have cached details (to avoid false positives)
             if (clientDetails) {
                 const boxOrders = clientDetails.boxOrders || [];
-                
+
                 if (boxOrders.length === 0) {
                     // No box orders means needs vendor
                     reasons.push('Boxes: No vendor assigned');
@@ -1144,7 +1192,7 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
                         const box = boxTypes.find(b => b.id === boxOrder.boxTypeId);
                         return !box?.vendorId; // Missing vendor if box type also doesn't have one
                     });
-                    
+
                     if (hasMissingVendor) {
                         reasons.push('Boxes: No vendor assigned');
                     }
@@ -1198,7 +1246,7 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
         const cachedBoxOrders = clientDetails?.boxOrders || [];
         // Combine both sources, prioritizing activeOrder
         const allBoxOrders = activeBoxOrders.length > 0 ? activeBoxOrders : cachedBoxOrders;
-        
+
         if (allBoxOrders.length > 0) {
             const boxOrdersWithoutVendor = allBoxOrders.filter(boxOrder => {
                 // Check vendorId on the box order itself, or fall back to box type's vendor
@@ -1209,7 +1257,7 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
                 const box = boxTypes.find(b => b.id === boxOrder.boxTypeId);
                 return !box?.vendorId; // Missing vendor if box type also doesn't have one
             });
-            
+
             if (boxOrdersWithoutVendor.length > 0) {
                 reasons.push('Box order: No vendor attached');
             }
@@ -1282,28 +1330,21 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
     }
 
     return (
-        <div className={styles.container}>
+        <div className={styles.container} style={{ height: 'calc(100vh - 64px)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+
             <div className={styles.header}>
-                <div style={{ display: 'flex', alignItems: 'baseline', gap: '12px' }}>
-                    <h1 className={styles.title}>Clients</h1>
-                    {!isLoading && (
-                        <span style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
-                            Total: {totalRegularClients} clients
-                        </span>
-                    )}
-                    {(isRefreshing || (isLoading && clients.length > 0)) && (
-                        <div className={styles.refreshIndicator}>
-                            <Loader2 size={14} className="animate-spin" />
-                            <span>Refreshing...</span>
-                        </div>
-                    )}
-                    {backgroundTasks.size > 0 && (
-                        <div className={styles.refreshIndicator} style={{ color: 'var(--primary)', backgroundColor: 'var(--primary-light)' }}>
-                            <Loader2 size={14} className="animate-spin" />
-                            <span>Saving {Array.from(backgroundTasks.values())[0]}{backgroundTasks.size > 1 ? ` (+${backgroundTasks.size - 1} others)` : ''}...</span>
-                        </div>
-                    )}
+                <div>
+                    <h1 className="title">Clients</h1>
+                    <p className="text-secondary">Manage and view all clients</p>
                 </div>
+
+                {isRefreshing && (
+                    <div className={styles.refreshIndicator} style={{ color: 'var(--primary)', backgroundColor: 'var(--primary-light)' }}>
+                        <Loader2 size={14} className="animate-spin" />
+                        <span>Saving {Array.from(backgroundTasks.values())[0]}{backgroundTasks.size > 1 ? ` (+${backgroundTasks.size - 1} others)` : ''}...</span>
+                    </div>
+                )}
+
                 <div className={styles.headerActions}>
                     <div className={styles.viewToggle}>
                         <button
@@ -1343,27 +1384,10 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
                             Orders
                         </button>
                     </div>
-
-                    <div style={{ display: 'flex', gap: '0.5rem' }}>
-                        <button
-                            className="btn btn-secondary"
-                            onClick={refreshDataInBackground}
-                            disabled={isRefreshing || isLoading}
-                            title="Refresh List"
-                        >
-                            <RefreshCcw size={16} className={isRefreshing || isLoading ? "animate-spin" : ""} />
-                        </button>
-                        <button className="btn btn-primary" onClick={handleCreate}>
-                            <Plus size={16} /> New Client
-                        </button>
-                        <button className="btn btn-secondary" onClick={() => setIsAddingDependent(true)}>
-                            <Plus size={16} /> Add Dependent
-                        </button>
-                    </div>
                 </div>
             </div>
 
-            <div className={styles.filters}>
+            <div className={styles.filters} style={{ marginTop: '12px' }}>
                 <button
                     className={`btn ${showDependents ? 'btn-primary' : 'btn-secondary'}`}
                     onClick={() => setShowDependents(!showDependents)}
@@ -1391,9 +1415,37 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
                     )}
                 </div>
 
+                <div style={{ marginLeft: '8px' }}>
+                    <button
+                        className={`btn ${includeOrderDetails ? 'btn-primary' : 'btn-secondary'}`}
+                        onClick={() => setIncludeOrderDetails(!includeOrderDetails)}
+                        style={{ fontSize: '0.9rem', height: '38px', display: 'flex', alignItems: 'center', gap: '6px' }}
+                        title="Search within order summaries (items and vendors)"
+                    >
+                        {includeOrderDetails ? <CheckSquare size={16} /> : <Square size={16} />}
+                        Include Order Details
+                    </button>
+                </div>
+
 
 
                 {/* Clear All Filters Button */}
+                <div style={{ display: 'flex', gap: '0.5rem', marginLeft: 'auto' }}>
+                    <button
+                        className="btn btn-secondary"
+                        onClick={refreshDataInBackground}
+                        disabled={isRefreshing || isLoading}
+                        title="Refresh List"
+                    >
+                        <RefreshCcw size={16} className={isRefreshing || isLoading ? "animate-spin" : ""} />
+                    </button>
+                    <button className="btn btn-primary" onClick={handleCreate}>
+                        <Plus size={16} /> New Client
+                    </button>
+                    <button className="btn btn-secondary" onClick={() => setIsAddingDependent(true)}>
+                        <Plus size={16} /> Add Dependent
+                    </button>
+                </div>
                 {(statusFilter || navigatorFilter || screeningFilter || serviceTypeFilter || needsVendorFilter) && (
                     <button
                         className="btn btn-secondary"
@@ -1405,12 +1457,17 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
                             setNeedsVendorFilter(false);
                             setReasonFilter(null);
                         }}
-                        style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.9rem' }}
                     >
-                        Clear All Filters
+                        <X size={16} /> Clear Filters
                     </button>
                 )}
+
+                {/* Filter Buttons ... can stay or be part of this sticky block? user said "header". Filters are usually part of header controls. */}
+                {/* The user said "the whole top of the page will still remain". This implies filters too. */}
+
             </div>
+
+
 
 
             {
@@ -1534,7 +1591,7 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
                 )
             }
 
-            <div className={styles.list}>
+            <div className={styles.list} style={{ flex: 1, overflowY: 'auto', minHeight: 0 }}>
                 <div className={styles.listHeader}>
                     <span style={{ minWidth: '60px', flex: 0.3, paddingRight: '16px', display: 'flex', alignItems: 'center' }}>
                         #

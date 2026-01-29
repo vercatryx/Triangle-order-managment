@@ -1022,9 +1022,7 @@ export async function saveEquipmentOrder(clientId: string, vendorId: string, equ
         price: equipmentItem.price
     };
 
-    // Get creation_id for this individual order
-    const creationId = await getNextCreationId();
-
+    // Equipment orders do not get a creation_id (only batch/weekly order creation does)
     // Create actual order in orders table (not upcoming_orders)
     const orderData: any = {
         client_id: clientId,
@@ -1037,7 +1035,7 @@ export async function saveEquipmentOrder(clientId: string, vendorId: string, equ
         total_value: equipmentItem.price,
         total_items: 1,
         notes: JSON.stringify(equipmentSelection),
-        creation_id: creationId
+        creation_id: null
     };
 
     const { data: newOrder, error: orderError } = await supabase
