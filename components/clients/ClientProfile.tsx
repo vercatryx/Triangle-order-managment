@@ -176,6 +176,41 @@ function DuplicateNameConfirmationModal({
     );
 }
 
+function EmptyOrderConfirmModal({
+    isOpen,
+    onClose,
+    onConfirm,
+    saving
+}: {
+    isOpen: boolean;
+    onClose: () => void;
+    onConfirm: () => void;
+    saving: boolean;
+}) {
+    if (!isOpen) return null;
+
+    return (
+        <div className={styles.modalOverlay} style={{ zIndex: 1000 }} onClick={onClose}>
+            <div className={styles.modalContent} style={{ maxWidth: '400px', height: 'auto', padding: '24px' }} onClick={e => e.stopPropagation()}>
+                <h2 style={{ fontSize: '1.25rem', fontWeight: 600, marginBottom: '16px', color: 'var(--text-primary)' }}>Save with empty order?</h2>
+                <p style={{ marginBottom: '24px', color: 'var(--text-secondary)' }}>
+                    This client has no items in their order. Do you want to save the client with an empty order?
+                </p>
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px' }}>
+                    <button className="btn" onClick={onClose} disabled={saving}>Cancel</button>
+                    <button
+                        className="btn btn-primary"
+                        onClick={onConfirm}
+                        disabled={saving}
+                    >
+                        {saving ? <Loader2 className="spin" size={16} /> : 'Yes, save as empty'}
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+}
+
 export function ClientProfileDetail({
     clientId: propClientId,
     onClose,
@@ -290,6 +325,7 @@ export function ClientProfileDetail({
 
     const [loading, setLoading] = useState(true);
     const [loadingOrderDetails, setLoadingOrderDetails] = useState(true);
+    const [loadingRecentOrders, setLoadingRecentOrders] = useState(false);
 
     // Form Filler State
     const [isFillingForm, setIsFillingForm] = useState(false);
@@ -308,6 +344,10 @@ export function ClientProfileDetail({
     // Duplicate Name Confirmation Modal
     const [showDuplicateNameModal, setShowDuplicateNameModal] = useState(false);
     const [pendingClientData, setPendingClientData] = useState<Omit<ClientProfile, 'id' | 'createdAt' | 'updatedAt'> | null>(null);
+
+    // Empty Order Confirmation Modal (save client with no order items)
+    const [showEmptyOrderConfirmModal, setShowEmptyOrderConfirmModal] = useState(false);
+    const pendingEmptyOrderSaveRef = useRef<(() => void) | null>(null);
 
     // Dependent Creation State
     const [showAddDependentForm, setShowAddDependentForm] = useState(false);
@@ -377,35 +417,11 @@ export function ClientProfileDetail({
 
 
 
-        // If we have initialData AND we have the necessary lookups (passed as props), we can hydrate instantly without loading state.
-        // However, if we are missing critical lookups (e.g. somehow props weren't passed), we should still trigger loadLookups.
-        // Generally, ClientList passes everything.
-
-        if (initialData && initialData.client.id === clientId) {
-            console.log(`[ClientProfile] Using initialData for ${clientId}`);
-            hydrateFromInitialData(initialData);
-            // If props were passed, we don't need to fetch standard lookups, but we might still need settings/categories/allClients
-            // For simplicity, let's just fetch everything missing in background but show content immediately if we have the basics.
-            // If we don't have vendors/statuses props, we probably should show loader or fetch fast.
-
-            if (!initialStatuses || !initialVendors) {
-                // Should hopefully not happen in ClientList usage, but handle it
-                console.log(`[ClientProfile] Missing lookups, loading them for ${clientId}`);
-                setLoading(true);
-                loadLookups().then(() => setLoading(false));
-            } else {
-                // Still fetch auxiliary data that might not be in props (settings, categories, allClients)
-                // But do NOT block UI
-                console.log(`[ClientProfile] Setting loading to false and loading auxiliary data for ${clientId}`);
-                setLoading(false);
-                loadAuxiliaryData(initialData.client);
-            }
-        } else {
-            console.log(`[ClientProfile] No initialData or mismatch, calling loadData() for ${clientId}`);
-            setLoading(true);
-            loadData().then(() => setLoading(false));
-        }
-    }, [clientId, initialData, isNewClient]);
+        // Always fetch fresh data from the server and show loading until it's ready (do not paint from cache).
+        console.log(`[ClientProfile] Loading fresh data for ${clientId}`);
+        setLoading(true);
+        loadData().then(() => setLoading(false));
+    }, [clientId, isNewClient]);
 
     useEffect(() => {
         // Load submissions for this client
@@ -752,6 +768,9 @@ export function ClientProfileDetail({
                 setOriginalOrderConfig(JSON.parse(JSON.stringify(conf)));
             }
         }
+
+        // Order details are fully applied; safe to hide loading
+        setLoadingOrderDetails(false);
     }
 
     function _hydrateFromInitialDataLegacy(data: ClientFullDetails) {
@@ -783,7 +802,6 @@ export function ClientProfileDetail({
             setClientOrderHistory([]);
         }
 
-        setLoadingOrderDetails(false);
         console.log(`[ClientProfile] Basic data set for ${data.client?.id}:`, {
             activeOrder: !!data.activeOrder,
             historyCount: data.history?.length || 0,
@@ -1005,17 +1023,25 @@ export function ClientProfileDetail({
                         // Trigger Lazy Load of History
                         console.log(`[ClientProfile] Triggering lazy load of history for ${clientId}`);
                         loadHistoryLazy();
+
+                        // Clear loading only after hydration state has been committed
+                        queueMicrotask(() => {
+                            setLoading(false);
+                            setLoadingOrderDetails(false);
+                        });
                     } else {
                         console.warn(`[ClientProfile] No details returned for clientId: ${clientId}`);
+                        setLoading(false);
+                        setLoadingOrderDetails(false);
                     }
                 } catch (error) {
                     console.error(`[ClientProfile] Error in loadData for ${clientId}:`, error);
+                    setLoading(false);
+                    setLoadingOrderDetails(false);
                 }
             })()
         ]);
 
-        setLoading(false);
-        setLoadingOrderDetails(false);
         console.log(`[ClientProfile] loadData() completed for clientId: ${clientId}`);
     }
 
@@ -3051,7 +3077,7 @@ export function ClientProfileDetail({
 
             {recentOrdersExpanded && (
                 <div style={{ marginTop: '1rem' }}>
-                    {loadingOrderDetails ? (
+                    {loadingRecentOrders ? (
                         <div className={styles.loadingContainer}>
                             <div className={styles.spinner}></div>
                             <p>Loading orders...</p>
@@ -4718,14 +4744,14 @@ export function ClientProfileDetail({
                                                                         setShowEquipmentOrder(false);
                                                                         setEquipmentOrder(null);
                                                                         // Reload data to show the new order in Recent Orders section
-                                                                        setLoadingOrderDetails(true);
+                                                                        setLoadingRecentOrders(true);
                                                                         const [activeOrderData, orderHistoryData] = await Promise.all([
                                                                             getActiveOrderForClient(clientId),
                                                                             getOrderHistory(clientId)
                                                                         ]);
                                                                         setActiveOrder(activeOrderData);
                                                                         setOrderHistory(orderHistoryData || []);
-                                                                        setLoadingOrderDetails(false);
+                                                                        setLoadingRecentOrders(false);
                                                                     } catch (error: any) {
                                                                         alert(`Error submitting equipment order: ${error.message || 'Unknown error'}`);
                                                                     } finally {
@@ -4792,7 +4818,7 @@ export function ClientProfileDetail({
                                 </button>
                                 {recentOrdersExpanded && (
                                     <div>
-                                        {loadingOrderDetails ? (
+                                        {loadingRecentOrders ? (
                                             <div className={styles.loadingContainer}>
                                                 <div className={styles.spinner}></div>
                                                 <p className={styles.loadingText}>Loading order details...</p>
@@ -5180,8 +5206,57 @@ export function ClientProfileDetail({
                 clientName={pendingClientData?.fullName || formData.fullName || ''}
                 creating={saving}
             />
+            <EmptyOrderConfirmModal
+                isOpen={showEmptyOrderConfirmModal}
+                onClose={() => {
+                    setShowEmptyOrderConfirmModal(false);
+                    pendingEmptyOrderSaveRef.current = null;
+                }}
+                onConfirm={handleConfirmEmptyOrderSave}
+                saving={saving}
+            />
         </>
     );
+
+    function isOrderCompletelyEmpty(): boolean {
+        const st = formData.serviceType;
+        if (st === 'Food') {
+            const hasDeliveryDays = orderConfig?.deliveryDayOrders && Object.keys(orderConfig.deliveryDayOrders).length > 0;
+            const hasItemsInDeliveryDays = hasDeliveryDays && Object.values(orderConfig.deliveryDayOrders).some((dayData: any) => {
+                const selections = dayData?.vendorSelections || [];
+                return selections.some((s: any) => s.vendorId && ((s.items && Object.keys(s.items).length > 0) || (s.itemsByDay && Object.keys(s.itemsByDay).length > 0)));
+            });
+            const hasVendorItems = orderConfig?.vendorSelections?.some((s: any) => s.vendorId && ((s.items && Object.keys(s.items).length > 0) || (s.itemsByDay && Object.keys(s.itemsByDay).length > 0)));
+            return !hasItemsInDeliveryDays && !hasVendorItems;
+        }
+        if (st === 'Meal') {
+            const hasMeals = orderConfig?.mealSelections && Object.keys(orderConfig.mealSelections).length > 0;
+            return !hasMeals;
+        }
+        if (st === 'Boxes') {
+            const boxes = orderConfig?.boxOrders || [];
+            if (boxes.length === 0) return true;
+            const hasAnyItems = boxes.some((b: any) => {
+                const cats = b.categories || b.itemCategories;
+                return cats && typeof cats === 'object' && Object.keys(cats).length > 0;
+            });
+            return !hasAnyItems;
+        }
+        if (st === 'Custom') {
+            return !orderConfig?.custom_name?.trim() || (orderConfig.custom_price !== 0 && (orderConfig.custom_price == null || orderConfig.custom_price === '')) || !orderConfig.vendorId || !orderConfig.deliveryDay;
+        }
+        // Equipment and other types: no order-config empty check
+        return false;
+    }
+
+    async function handleConfirmEmptyOrderSave() {
+        const fn = pendingEmptyOrderSaveRef.current;
+        if (fn) {
+            pendingEmptyOrderSaveRef.current = null;
+            setShowEmptyOrderConfirmModal(false);
+            await fn();
+        }
+    }
 
     async function handleSave(): Promise<boolean> {
         if (!client && !isNewClient) {
@@ -5243,7 +5318,25 @@ export function ClientProfileDetail({
             }
         }
 
-
+        // If order is completely empty, show confirmation modal before saving
+        if (isOrderCompletelyEmpty()) {
+            const performSave = async () => {
+                const success = await executeSave(0);
+                if (!success) {
+                    throw new Error("Failed to save client data");
+                }
+            };
+            pendingEmptyOrderSaveRef.current = async () => {
+                if (onBackgroundSave && !isNewClient && client) {
+                    onBackgroundSave(client.id, client.fullName, performSave);
+                    if (onClose) onClose();
+                } else {
+                    await executeSave(0);
+                }
+            };
+            setShowEmptyOrderConfirmModal(true);
+            return false;
+        }
 
         // Perform the save operation (encapsulated for background use)
         const performSave = async () => {

@@ -58,6 +58,7 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
     const [isLoading, setIsLoading] = useState(true);
     const [isRefreshing, setIsRefreshing] = useState(false);
     const [backgroundTasks, setBackgroundTasks] = useState<Map<string, string>>(new Map());
+    const [successMessage, setSuccessMessage] = useState<string | null>(null);
     const [includeOrderDetails, setIncludeOrderDetails] = useState(false);
 
     // Single Batch Loading State - No Pagination
@@ -247,6 +248,12 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
                 next.delete(clientId);
                 return next;
             });
+
+            // Show success message if no error occurred
+            if (!backgroundTasks.has(clientId)) { // Check simplistic error handling, ideally based on try/catch flow
+                setSuccessMessage(`Successfully saved ${clientName}`);
+                setTimeout(() => setSuccessMessage(null), 3000);
+            }
         }
     };
 
@@ -1374,16 +1381,23 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
 
             <div className={styles.header}>
                 <div>
-                    <h1 className="title">Clients</h1>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                        <h1 className="title">Clients</h1>
+                        {(isRefreshing || backgroundTasks.size > 0) && (
+                            <div className={styles.refreshIndicator} style={{ color: 'var(--primary)', backgroundColor: 'var(--primary-light)' }}>
+                                <Loader2 size={14} className="animate-spin" />
+                                <span>Saving {Array.from(backgroundTasks.values())[0]}{backgroundTasks.size > 1 ? ` (+${backgroundTasks.size - 1} others)` : ''}...</span>
+                            </div>
+                        )}
+                        {!isRefreshing && backgroundTasks.size === 0 && successMessage && (
+                            <div className={styles.refreshIndicator} style={{ color: 'var(--success)', backgroundColor: 'var(--success-light)', border: '1px solid var(--success)' }}>
+                                <CheckSquare size={14} />
+                                <span>{successMessage}</span>
+                            </div>
+                        )}
+                    </div>
                     <p className="text-secondary">Showing {filteredClients.length} of {clients.length} clients{!showDependents ? ' (Dependents Hidden)' : ''}</p>
                 </div>
-
-                {isRefreshing && (
-                    <div className={styles.refreshIndicator} style={{ color: 'var(--primary)', backgroundColor: 'var(--primary-light)' }}>
-                        <Loader2 size={14} className="animate-spin" />
-                        <span>Saving {Array.from(backgroundTasks.values())[0]}{backgroundTasks.size > 1 ? ` (+${backgroundTasks.size - 1} others)` : ''}...</span>
-                    </div>
-                )}
 
                 <div className={styles.headerActions}>
                     <div className={styles.viewToggle}>
