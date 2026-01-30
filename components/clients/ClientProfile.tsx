@@ -4,7 +4,7 @@ import { useState, useEffect, Fragment, useMemo, useRef, ReactNode } from 'react
 import { useRouter, useParams } from 'next/navigation';
 import Link from 'next/link';
 import { ClientProfile, ClientStatus, Navigator, Vendor, MenuItem, BoxType, ServiceType, AppSettings, DeliveryRecord, ItemCategory, ClientFullDetails, BoxQuota, MealCategory, MealItem, ClientFoodOrder, ClientMealOrder, ClientBoxOrder, Equipment, OrderConfiguration } from '@/lib/types';
-import { updateClient, addClient, deleteClient, updateDeliveryProof, recordClientChange, syncCurrentOrderToUpcoming, logNavigatorAction, getBoxQuotas, saveEquipmentOrder, getRegularClients, getDependentsByParentId, addDependent, checkClientNameExists, getClientFullDetails, saveClientFoodOrder, saveClientMealOrder, saveClientBoxOrder, saveClientCustomOrder, getEquipment, getClientProfileData, appendOrderHistory } from '@/lib/actions';
+import { updateClient, addClient, deleteClient, updateDeliveryProof, recordClientChange, syncCurrentOrderToUpcoming, logNavigatorAction, getBoxQuotas, saveEquipmentOrder, getRegularClients, getDependentsByParentId, addDependent, checkClientNameExists, getClientFullDetails, getClientFoodOrder, getClientMealOrder, getClientBoxOrder, saveClientFoodOrder, saveClientMealOrder, saveClientBoxOrder, saveClientCustomOrder, getEquipment, getClientProfileData, appendOrderHistory } from '@/lib/actions';
 import { getSingleForm, getClientSubmissions } from '@/lib/form-actions';
 import { getClient, getStatuses, getNavigators, getVendors, getMenuItems, getBoxTypes, getSettings, getCategories, getClients, invalidateClientData, invalidateReferenceData, getActiveOrderForClient, getUpcomingOrderForClient, getOrderHistory, getClientHistory, getBillingHistory, invalidateOrderData, getMealCategories, getMealItems, getRecentOrdersForClient, getClientsLight } from '@/lib/cached-data';
 import { areAnyDeliveriesLocked, getEarliestEffectiveDate, getLockedWeekDescription } from '@/lib/weekly-lock';
@@ -811,8 +811,15 @@ export function ClientProfileDetail({
 
         // Handle upcoming order logic (reused from loadData)
         const upcomingOrderData = data.upcomingOrder;
+        const foodOrderData = data.foodOrder;
+        const mealOrderData = data.mealOrder;
+        const boxOrdersData = data.boxOrders;
+
         console.log(`[ClientProfile] Processing upcoming order for ${data.client?.id}:`, {
             hasUpcomingOrder: !!upcomingOrderData,
+            hasFoodOrder: !!foodOrderData,
+            hasMealOrder: !!mealOrderData,
+            hasBoxOrders: !!boxOrdersData,
             upcomingOrderType: typeof upcomingOrderData,
             isObject: upcomingOrderData && typeof upcomingOrderData === 'object',
             keys: upcomingOrderData && typeof upcomingOrderData === 'object' ? Object.keys(upcomingOrderData) : [],
@@ -1107,7 +1114,7 @@ export function ClientProfileDetail({
 
     async function loadDataLegacy() {
         setLoadingOrderDetails(true);
-        const [c, s, n, v, m, b, appSettings, catData, eData, allClientsData, regularClientsData, mealCatData, mealItemData, upcomingOrderData, activeOrderData, historyData, orderHistoryData, billingHistoryData] = await Promise.all([
+        const [c, s, n, v, m, b, appSettings, catData, eData, allClientsData, regularClientsData, mealCatData, mealItemData, upcomingOrderData, activeOrderData, historyData, orderHistoryData, billingHistoryData, foodOrderData, mealOrderData, boxOrdersData] = await Promise.all([
             getClient(clientId),
             getStatuses(),
             getNavigators(),
@@ -1125,7 +1132,10 @@ export function ClientProfileDetail({
             getRecentOrdersForClient(clientId),
             getClientHistory(clientId),
             getOrderHistory(clientId),
-            getBillingHistory(clientId)
+            getBillingHistory(clientId),
+            getClientFoodOrder(clientId),
+            getClientMealOrder(clientId),
+            getClientBoxOrder(clientId)
         ]);
 
         if (c) {
@@ -1174,7 +1184,66 @@ export function ClientProfileDetail({
         if (c) {
 
             let configToSet: any = null;
-            if (upcomingOrderData) {
+
+            // 1. Try Food Order (New Table)
+            if (c.serviceType === 'Food' && foodOrderData) {
+                let foodOrderForUI = { ...foodOrderData } as any;
+
+                // Convert deliveryDayOrders from DB back to vendorSelections with itemsByDay for UI
+                if (foodOrderForUI.deliveryDayOrders) {
+                    const vendorMap = new Map<string, any>();
+                    for (const [day, dayData] of Object.entries(foodOrderForUI.deliveryDayOrders)) {
+                        const vendorSelections = (dayData as any).vendorSelections || [];
+                        for (const selection of vendorSelections) {
+                            if (!selection.vendorId) continue;
+                            if (!vendorMap.has(selection.vendorId)) {
+                                vendorMap.set(selection.vendorId, {
+                                    vendorId: selection.vendorId,
+                                    items: {},
+                                    selectedDeliveryDays: [],
+                                    itemsByDay: {}
+                                });
+                            }
+                            const vendor = vendorMap.get(selection.vendorId)!;
+                            vendor.selectedDeliveryDays.push(day);
+                            vendor.itemsByDay[day] = selection.items || {};
+                            // Ensure itemNotes are populated
+                            if (!vendor.itemNotesByDay) vendor.itemNotesByDay = {};
+                            vendor.itemNotesByDay[day] = selection.itemNotes || {};
+                        }
+                    }
+                    foodOrderForUI.vendorSelections = Array.from(vendorMap.values());
+                    delete foodOrderForUI.deliveryDayOrders; // Clean up legacy format to avoid confusion
+                }
+
+                configToSet = { ...foodOrderForUI, serviceType: 'Food' };
+                if (!configToSet.caseId && c.activeOrder?.caseId) {
+                    configToSet.caseId = c.activeOrder.caseId;
+                }
+                // Merge mealSelections if available (e.g. Breakfast)
+                if (mealOrderData && mealOrderData.mealSelections) {
+                    configToSet.mealSelections = mealOrderData.mealSelections;
+                }
+
+            }
+            // 2. Try Meal Order (New Table)
+            else if (c.serviceType === 'Meal' && mealOrderData) {
+                configToSet = { ...mealOrderData, serviceType: 'Meal' };
+                if (!configToSet.caseId && c.activeOrder?.caseId) {
+                    configToSet.caseId = c.activeOrder.caseId;
+                }
+            }
+            // 3. Try Box Order (New Table)
+            else if (c.serviceType === 'Boxes' && boxOrdersData && boxOrdersData.length > 0) {
+                configToSet = {
+                    boxOrders: boxOrdersData,
+                    serviceType: 'Boxes',
+                    caseId: boxOrdersData[0].caseId || c.activeOrder?.caseId
+                };
+            }
+            // 4. Fallback to Upcoming/Active Order (Legacy)
+            else if (upcomingOrderData) {
+
                 // Check if it's the multi-day format (object keyed by delivery day, not deliveryDayOrders)
                 const isMultiDayFormat = upcomingOrderData && typeof upcomingOrderData === 'object' &&
                     !upcomingOrderData.serviceType &&
@@ -1268,6 +1337,41 @@ export function ClientProfileDetail({
 
                     configToSet.vendorId = boxType.vendorId;
                 }
+            }
+
+            // FINAL CONVERSION CHECK: Ensure any Food order with deliveryDayOrders has vendorSelections for UI
+            if (configToSet && configToSet.serviceType === 'Food' && configToSet.deliveryDayOrders) {
+                const vendorMap = new Map<string, any>();
+                for (const [day, dayData] of Object.entries(configToSet.deliveryDayOrders)) {
+                    const vendorSelections = (dayData as any).vendorSelections || [];
+                    for (const selection of vendorSelections) {
+                        if (!selection.vendorId) continue;
+                        if (!vendorMap.has(selection.vendorId)) {
+                            vendorMap.set(selection.vendorId, {
+                                vendorId: selection.vendorId,
+                                items: {},
+                                selectedDeliveryDays: [],
+                                itemsByDay: {}
+                            });
+                        }
+                        const vendor = vendorMap.get(selection.vendorId)!;
+                        if (!vendor.selectedDeliveryDays.includes(day)) {
+                            vendor.selectedDeliveryDays.push(day);
+                        }
+                        vendor.itemsByDay[day] = selection.items || {};
+                        // Ensure itemNotes are populated
+                        if (!vendor.itemNotesByDay) vendor.itemNotesByDay = {};
+                        vendor.itemNotesByDay[day] = selection.itemNotes || {};
+                    }
+                }
+                // Only overwrite if we found valid selections, or if vendorSelections is missing
+                if (vendorMap.size > 0 || !configToSet.vendorSelections) {
+                    configToSet.vendorSelections = Array.from(vendorMap.values());
+                }
+                // We keep deliveryDayOrders on configToSet as the source of truth, but UI needs vendorSelections
+                // Ideally we shouldn't delete deliveryDayOrders if we want to save it back, 
+                // but ClientPortal logic deletes it. Let's delete it to match ClientPortal behavior and avoid confusion.
+                delete configToSet.deliveryDayOrders;
             }
 
             setOrderConfig(configToSet);
@@ -5697,10 +5801,26 @@ export function ClientProfileDetail({
                 }).join('\n');
             } else if ((config as any).vendorSelections && (config as any).vendorSelections.length > 0) {
                 primarySection = (config as any).vendorSelections.map((vs: any) => {
-                    const items = vs.items || {};
-                    const itemDetails = Object.keys(items)
-                        .map(itemId => `  - ${items[itemId]}x ${getItemName(itemId)}`)
-                        .join('\n');
+                    let itemDetails = '';
+
+                    // Handle itemsByDay (Multi-day format in vendorSelections)
+                    if (vs.itemsByDay && Object.keys(vs.itemsByDay).length > 0) {
+                        const days = Object.keys(vs.itemsByDay).sort();
+                        itemDetails = days.map(day => {
+                            const dayItems = vs.itemsByDay[day] || {};
+                            const dayDetails = Object.keys(dayItems)
+                                .map(itemId => `    - ${dayItems[itemId]}x ${getItemName(itemId)}`)
+                                .join('\n');
+                            return `  ${day}:\n${dayDetails || '    - No items'}`;
+                        }).join('\n');
+                    } else {
+                        // Standard items
+                        const items = vs.items || {};
+                        itemDetails = Object.keys(items)
+                            .map(itemId => `  - ${items[itemId]}x ${getItemName(itemId)}`)
+                            .join('\n');
+                    }
+
                     return `Vendor [${getVendorName(vs.vendorId)}]:\n${itemDetails || '  - No items'}`;
                 }).join('\n');
             }

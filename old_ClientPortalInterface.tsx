@@ -114,7 +114,7 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
             let foodOrderForUI = { ...foodOrder } as any;
 
             // Convert deliveryDayOrders from DB back to vendorSelections with itemsByDay for UI
-            if (foodOrderForUI.deliveryDayOrders) {
+            if (foodOrderForUI.deliveryDayOrders && !foodOrderForUI.vendorSelections) {
                 const vendorMap = new Map<string, any>();
                 for (const [day, dayData] of Object.entries(foodOrderForUI.deliveryDayOrders)) {
                     const vendorSelections = (dayData as any).vendorSelections || [];
@@ -619,20 +619,6 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
         const caseId = orderConfig?.caseId || (client as any).caseID || (client.activeOrder as any)?.caseId;
 
         console.error("!!! [handleSave] CALLED !!!", { validationStatus, totalMealCount });
-        console.log("DEBUG: Full orderConfig:", JSON.stringify(orderConfig, null, 2));
-        console.log("DEBUG: serviceType:", serviceType);
-        console.log("DEBUG: caseId:", caseId);
-
-        if (serviceType === 'Meal') {
-            console.log("DEBUG: Checking Meal Selections:", orderConfig?.mealSelections);
-            if (orderConfig?.mealSelections) {
-                Object.entries(orderConfig.mealSelections).forEach(([key, val]) => {
-                    console.log(`DEBUG: Meal Selection [${key}]:`, val);
-                });
-            } else {
-                console.log("DEBUG: No mealSelections found in orderConfig");
-            }
-        }
 
         // For Food clients, caseId is required. For Boxes, it's optional
         if (serviceType === 'Food' && !caseId) {
@@ -654,9 +640,6 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
 
             // CRITICAL: Always preserve caseId at the top level for both Food and Boxes
             cleanedOrderConfig.caseId = orderConfig.caseId;
-
-            // Generate the order snapshot for the history (BEFORE any mutations)
-            const orderSnapshot = generateOrderSnapshot(cleanedOrderConfig as any);
 
             if (serviceType === 'Food') {
                 if (cleanedOrderConfig.vendorSelections) {
@@ -769,8 +752,7 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
                     ...cleanedOrderConfig,
                     serviceType: serviceType,
                     lastUpdated: new Date().toISOString(),
-                    updatedBy: `Client: ${client.fullName}`,
-                    snapshot: orderSnapshot // Pass snapshot to syncCurrentOrderToUpcoming
+                    updatedBy: 'Client'
                 }
             } as ClientProfile;
 
@@ -880,114 +862,6 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
 
 
     // -- LOGIC HELPERS --
-
-    function generateOrderSnapshot(config: any | undefined): string {
-        if (!config) return 'No order configuration';
-        let snapshot = `Service: ${config.serviceType || 'Not Set'}${config.caseId ? ` | Case ID: ${config.caseId}` : ''}\n`;
-
-        // Helper to get item name
-        const getItemName = (id: string, isMeal = false) => {
-            if (isMeal) return (mealItems || []).find(i => i.id === id)?.name || id;
-            return (menuItems || []).find(i => i.id === id)?.name || id;
-        };
-
-        // Helper to get vendor name
-        const getVendorName = (id: string) => (vendors || []).find(v => v.id === id)?.name || id;
-
-        // Helper to get box type name
-        const getBoxTypeName = (id: string) => (boxTypes || []).find(b => b.id === id)?.name || id;
-
-        // 1. PRIMARY SERVICE SECTION
-        let primarySection = '';
-        if (config.serviceType === 'Boxes') {
-            const boxes = config.boxOrders || [];
-            if (boxes.length > 0) {
-                primarySection = boxes.map((box: any, i: number) => {
-                    const items = box.items || {};
-                    const itemDetails = Object.keys(items)
-                        .map(itemId => `  - ${items[itemId]}x ${getItemName(itemId)}`)
-                        .join('\n');
-                    const vendorName = getVendorName(box.vendorId);
-                    const boxTypeName = getBoxTypeName(box.boxTypeId);
-                    return `Box ${i + 1}: ${boxTypeName} (Qty: ${box.quantity || 1}) [Vendor: ${vendorName}]\n${itemDetails || '  - No items'}`;
-                }).join('\n');
-            } else if (config.boxTypeId) {
-                const items = (config as any).items || {};
-                const itemDetails = Object.keys(items)
-                    .map(itemId => `  - ${items[itemId]}x ${getItemName(itemId)}`)
-                    .join('\n');
-                const vendorName = getVendorName((config as any).vendorId);
-                const boxTypeName = getBoxTypeName(config.boxTypeId);
-                primarySection = `Box: ${boxTypeName} (Qty: ${(config as any).boxQuantity || 1}) [Vendor: ${vendorName}]\n${itemDetails || '  - No items'}`;
-            }
-        } else if (config.serviceType === 'Food') {
-            const days = (config as any).deliveryDayOrders || {};
-            const dayKeys = Object.keys(days).sort();
-
-            if (dayKeys.length > 0) {
-                primarySection = dayKeys.map(day => {
-                    const selections = days[day]?.vendorSelections || [];
-                    const vendorDetails = selections.map((vs: any) => {
-                        const items = vs.items || {};
-                        const itemDetails = Object.keys(items)
-                            .map(itemId => `    - ${items[itemId]}x ${getItemName(itemId)}`)
-                            .join('\n');
-                        return `  Vendor [${getVendorName(vs.vendorId)}]:\n${itemDetails || '    - No items'}`;
-                    }).join('\n');
-                    return `${day}:\n${vendorDetails || '  - No vendors'}`;
-                }).join('\n');
-            } else if ((config as any).vendorSelections && (config as any).vendorSelections.length > 0) {
-                primarySection = (config as any).vendorSelections.map((vs: any) => {
-                    let itemDetails = '';
-
-                    // Handle itemsByDay (Multi-day format in vendorSelections)
-                    if (vs.itemsByDay && Object.keys(vs.itemsByDay).length > 0) {
-                        const days = Object.keys(vs.itemsByDay).sort();
-                        itemDetails = days.map(day => {
-                            const dayItems = vs.itemsByDay[day] || {};
-                            const dayDetails = Object.keys(dayItems)
-                                .map(itemId => `    - ${dayItems[itemId]}x ${getItemName(itemId)}`)
-                                .join('\n');
-                            return `  ${day}:\n${dayDetails || '    - No items'}`;
-                        }).join('\n');
-                    } else {
-                        // Standard items
-                        const items = vs.items || {};
-                        itemDetails = Object.keys(items)
-                            .map(itemId => `  - ${items[itemId]}x ${getItemName(itemId)}`)
-                            .join('\n');
-                    }
-
-                    return `Vendor [${getVendorName(vs.vendorId)}]:\n${itemDetails || '  - No items'}`;
-                }).join('\n');
-            }
-        } else if (config.serviceType === 'Custom') {
-            primarySection = `Custom Order: ${(config as any).custom_name || (config as any).description || 'Unnamed'}\n`;
-            primarySection += `Price: $${(config as any).custom_price || (config as any).totalValue || 0}\n`;
-            primarySection += `Vendor: ${getVendorName((config as any).vendorId)}`;
-        }
-
-        if (primarySection) {
-            snapshot += primarySection + '\n';
-        }
-
-        // 2. MEAL SELECTIONS SECTION (CUMULATIVE)
-        const meals = (config as any).mealSelections || {};
-        const mealTypes = Object.keys(meals).sort();
-        if (mealTypes.length > 0) {
-            const mealSection = `\nMeal Selections:\n` + mealTypes.map(mKey => {
-                const meal = meals[mKey];
-                const items = meal.items || {};
-                const itemDetails = Object.keys(items)
-                    .map(itemId => `  - ${items[itemId]}x ${getItemName(itemId, true)}`)
-                    .join('\n');
-                return `${meal.mealType || mKey} [${getVendorName(meal.vendorId)}]:\n${itemDetails || '  - No items'}`;
-            }).join('\n');
-            snapshot += mealSection;
-        }
-
-        return snapshot.trim();
-    }
 
     function handleBoxItemChange(itemId: string, qty: number) {
         // Legacy/Fallback for flat items if needed, but we are moving to multi-box
@@ -1175,9 +1049,6 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
         return headerEffectiveDate;
     }, [settings, client, orderConfig.deliveryDayOrders, orderConfig.vendorSelections, vendors]);
 
-    // --- SEARCH STATE ---
-    const [searchTerm, setSearchTerm] = useState('');
-
     return (
         <div className={stylesClientPortal.portalContainer}>
             {/* Left Sidebar */}
@@ -1298,8 +1169,7 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
                                                                 const availableItems = menuItems.filter(i =>
                                                                     ((i.vendorId === null || i.vendorId === '') || i.vendorId === box.vendorId) &&
                                                                     i.isActive &&
-                                                                    i.categoryId === category.id &&
-                                                                    (searchTerm === '' || i.name.toLowerCase().includes(searchTerm.toLowerCase()))
+                                                                    i.categoryId === category.id
                                                                 );
                                                                 if (availableItems.length === 0) return null;
                                                                 const selectedItems = box.items || {};
