@@ -5235,12 +5235,37 @@ export function ClientProfileDetail({
         }
         if (st === 'Boxes') {
             const boxes = orderConfig?.boxOrders || [];
-            if (boxes.length === 0) return true;
-            const hasAnyItems = boxes.some((b: any) => {
-                const cats = b.categories || b.itemCategories;
-                return cats && typeof cats === 'object' && Object.keys(cats).length > 0;
+
+            console.log('DEBUG_EMPTY_CHECK: Checking boxes...', {
+                boxCount: boxes.length,
+                rootItems: orderConfig?.items,
+                fullConfig: orderConfig
             });
-            return !hasAnyItems;
+
+            // Check boxOrders if they exist
+            let hasItemsInBoxes = false;
+            if (boxes.length > 0) {
+                hasItemsInBoxes = boxes.some((b: any) => {
+                    const items = b.items;
+                    const has = items && typeof items === 'object' && Object.values(items).some((qty: any) => Number(qty) > 0);
+                    console.log('DEBUG_EMPTY_CHECK: Box items check:', { items, has });
+                    return has;
+                });
+            }
+
+            console.log('DEBUG_EMPTY_CHECK: hasItemsInBoxes result:', hasItemsInBoxes);
+
+            if (hasItemsInBoxes) return false;
+
+            // Fallback: Check root items (Single Box / Legacy mode)
+            // This handles updates from handleBoxItemChange which sets items on root
+            // even if boxOrders array exists (e.g. initialized but not updated by legacy handlers)
+            const rootItems = orderConfig?.items;
+            const hasRootItems = rootItems && typeof rootItems === 'object' && Object.values(rootItems).some((qty: any) => Number(qty) > 0);
+
+            console.log('DEBUG_EMPTY_CHECK: hasRootItems result:', { rootItems, hasRootItems });
+
+            return !hasRootItems;
         }
         if (st === 'Custom') {
             return !orderConfig?.custom_name?.trim() || (orderConfig.custom_price !== 0 && (orderConfig.custom_price == null || orderConfig.custom_price === '')) || !orderConfig.vendorId || !orderConfig.deliveryDay;
@@ -5557,7 +5582,7 @@ export function ClientProfileDetail({
             cleanedOrderConfig.itemPrices = orderConfig.itemPrices || {};
 
             // Helper to clean box items and notes
-            if (orderConfig.boxOrders && Array.isArray(orderConfig.boxOrders)) {
+            if (orderConfig.boxOrders && Array.isArray(orderConfig.boxOrders) && orderConfig.boxOrders.length > 0) {
                 cleanedOrderConfig.boxOrders = orderConfig.boxOrders.map((box: any) => {
                     const cleanedItems: any = {};
                     const cleanedNotes: any = {};
@@ -5579,6 +5604,28 @@ export function ClientProfileDetail({
                         itemNotes: cleanedNotes
                     };
                 });
+            } else if (orderConfig.items && Object.keys(orderConfig.items).length > 0) {
+                // Fallback: Convert root items to boxOrders array for legacy/single-box mode
+                const cleanedItems: any = {};
+                const cleanedNotes: any = {}; // Notes might be missing on root in this case, or logic is needed if stored elsewhere
+
+                Object.entries(orderConfig.items).forEach(([itemId, qty]) => {
+                    if (Number(qty) > 0) {
+                        cleanedItems[itemId] = Number(qty);
+                        // Accessing global itemNotes if they exist on orderConfig, or skip
+                        // Assuming itemNotes are not on root for now, or would be orderConfig.itemNotes
+                    }
+                });
+
+                if (Object.keys(cleanedItems).length > 0) {
+                    cleanedOrderConfig.boxOrders = [{
+                        vendorId: orderConfig.vendorId,
+                        boxTypeId: orderConfig.boxTypeId,
+                        quantity: orderConfig.boxQuantity || 1,
+                        items: cleanedItems,
+                        itemNotes: cleanedNotes // Empty for now unless we find where notes are stored in legacy
+                    }];
+                }
             }
 
         }
