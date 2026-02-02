@@ -307,6 +307,21 @@ export function ClientProfileDetail({
     const [orderConfig, setOrderConfig] = useState<any>({}); // Current Order Request (from upcoming_orders)
     const [originalOrderConfig, setOriginalOrderConfig] = useState<any>({}); // Original Order Request for comparison
 
+    // Debug: Log when orderConfig changes
+    useEffect(() => {
+        if (clientId) {
+            console.log(`[ClientProfile] orderConfig changed for ${clientId}:`, {
+                hasOrderConfig: !!orderConfig,
+                orderConfigKeys: orderConfig ? Object.keys(orderConfig) : [],
+                serviceType: orderConfig?.serviceType,
+                caseId: orderConfig?.caseId,
+                hasVendorSelections: !!orderConfig?.vendorSelections,
+                vendorSelectionsLength: orderConfig?.vendorSelections?.length,
+                id: orderConfig?.id
+            });
+        }
+    }, [orderConfig, clientId]);
+
     // --- INDEPENDENT ORDER CONFIGS ---
     const [foodOrderConfig, setFoodOrderConfig] = useState<Partial<ClientFoodOrder> | null>(null);
     const [originalFoodOrderConfig, setOriginalFoodOrderConfig] = useState<Partial<ClientFoodOrder> | null>(null);
@@ -823,10 +838,22 @@ export function ClientProfileDetail({
             upcomingOrderType: typeof upcomingOrderData,
             isObject: upcomingOrderData && typeof upcomingOrderData === 'object',
             keys: upcomingOrderData && typeof upcomingOrderData === 'object' ? Object.keys(upcomingOrderData) : [],
-            serviceType: (upcomingOrderData as any)?.serviceType
+            serviceType: (upcomingOrderData as any)?.serviceType,
+            vendorSelections: (upcomingOrderData as any)?.vendorSelections,
+            vendorSelectionsLength: (upcomingOrderData as any)?.vendorSelections?.length,
+            vendorSelectionsIsArray: Array.isArray((upcomingOrderData as any)?.vendorSelections),
+            deliveryDayOrders: (upcomingOrderData as any)?.deliveryDayOrders,
+            fullUpcomingOrder: JSON.stringify(upcomingOrderData, null, 2)
         });
 
-        if (upcomingOrderData) {
+        // IMPORTANT: Check if upcomingOrderData is actually valid
+        // An empty object {} or null should not be treated as having an upcoming order
+        // But an object with keys (even if vendorSelections is empty) is valid
+        const hasValidUpcomingOrder = upcomingOrderData && 
+            typeof upcomingOrderData === 'object' && 
+            (upcomingOrderData.serviceType || upcomingOrderData.caseId || upcomingOrderData.id || Object.keys(upcomingOrderData).length > 0);
+
+        if (hasValidUpcomingOrder) {
             // Check if it's the multi-day format (object keyed by delivery day, not deliveryDayOrders)
             const isMultiDayFormat = upcomingOrderData && typeof upcomingOrderData === 'object' &&
                 !upcomingOrderData.serviceType &&
@@ -877,14 +904,40 @@ export function ClientProfileDetail({
                         mealSelections: aggregatedMealSelections
                     });
                 }
-            } else if (upcomingOrderData.serviceType === 'Food' && !upcomingOrderData.vendorSelections && !upcomingOrderData.deliveryDayOrders) {
-                console.log(`[ClientProfile] Migrating old Food order format for ${data.client?.id}`);
+            } else if (upcomingOrderData.serviceType === 'Food' && (!upcomingOrderData.vendorSelections || upcomingOrderData.vendorSelections.length === 0) && !upcomingOrderData.deliveryDayOrders) {
+                console.log(`[ClientProfile] Migrating old Food order format for ${data.client?.id}`, {
+                    hasVendorId: !!upcomingOrderData.vendorId,
+                    vendorId: upcomingOrderData.vendorId,
+                    hasMenuSelections: !!upcomingOrderData.menuSelections,
+                    currentVendorSelections: upcomingOrderData.vendorSelections,
+                    currentVendorSelectionsLength: upcomingOrderData.vendorSelections?.length,
+                    caseId: upcomingOrderData.caseId,
+                    id: upcomingOrderData.id,
+                    serviceType: upcomingOrderData.serviceType
+                });
                 if (upcomingOrderData.vendorId) {
                     upcomingOrderData.vendorSelections = [{ vendorId: upcomingOrderData.vendorId, items: upcomingOrderData.menuSelections || {} }];
                 } else {
-                    upcomingOrderData.vendorSelections = [{ vendorId: '', items: {} }];
+                    // Ensure vendorSelections exists even if empty - allows order to be displayed and edited
+                    // IMPORTANT: Empty array [] is truthy in JavaScript, so we need to check length
+                    if (!upcomingOrderData.vendorSelections || upcomingOrderData.vendorSelections.length === 0) {
+                        upcomingOrderData.vendorSelections = [{ vendorId: '', items: {} }];
+                    }
                 }
-                setOrderConfig(upcomingOrderData);
+                // Ensure all critical fields are preserved
+                const migratedConfig = {
+                    ...upcomingOrderData,
+                    vendorSelections: upcomingOrderData.vendorSelections
+                };
+                console.log(`[ClientProfile] After migration, setting order config:`, {
+                    vendorSelections: migratedConfig.vendorSelections,
+                    vendorSelectionsLength: migratedConfig.vendorSelections?.length,
+                    serviceType: migratedConfig.serviceType,
+                    caseId: migratedConfig.caseId,
+                    id: migratedConfig.id,
+                    hasCaseId: !!migratedConfig.caseId
+                });
+                setOrderConfig(migratedConfig);
             } else {
                 console.log(`[ClientProfile] Setting order config directly for ${data.client?.id}:`, {
                     serviceType: upcomingOrderData.serviceType,
@@ -901,7 +954,18 @@ export function ClientProfileDetail({
             if (!activeOrderConfig.serviceType) {
                 activeOrderConfig.serviceType = data.client.serviceType;
             }
+            
+            // Ensure vendorSelections exists for Food orders
+            if (activeOrderConfig.serviceType === 'Food' && (!activeOrderConfig.vendorSelections || activeOrderConfig.vendorSelections.length === 0)) {
+                activeOrderConfig.vendorSelections = [{ vendorId: '', items: {} }];
+            }
 
+            console.log(`[ClientProfile] Using activeOrder from clients table for ${data.client?.id}:`, {
+                serviceType: activeOrderConfig.serviceType,
+                hasVendorSelections: !!activeOrderConfig.vendorSelections,
+                vendorSelectionsLength: activeOrderConfig.vendorSelections?.length,
+                hasCaseId: !!activeOrderConfig.caseId
+            });
             setOrderConfig(activeOrderConfig);
         } else {
             const defaultOrder: any = { serviceType: data.client.serviceType };
@@ -1009,6 +1073,10 @@ export function ClientProfileDetail({
                         hasClient: !!details?.client,
                         hasActiveOrder: !!details?.activeOrder,
                         hasUpcomingOrder: !!details?.upcomingOrder,
+                        upcomingOrderType: typeof details?.upcomingOrder,
+                        upcomingOrderServiceType: (details?.upcomingOrder as any)?.serviceType,
+                        upcomingOrderVendorSelections: (details?.upcomingOrder as any)?.vendorSelections,
+                        upcomingOrderVendorSelectionsLength: (details?.upcomingOrder as any)?.vendorSelections?.length,
                         hasFoodOrder: !!details?.foodOrder,
                         hasMealOrder: !!details?.mealOrder,
                         hasBoxOrders: !!details?.boxOrders,
@@ -5674,6 +5742,9 @@ export function ClientProfileDetail({
                 }
             }
         } else if (formData.serviceType === 'Boxes') {
+            console.log('[ClientProfile] prepareActiveOrder: Processing Boxes service');
+            console.log('[ClientProfile] prepareActiveOrder: orderConfig.boxOrders:', orderConfig.boxOrders?.length || 0, 'boxes');
+            
             if (orderConfig.vendorId !== undefined) {
                 cleanedOrderConfig.vendorId = orderConfig.vendorId;
             }
@@ -5687,6 +5758,7 @@ export function ClientProfileDetail({
 
             // Helper to clean box items and notes
             if (orderConfig.boxOrders && Array.isArray(orderConfig.boxOrders) && orderConfig.boxOrders.length > 0) {
+                console.log('[ClientProfile] prepareActiveOrder: Processing', orderConfig.boxOrders.length, 'box orders');
                 cleanedOrderConfig.boxOrders = orderConfig.boxOrders.map((box: any) => {
                     const cleanedItems: any = {};
                     const cleanedNotes: any = {};
@@ -5708,6 +5780,10 @@ export function ClientProfileDetail({
                         itemNotes: cleanedNotes
                     };
                 });
+                // CRITICAL: Ensure boxOrders is always set if it existed in orderConfig, even if empty after cleaning
+                // This prevents the save from being skipped when boxOrders exists but gets filtered
+                console.log('[ClientProfile] prepareActiveOrder: Processed boxOrders:', cleanedOrderConfig.boxOrders.length, 'boxes');
+                console.log('[ClientProfile] prepareActiveOrder: Final boxOrders:', JSON.stringify(cleanedOrderConfig.boxOrders, null, 2));
             } else if (orderConfig.items && Object.keys(orderConfig.items).length > 0) {
                 // Fallback: Convert root items to boxOrders array for legacy/single-box mode
                 const cleanedItems: any = {};
@@ -6255,13 +6331,31 @@ export function ClientProfileDetail({
                 // Save box orders if it's a Boxes service
                 if (serviceType === 'Boxes') {
                     console.log('[ClientProfile] Saving Box Orders...');
-                    const boxesToSave = updateData.activeOrder?.boxOrders || [];
-                    savePromises.push(
-                        saveClientBoxOrder(clientId, boxesToSave.map((box: any) => ({
-                            ...box,
-                            caseId: updateData.activeOrder?.caseId
-                        })), { skipHistory: true })
-                    );
+                    // CRITICAL FIX: Use orderConfig.boxOrders directly if updateData.activeOrder.boxOrders is empty
+                    // This handles cases where prepareActiveOrder() might have filtered out boxOrders incorrectly
+                    const boxesFromActiveOrder = updateData.activeOrder?.boxOrders || [];
+                    const boxesFromOrderConfig = orderConfig?.boxOrders || [];
+                    
+                    // Prefer activeOrder.boxOrders, but fallback to orderConfig.boxOrders if activeOrder is empty
+                    const boxesToSave = boxesFromActiveOrder.length > 0 ? boxesFromActiveOrder : boxesFromOrderConfig;
+                    
+                    console.log('[ClientProfile] DEBUG Box Save:', {
+                        activeOrderBoxesCount: boxesFromActiveOrder.length,
+                        orderConfigBoxesCount: boxesFromOrderConfig.length,
+                        finalBoxesCount: boxesToSave.length,
+                        caseId: updateData.activeOrder?.caseId || orderConfig?.caseId
+                    });
+                    
+                    if (boxesToSave.length === 0) {
+                        console.warn('[ClientProfile] WARNING: No box orders to save! Both activeOrder and orderConfig have empty boxOrders.');
+                    } else {
+                        savePromises.push(
+                            saveClientBoxOrder(clientId, boxesToSave.map((box: any) => ({
+                                ...box,
+                                caseId: updateData.activeOrder?.caseId || orderConfig?.caseId
+                            })), { skipHistory: true })
+                        );
+                    }
                 }
 
                 // Execute all save operations in parallel

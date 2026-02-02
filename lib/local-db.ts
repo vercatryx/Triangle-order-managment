@@ -613,7 +613,7 @@ export async function getActiveOrderForClientLocal(clientId: string) {
                     for (const vs of vendorSelections) {
                         // Get items for this vendor selection
                         const items = order.is_upcoming
-                            ? db.upcomingOrderItems.filter(item => item.upcoming_vendor_selection_id === vs.id)
+                            ? db.upcomingOrderItems.filter(item => item.vendor_selection_id === vs.id)
                             : db.orderItems.filter(item => item.vendor_selection_id === vs.id);
                         const itemsMap: any = {};
                         for (const item of items) {
@@ -727,8 +727,8 @@ export async function getUpcomingOrderForClientLocal(clientId: string) {
 
             if (data.service_type === 'Food') {
                 const vendorSelections = db.upcomingOrderVendorSelections.filter(vs => vs.upcoming_order_id === data.id);
+                orderConfig.vendorSelections = [];
                 if (vendorSelections.length > 0) {
-                    orderConfig.vendorSelections = [];
                     for (const vs of vendorSelections) {
                         const items = db.upcomingOrderItems.filter(item => item.vendor_selection_id === vs.id);
                         const itemsMap: any = {};
@@ -739,6 +739,26 @@ export async function getUpcomingOrderForClientLocal(clientId: string) {
                             vendorId: vs.vendor_id,
                             items: itemsMap
                         });
+                    }
+                } else {
+                    // Food orders without vendor selections - still return the order config
+                    // This allows empty/incomplete orders to be displayed and edited
+                    // Try to find items directly by upcoming_order_id as fallback
+                    const items = db.upcomingOrderItems.filter(item => item.upcoming_order_id === data.id);
+                    if (items.length > 0) {
+                        // If items exist but no vendor selection, create a placeholder
+                        const itemsMap: any = {};
+                        for (const item of items) {
+                            if (item.menu_item_id) {
+                                itemsMap[item.menu_item_id] = item.quantity;
+                            }
+                        }
+                        if (Object.keys(itemsMap).length > 0) {
+                            orderConfig.vendorSelections.push({
+                                vendorId: null,
+                                items: itemsMap
+                            });
+                        }
                     }
                 }
             } else if (data.service_type === 'Boxes') {
@@ -769,16 +789,30 @@ export async function getUpcomingOrderForClientLocal(clientId: string) {
                 const vendorSelections = db.upcomingOrderVendorSelections.filter(vs => vs.upcoming_order_id === data.id);
                 orderConfig.mealSelections = {};
 
+                let mealItems: any = {};
+                let mealVendorId = null;
+
                 if (vendorSelections.length > 0) {
                     const vs = vendorSelections[0];
+                    mealVendorId = vs.vendor_id;
                     const items = db.upcomingOrderItems.filter(item => item.vendor_selection_id === vs.id);
-                    const mealItems: any = {};
                     for (const item of items) {
                         const itemId = item.meal_item_id || item.menu_item_id;
                         if (itemId) mealItems[itemId] = item.quantity;
                     }
+                } else {
+                    // Meal orders don't require a vendor - try to find items directly by upcoming_order_id
+                    // This handles cases where vendor selection wasn't created but items exist
+                    const items = db.upcomingOrderItems.filter(item => item.upcoming_order_id === data.id);
+                    for (const item of items) {
+                        const itemId = item.meal_item_id || item.menu_item_id;
+                        if (itemId) mealItems[itemId] = item.quantity;
+                    }
+                }
+
+                if (Object.keys(mealItems).length > 0) {
                     orderConfig.mealSelections[data.meal_type || 'Lunch'] = {
-                        vendorId: vs.vendor_id,
+                        vendorId: mealVendorId,
                         items: mealItems
                     };
                 }
@@ -795,6 +829,17 @@ export async function getUpcomingOrderForClientLocal(clientId: string) {
                     }
                 }
             }
+            
+            // Always return the order config, even if it's empty
+            // This ensures orders without vendor selections/items can still be displayed and edited
+            console.log(`[getUpcomingOrderForClientLocal] Returning order config for ${clientId}:`, {
+                id: orderConfig.id,
+                serviceType: orderConfig.serviceType,
+                hasVendorSelections: !!orderConfig.vendorSelections,
+                vendorSelectionsLength: orderConfig.vendorSelections?.length || 0,
+                hasMealSelections: !!orderConfig.mealSelections,
+                mealSelectionsKeys: orderConfig.mealSelections ? Object.keys(orderConfig.mealSelections) : []
+            });
             return orderConfig;
         }
 
@@ -869,6 +914,24 @@ export async function getUpcomingOrderForClientLocal(clientId: string) {
                             items: itemsMap
                         });
                     }
+                } else {
+                    // Food orders without vendor selections - try to find items directly by upcoming_order_id
+                    // This handles cases where vendor selection wasn't created but items exist
+                    const items = db.upcomingOrderItems.filter(item => item.upcoming_order_id === data.id);
+                    if (items.length > 0) {
+                        const itemsMap: any = {};
+                        for (const item of items) {
+                            if (item.menu_item_id) {
+                                itemsMap[item.menu_item_id] = item.quantity;
+                            }
+                        }
+                        if (Object.keys(itemsMap).length > 0) {
+                            extractedVendorSelections.push({
+                                vendorId: null,
+                                items: itemsMap
+                            });
+                        }
+                    }
                 }
             } else if (data.service_type === 'Boxes') {
                 const boxSelection = db.upcomingOrderBoxSelections.find(bs => bs.upcoming_order_id === data.id);
@@ -930,7 +993,18 @@ export async function getUpcomingOrderForClientLocal(clientId: string) {
                         }
                     }
                 } else {
-                    console.warn(`[getUpcomingOrderForClientLocal] Meal order ${data.id} has NO vendor selections. Items will be empty.`);
+                    // Meal orders don't require a vendor - try to find items directly by upcoming_order_id
+                    // This handles cases where vendor selection wasn't created but items exist
+                    const items = db.upcomingOrderItems.filter(item => item.upcoming_order_id === data.id);
+                    for (const item of items) {
+                        const itemId = item.meal_item_id || item.menu_item_id;
+                        if (itemId) {
+                            mealItems[itemId] = item.quantity;
+                        }
+                    }
+                    if (Object.keys(mealItems).length === 0) {
+                        console.warn(`[getUpcomingOrderForClientLocal] Meal order ${data.id} has NO vendor selections and NO items.`);
+                    }
                 }
 
                 // Store as meal selection

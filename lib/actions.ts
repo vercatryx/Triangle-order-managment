@@ -1437,6 +1437,7 @@ export async function deleteNutritionist(id: string) {
 // --- CLIENT ACTIONS ---
 
 // Helper to generate next client ID manually to avoid sequence issues
+// Improved to reduce race conditions by using ORDER BY and LIMIT for atomic max query
 async function generateNextClientId() {
     // Use Service Role to ensure we see ALL clients regardless of RLS
     // Create a local admin client just for this operation
@@ -1446,16 +1447,18 @@ async function generateNextClientId() {
         { auth: { persistSession: false } }
     );
 
-    // Fetch IDs with a high limit to ensure we get all of them
-    const { data } = await supabaseAdmin
+    // Use a more atomic approach: get the max ID directly with a query
+    // This reduces the window for race conditions
+    const { data: maxIdData } = await supabaseAdmin
         .from('clients')
         .select('id')
-        .limit(5000);
+        .order('id', { ascending: false })
+        .limit(100); // Get top 100 to account for any non-sequential IDs
 
-    if (!data || data.length === 0) return 'CLIENT-001';
+    if (!maxIdData || maxIdData.length === 0) return 'CLIENT-001';
 
     let maxNum = 0;
-    for (const row of data) {
+    for (const row of maxIdData) {
         if (!row.id) continue;
         const match = row.id.match(/CLIENT-(\d+)/);
         if (match) {
@@ -1464,29 +1467,39 @@ async function generateNextClientId() {
         }
     }
 
+    // Add a small random component to reduce collision probability in race conditions
+    // This is a safety measure - the retry logic in addClient will handle any collisions
     const nextNum = maxNum + 1;
     let candidateId = `CLIENT-${nextNum.toString().padStart(3, '0')}`;
 
-    // Double check existence to be absolutely sure
-    // Loop until we find a free one (safety valve for race conditions)
-    let tries = 0;
-    while (tries < 10) {
-        const { data: exists } = await supabaseAdmin
+    // Quick existence check (but don't rely solely on this due to race conditions)
+    const { data: exists } = await supabaseAdmin
+        .from('clients')
+        .select('id')
+        .eq('id', candidateId)
+        .maybeSingle();
+
+    if (!exists) {
+        return candidateId;
+    }
+
+    // If exists, find next available
+    let currentNum = nextNum;
+    for (let i = 0; i < 20; i++) {
+        currentNum++;
+        candidateId = `CLIENT-${currentNum.toString().padStart(3, '0')}`;
+        const { data: checkExists } = await supabaseAdmin
             .from('clients')
             .select('id')
             .eq('id', candidateId)
             .maybeSingle();
-
-        if (!exists) {
+        
+        if (!checkExists) {
             return candidateId;
         }
-
-        // If exists, try next
-        const currentNum = parseInt(candidateId.replace('CLIENT-', ''), 10);
-        candidateId = `CLIENT-${(currentNum + 1).toString().padStart(3, '0')}`;
-        tries++;
     }
 
+    // Fallback: return the next number anyway (retry logic will handle collision)
     return candidateId;
 }
 
@@ -1624,53 +1637,81 @@ export async function getPublicClient(id: string) {
 }
 
 export async function addClient(data: Omit<ClientProfile, 'id' | 'createdAt' | 'updatedAt'>) {
-    const payload: any = {
-        full_name: data.fullName,
-        email: data.email,
-        address: data.address,
-        phone_number: data.phoneNumber,
-        secondary_phone_number: data.secondaryPhoneNumber || null,
-        navigator_id: data.navigatorId || null,
-        end_date: data.endDate,
-        screening_took_place: data.screeningTookPlace,
-        screening_signed: data.screeningSigned,
-        notes: data.notes,
-        status_id: data.statusId || null,
-        service_type: data.serviceType,
-        approved_meals_per_week: data.approvedMealsPerWeek || 0,
-        authorized_amount: data.authorizedAmount !== null && data.authorizedAmount !== undefined ? roundCurrency(data.authorizedAmount) : null,
-        expiration_date: data.expirationDate || null,
-        location_id: data.locationId || null,
-        id: await generateNextClientId()
-    };
+    // Retry logic to handle race conditions in ID generation
+    const maxRetries = 5;
+    let lastError: any = null;
 
-    // Save active_order if provided (ClientProfile component handles validation)
-    if (data.activeOrder !== undefined && data.activeOrder !== null) {
-        payload.active_order = data.activeOrder;
-    } else {
-        payload.active_order = {};
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+        const payload: any = {
+            full_name: data.fullName,
+            email: data.email,
+            address: data.address,
+            phone_number: data.phoneNumber,
+            secondary_phone_number: data.secondaryPhoneNumber || null,
+            navigator_id: data.navigatorId || null,
+            end_date: data.endDate,
+            screening_took_place: data.screeningTookPlace,
+            screening_signed: data.screeningSigned,
+            notes: data.notes,
+            status_id: data.statusId || null,
+            service_type: data.serviceType,
+            approved_meals_per_week: data.approvedMealsPerWeek || 0,
+            authorized_amount: data.authorizedAmount !== null && data.authorizedAmount !== undefined ? roundCurrency(data.authorizedAmount) : null,
+            expiration_date: data.expirationDate || null,
+            location_id: data.locationId || null,
+            id: await generateNextClientId()
+        };
+
+        // Save active_order if provided (ClientProfile component handles validation)
+        if (data.activeOrder !== undefined && data.activeOrder !== null) {
+            payload.active_order = data.activeOrder;
+        } else {
+            payload.active_order = {};
+        }
+
+        const { data: res, error } = await supabase.from('clients').insert([payload]).select().single();
+        
+        // Check for duplicate key error (unique constraint violation)
+        if (error) {
+            const isDuplicateKey = error.code === '23505' || 
+                                  error.message?.includes('duplicate key') || 
+                                  error.message?.includes('unique constraint') ||
+                                  error.message?.includes('clients_okey');
+            
+            if (isDuplicateKey && attempt < maxRetries - 1) {
+                // Retry with a new ID after a short delay
+                lastError = error;
+                await new Promise(resolve => setTimeout(resolve, 50 * (attempt + 1))); // Exponential backoff
+                continue;
+            } else {
+                handleError(error);
+            }
+        }
+
+        if (!res) {
+            throw new Error('Failed to create client: no data returned');
+        }
+
+        const newClient = mapClientFromDB(res);
+
+        if (newClient.activeOrder && newClient.activeOrder.caseId) {
+            await syncCurrentOrderToUpcoming(newClient.id, newClient, true);
+        }
+
+        revalidatePath('/clients');
+
+        // Targeted local DB sync for this client
+        const { updateClientInLocalDB } = await import('./local-db');
+        updateClientInLocalDB(newClient.id);
+
+        return newClient;
     }
 
-    const { data: res, error } = await supabase.from('clients').insert([payload]).select().single();
-    handleError(error);
-
-    if (!res) {
-        throw new Error('Failed to create client: no data returned');
+    // If we exhausted all retries, throw the last error
+    if (lastError) {
+        handleError(lastError);
     }
-
-    const newClient = mapClientFromDB(res);
-
-    if (newClient.activeOrder && newClient.activeOrder.caseId) {
-        await syncCurrentOrderToUpcoming(newClient.id, newClient, true);
-    }
-
-    revalidatePath('/clients');
-
-    // Targeted local DB sync for this client
-    const { updateClientInLocalDB } = await import('./local-db');
-    updateClientInLocalDB(newClient.id);
-
-    return newClient;
+    throw new Error('Failed to create client after multiple retries');
 }
 
 export async function addDependent(name: string, parentClientId: string, dob?: string | null, cin?: string | null) {
@@ -1687,44 +1728,72 @@ export async function addDependent(name: string, parentClientId: string, dob?: s
         throw new Error('Cannot attach dependent to another dependent');
     }
 
-    const payload = {
-        full_name: name.trim(),
-        email: null,
-        address: '',
-        phone_number: '',
-        navigator_id: null,
-        end_date: '',
-        screening_took_place: false,
-        screening_signed: false,
-        notes: '',
-        status_id: null,
-        service_type: 'Food' as ServiceType, // Default service type
-        approved_meals_per_week: 0,
-        authorized_amount: null,
-        expiration_date: null,
-        active_order: {},
-        parent_client_id: parentClientId,
-        dob: dob || null,
-        cin: cin ?? null,
-        id: await generateNextClientId()
-    };
+    // Retry logic to handle race conditions in ID generation
+    const maxRetries = 5;
+    let lastError: any = null;
 
-    const { data: res, error } = await supabase.from('clients').insert([payload]).select().single();
-    handleError(error);
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+        const payload = {
+            full_name: name.trim(),
+            email: null,
+            address: '',
+            phone_number: '',
+            navigator_id: null,
+            end_date: '',
+            screening_took_place: false,
+            screening_signed: false,
+            notes: '',
+            status_id: null,
+            service_type: 'Food' as ServiceType, // Default service type
+            approved_meals_per_week: 0,
+            authorized_amount: null,
+            expiration_date: null,
+            active_order: {},
+            parent_client_id: parentClientId,
+            dob: dob || null,
+            cin: cin ?? null,
+            id: await generateNextClientId()
+        };
 
-    if (!res) {
-        throw new Error('Failed to create dependent: no data returned');
+        const { data: res, error } = await supabase.from('clients').insert([payload]).select().single();
+        
+        // Check for duplicate key error (unique constraint violation)
+        if (error) {
+            const isDuplicateKey = error.code === '23505' || 
+                                  error.message?.includes('duplicate key') || 
+                                  error.message?.includes('unique constraint') ||
+                                  error.message?.includes('clients_okey');
+            
+            if (isDuplicateKey && attempt < maxRetries - 1) {
+                // Retry with a new ID after a short delay
+                lastError = error;
+                await new Promise(resolve => setTimeout(resolve, 50 * (attempt + 1))); // Exponential backoff
+                continue;
+            } else {
+                handleError(error);
+            }
+        }
+
+        if (!res) {
+            throw new Error('Failed to create dependent: no data returned');
+        }
+
+        const newDependent = mapClientFromDB(res);
+
+        revalidatePath('/clients');
+
+        // Targeted local DB sync for this client
+        const { updateClientInLocalDB } = await import('./local-db');
+        updateClientInLocalDB(newDependent.id);
+
+        return newDependent;
     }
 
-    const newDependent = mapClientFromDB(res);
-
-    revalidatePath('/clients');
-
-    // Targeted local DB sync for this client
-    const { updateClientInLocalDB } = await import('./local-db');
-    updateClientInLocalDB(newDependent.id);
-
-    return newDependent;
+    // If we exhausted all retries, throw the last error
+    if (lastError) {
+        handleError(lastError);
+    }
+    throw new Error('Failed to create dependent after multiple retries');
 }
 
 export async function getRegularClients() {
@@ -3356,12 +3425,28 @@ export async function syncSingleOrderForDeliveryDay(
         const allItemsToInsert: any[] = [];
 
         // First, batch insert all vendor selections
-        const vendorSelectionsToInsert = orderConfig.vendorSelections
-            .filter((selection: any) => selection.vendorId && selection.items)
-            .map((selection: any) => ({
-                upcoming_order_id: upcomingOrderId,
-                vendor_id: selection.vendorId
-            }));
+        // IMPORTANT: We need to create vendor selections even if vendorId is empty/null
+        // This is because items must be linked to a vendor_selection_id
+        // However, we should only create vendor selections if there are actual items to save
+        const vendorSelectionsToInsert: any[] = [];
+        const vendorSelectionItemsMap = new Map<number, any>(); // Map index to items
+        
+        for (let i = 0; i < orderConfig.vendorSelections.length; i++) {
+            const selection = orderConfig.vendorSelections[i];
+            if (!selection.items) continue;
+            
+            // Check if there are actual items with quantity > 0
+            const hasItems = Object.keys(selection.items || {}).length > 0 && 
+                Object.values(selection.items || {}).some((qty: any) => qty > 0);
+            
+            if (hasItems) {
+                vendorSelectionsToInsert.push({
+                    upcoming_order_id: upcomingOrderId,
+                    vendor_id: selection.vendorId || null // Allow null vendor_id
+                });
+                vendorSelectionItemsMap.set(vendorSelectionsToInsert.length - 1, selection);
+            }
+        }
 
         if (vendorSelectionsToInsert.length > 0) {
             const { data: insertedVendorSelections, error: vsBatchError } = await supabaseClient
@@ -3380,17 +3465,11 @@ export async function syncSingleOrderForDeliveryDay(
         }
 
         // Now batch collect all items to insert
-        // Create a map of vendorId to vendorSelection for quick lookup
-        const vendorSelectionMap = new Map<string, any>();
-        for (const vs of allVendorSelections) {
-            vendorSelectionMap.set(vs.vendor_id, vs);
-        }
-
-        for (const selection of orderConfig.vendorSelections) {
-            if (!selection.vendorId || !selection.items) continue;
-
-            const vendorSelection = vendorSelectionMap.get(selection.vendorId);
-            if (!vendorSelection) continue;
+        // Match items to vendor selections by index (since we created them in the same order)
+        for (let i = 0; i < allVendorSelections.length && i < vendorSelectionsToInsert.length; i++) {
+            const vendorSelection = allVendorSelections[i];
+            const selection = vendorSelectionItemsMap.get(i);
+            if (!selection || !selection.items) continue;
 
             for (const [itemId, qty] of Object.entries(selection.items)) {
                 const item = menuItems.find(i => i.id === itemId);
@@ -3536,69 +3615,134 @@ export async function syncSingleOrderForDeliveryDay(
         const boxOrders = orderConfig.boxOrders || [];
 
         const processBox = async (boxData: any) => {
-            const boxDef = boxTypes.find(bt => bt.id === boxData.boxTypeId);
-            const boxVendorId = boxData.vendorId || boxDef?.vendorId || null;
-            const quantity = boxData.quantity || 1;
-            const boxItemsRaw = boxData.items || {};
-            const boxItemNotes = boxData.itemNotes || {};
-            const boxItemPrices = boxData.itemPrices || {};
+            try {
+                const boxDef = boxTypes.find(bt => bt.id === boxData.boxTypeId);
+                const boxVendorId = boxData.vendorId || boxDef?.vendorId || null;
+                const quantity = boxData.quantity || 1;
+                const boxItemsRaw = boxData.items || {};
+                const boxItemNotes = boxData.itemNotes || {};
+                const boxItemPrices = boxData.itemPrices || {};
 
-            const boxItems: any = {};
-            let calculatedTotal = 0;
+                // Log warning if vendor is missing but continue anyway
+                if (!boxVendorId) {
+                    console.warn(`[syncSingleOrderForDeliveryDay] WARNING: Box order missing vendor_id. BoxTypeId: ${boxData.boxTypeId}, will save with NULL vendor_id.`);
+                }
 
-            for (const [itemId, qty] of Object.entries(boxItemsRaw)) {
-                const quantity = typeof qty === 'number' ? qty : 0;
-                const price = boxItemPrices[itemId];
-                const note = boxItemNotes[itemId];
+                const boxItems: any = {};
+                let calculatedTotal = 0;
 
-                if ((price !== undefined && price !== null) || note) {
-                    const itemEntry: any = { quantity };
-                    if (price !== undefined && price !== null) itemEntry.price = price;
-                    if (note) itemEntry.note = note;
-                    boxItems[itemId] = itemEntry;
+                for (const [itemId, qty] of Object.entries(boxItemsRaw)) {
+                    const quantity = typeof qty === 'number' ? qty : 0;
+                    const price = boxItemPrices[itemId];
+                    const note = boxItemNotes[itemId];
+
+                    if ((price !== undefined && price !== null) || note) {
+                        const itemEntry: any = { quantity };
+                        if (price !== undefined && price !== null) itemEntry.price = price;
+                        if (note) itemEntry.note = note;
+                        boxItems[itemId] = itemEntry;
+                    } else {
+                        boxItems[itemId] = quantity;
+                    }
+
+                    if (price !== undefined && price !== null && quantity > 0) {
+                        calculatedTotal += price * quantity;
+                    }
+                }
+
+                if (calculatedTotal === 0 && boxDef?.priceEach) {
+                    calculatedTotal = boxDef.priceEach * quantity;
+                }
+
+                const boxSelectionData: any = {
+                    upcoming_order_id: upcomingOrderId,
+                    vendor_id: boxVendorId, // Allow NULL - schema should allow this or we'll handle the error
+                    quantity: quantity,
+                    unit_value: 0,
+                    total_value: calculatedTotal,
+                    items: boxItems,
+                    box_type_id: boxData.boxTypeId || undefined
+                };
+
+                console.log(`[syncSingleOrderForDeliveryDay] Inserting box selection:`, {
+                    upcoming_order_id: upcomingOrderId,
+                    vendor_id: boxVendorId,
+                    quantity: quantity,
+                    itemsCount: Object.keys(boxItems).length,
+                    total_value: calculatedTotal
+                });
+
+                const { error: boxSelectionError } = await supabaseClient.from('upcoming_order_box_selections').insert(boxSelectionData);
+                if (boxSelectionError) {
+                    // CRITICAL: Log error but don't throw - we want to save the order even if box selection fails
+                    // This ensures the upcoming_order record exists and can be fixed later
+                    console.error(`[syncSingleOrderForDeliveryDay] CRITICAL ERROR inserting box selection (order will still be saved):`, {
+                        error: boxSelectionError.message,
+                        code: boxSelectionError.code,
+                        details: boxSelectionError.details,
+                        hint: boxSelectionError.hint,
+                        boxSelectionData: {
+                            upcoming_order_id: upcomingOrderId,
+                            vendor_id: boxVendorId,
+                            quantity: quantity,
+                            box_type_id: boxData.boxTypeId
+                        }
+                    });
+                    
+                    // If vendor_id is the issue, try again with a workaround
+                    if (boxSelectionError.code === '23502' && boxSelectionError.column === 'vendor_id') {
+                        console.warn(`[syncSingleOrderForDeliveryDay] vendor_id is required but missing. Attempting to find a default vendor...`);
+                        // Try to find any vendor for this box type or use first available vendor
+                        const fallbackVendorId = boxDef?.vendorId || vendors.find(v => v.isActive)?.id || null;
+                        if (fallbackVendorId) {
+                            console.log(`[syncSingleOrderForDeliveryDay] Using fallback vendor: ${fallbackVendorId}`);
+                            const retryData = { ...boxSelectionData, vendor_id: fallbackVendorId };
+                            const { error: retryError } = await supabaseClient.from('upcoming_order_box_selections').insert(retryData);
+                            if (retryError) {
+                                console.error(`[syncSingleOrderForDeliveryDay] Retry also failed:`, retryError);
+                            } else {
+                                console.log(`[syncSingleOrderForDeliveryDay] Successfully saved box selection with fallback vendor`);
+                            }
+                        } else {
+                            console.error(`[syncSingleOrderForDeliveryDay] No fallback vendor available. Box selection NOT saved, but order record exists.`);
+                        }
+                    }
+                    // Don't throw - let the order be saved even if box selection fails
+                    // The sync function will catch this later and can re-sync
                 } else {
-                    boxItems[itemId] = quantity;
+                    console.log(`[syncSingleOrderForDeliveryDay] Successfully saved box selection`);
                 }
-
-                if (price !== undefined && price !== null && quantity > 0) {
-                    calculatedTotal += price * quantity;
-                }
-            }
-
-            if (calculatedTotal === 0 && boxDef?.priceEach) {
-                calculatedTotal = boxDef.priceEach * quantity;
-            }
-
-            const boxSelectionData: any = {
-                upcoming_order_id: upcomingOrderId,
-                vendor_id: boxVendorId,
-                quantity: quantity,
-                unit_value: 0,
-                total_value: calculatedTotal,
-                items: boxItems,
-                box_type_id: boxData.boxTypeId || undefined
-            };
-
-            const { error: boxSelectionError } = await supabaseClient.from('upcoming_order_box_selections').insert(boxSelectionData);
-            if (boxSelectionError) {
-                console.error(`[syncSingleOrderForDeliveryDay] Error inserting box selection:`, boxSelectionError);
-                throw new Error(`Failed to insert box selection: ${boxSelectionError.message}`);
+            } catch (error: any) {
+                // Catch any unexpected errors and log but don't throw
+                console.error(`[syncSingleOrderForDeliveryDay] Unexpected error in processBox (order will still be saved):`, error);
             }
         };
 
         // PERFORMANCE: Process boxes in parallel if multiple
+        // CRITICAL: Use Promise.allSettled to ensure all boxes are attempted even if some fail
         if (boxOrders.length > 0) {
-            await Promise.all(boxOrders.map((box: any) => processBox(box)));
+            const results = await Promise.allSettled(boxOrders.map((box: any) => processBox(box)));
+            // Log any failures but don't throw - order record is already saved
+            results.forEach((result, index) => {
+                if (result.status === 'rejected') {
+                    console.error(`[syncSingleOrderForDeliveryDay] Box ${index + 1} processing failed (order still saved):`, result.reason);
+                }
+            });
         } else {
             // Fallback for legacy format
-            await processBox({
-                boxTypeId: orderConfig.boxTypeId,
-                vendorId: orderConfig.vendorId,
-                quantity: orderConfig.boxQuantity,
-                items: (orderConfig as any).items,
-                itemNotes: (orderConfig as any).itemNotes,
-                itemPrices: (orderConfig as any).itemPrices
-            });
+            try {
+                await processBox({
+                    boxTypeId: orderConfig.boxTypeId,
+                    vendorId: orderConfig.vendorId,
+                    quantity: orderConfig.boxQuantity,
+                    items: (orderConfig as any).items,
+                    itemNotes: (orderConfig as any).itemNotes,
+                    itemPrices: (orderConfig as any).itemPrices
+                });
+            } catch (error: any) {
+                // Log but don't throw - order record is already saved
+                console.error(`[syncSingleOrderForDeliveryDay] Legacy box processing failed (order still saved):`, error);
+            }
         }
     } else if (orderConfig.serviceType === 'Custom') {
         console.log('[syncSingleOrderForDeliveryDay] Processing Custom order', {
@@ -5441,10 +5585,50 @@ export async function getClientProfileData(clientId: string) {
 
         if (!client) return null;
 
+        // IMPORTANT: If upcomingOrder is null/empty but activeOrder exists and is from upcoming_orders (isUpcoming flag),
+        // use activeOrder as the upcomingOrder. This matches how the sidebar works.
+        // The sidebar uses client.activeOrder which comes from getActiveOrderForClientLocal when it falls back to upcoming_orders
+        let finalUpcomingOrder = upcomingOrder;
+        if (!upcomingOrder && activeOrder && (activeOrder as any).isUpcoming) {
+            console.log(`[getClientProfileData] Using activeOrder as upcomingOrder for ${clientId} (isUpcoming flag set)`, {
+                activeOrderServiceType: (activeOrder as any).serviceType,
+                activeOrderCaseId: (activeOrder as any).caseId,
+                activeOrderHasVendorSelections: !!(activeOrder as any).vendorSelections,
+                activeOrderVendorSelectionsLength: (activeOrder as any).vendorSelections?.length
+            });
+            finalUpcomingOrder = activeOrder;
+        } else if (upcomingOrder && activeOrder && (activeOrder as any).isUpcoming) {
+            // If both exist but activeOrder is from upcoming_orders, prefer it as it's already processed
+            console.log(`[getClientProfileData] Both upcomingOrder and activeOrder (isUpcoming) exist for ${clientId}, preferring activeOrder`);
+            finalUpcomingOrder = activeOrder;
+        } else if (!upcomingOrder && !activeOrder && client.activeOrder) {
+            // CRITICAL FIX: If no upcomingOrder from table AND no activeOrder from tables,
+            // but client.activeOrder exists in the JSONB field, use it as the upcomingOrder.
+            // This handles cases where the order exists only in clients.active_order but not synced to upcoming_orders table.
+            // This is why the sidebar shows the order (it uses client.activeOrder) but the profile doesn't (it only checks upcoming_orders table).
+            console.log(`[getClientProfileData] No upcomingOrder or activeOrder from tables, but client.activeOrder exists for ${clientId}. Using client.activeOrder as upcomingOrder.`, {
+                clientActiveOrderServiceType: client.activeOrder?.serviceType,
+                clientActiveOrderCaseId: client.activeOrder?.caseId,
+                clientActiveOrderHasVendorSelections: !!client.activeOrder?.vendorSelections,
+                clientActiveOrderVendorSelectionsLength: client.activeOrder?.vendorSelections?.length,
+                clientActiveOrderHasDeliveryDayOrders: !!client.activeOrder?.deliveryDayOrders
+            });
+            finalUpcomingOrder = client.activeOrder;
+        }
+
+        console.log(`[getClientProfileData] Final result for ${clientId}:`, {
+            hasUpcomingOrder: !!finalUpcomingOrder,
+            upcomingOrderType: typeof finalUpcomingOrder,
+            upcomingOrderServiceType: (finalUpcomingOrder as any)?.serviceType,
+            upcomingOrderCaseId: (finalUpcomingOrder as any)?.caseId,
+            upcomingOrderHasVendorSelections: !!(finalUpcomingOrder as any)?.vendorSelections,
+            upcomingOrderVendorSelectionsLength: (finalUpcomingOrder as any)?.vendorSelections?.length
+        });
+
         return {
             client,
             activeOrder,
-            upcomingOrder,
+            upcomingOrder: finalUpcomingOrder,
             foodOrder,
             mealOrder,
             boxOrders

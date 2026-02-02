@@ -360,7 +360,31 @@ export function ClientInfoShelf({
                                 autoFocus
                             />
                         ) : (
-                            <h2>{client.fullName}</h2>
+                            <>
+                                <h2>{client.fullName}</h2>
+                                <a 
+                                    href={`/client-portal/${client.id}`}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    style={{ 
+                                        fontSize: '0.85rem', 
+                                        color: 'var(--text-tertiary)', 
+                                        marginTop: '4px',
+                                        textDecoration: 'none',
+                                        cursor: 'pointer'
+                                    }}
+                                    onMouseEnter={(e) => {
+                                        e.currentTarget.style.color = 'var(--color-primary)';
+                                        e.currentTarget.style.textDecoration = 'underline';
+                                    }}
+                                    onMouseLeave={(e) => {
+                                        e.currentTarget.style.color = 'var(--text-tertiary)';
+                                        e.currentTarget.style.textDecoration = 'none';
+                                    }}
+                                >
+                                    ID: {client.id}
+                                </a>
+                            </>
                         )}
                     </div>
                     <div className={styles.headerActions}>

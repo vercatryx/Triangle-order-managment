@@ -34,6 +34,9 @@ export default function ClientPortalSidebar({ client }: Props) {
                     <h2 style={{ fontSize: '1.25rem', fontWeight: 700, margin: '0 0 4px', color: 'var(--text-primary)' }}>
                         {client.fullName}
                     </h2>
+                    <div style={{ fontSize: '0.85rem', color: 'var(--text-tertiary)', marginBottom: '4px' }}>
+                        ID: {client.id}
+                    </div>
                     <div style={{ fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
                         Client Portal
                     </div>
