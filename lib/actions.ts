@@ -3946,7 +3946,8 @@ export async function syncSingleOrderForDeliveryDay(
  * Now supports multiple orders per client (one per delivery day)
  */
 export async function syncCurrentOrderToUpcoming(clientId: string, client: ClientProfile, skipClientUpdate: boolean = false, skipHistory: boolean = false) {
-    // console.log('[syncCurrentOrderToUpcoming] START', { clientId, serviceType: client.activeOrder?.serviceType });
+    console.log('[syncCurrentOrderToUpcoming] START', { clientId, serviceType: client.activeOrder?.serviceType });
+    try {
 
     // 1. DRAFT PERSISTENCE: Save the raw activeOrder metadata to the clients table.
     // This ensures Case ID, Vendor, and other selections are persisted even if the 
@@ -4302,18 +4303,30 @@ export async function syncCurrentOrderToUpcoming(clientId: string, client: Clien
         }
     }
 
-    // Targeted local DB sync for this client to avoid full blocking sync
-    // PERFORMANCE: Run in background to avoid blocking the response
-    const { updateClientInLocalDB } = await import('./local-db');
-    updateClientInLocalDB(clientId).catch(err => {
-        console.error('[syncCurrentOrderToUpcoming] Error in background local DB sync:', err);
-    });
+        // Targeted local DB sync for this client to avoid full blocking sync
+        // PERFORMANCE: Run in background to avoid blocking the response
+        console.log('[syncCurrentOrderToUpcoming] Starting local DB sync...');
+        const { updateClientInLocalDB } = await import('./local-db');
+        updateClientInLocalDB(clientId).catch(err => {
+            console.error('[syncCurrentOrderToUpcoming] Error in background local DB sync:', err);
+        });
 
-    try {
-        revalidatePath('/clients');
-        revalidatePath(`/client-portal/${clientId}`);
-    } catch (e) { }
-
+        console.log('[syncCurrentOrderToUpcoming] Revalidating paths...');
+        try {
+            revalidatePath('/clients');
+            revalidatePath(`/client-portal/${clientId}`);
+        } catch (e) {
+            console.error('[syncCurrentOrderToUpcoming] Error revalidating paths:', e);
+        }
+        
+        console.log('[syncCurrentOrderToUpcoming] SUCCESS');
+    } catch (error: any) {
+        console.error('[syncCurrentOrderToUpcoming] FATAL ERROR:', error);
+        console.error('[syncCurrentOrderToUpcoming] Error message:', error?.message);
+        console.error('[syncCurrentOrderToUpcoming] Error stack:', error?.stack);
+        console.error('[syncCurrentOrderToUpcoming] Error details:', JSON.stringify(error, null, 2));
+        throw error;
+    }
 }
 
 /**
@@ -7111,72 +7124,123 @@ export async function getBatchClientDetails(clientIds: string[]) {
 // --- INDEPENDENT ORDER ACTIONS ---
 
 export async function getClientFoodOrder(clientId: string): Promise<ClientFoodOrder | null> {
-    const { data, error } = await supabase
-        .from('client_food_orders')
-        .select('*')
-        .eq('client_id', clientId)
-        .maybeSingle();
+    console.log('[getClientFoodOrder] START', { clientId });
+    try {
+        // Use Service Role to bypass RLS - clients need to read their own orders
+        let supabaseClient = supabase;
+        const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+        if (serviceRoleKey) {
+            supabaseClient = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, serviceRoleKey, {
+                auth: { persistSession: false }
+            });
+            console.log('[getClientFoodOrder] Using service role key');
+        } else {
+            console.warn('[getClientFoodOrder] Service role key not found - using regular client (may be blocked by RLS)');
+        }
 
-    if (error) {
-        // Suppress table missing error during migration phase? 
-        // Or confirm tables exist. For now log error.
-        console.error('Error fetching food order:', error);
+        console.log('[getClientFoodOrder] Querying database...');
+        const { data, error } = await supabaseClient
+            .from('client_food_orders')
+            .select('*')
+            .eq('client_id', clientId)
+            .maybeSingle();
+
+        if (error) {
+            console.error('[getClientFoodOrder] Database error:', error);
+            console.error('[getClientFoodOrder] Error details:', JSON.stringify(error, null, 2));
+            return null;
+        }
+        
+        if (!data) {
+            console.log('[getClientFoodOrder] No food order found for client');
+            return null;
+        }
+        
+        console.log('[getClientFoodOrder] Food order found:', { id: data.id, hasDeliveryDayOrders: !!data.delivery_day_orders });
+
+        const result = {
+            id: data.id,
+            clientId: data.client_id,
+            caseId: data.case_id,
+            deliveryDayOrders: data.delivery_day_orders,
+            notes: data.notes,
+            created_at: data.created_at,
+            updated_at: data.updated_at,
+            updated_by: data.updated_by
+        };
+        
+        console.log('[getClientFoodOrder] SUCCESS - Returning food order');
+        return result;
+    } catch (error: any) {
+        console.error('[getClientFoodOrder] FATAL ERROR:', error);
+        console.error('[getClientFoodOrder] Error message:', error?.message);
+        console.error('[getClientFoodOrder] Error stack:', error?.stack);
         return null;
     }
-    if (!data) return null;
-
-    return {
-        id: data.id,
-        clientId: data.client_id,
-        caseId: data.case_id,
-        deliveryDayOrders: data.delivery_day_orders,
-        notes: data.notes,
-        created_at: data.created_at,
-        updated_at: data.updated_at,
-        updated_by: data.updated_by
-    };
 }
 
 export async function saveClientFoodOrder(clientId: string, data: Partial<ClientFoodOrder>, options?: { skipHistory?: boolean }) {
-    const session = await getSession();
-    const updatedBy = session?.userId || null;
+    console.log('[saveClientFoodOrder] START', { clientId, data: JSON.stringify(data, null, 2) });
+    try {
+        const session = await getSession();
+        const updatedBy = session?.userId || null;
+        console.log('[saveClientFoodOrder] Session:', { userId: updatedBy, role: session?.role });
 
-    const supabaseAdmin = createClient(
-        process.env.NEXT_PUBLIC_SUPABASE_URL!,
-        process.env.SUPABASE_SERVICE_ROLE_KEY!
-    );
+        const supabaseAdmin = createClient(
+            process.env.NEXT_PUBLIC_SUPABASE_URL!,
+            process.env.SUPABASE_SERVICE_ROLE_KEY!
+        );
 
-    const payload: any = {
-        client_id: clientId,
-        case_id: data.caseId,
-        delivery_day_orders: data.deliveryDayOrders,
-        notes: data.notes,
-        updated_at: new Date().toISOString(),
-        updated_by: updatedBy
-    };
+        const payload: any = {
+            client_id: clientId,
+            case_id: data.caseId,
+            delivery_day_orders: data.deliveryDayOrders,
+            notes: data.notes,
+            updated_at: new Date().toISOString(),
+            updated_by: updatedBy
+        };
+        
+        console.log('[saveClientFoodOrder] Payload prepared:', JSON.stringify(payload, null, 2));
 
-    // Check if order exists first
-    const { data: existing } = await supabaseAdmin
-        .from('client_food_orders')
-        .select('id')
-        .eq('client_id', clientId)
-        .single();
-
-    let query;
-    if (existing) {
-        query = supabaseAdmin
+        // Check if order exists first
+        console.log('[saveClientFoodOrder] Checking for existing order...');
+        const { data: existing, error: existingError } = await supabaseAdmin
             .from('client_food_orders')
-            .update(payload)
-            .eq('id', existing.id);
-    } else {
-        query = supabaseAdmin
-            .from('client_food_orders')
-            .insert(payload);
-    }
+            .select('id')
+            .eq('client_id', clientId)
+            .maybeSingle();
+        
+        if (existingError && existingError.code !== 'PGRST116') {
+            console.error('[saveClientFoodOrder] Error checking existing order:', existingError);
+            throw existingError;
+        }
+        
+        console.log('[saveClientFoodOrder] Existing order:', existing ? 'Found' : 'Not found');
 
-    const { data: saved, error } = await query.select().single();
+        let query;
+        if (existing) {
+            console.log('[saveClientFoodOrder] Updating existing order:', existing.id);
+            query = supabaseAdmin
+                .from('client_food_orders')
+                .update(payload)
+                .eq('id', existing.id);
+        } else {
+            console.log('[saveClientFoodOrder] Inserting new order');
+            query = supabaseAdmin
+                .from('client_food_orders')
+                .insert(payload);
+        }
 
-    handleError(error);
+        console.log('[saveClientFoodOrder] Executing query...');
+        const { data: saved, error } = await query.select().single();
+        
+        if (error) {
+            console.error('[saveClientFoodOrder] Database error:', error);
+            console.error('[saveClientFoodOrder] Error details:', JSON.stringify(error, null, 2));
+        }
+        
+        handleError(error);
+        console.log('[saveClientFoodOrder] Order saved successfully:', saved?.id);
 
     // Append to order history with comprehensive details
     try {
@@ -7230,85 +7294,153 @@ export async function saveClientFoodOrder(clientId: string, data: Partial<Client
                 orderData: data
             }, supabaseAdmin);
         }
-    } catch (historyError: any) {
-        console.error('[saveClientFoodOrder] CRITICAL Error appending to order history:', historyError);
+        } catch (historyError: any) {
+            console.error('[saveClientFoodOrder] CRITICAL Error appending to order history:', historyError);
+            console.error('[saveClientFoodOrder] History error stack:', historyError?.stack);
+        }
+
+        console.log('[saveClientFoodOrder] Starting local DB sync...');
+        const { updateClientInLocalDB } = await import('./local-db');
+        updateClientInLocalDB(clientId).catch(err => {
+            console.error('[saveClientFoodOrder] Error in background local DB sync:', err);
+        });
+
+        console.log('[saveClientFoodOrder] Revalidating paths...');
+        revalidatePath(`/client-portal/${clientId}`);
+        revalidatePath(`/clients/${clientId}`);
+        
+        console.log('[saveClientFoodOrder] SUCCESS - Returning saved order');
+        return saved;
+    } catch (error: any) {
+        console.error('[saveClientFoodOrder] FATAL ERROR:', error);
+        console.error('[saveClientFoodOrder] Error message:', error?.message);
+        console.error('[saveClientFoodOrder] Error stack:', error?.stack);
+        console.error('[saveClientFoodOrder] Error details:', JSON.stringify(error, null, 2));
+        throw error;
     }
-
-    const { updateClientInLocalDB } = await import('./local-db');
-    updateClientInLocalDB(clientId).catch(err => {
-        console.error('[saveClientFoodOrder] Error in background local DB sync:', err);
-    });
-
-    revalidatePath(`/client-portal/${clientId}`);
-    revalidatePath(`/clients/${clientId}`);
-    return saved;
 }
 
 export async function getClientMealOrder(clientId: string): Promise<ClientMealOrder | null> {
-    const { data, error } = await supabase
-        .from('client_meal_orders')
-        .select('*')
-        .eq('client_id', clientId)
-        .maybeSingle();
+    console.log('[getClientMealOrder] START', { clientId });
+    try {
+        // Use Service Role to bypass RLS - clients need to read their own orders
+        let supabaseClient = supabase;
+        const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+        if (serviceRoleKey) {
+            supabaseClient = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, serviceRoleKey, {
+                auth: { persistSession: false }
+            });
+            console.log('[getClientMealOrder] Using service role key');
+        } else {
+            console.warn('[getClientMealOrder] Service role key not found - using regular client (may be blocked by RLS)');
+        }
 
-    if (error) {
-        console.error('Error fetching meal order:', error);
+        console.log('[getClientMealOrder] Querying database...');
+        const { data, error } = await supabaseClient
+            .from('client_meal_orders')
+            .select('*')
+            .eq('client_id', clientId)
+            .maybeSingle();
+
+        if (error) {
+            console.error('[getClientMealOrder] Database error:', error);
+            console.error('[getClientMealOrder] Error details:', JSON.stringify(error, null, 2));
+            return null;
+        }
+        
+        if (!data) {
+            console.log('[getClientMealOrder] No meal order found for client');
+            return null;
+        }
+        
+        console.log('[getClientMealOrder] Meal order found:', { id: data.id, hasMealSelections: !!data.meal_selections });
+
+        const result = {
+            id: data.id,
+            clientId: data.client_id,
+            caseId: data.case_id,
+            mealSelections: data.meal_selections,
+            notes: data.notes,
+            created_at: data.created_at,
+            updated_at: data.updated_at,
+            updated_by: data.updated_by
+        };
+        
+        console.log('[getClientMealOrder] SUCCESS - Returning meal order');
+        return result;
+    } catch (error: any) {
+        console.error('[getClientMealOrder] FATAL ERROR:', error);
+        console.error('[getClientMealOrder] Error message:', error?.message);
+        console.error('[getClientMealOrder] Error stack:', error?.stack);
         return null;
     }
-    if (!data) return null;
-
-    return {
-        id: data.id,
-        clientId: data.client_id,
-        caseId: data.case_id,
-        mealSelections: data.meal_selections,
-        notes: data.notes,
-        created_at: data.created_at,
-        updated_at: data.updated_at,
-        updated_by: data.updated_by
-    };
 }
 
 export async function saveClientMealOrder(clientId: string, data: Partial<ClientMealOrder>, options?: { skipHistory?: boolean }) {
-    const session = await getSession();
-    const updatedBy = session?.userId || null;
-    const supabaseAdmin = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
-
-    const payload: any = {
-        client_id: clientId,
-        case_id: data.caseId,
-        meal_selections: data.mealSelections,
-        notes: data.notes,
-        updated_at: new Date().toISOString(),
-        updated_by: updatedBy
-    };
-
-    // Check for existing order
-    const { data: existing } = await supabaseAdmin
-        .from('client_meal_orders')
-        .select('id')
-        .eq('client_id', clientId)
-        .single();
-
-    let query;
-    if (existing) {
-        query = supabaseAdmin
-            .from('client_meal_orders')
-            .update(payload)
-            .eq('id', existing.id);
-    } else {
-        query = supabaseAdmin
-            .from('client_meal_orders')
-            .insert(payload);
-    }
-
-    const { data: saved, error } = await query.select().single();
-
-    handleError(error);
-
-    // Append to order history with comprehensive details
+    console.log('[saveClientMealOrder] START', { clientId, data: JSON.stringify(data, null, 2) });
     try {
-        const [vendorsList, mealItemsList] = await Promise.all([getVendors(), getMealItems()]);
+        const session = await getSession();
+        const updatedBy = session?.userId || null;
+        console.log('[saveClientMealOrder] Session:', { userId: updatedBy, role: session?.role });
+        
+        const supabaseAdmin = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
+
+        const payload: any = {
+            client_id: clientId,
+            case_id: data.caseId,
+            meal_selections: data.mealSelections,
+            notes: data.notes,
+            updated_at: new Date().toISOString(),
+            updated_by: updatedBy
+        };
+        
+        console.log('[saveClientMealOrder] Payload prepared:', JSON.stringify(payload, null, 2));
+
+        // Check for existing order
+        console.log('[saveClientMealOrder] Checking for existing order...');
+        const { data: existing, error: existingError } = await supabaseAdmin
+            .from('client_meal_orders')
+            .select('id')
+            .eq('client_id', clientId)
+            .maybeSingle();
+        
+        if (existingError && existingError.code !== 'PGRST116') {
+            console.error('[saveClientMealOrder] Error checking existing order:', existingError);
+            throw existingError;
+        }
+        
+        console.log('[saveClientMealOrder] Existing order:', existing ? 'Found' : 'Not found');
+
+        let query;
+        if (existing) {
+            console.log('[saveClientMealOrder] Updating existing order:', existing.id);
+            query = supabaseAdmin
+                .from('client_meal_orders')
+                .update(payload)
+                .eq('id', existing.id);
+        } else {
+            console.log('[saveClientMealOrder] Inserting new order');
+            query = supabaseAdmin
+                .from('client_meal_orders')
+                .insert(payload);
+        }
+
+        console.log('[saveClientMealOrder] Executing query...');
+        const { data: saved, error } = await query.select().single();
+        
+        if (error) {
+            console.error('[saveClientMealOrder] Database error:', error);
+            console.error('[saveClientMealOrder] Error details:', JSON.stringify(error, null, 2));
+        }
+        
+        handleError(error);
+        console.log('[saveClientMealOrder] Order saved successfully:', saved?.id);
+
+        // Append to order history with comprehensive details
+        console.log('[saveClientMealOrder] Starting history append...');
+        try {
+            const [vendorsList, mealItemsList] = await Promise.all([getVendors(), getMealItems()]);
+            console.log('[saveClientMealOrder] Fetched vendors and meal items');
 
         const orderDetails: any = {
             serviceType: 'Meal',
@@ -7356,51 +7488,92 @@ export async function saveClientMealOrder(clientId: string, data: Partial<Client
                 summary: `Meal Selection Updated - ${Object.keys(data.mealSelections || {}).length} meals`
             }, supabaseAdmin);
         }
-    } catch (historyError: any) {
-        console.warn('[saveClientMealOrder] Error appending to order history:', historyError);
+        } catch (historyError: any) {
+            console.warn('[saveClientMealOrder] Error appending to order history:', historyError);
+            console.warn('[saveClientMealOrder] History error stack:', historyError?.stack);
+        }
+
+        console.log('[saveClientMealOrder] Starting local DB sync...');
+        const { updateClientInLocalDB } = await import('./local-db');
+        updateClientInLocalDB(clientId).catch(err => {
+            console.error('[saveClientMealOrder] Error in background local DB sync:', err);
+        });
+
+        console.log('[saveClientMealOrder] Revalidating paths...');
+        revalidatePath(`/client-portal/${clientId}`);
+        revalidatePath(`/clients/${clientId}`);
+        
+        console.log('[saveClientMealOrder] SUCCESS - Returning saved order');
+        return saved;
+    } catch (error: any) {
+        console.error('[saveClientMealOrder] FATAL ERROR:', error);
+        console.error('[saveClientMealOrder] Error message:', error?.message);
+        console.error('[saveClientMealOrder] Error stack:', error?.stack);
+        console.error('[saveClientMealOrder] Error details:', JSON.stringify(error, null, 2));
+        throw error;
     }
-
-    const { updateClientInLocalDB } = await import('./local-db');
-    updateClientInLocalDB(clientId).catch(err => {
-        console.error('[saveClientMealOrder] Error in background local DB sync:', err);
-    });
-
-    revalidatePath(`/client-portal/${clientId}`);
-    revalidatePath(`/clients/${clientId}`);
-    return saved;
 }
 
 export async function getClientBoxOrder(clientId: string): Promise<ClientBoxOrder[]> {
-    const { data, error } = await supabase
-        .from('client_box_orders')
-        .select('*')
-        .eq('client_id', clientId);
+    console.log('[getClientBoxOrder] START', { clientId });
+    try {
+        // Use Service Role to bypass RLS - clients need to read their own orders
+        let supabaseClient = supabase;
+        const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+        if (serviceRoleKey) {
+            supabaseClient = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, serviceRoleKey, {
+                auth: { persistSession: false }
+            });
+            console.log('[getClientBoxOrder] Using service role key');
+        } else {
+            console.warn('[getClientBoxOrder] Service role key not found - using regular client (may be blocked by RLS)');
+        }
 
-    if (error) {
-        console.error('Error fetching box order:', error);
+        console.log('[getClientBoxOrder] Querying database...');
+        const { data, error } = await supabaseClient
+            .from('client_box_orders')
+            .select('*')
+            .eq('client_id', clientId);
+
+        if (error) {
+            console.error('[getClientBoxOrder] Database error:', error);
+            console.error('[getClientBoxOrder] Error details:', JSON.stringify(error, null, 2));
+            return [];
+        }
+        
+        if (!data) {
+            console.log('[getClientBoxOrder] No box orders found for client');
+            return [];
+        }
+
+        console.log('[getClientBoxOrder] Fetched data count:', data.length);
+        if (data.length > 0) {
+            console.log('[getClientBoxOrder] Sample item notes:', JSON.stringify(data[0].item_notes, null, 2));
+        }
+
+        const result = data.map(d => ({
+            id: d.id,
+            clientId: d.client_id,
+            caseId: d.case_id,
+            boxTypeId: d.box_type_id,
+            vendorId: d.vendor_id,
+            quantity: d.quantity,
+            items: d.items,
+            itemNotes: d.item_notes, // Map item_notes from DB
+            notes: d.notes,
+            created_at: d.created_at,
+            updated_at: d.updated_at,
+            updated_by: d.updated_by
+        }));
+        
+        console.log('[getClientBoxOrder] SUCCESS - Returning', result.length, 'box orders');
+        return result;
+    } catch (error: any) {
+        console.error('[getClientBoxOrder] FATAL ERROR:', error);
+        console.error('[getClientBoxOrder] Error message:', error?.message);
+        console.error('[getClientBoxOrder] Error stack:', error?.stack);
         return [];
     }
-    if (!data) return [];
-
-    console.log('[getClientBoxOrder] Fetched data count:', data.length);
-    if (data.length > 0) {
-        console.log('[getClientBoxOrder] Sample item notes:', JSON.stringify(data[0].item_notes, null, 2));
-    }
-
-    return data.map(d => ({
-        id: d.id,
-        clientId: d.client_id,
-        caseId: d.case_id,
-        boxTypeId: d.box_type_id,
-        vendorId: d.vendor_id,
-        quantity: d.quantity,
-        items: d.items,
-        itemNotes: d.item_notes, // Map item_notes from DB
-        notes: d.notes,
-        created_at: d.created_at,
-        updated_at: d.updated_at,
-        updated_by: d.updated_by
-    }));
 }
 
 export async function saveClientBoxOrder(clientId: string, data: Partial<ClientBoxOrder>[], options?: { skipHistory?: boolean }) {
