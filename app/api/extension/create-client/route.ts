@@ -151,6 +151,21 @@ export async function POST(request: NextRequest) {
 
     } catch (error: any) {
         console.error('Error creating client:', error);
+        
+        // Check if it's a duplicate key error (ID collision)
+        const isDuplicateKey = error.code === '23505' || 
+                              error.message?.includes('duplicate key') || 
+                              error.message?.includes('unique constraint') ||
+                              error.message?.includes('clients_okey');
+        
+        if (isDuplicateKey) {
+            // This should be handled by retry logic, but if it still fails, return a clear error
+            return NextResponse.json({
+                success: false,
+                error: 'Failed to create client due to ID collision. Please try again.'
+            }, { status: 500 });
+        }
+        
         return NextResponse.json({
             success: false,
             error: error.message || 'Failed to create client'

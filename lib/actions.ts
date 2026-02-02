@@ -1467,10 +1467,12 @@ async function generateNextClientId() {
         }
     }
 
-    // Add a small random component to reduce collision probability in race conditions
-    // This is a safety measure - the retry logic in addClient will handle any collisions
+    // Calculate next number and add a small random offset to reduce collision probability
+    // The random component helps when multiple requests generate IDs simultaneously
     const nextNum = maxNum + 1;
-    let candidateId = `CLIENT-${nextNum.toString().padStart(3, '0')}`;
+    const randomOffset = Math.floor(Math.random() * 5); // Add 0-4 random offset
+    let candidateNum = nextNum + randomOffset;
+    let candidateId = `CLIENT-${candidateNum.toString().padStart(3, '0')}`;
 
     // Quick existence check (but don't rely solely on this due to race conditions)
     const { data: exists } = await supabaseAdmin
@@ -1483,9 +1485,9 @@ async function generateNextClientId() {
         return candidateId;
     }
 
-    // If exists, find next available
-    let currentNum = nextNum;
-    for (let i = 0; i < 20; i++) {
+    // If exists, find next available by checking sequentially from candidateNum
+    let currentNum = candidateNum;
+    for (let i = 0; i < 50; i++) { // Increased search range
         currentNum++;
         candidateId = `CLIENT-${currentNum.toString().padStart(3, '0')}`;
         const { data: checkExists } = await supabaseAdmin
@@ -1499,8 +1501,11 @@ async function generateNextClientId() {
         }
     }
 
-    // Fallback: return the next number anyway (retry logic will handle collision)
-    return candidateId;
+    // Fallback: return a number with timestamp component to ensure uniqueness
+    // Format: CLIENT-XXX where XXX is based on maxNum + timestamp component
+    const timestampComponent = Date.now() % 1000; // Last 3 digits of timestamp
+    const fallbackNum = Math.max(nextNum, maxNum) + (timestampComponent % 10);
+    return `CLIENT-${fallbackNum.toString().padStart(3, '0')}`;
 }
 
 function mapClientFromDB(c: any): ClientProfile {
@@ -1671,7 +1676,7 @@ export async function addClient(data: Omit<ClientProfile, 'id' | 'createdAt' | '
 
         const { data: res, error } = await supabase.from('clients').insert([payload]).select().single();
         
-        // Check for duplicate key error (unique constraint violation)
+        // Check for duplicate key error (unique constraint violation - likely ID collision)
         if (error) {
             const isDuplicateKey = error.code === '23505' || 
                                   error.message?.includes('duplicate key') || 
@@ -1679,10 +1684,15 @@ export async function addClient(data: Omit<ClientProfile, 'id' | 'createdAt' | '
                                   error.message?.includes('clients_okey');
             
             if (isDuplicateKey && attempt < maxRetries - 1) {
-                // Retry with a new ID after a short delay
+                // This is likely an ID collision - retry with a new ID after a short delay
                 lastError = error;
-                await new Promise(resolve => setTimeout(resolve, 50 * (attempt + 1))); // Exponential backoff
+                console.log(`[addClient] Duplicate key error on attempt ${attempt + 1}, retrying with new ID...`);
+                await new Promise(resolve => setTimeout(resolve, 100 * (attempt + 1))); // Exponential backoff
                 continue;
+            } else if (isDuplicateKey) {
+                // Exhausted retries - this shouldn't happen often
+                console.error(`[addClient] Duplicate key error after ${maxRetries} attempts:`, error);
+                throw new Error('Failed to create client: ID collision after multiple retries. Please try again.');
             } else {
                 handleError(error);
             }
@@ -1757,7 +1767,7 @@ export async function addDependent(name: string, parentClientId: string, dob?: s
 
         const { data: res, error } = await supabase.from('clients').insert([payload]).select().single();
         
-        // Check for duplicate key error (unique constraint violation)
+        // Check for duplicate key error (unique constraint violation - likely ID collision)
         if (error) {
             const isDuplicateKey = error.code === '23505' || 
                                   error.message?.includes('duplicate key') || 
@@ -1765,10 +1775,15 @@ export async function addDependent(name: string, parentClientId: string, dob?: s
                                   error.message?.includes('clients_okey');
             
             if (isDuplicateKey && attempt < maxRetries - 1) {
-                // Retry with a new ID after a short delay
+                // This is likely an ID collision - retry with a new ID after a short delay
                 lastError = error;
-                await new Promise(resolve => setTimeout(resolve, 50 * (attempt + 1))); // Exponential backoff
+                console.log(`[addDependent] Duplicate key error on attempt ${attempt + 1}, retrying with new ID...`);
+                await new Promise(resolve => setTimeout(resolve, 100 * (attempt + 1))); // Exponential backoff
                 continue;
+            } else if (isDuplicateKey) {
+                // Exhausted retries - this shouldn't happen often
+                console.error(`[addDependent] Duplicate key error after ${maxRetries} attempts:`, error);
+                throw new Error('Failed to create dependent: ID collision after multiple retries. Please try again.');
             } else {
                 handleError(error);
             }

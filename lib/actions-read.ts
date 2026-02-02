@@ -365,6 +365,63 @@ export async function checkClientNameExists(fullName: string, excludeId?: string
     return (data?.length || 0) > 0;
 }
 
+export async function checkClientCaseIdExists(caseId: string, excludeId?: string): Promise<{ exists: boolean; clientId?: string; clientName?: string }> {
+    if (!caseId || !caseId.trim()) return { exists: false };
+
+    // Use Service Role if available to bypass RLS
+    let supabaseClient = supabase;
+    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    if (serviceRoleKey) {
+        supabaseClient = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, serviceRoleKey, {
+            auth: { persistSession: false }
+        });
+    }
+
+    // Fetch clients with non-null active_order and filter in JavaScript
+    // This is more reliable than trying to query JSONB directly
+    const { data, error } = await supabaseClient
+        .from('clients')
+        .select('id, full_name, active_order')
+        .not('active_order', 'is', null);
+
+    if (error) {
+        console.error('Error checking client caseId:', error);
+        return { exists: false };
+    }
+
+    if (!data || data.length === 0) {
+        return { exists: false };
+    }
+
+    // Filter clients where active_order.caseId matches
+    const matchingClients = data.filter(c => {
+        // Skip excluded ID if provided
+        if (excludeId && c.id === excludeId) {
+            return false;
+        }
+        
+        // Check if active_order exists and has matching caseId
+        const activeOrder = c.active_order;
+        if (!activeOrder || typeof activeOrder !== 'object') {
+            return false;
+        }
+        
+        const orderCaseId = (activeOrder as any).caseId;
+        return orderCaseId && orderCaseId.trim() === caseId.trim();
+    });
+
+    if (matchingClients.length === 0) {
+        return { exists: false };
+    }
+
+    const firstMatch = matchingClients[0];
+    return {
+        exists: true,
+        clientId: firstMatch.id,
+        clientName: firstMatch.full_name || undefined
+    };
+}
+
 export async function getPublicClient(id: string) {
     if (!id) return undefined;
 
