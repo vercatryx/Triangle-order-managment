@@ -1436,28 +1436,39 @@ export async function deleteNutritionist(id: string) {
 
 // --- CLIENT ACTIONS ---
 
-// Helper to generate next client ID; uses DB RPC when available to avoid collisions under concurrency
-async function generateNextClientId() {
+// Helper to generate next client ID; uses DB RPC when available to avoid collisions under concurrency.
+// When afterCollisionId is set (e.g. after a 23505 retry), fallback uses that + 1 so retries get a new ID.
+async function generateNextClientId(afterCollisionId?: string) {
     const supabaseAdmin = createClient(
         process.env.NEXT_PUBLIC_SUPABASE_URL!,
         process.env.SUPABASE_SERVICE_ROLE_KEY!,
         { auth: { persistSession: false } }
     );
 
-    const { data: rpcId, error: rpcError } = await supabaseAdmin.rpc('get_next_client_id');
-    if (!rpcError && rpcId && typeof rpcId === 'string') {
-        return rpcId;
+    if (!afterCollisionId) {
+        const { data: rpcId, error: rpcError } = await supabaseAdmin.rpc('get_next_client_id');
+        if (!rpcError && rpcId && typeof rpcId === 'string') {
+            return rpcId;
+        }
     }
 
-    // Fallback when RPC is not deployed or fails: fetch CLIENT-* ids and compute max
+    // Fallback when RPC is not deployed, fails, or we're retrying after collision
     const { data } = await supabaseAdmin
         .from('clients')
         .select('id')
         .like('id', 'CLIENT-%');
 
-    if (!data || data.length === 0) return 'CLIENT-001';
+    let minNum = 0;
+    if (afterCollisionId) {
+        const m = afterCollisionId.match(/CLIENT-(\d+)/);
+        if (m) minNum = parseInt(m[1], 10);
+    }
 
-    let maxNum = 0;
+    if (!data || data.length === 0) {
+        return minNum > 0 ? `CLIENT-${(minNum + 1).toString().padStart(3, '0')}` : 'CLIENT-001';
+    }
+
+    let maxNum = minNum;
     for (const row of data) {
         if (!row.id) continue;
         const match = row.id.match(/CLIENT-(\d+)/);
@@ -1622,6 +1633,7 @@ const ADD_CLIENT_MAX_RETRIES = 5;
 
 export async function addClient(data: Omit<ClientProfile, 'id' | 'createdAt' | 'updatedAt'>) {
     let lastError: any = null;
+    let lastAttemptedId: string | null = null;
     for (let attempt = 0; attempt < ADD_CLIENT_MAX_RETRIES; attempt++) {
         const payload: any = {
             full_name: data.fullName,
@@ -1640,7 +1652,7 @@ export async function addClient(data: Omit<ClientProfile, 'id' | 'createdAt' | '
             authorized_amount: data.authorizedAmount !== null && data.authorizedAmount !== undefined ? roundCurrency(data.authorizedAmount) : null,
             expiration_date: data.expirationDate || null,
             location_id: data.locationId || null,
-            id: await generateNextClientId()
+            id: await generateNextClientId(lastAttemptedId ?? undefined)
         };
 
         // Save active_order if provided (ClientProfile component handles validation)
@@ -1653,9 +1665,10 @@ export async function addClient(data: Omit<ClientProfile, 'id' | 'createdAt' | '
         const { data: res, error } = await supabase.from('clients').insert([payload]).select().single();
 
         if (error) {
-            // Retry on duplicate primary key (race with another create)
+            // Retry on duplicate primary key (race with another create or broken RPC)
             if (error.code === '23505') {
                 lastError = error;
+                lastAttemptedId = payload.id;
                 continue;
             }
             handleError(error);
