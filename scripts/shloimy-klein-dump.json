@@ -1,0 +1,543 @@
+{
+  "timestamp": "2026-02-03T16:26:42.757Z",
+  "clients": [
+    {
+      "full_name": "SHLOIMY KLEIN",
+      "address": "22 DECATER AVE #307 FIRST DOOR FROM RIGHT FROM OUTSIDE THE LOCK DOOR TO ENTER IS 2,4 TOGETHER THEN 3 THIRD FLOOR ON THE LEFT SIDE",
+      "phone_number": "(845) 746-8717",
+      "navigator_id": "181e3490-2b40-41b0-8d9b-473226298ca4",
+      "end_date": "",
+      "screening_took_place": false,
+      "screening_signed": false,
+      "notes": "",
+      "status_id": "5d113e7c-7791-4384-b6be-449298fbfebe",
+      "service_type": "Food",
+      "approved_meals_per_week": 21,
+      "active_order": {
+        "id": "fac7759c-e6b1-4c50-a300-cace190b8ad2",
+        "caseId": "https://app.uniteus.io/dashboard/cases/open/172854c8-79d8-4675-9db5-4e86c83a8c51/contact/36844e4f-af50-48bd-81dc-9527eb18bfd7",
+        "clientId": "CLIENT-642",
+        "updatedBy": "Admin",
+        "created_at": "2026-01-25T05:44:06.868101+00:00",
+        "updated_at": "2026-01-25T05:44:06.611+00:00",
+        "updated_by": null,
+        "lastUpdated": "2026-02-03T16:09:36.215Z",
+        "serviceType": "Food",
+        "vendorSelections": [
+          {
+            "items": {},
+            "vendorId": ""
+          }
+        ],
+        "deliveryDayOrders": {
+          "Monday": {
+            "vendorSelections": [
+              {
+                "items": {
+                  "0f78e662-863d-4502-be12-3ffea80c518a": 2,
+                  "16f6a6f7-054a-493a-96f8-29f0b7c1f397": 2,
+                  "5b76469c-68c0-4fee-af74-e2d37fe34907": 2,
+                  "8ce1d790-e518-45a6-b03a-b14dcd8dff7f": 2,
+                  "b66b5829-6df0-4507-955b-1682fbcb396a": 1
+                },
+                "vendorId": "1e9e2218-fdff-434f-b279-93d9d7bf4bd2"
+              }
+            ]
+          },
+          "Wednesday": {
+            "vendorSelections": [
+              {
+                "items": {
+                  "3057c180-097e-477d-9ec1-afb431470f40": 1
+                },
+                "vendorId": "5fd3dae7-e63c-4fe5-9d05-16847453a9fa"
+              }
+            ]
+          }
+        }
+      },
+      "created_at": "2026-01-21T20:44:30.952396+00:00",
+      "updated_at": "2026-02-03T16:09:36.198+00:00",
+      "email": "familyklein1037@gmail.com",
+      "id": "CLIENT-642",
+      "screening_status": "waiting_approval",
+      "parent_client_id": null,
+      "secondary_phone_number": null,
+      "authorized_amount": 8545.51,
+      "expiration_date": "2026-07-31",
+      "dob": null,
+      "cin": null,
+      "location_id": null,
+      "order_history": [
+        {
+          "type": "save_event",
+          "snapshot": "Service: Food | Case ID: https://app.uniteus.io/dashboard/cases/open/172854c8-79d8-4675-9db5-4e86c83a8c51/contact/36844e4f-af50-48bd-81dc-9527eb18bfd7\nMonday:\n  Vendor [Satmar Meat (Monsey Tuesday, Wednsday and Thursday.  Monroe wednesday only) KJ Poultry]:\n    - 2x #5 White grilled chicken cutlets, Cubed potatoes, Garlic string beans\n    - 2x #3 Chicken nuggets, Farfel, Garden vegetables\n    - 2x #11 Crispy chicken fingers, Rice with mushrooms, Roasted squash\n    - 2x #6 Sesame chicken, Slishkes, Garlic string beans\n    - 1x #10 Chicken burgers, Slishkes, Garlic string beans\nWednesday:\n  Vendor [Fresh Pizza (R' Yechiel Steinmetz Hechsher) Monsey Only]:\n    - 1x PIzza, Fries, Choice of Caesar or Greek Salad, Falafel balls/Garlic nuts. (please write in the note your choice of fries and salad and Preferred time of delivery)",
+          "timestamp": "2026-02-03T15:05:37.794Z",
+          "updatedBy": "admin",
+          "orderDetails": {
+            "id": "fac7759c-e6b1-4c50-a300-cace190b8ad2",
+            "caseId": "https://app.uniteus.io/dashboard/cases/open/172854c8-79d8-4675-9db5-4e86c83a8c51/contact/36844e4f-af50-48bd-81dc-9527eb18bfd7",
+            "clientId": "CLIENT-642",
+            "updatedBy": "Client",
+            "created_at": "2026-01-25T05:44:06.868101+00:00",
+            "updated_at": "2026-01-25T05:44:06.611+00:00",
+            "updated_by": null,
+            "lastUpdated": "2026-01-25T05:47:57.588Z",
+            "serviceType": "Food",
+            "vendorSelections": [
+              {
+                "items": {},
+                "vendorId": ""
+              }
+            ],
+            "deliveryDayOrders": {
+              "Monday": {
+                "vendorSelections": [
+                  {
+                    "items": {
+                      "0f78e662-863d-4502-be12-3ffea80c518a": 2,
+                      "16f6a6f7-054a-493a-96f8-29f0b7c1f397": 2,
+                      "5b76469c-68c0-4fee-af74-e2d37fe34907": 2,
+                      "8ce1d790-e518-45a6-b03a-b14dcd8dff7f": 2,
+                      "b66b5829-6df0-4507-955b-1682fbcb396a": 1
+                    },
+                    "vendorId": "1e9e2218-fdff-434f-b279-93d9d7bf4bd2"
+                  }
+                ]
+              },
+              "Wednesday": {
+                "vendorSelections": [
+                  {
+                    "items": {
+                      "3057c180-097e-477d-9ec1-afb431470f40": 1
+                    },
+                    "vendorId": "5fd3dae7-e63c-4fe5-9d05-16847453a9fa"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "type": "save_event",
+          "snapshot": "Service: Food | Case ID: https://app.uniteus.io/dashboard/cases/open/172854c8-79d8-4675-9db5-4e86c83a8c51/contact/36844e4f-af50-48bd-81dc-9527eb18bfd7\nMonday:\n  Vendor [Satmar Meat (Monsey Tuesday, Wednsday and Thursday.  Monroe wednesday only) KJ Poultry]:\n    - 2x #5 White grilled chicken cutlets, Cubed potatoes, Garlic string beans\n    - 2x #3 Chicken nuggets, Farfel, Garden vegetables\n    - 2x #11 Crispy chicken fingers, Rice with mushrooms, Roasted squash\n    - 2x #6 Sesame chicken, Slishkes, Garlic string beans\n    - 1x #10 Chicken burgers, Slishkes, Garlic string beans\nWednesday:\n  Vendor [Fresh Pizza (R' Yechiel Steinmetz Hechsher) Monsey Only]:\n    - 1x PIzza, Fries, Choice of Caesar or Greek Salad, Falafel balls/Garlic nuts. (please write in the note your choice of fries and salad and Preferred time of delivery)",
+          "timestamp": "2026-02-03T15:08:41.323Z",
+          "updatedBy": "admin",
+          "orderDetails": {
+            "id": "fac7759c-e6b1-4c50-a300-cace190b8ad2",
+            "caseId": "https://app.uniteus.io/dashboard/cases/open/172854c8-79d8-4675-9db5-4e86c83a8c51/contact/36844e4f-af50-48bd-81dc-9527eb18bfd7",
+            "clientId": "CLIENT-642",
+            "updatedBy": "Admin",
+            "created_at": "2026-01-25T05:44:06.868101+00:00",
+            "updated_at": "2026-01-25T05:44:06.611+00:00",
+            "updated_by": null,
+            "lastUpdated": "2026-02-03T15:05:37.794Z",
+            "serviceType": "Food",
+            "vendorSelections": [
+              {
+                "items": {},
+                "vendorId": ""
+              }
+            ],
+            "deliveryDayOrders": {
+              "Monday": {
+                "vendorSelections": [
+                  {
+                    "items": {
+                      "0f78e662-863d-4502-be12-3ffea80c518a": 2,
+                      "16f6a6f7-054a-493a-96f8-29f0b7c1f397": 2,
+                      "5b76469c-68c0-4fee-af74-e2d37fe34907": 2,
+                      "8ce1d790-e518-45a6-b03a-b14dcd8dff7f": 2,
+                      "b66b5829-6df0-4507-955b-1682fbcb396a": 1
+                    },
+                    "vendorId": "1e9e2218-fdff-434f-b279-93d9d7bf4bd2"
+                  }
+                ]
+              },
+              "Wednesday": {
+                "vendorSelections": [
+                  {
+                    "items": {
+                      "3057c180-097e-477d-9ec1-afb431470f40": 1
+                    },
+                    "vendorId": "5fd3dae7-e63c-4fe5-9d05-16847453a9fa"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "type": "save_event",
+          "snapshot": "Service: Food | Case ID: https://app.uniteus.io/dashboard/cases/open/172854c8-79d8-4675-9db5-4e86c83a8c51/contact/36844e4f-af50-48bd-81dc-9527eb18bfd7\nMonday:\n  Vendor [Satmar Meat (Monsey Tuesday, Wednsday and Thursday.  Monroe wednesday only) KJ Poultry]:\n    - 2x #5 White grilled chicken cutlets, Cubed potatoes, Garlic string beans\n    - 2x #3 Chicken nuggets, Farfel, Garden vegetables\n    - 2x #11 Crispy chicken fingers, Rice with mushrooms, Roasted squash\n    - 2x #6 Sesame chicken, Slishkes, Garlic string beans\n    - 1x #10 Chicken burgers, Slishkes, Garlic string beans\nWednesday:\n  Vendor [Fresh Pizza (R' Yechiel Steinmetz Hechsher) Monsey Only]:\n    - 1x PIzza, Fries, Choice of Caesar or Greek Salad, Falafel balls/Garlic nuts. (please write in the note your choice of fries and salad and Preferred time of delivery)",
+          "timestamp": "2026-02-03T15:09:38.661Z",
+          "updatedBy": "admin",
+          "orderDetails": {
+            "id": "fac7759c-e6b1-4c50-a300-cace190b8ad2",
+            "caseId": "https://app.uniteus.io/dashboard/cases/open/172854c8-79d8-4675-9db5-4e86c83a8c51/contact/36844e4f-af50-48bd-81dc-9527eb18bfd7",
+            "clientId": "CLIENT-642",
+            "updatedBy": "Admin",
+            "created_at": "2026-01-25T05:44:06.868101+00:00",
+            "updated_at": "2026-01-25T05:44:06.611+00:00",
+            "updated_by": null,
+            "lastUpdated": "2026-02-03T15:08:41.324Z",
+            "serviceType": "Food",
+            "vendorSelections": [
+              {
+                "items": {},
+                "vendorId": ""
+              }
+            ],
+            "deliveryDayOrders": {
+              "Monday": {
+                "vendorSelections": [
+                  {
+                    "items": {
+                      "0f78e662-863d-4502-be12-3ffea80c518a": 2,
+                      "16f6a6f7-054a-493a-96f8-29f0b7c1f397": 2,
+                      "5b76469c-68c0-4fee-af74-e2d37fe34907": 2,
+                      "8ce1d790-e518-45a6-b03a-b14dcd8dff7f": 2,
+                      "b66b5829-6df0-4507-955b-1682fbcb396a": 1
+                    },
+                    "vendorId": "1e9e2218-fdff-434f-b279-93d9d7bf4bd2"
+                  }
+                ]
+              },
+              "Wednesday": {
+                "vendorSelections": [
+                  {
+                    "items": {
+                      "3057c180-097e-477d-9ec1-afb431470f40": 1
+                    },
+                    "vendorId": "5fd3dae7-e63c-4fe5-9d05-16847453a9fa"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "type": "save_event",
+          "snapshot": "Service: Food | Case ID: https://app.uniteus.io/dashboard/cases/open/172854c8-79d8-4675-9db5-4e86c83a8c51/contact/36844e4f-af50-48bd-81dc-9527eb18bfd7\nMonday:\n  Vendor [Satmar Meat (Monsey Tuesday, Wednsday and Thursday.  Monroe wednesday only) KJ Poultry]:\n    - 2x #5 White grilled chicken cutlets, Cubed potatoes, Garlic string beans\n    - 2x #3 Chicken nuggets, Farfel, Garden vegetables\n    - 2x #11 Crispy chicken fingers, Rice with mushrooms, Roasted squash\n    - 2x #6 Sesame chicken, Slishkes, Garlic string beans\n    - 1x #10 Chicken burgers, Slishkes, Garlic string beans\nWednesday:\n  Vendor [Fresh Pizza (R' Yechiel Steinmetz Hechsher) Monsey Only]:\n    - 1x PIzza, Fries, Choice of Caesar or Greek Salad, Falafel balls/Garlic nuts. (please write in the note your choice of fries and salad and Preferred time of delivery)",
+          "timestamp": "2026-02-03T15:16:09.064Z",
+          "updatedBy": "admin",
+          "orderDetails": {
+            "id": "fac7759c-e6b1-4c50-a300-cace190b8ad2",
+            "caseId": "https://app.uniteus.io/dashboard/cases/open/172854c8-79d8-4675-9db5-4e86c83a8c51/contact/36844e4f-af50-48bd-81dc-9527eb18bfd7",
+            "clientId": "CLIENT-642",
+            "updatedBy": "Admin",
+            "created_at": "2026-01-25T05:44:06.868101+00:00",
+            "updated_at": "2026-01-25T05:44:06.611+00:00",
+            "updated_by": null,
+            "lastUpdated": "2026-02-03T15:09:38.661Z",
+            "serviceType": "Food",
+            "vendorSelections": [
+              {
+                "items": {},
+                "vendorId": ""
+              }
+            ],
+            "deliveryDayOrders": {
+              "Monday": {
+                "vendorSelections": [
+                  {
+                    "items": {
+                      "0f78e662-863d-4502-be12-3ffea80c518a": 2,
+                      "16f6a6f7-054a-493a-96f8-29f0b7c1f397": 2,
+                      "5b76469c-68c0-4fee-af74-e2d37fe34907": 2,
+                      "8ce1d790-e518-45a6-b03a-b14dcd8dff7f": 2,
+                      "b66b5829-6df0-4507-955b-1682fbcb396a": 1
+                    },
+                    "vendorId": "1e9e2218-fdff-434f-b279-93d9d7bf4bd2"
+                  }
+                ]
+              },
+              "Wednesday": {
+                "vendorSelections": [
+                  {
+                    "items": {
+                      "3057c180-097e-477d-9ec1-afb431470f40": 1
+                    },
+                    "vendorId": "5fd3dae7-e63c-4fe5-9d05-16847453a9fa"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "type": "save_event",
+          "snapshot": "Service: Food | Case ID: https://app.uniteus.io/dashboard/cases/open/172854c8-79d8-4675-9db5-4e86c83a8c51/contact/36844e4f-af50-48bd-81dc-9527eb18bfd7\nMonday:\n  Vendor [Satmar Meat (Monsey Tuesday, Wednsday and Thursday.  Monroe wednesday only) KJ Poultry]:\n    - 2x #5 White grilled chicken cutlets, Cubed potatoes, Garlic string beans\n    - 2x #3 Chicken nuggets, Farfel, Garden vegetables\n    - 2x #11 Crispy chicken fingers, Rice with mushrooms, Roasted squash\n    - 2x #6 Sesame chicken, Slishkes, Garlic string beans\n    - 1x #10 Chicken burgers, Slishkes, Garlic string beans\nWednesday:\n  Vendor [Fresh Pizza (R' Yechiel Steinmetz Hechsher) Monsey Only]:\n    - 1x PIzza, Fries, Choice of Caesar or Greek Salad, Falafel balls/Garlic nuts. (please write in the note your choice of fries and salad and Preferred time of delivery)",
+          "timestamp": "2026-02-03T16:08:05.898Z",
+          "updatedBy": "admin",
+          "orderDetails": {
+            "id": "fac7759c-e6b1-4c50-a300-cace190b8ad2",
+            "caseId": "https://app.uniteus.io/dashboard/cases/open/172854c8-79d8-4675-9db5-4e86c83a8c51/contact/36844e4f-af50-48bd-81dc-9527eb18bfd7",
+            "clientId": "CLIENT-642",
+            "updatedBy": "Admin",
+            "created_at": "2026-01-25T05:44:06.868101+00:00",
+            "updated_at": "2026-01-25T05:44:06.611+00:00",
+            "updated_by": null,
+            "lastUpdated": "2026-02-03T15:16:09.064Z",
+            "serviceType": "Food",
+            "vendorSelections": [
+              {
+                "items": {},
+                "vendorId": ""
+              }
+            ],
+            "deliveryDayOrders": {
+              "Monday": {
+                "vendorSelections": [
+                  {
+                    "items": {
+                      "0f78e662-863d-4502-be12-3ffea80c518a": 2,
+                      "16f6a6f7-054a-493a-96f8-29f0b7c1f397": 2,
+                      "5b76469c-68c0-4fee-af74-e2d37fe34907": 2,
+                      "8ce1d790-e518-45a6-b03a-b14dcd8dff7f": 2,
+                      "b66b5829-6df0-4507-955b-1682fbcb396a": 1
+                    },
+                    "vendorId": "1e9e2218-fdff-434f-b279-93d9d7bf4bd2"
+                  }
+                ]
+              },
+              "Wednesday": {
+                "vendorSelections": [
+                  {
+                    "items": {
+                      "3057c180-097e-477d-9ec1-afb431470f40": 1
+                    },
+                    "vendorId": "5fd3dae7-e63c-4fe5-9d05-16847453a9fa"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "type": "save_event",
+          "snapshot": "Service: Food | Case ID: https://app.uniteus.io/dashboard/cases/open/172854c8-79d8-4675-9db5-4e86c83a8c51/contact/36844e4f-af50-48bd-81dc-9527eb18bfd7\nMonday:\n  Vendor [Satmar Meat (Monsey Tuesday, Wednsday and Thursday.  Monroe wednesday only) KJ Poultry]:\n    - 2x #5 White grilled chicken cutlets, Cubed potatoes, Garlic string beans\n    - 2x #3 Chicken nuggets, Farfel, Garden vegetables\n    - 2x #11 Crispy chicken fingers, Rice with mushrooms, Roasted squash\n    - 2x #6 Sesame chicken, Slishkes, Garlic string beans\n    - 1x #10 Chicken burgers, Slishkes, Garlic string beans\nWednesday:\n  Vendor [Fresh Pizza (R' Yechiel Steinmetz Hechsher) Monsey Only]:\n    - 1x PIzza, Fries, Choice of Caesar or Greek Salad, Falafel balls/Garlic nuts. (please write in the note your choice of fries and salad and Preferred time of delivery)",
+          "timestamp": "2026-02-03T16:09:36.215Z",
+          "updatedBy": "admin",
+          "orderDetails": {
+            "id": "fac7759c-e6b1-4c50-a300-cace190b8ad2",
+            "caseId": "https://app.uniteus.io/dashboard/cases/open/172854c8-79d8-4675-9db5-4e86c83a8c51/contact/36844e4f-af50-48bd-81dc-9527eb18bfd7",
+            "clientId": "CLIENT-642",
+            "updatedBy": "Admin",
+            "created_at": "2026-01-25T05:44:06.868101+00:00",
+            "updated_at": "2026-01-25T05:44:06.611+00:00",
+            "updated_by": null,
+            "lastUpdated": "2026-02-03T16:08:05.898Z",
+            "serviceType": "Food",
+            "vendorSelections": [
+              {
+                "items": {},
+                "vendorId": ""
+              }
+            ],
+            "deliveryDayOrders": {
+              "Monday": {
+                "vendorSelections": [
+                  {
+                    "items": {
+                      "0f78e662-863d-4502-be12-3ffea80c518a": 2,
+                      "16f6a6f7-054a-493a-96f8-29f0b7c1f397": 2,
+                      "5b76469c-68c0-4fee-af74-e2d37fe34907": 2,
+                      "8ce1d790-e518-45a6-b03a-b14dcd8dff7f": 2,
+                      "b66b5829-6df0-4507-955b-1682fbcb396a": 1
+                    },
+                    "vendorId": "1e9e2218-fdff-434f-b279-93d9d7bf4bd2"
+                  }
+                ]
+              },
+              "Wednesday": {
+                "vendorSelections": [
+                  {
+                    "items": {
+                      "3057c180-097e-477d-9ec1-afb431470f40": 1
+                    },
+                    "vendorId": "5fd3dae7-e63c-4fe5-9d05-16847453a9fa"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "upcomingOrders": [
+    {
+      "id": "c2a62957-eb31-4c19-899b-02738ac9049a",
+      "client_id": "CLIENT-642",
+      "service_type": "Food",
+      "case_id": "https://app.uniteus.io/dashboard/cases/open/172854c8-79d8-4675-9db5-4e86c83a8c51/contact/36844e4f-af50-48bd-81dc-9527eb18bfd7",
+      "status": "scheduled",
+      "last_updated": "2026-02-03T16:09:36.215+00:00",
+      "updated_by": "Abraham Eger",
+      "created_at": "2026-02-03T16:09:37.538993+00:00",
+      "take_effect_date": null,
+      "total_value": 144,
+      "total_items": 9,
+      "notes": null,
+      "processed_order_id": null,
+      "processed_at": null,
+      "delivery_day": "Monday",
+      "order_number": 111720,
+      "meal_type": "Lunch",
+      "upcoming_order_vendor_selections": [
+        {
+          "id": "c7fd36d1-0ea6-48e8-ad57-125aa98418aa",
+          "vendor_id": "1e9e2218-fdff-434f-b279-93d9d7bf4bd2",
+          "created_at": "2026-02-03T16:09:37.817496+00:00",
+          "upcoming_order_id": "c2a62957-eb31-4c19-899b-02738ac9049a"
+        }
+      ],
+      "upcoming_order_items": [
+        {
+          "id": "957c6854-e7a2-4232-97e0-a0e6e4720cbd",
+          "notes": null,
+          "quantity": 2,
+          "created_at": "2026-02-03T16:09:37.955956+00:00",
+          "unit_value": 16,
+          "custom_name": null,
+          "total_value": 32,
+          "custom_price": null,
+          "meal_item_id": null,
+          "menu_item_id": "0f78e662-863d-4502-be12-3ffea80c518a",
+          "upcoming_order_id": "c2a62957-eb31-4c19-899b-02738ac9049a",
+          "vendor_selection_id": "c7fd36d1-0ea6-48e8-ad57-125aa98418aa"
+        },
+        {
+          "id": "a16275a7-32b7-4138-bcfd-19826065ab84",
+          "notes": null,
+          "quantity": 2,
+          "created_at": "2026-02-03T16:09:37.955956+00:00",
+          "unit_value": 16,
+          "custom_name": null,
+          "total_value": 32,
+          "custom_price": null,
+          "meal_item_id": null,
+          "menu_item_id": "16f6a6f7-054a-493a-96f8-29f0b7c1f397",
+          "upcoming_order_id": "c2a62957-eb31-4c19-899b-02738ac9049a",
+          "vendor_selection_id": "c7fd36d1-0ea6-48e8-ad57-125aa98418aa"
+        },
+        {
+          "id": "9009c264-a77c-4ca2-8222-3ff6a8e3b0b6",
+          "notes": null,
+          "quantity": 2,
+          "created_at": "2026-02-03T16:09:37.955956+00:00",
+          "unit_value": 16,
+          "custom_name": null,
+          "total_value": 32,
+          "custom_price": null,
+          "meal_item_id": null,
+          "menu_item_id": "5b76469c-68c0-4fee-af74-e2d37fe34907",
+          "upcoming_order_id": "c2a62957-eb31-4c19-899b-02738ac9049a",
+          "vendor_selection_id": "c7fd36d1-0ea6-48e8-ad57-125aa98418aa"
+        },
+        {
+          "id": "5bab8a73-908a-4c61-9153-a3f621a6e07b",
+          "notes": null,
+          "quantity": 2,
+          "created_at": "2026-02-03T16:09:37.955956+00:00",
+          "unit_value": 16,
+          "custom_name": null,
+          "total_value": 32,
+          "custom_price": null,
+          "meal_item_id": null,
+          "menu_item_id": "8ce1d790-e518-45a6-b03a-b14dcd8dff7f",
+          "upcoming_order_id": "c2a62957-eb31-4c19-899b-02738ac9049a",
+          "vendor_selection_id": "c7fd36d1-0ea6-48e8-ad57-125aa98418aa"
+        },
+        {
+          "id": "52fb2fd8-dbb0-4286-8d43-c7eeecbb5c3e",
+          "notes": null,
+          "quantity": 1,
+          "created_at": "2026-02-03T16:09:37.955956+00:00",
+          "unit_value": 16,
+          "custom_name": null,
+          "total_value": 16,
+          "custom_price": null,
+          "meal_item_id": null,
+          "menu_item_id": "b66b5829-6df0-4507-955b-1682fbcb396a",
+          "upcoming_order_id": "c2a62957-eb31-4c19-899b-02738ac9049a",
+          "vendor_selection_id": "c7fd36d1-0ea6-48e8-ad57-125aa98418aa"
+        },
+        {
+          "id": "54b6f802-f0a5-495e-8eb2-f33f674f652e",
+          "notes": null,
+          "quantity": 1,
+          "created_at": "2026-02-03T16:09:38.093521+00:00",
+          "unit_value": 144,
+          "custom_name": null,
+          "total_value": 144,
+          "custom_price": null,
+          "meal_item_id": null,
+          "menu_item_id": null,
+          "upcoming_order_id": "c2a62957-eb31-4c19-899b-02738ac9049a",
+          "vendor_selection_id": "c7fd36d1-0ea6-48e8-ad57-125aa98418aa"
+        }
+      ],
+      "upcoming_order_box_selections": []
+    },
+    {
+      "id": "46495dd1-d241-4985-901e-42d70684b9ee",
+      "client_id": "CLIENT-642",
+      "service_type": "Food",
+      "case_id": "https://app.uniteus.io/dashboard/cases/open/172854c8-79d8-4675-9db5-4e86c83a8c51/contact/36844e4f-af50-48bd-81dc-9527eb18bfd7",
+      "status": "scheduled",
+      "last_updated": "2026-02-03T16:09:36.215+00:00",
+      "updated_by": "Abraham Eger",
+      "created_at": "2026-02-03T16:09:37.552622+00:00",
+      "take_effect_date": null,
+      "total_value": 190.49,
+      "total_items": 1,
+      "notes": null,
+      "processed_order_id": null,
+      "processed_at": null,
+      "delivery_day": "Wednesday",
+      "order_number": 111721,
+      "meal_type": "Lunch",
+      "upcoming_order_vendor_selections": [
+        {
+          "id": "2127fa28-5691-449f-ab90-ab7168ee3e03",
+          "vendor_id": "5fd3dae7-e63c-4fe5-9d05-16847453a9fa",
+          "created_at": "2026-02-03T16:09:37.894099+00:00",
+          "upcoming_order_id": "46495dd1-d241-4985-901e-42d70684b9ee"
+        }
+      ],
+      "upcoming_order_items": [
+        {
+          "id": "70ec57f9-78c2-45e0-ae0f-6dcfc433e97d",
+          "notes": null,
+          "quantity": 1,
+          "created_at": "2026-02-03T16:09:38.044044+00:00",
+          "unit_value": 190.49,
+          "custom_name": null,
+          "total_value": 190.49,
+          "custom_price": null,
+          "meal_item_id": null,
+          "menu_item_id": "3057c180-097e-477d-9ec1-afb431470f40",
+          "upcoming_order_id": "46495dd1-d241-4985-901e-42d70684b9ee",
+          "vendor_selection_id": "2127fa28-5691-449f-ab90-ab7168ee3e03"
+        },
+        {
+          "id": "e29a1f81-2ea6-4586-8495-3a2da97abe2b",
+          "notes": null,
+          "quantity": 1,
+          "created_at": "2026-02-03T16:09:38.18367+00:00",
+          "unit_value": 190.49,
+          "custom_name": null,
+          "total_value": 190.49,
+          "custom_price": null,
+          "meal_item_id": null,
+          "menu_item_id": null,
+          "upcoming_order_id": "46495dd1-d241-4985-901e-42d70684b9ee",
+          "vendor_selection_id": "2127fa28-5691-449f-ab90-ab7168ee3e03"
+        }
+      ],
+      "upcoming_order_box_selections": []
+    }
+  ]
+}

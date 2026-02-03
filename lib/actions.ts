@@ -1439,21 +1439,21 @@ export async function deleteNutritionist(id: string) {
 // Helper to generate next client ID; uses DB RPC when available to avoid collisions under concurrency.
 // When afterCollisionId is set (e.g. after a 23505 retry), fallback uses that + 1 so retries get a new ID.
 async function generateNextClientId(afterCollisionId?: string) {
-    const supabaseAdmin = createClient(
-        process.env.NEXT_PUBLIC_SUPABASE_URL!,
-        process.env.SUPABASE_SERVICE_ROLE_KEY!,
-        { auth: { persistSession: false } }
-    );
+    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    const supabaseAdmin = serviceRoleKey
+        ? createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, serviceRoleKey, { auth: { persistSession: false } })
+        : null;
 
-    if (!afterCollisionId) {
+    if (supabaseAdmin && !afterCollisionId) {
         const { data: rpcId, error: rpcError } = await supabaseAdmin.rpc('get_next_client_id');
         if (!rpcError && rpcId && typeof rpcId === 'string') {
             return rpcId;
         }
     }
 
-    // Fallback when RPC is not deployed, fails, or we're retrying after collision
-    const { data } = await supabaseAdmin
+    // Fallback when RPC is not deployed, fails, service role missing, or we're retrying after collision
+    const clientForFallback = supabaseAdmin ?? supabase;
+    const { data } = await clientForFallback
         .from('clients')
         .select('id')
         .like('id', 'CLIENT-%');
@@ -1481,7 +1481,7 @@ async function generateNextClientId(afterCollisionId?: string) {
     let candidateId = `CLIENT-${(maxNum + 1).toString().padStart(3, '0')}`;
 
     for (let tries = 0; tries < 10; tries++) {
-        const { data: exists } = await supabaseAdmin
+        const { data: exists } = await clientForFallback
             .from('clients')
             .select('id')
             .eq('id', candidateId)
@@ -1711,44 +1711,63 @@ export async function addDependent(name: string, parentClientId: string, dob?: s
         throw new Error('Cannot attach dependent to another dependent');
     }
 
-    const payload = {
-        full_name: name.trim(),
-        email: null,
-        address: '',
-        phone_number: '',
-        navigator_id: null,
-        end_date: '',
-        screening_took_place: false,
-        screening_signed: false,
-        notes: '',
-        status_id: null,
-        service_type: 'Food' as ServiceType, // Default service type
-        approved_meals_per_week: 0,
-        authorized_amount: null,
-        expiration_date: null,
-        active_order: {},
-        parent_client_id: parentClientId,
-        dob: dob || null,
-        cin: cin ?? null,
-        id: await generateNextClientId()
-    };
+    let lastError: any = null;
+    let lastAttemptedId: string | null = null;
 
-    const { data: res, error } = await supabase.from('clients').insert([payload]).select().single();
-    handleError(error);
+    for (let attempt = 0; attempt < ADD_CLIENT_MAX_RETRIES; attempt++) {
+        const id = await generateNextClientId(lastAttemptedId ?? undefined);
+        const payload = {
+            full_name: name.trim(),
+            email: null,
+            address: '',
+            phone_number: '',
+            navigator_id: null,
+            end_date: '',
+            screening_took_place: false,
+            screening_signed: false,
+            notes: '',
+            status_id: null,
+            service_type: 'Food' as ServiceType, // Default service type
+            approved_meals_per_week: 0,
+            authorized_amount: null,
+            expiration_date: null,
+            active_order: {},
+            parent_client_id: parentClientId,
+            dob: dob || null,
+            cin: cin ?? null,
+            id
+        };
 
-    if (!res) {
-        throw new Error('Failed to create dependent: no data returned');
+        const { data: res, error } = await supabase.from('clients').insert([payload]).select().single();
+
+        if (error) {
+            // Retry on duplicate primary key (race with another create or broken RPC)
+            if (error.code === '23505') {
+                lastError = error;
+                lastAttemptedId = payload.id;
+                continue;
+            }
+            console.error('[addDependent] Supabase error:', error.code, error.message);
+            throw new Error(error.message || 'Failed to create dependent');
+        }
+
+        if (!res) {
+            throw new Error('Failed to create dependent: no data returned');
+        }
+
+        const newDependent = mapClientFromDB(res);
+
+        revalidatePath('/clients');
+
+        // Targeted local DB sync for this client
+        const { updateClientInLocalDB } = await import('./local-db');
+        updateClientInLocalDB(newDependent.id);
+
+        return newDependent;
     }
 
-    const newDependent = mapClientFromDB(res);
-
-    revalidatePath('/clients');
-
-    // Targeted local DB sync for this client
-    const { updateClientInLocalDB } = await import('./local-db');
-    updateClientInLocalDB(newDependent.id);
-
-    return newDependent;
+    console.error('[addDependent] Duplicate key error after', ADD_CLIENT_MAX_RETRIES, 'attempts:', lastError?.message);
+    throw new Error('Failed to create dependent: ID collision after multiple retries. Please try again.');
 }
 
 export async function getRegularClients() {
@@ -3409,17 +3428,22 @@ export async function syncSingleOrderForDeliveryDay(
         const allItemsToInsert: any[] = [];
 
         // First, batch insert all vendor selections
+        // Note: vendorId can be null (e.g., breakfast items without a vendor)
         const vendorSelectionsToInsert = orderConfig.vendorSelections
-            .filter((selection: any) => selection.vendorId && selection.items)
-            .map((selection: any) => ({
+            .filter((selection: any) => selection.items && Object.keys(selection.items).length > 0)
+            .map((selection: any, index: number) => ({
                 upcoming_order_id: upcomingOrderId,
-                vendor_id: selection.vendorId
+                vendor_id: selection.vendorId || null,
+                _temp_index: index // Track which selection this corresponds to
             }));
 
         if (vendorSelectionsToInsert.length > 0) {
             const { data: insertedVendorSelections, error: vsBatchError } = await supabaseClient
                 .from('upcoming_order_vendor_selections')
-                .insert(vendorSelectionsToInsert)
+                .insert(vendorSelectionsToInsert.map((vs: { upcoming_order_id: string; vendor_id: string | null }) => ({
+                    upcoming_order_id: vs.upcoming_order_id,
+                    vendor_id: vs.vendor_id
+                })))
                 .select();
 
             if (vsBatchError) {
@@ -3428,21 +3452,26 @@ export async function syncSingleOrderForDeliveryDay(
             }
 
             if (insertedVendorSelections) {
-                allVendorSelections.push(...insertedVendorSelections);
+                // Associate inserted selections with original selections by order
+                allVendorSelections.push(...insertedVendorSelections.map((vs: any, i: number) => ({
+                    ...vs,
+                    _temp_index: vendorSelectionsToInsert[i]._temp_index
+                })));
             }
         }
 
         // Now batch collect all items to insert
-        // Create a map of vendorId to vendorSelection for quick lookup
-        const vendorSelectionMap = new Map<string, any>();
+        // Create a map by index (not vendorId since it can be null)
+        const vendorSelectionByIndex = new Map<number, any>();
         for (const vs of allVendorSelections) {
-            vendorSelectionMap.set(vs.vendor_id, vs);
+            vendorSelectionByIndex.set(vs._temp_index, vs);
         }
 
-        for (const selection of orderConfig.vendorSelections) {
-            if (!selection.vendorId || !selection.items) continue;
+        for (let selIndex = 0; selIndex < orderConfig.vendorSelections.length; selIndex++) {
+            const selection = orderConfig.vendorSelections[selIndex];
+            if (!selection.items || Object.keys(selection.items).length === 0) continue;
 
-            const vendorSelection = vendorSelectionMap.get(selection.vendorId);
+            const vendorSelection = vendorSelectionByIndex.get(selIndex);
             if (!vendorSelection) continue;
 
             for (const [itemId, qty] of Object.entries(selection.items)) {
