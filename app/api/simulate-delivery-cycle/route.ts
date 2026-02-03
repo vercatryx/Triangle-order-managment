@@ -275,7 +275,7 @@ export async function POST(request: NextRequest) {
                                 if (q > 0) {
                                     const mItem = menuItemMap.get(itemId) || mealItemMap.get(itemId);
                                     if (mItem) {
-                                        const price = mItem.priceEach || mItem.value || 0;
+                                        const price = mItem.itemType === 'meal' ? (mItem.priceEach ?? 0) : (mItem.priceEach ?? mItem.value ?? 0);
                                         itemDetails.push(`${q}x ${mItem.name} ($${(price * q).toFixed(2)})`);
                                     }
                                 }
@@ -329,7 +329,7 @@ export async function POST(request: NextRequest) {
                             if (q > 0) {
                                 const mItem = mealItemMap.get(itemId) || menuItemMap.get(itemId);
                                 if (mItem) {
-                                    const price = mItem.priceEach || mItem.value || 0;
+                                    const price = mItem.itemType === 'meal' ? (mItem.priceEach ?? 0) : (mItem.priceEach ?? mItem.value ?? 0);
                                     itemDetails.push(`${q}x ${mItem.name} ($${(price * q).toFixed(2)})`);
                                 }
                             }
@@ -877,7 +877,7 @@ export async function POST(request: NextRequest) {
                                     // Map Optimization
                                     const mItem = menuItemMap.get(itemId) || mealItemMap.get(itemId);
                                     if (mItem) {
-                                        const price = mItem.priceEach || mItem.value || 0;
+                                        const price = mItem.itemType === 'meal' ? (mItem.priceEach ?? 0) : (mItem.priceEach ?? mItem.value ?? 0);
                                         itemsTotal += q;
                                         valueTotal += price * q;
                                         itemsList.push({
@@ -1254,7 +1254,12 @@ export async function POST(request: NextRequest) {
                         for (const [itemId, qty] of Object.entries(group.items)) {
                             const q = Number(qty);
                             const mItem = allMealItems.find(i => i.id === itemId) || allMenuItems.find(i => i.id === itemId);
-                            const price = mItem?.priceEach || mItem?.value || 0;
+                            // Meal items: use only price_each (value is quota_value, not price). Menu items: price_each or value.
+                            const price = mItem
+                                ? (mItem.itemType === 'meal'
+                                    ? (mItem.priceEach ?? 0)
+                                    : (mItem.priceEach ?? mItem.value ?? 0))
+                                : 0;
                             const total = price * q;
 
                             await supabase.from('order_items').insert({

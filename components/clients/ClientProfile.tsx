@@ -16,7 +16,7 @@ import {
     formatDeliveryDate
 } from '@/lib/order-dates';
 import { isMeetingMinimum, isExceedingMaximum, isMeetingExactTarget } from '@/lib/utils';
-import { Save, ArrowLeft, Truck, Package, AlertTriangle, Upload, Trash2, Plus, Check, ClipboardList, History, CreditCard, Calendar, ChevronDown, ChevronUp, ShoppingCart, Loader2, FileText, Square, CheckSquare, Wrench, Info, Construction, ChevronRight, X } from 'lucide-react';
+import { Save, ArrowLeft, Truck, Package, AlertTriangle, Upload, Trash2, Plus, Check, ClipboardList, History, CreditCard, Calendar, ChevronDown, ChevronUp, ShoppingCart, Loader2, FileText, Square, CheckSquare, Wrench, Info, Construction, ChevronRight, X, RotateCcw } from 'lucide-react';
 import FormFiller from '@/components/forms/FormFiller';
 import { FormSchema } from '@/lib/form-types';
 import TextareaAutosize from 'react-textarea-autosize';
@@ -288,7 +288,9 @@ export function ClientProfileDetail({
     const [billingHistory, setBillingHistory] = useState<any[]>([]);
     const [activeHistoryTab, setActiveHistoryTab] = useState<'deliveries' | 'audit' | 'billing'>('deliveries');
     const [clientOrderHistory, setClientOrderHistory] = useState<any[]>([]);
-    const [orderHistoryExpanded, setOrderHistoryExpanded] = useState<boolean>(true); // Default open as per user request
+    const [orderHistoryRestoringId, setOrderHistoryRestoringId] = useState<string | null>(null); // actionId of entry being restored
+    const [orderHistoryRestoreMessage, setOrderHistoryRestoreMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+    const [orderHistoryExpanded, setOrderHistoryExpanded] = useState<boolean>(false); // Default closed when opening client profile
     const [recentOrdersExpanded, setRecentOrdersExpanded] = useState<boolean>(false);
     const [historyExpanded, setHistoryExpanded] = useState<boolean>(false);
     const [billingHistoryExpanded, setBillingHistoryExpanded] = useState<boolean>(false);
@@ -1161,7 +1163,9 @@ export function ClientProfileDetail({
                             count: parsed.length,
                             sample: parsed[0] ? Object.keys(parsed[0]) : []
                         });
-                        setClientOrderHistory(parsed || []);
+                        // Newest first (backend may store either way; sort by timestamp for consistent UI)
+                        const sorted = [...(parsed || [])].sort((a: any, b: any) => new Date(b.timestamp || 0).getTime() - new Date(a.timestamp || 0).getTime());
+                        setClientOrderHistory(sorted);
                     } else {
                         setClientOrderHistory([]);
                     }
@@ -1213,7 +1217,9 @@ export function ClientProfileDetail({
                 const orderHistoryData = (c as any).order_history;
                 if (orderHistoryData) {
                     const parsed = Array.isArray(orderHistoryData) ? orderHistoryData : JSON.parse(orderHistoryData);
-                    setClientOrderHistory(parsed || []);
+                    // Newest first (backend may store either way; sort by timestamp for consistent UI)
+                    const sorted = [...(parsed || [])].sort((a: any, b: any) => new Date(b.timestamp || 0).getTime() - new Date(a.timestamp || 0).getTime());
+                    setClientOrderHistory(sorted);
                 } else {
                     setClientOrderHistory([]);
                 }
@@ -3330,6 +3336,179 @@ export function ClientProfileDetail({
     );
 
     // --- ORDER HISTORY SECTION ---
+    /** Build OrderConfiguration from a history entry so we can restore activeOrder + upcoming order */
+    function historyEntryToOrderConfiguration(entry: any): OrderConfiguration {
+        const d = entry.orderDetails || entry.orderConfig || {};
+        console.log('[Restore] Mapping entry to config. entry.orderDetails keys:', entry.orderDetails ? Object.keys(entry.orderDetails) : 'none', 'd keys:', Object.keys(d));
+        const config: OrderConfiguration = {
+            serviceType: entry.serviceType || d.serviceType || 'Food',
+            caseId: entry.caseId ?? d.caseId ?? undefined,
+            deliveryDay: entry.deliveryDay ?? d.deliveryDay ?? undefined
+        };
+        // Notes are often stored on the entry; pass through for display if the type is extended
+        (config as any).notes = entry.notes ?? d.notes ?? undefined;
+        (config as any).mealType = entry.mealType ?? d.mealType ?? undefined;
+
+        // Food: vendorSelections or deliveryDayOrders
+        if (d.vendorSelections && Array.isArray(d.vendorSelections)) {
+            config.vendorSelections = d.vendorSelections.map((vs: any) => ({
+                vendorId: vs.vendorId,
+                items: vs.items && typeof vs.items === 'object' ? vs.items : (Array.isArray(vs.itemsDetails)
+                    ? Object.fromEntries((vs.itemsDetails as any[]).map((i: any) => [i.itemId, i.quantity]))
+                    : {}),
+                itemNotes: vs.itemNotes && typeof vs.itemNotes === 'object' ? vs.itemNotes : (Array.isArray(vs.itemsDetails)
+                    ? Object.fromEntries((vs.itemsDetails as any[]).filter((i: any) => i.note).map((i: any) => [i.itemId, i.note]))
+                    : undefined)
+            }));
+        }
+        if (d.deliveryDayOrders && typeof d.deliveryDayOrders === 'object') {
+            config.deliveryDayOrders = {};
+            for (const [day, dayData] of Object.entries(d.deliveryDayOrders as Record<string, any>)) {
+                const vsList = dayData?.vendorSelections;
+                if (Array.isArray(vsList)) {
+                    config.deliveryDayOrders![day] = {
+                        vendorSelections: vsList.map((vs: any) => ({
+                            vendorId: vs.vendorId,
+                            items: vs.items && typeof vs.items === 'object' ? vs.items : (Array.isArray(vs.itemsDetails)
+                                ? Object.fromEntries((vs.itemsDetails as any[]).map((i: any) => [i.itemId, i.quantity]))
+                                : {}),
+                            itemNotes: vs.itemNotes && typeof vs.itemNotes === 'object' ? vs.itemNotes : (Array.isArray(vs.itemsDetails)
+                                ? Object.fromEntries((vs.itemsDetails as any[]).filter((i: any) => i.note).map((i: any) => [i.itemId, i.note]))
+                                : undefined)
+                        }))
+                    };
+                }
+            }
+        }
+
+        // Meal: mealSelections
+        if (d.mealSelections && typeof d.mealSelections === 'object') {
+            config.mealSelections = {};
+            for (const [key, sel] of Object.entries(d.mealSelections as Record<string, any>)) {
+                if (sel && typeof sel === 'object') {
+                    config.mealSelections![key] = {
+                        vendorId: sel.vendorId ?? undefined,
+                        items: sel.items && typeof sel.items === 'object' ? sel.items : (Array.isArray(sel.itemsDetails)
+                            ? Object.fromEntries((sel.itemsDetails as any[]).map((i: any) => [i.itemId, i.quantity]))
+                            : {}),
+                        itemNotes: sel.itemNotes && typeof sel.itemNotes === 'object' ? sel.itemNotes : (Array.isArray(sel.itemsDetails)
+                            ? Object.fromEntries((sel.itemsDetails as any[]).filter((i: any) => i.note).map((i: any) => [i.itemId, i.note]))
+                            : undefined)
+                    };
+                }
+            }
+        }
+
+        // Boxes: boxOrders
+        if (d.boxOrders && Array.isArray(d.boxOrders)) {
+            config.boxOrders = d.boxOrders.map((box: any) => ({
+                id: box.id || `restore-${Math.random().toString(36).slice(2)}`,
+                clientId: clientId,
+                boxTypeId: box.boxTypeId,
+                vendorId: box.vendorId,
+                quantity: box.quantity ?? 1,
+                items: box.items && typeof box.items === 'object' ? box.items : (Array.isArray(box.itemsDetails)
+                    ? Object.fromEntries((box.itemsDetails as any[]).map((i: any) => [i.itemId, i.quantity]))
+                    : {}),
+                itemPrices: box.itemPrices && typeof box.itemPrices === 'object' ? box.itemPrices : undefined,
+                itemNotes: box.itemNotes && typeof box.itemNotes === 'object' ? box.itemNotes : undefined
+            }));
+        }
+
+        // Custom
+        if (d.customOrder && typeof d.customOrder === 'object') {
+            const co = d.customOrder as any;
+            config.vendorId = co.vendorId;
+            config.custom_name = co.description ?? co.custom_name;
+            config.custom_price = co.price ?? co.custom_price;
+            config.deliveryDay = co.deliveryDay ?? config.deliveryDay;
+        }
+
+        return config;
+    }
+
+    async function handleRestoreFromHistory(entry: any, entryKey: string) {
+        console.log('[Restore] Clicked – entryKey:', entryKey, 'entry keys:', entry ? Object.keys(entry) : []);
+        setOrderHistoryRestoringId(entryKey);
+        try {
+            const restored = historyEntryToOrderConfiguration(entry);
+            console.log('[Restore] Built config:', { serviceType: restored.serviceType, caseId: restored.caseId, vendorSelectionsCount: restored.vendorSelections?.length, boxOrdersCount: restored.boxOrders?.length, mealSelectionsKeys: restored.mealSelections ? Object.keys(restored.mealSelections) : [] });
+            // Form is driven by orderConfig – must set this so the order form shows the restored data
+            setOrderConfig(restored);
+            setActiveOrder(restored);
+            // Switch service type tab to match restored order
+            if (restored.serviceType && formData.serviceType !== restored.serviceType) {
+                setFormData((prev: any) => ({ ...prev, serviceType: restored.serviceType }));
+            }
+            console.log('[Restore] Calling updateClient...');
+            const updated = await updateClient(clientId, { activeOrder: restored }, { skipHistory: false }); // Record restore as a new history entry
+            console.log('[Restore] updateClient result:', updated ? 'ok' : 'null', updated?.activeOrder ? 'has activeOrder' : '');
+            if (updated) setClient(updated);
+            console.log('[Restore] Done – form should show restored order.');
+            setOrderHistoryRestoreMessage({ type: 'success', text: 'Order restored. Form updated and saved to server.' });
+            setTimeout(() => setOrderHistoryRestoreMessage(null), 5000);
+        } catch (e: any) {
+            const msg = e?.message || String(e);
+            console.error('[Restore] Failed:', msg, e);
+            setOrderHistoryRestoreMessage({ type: 'error', text: `Restore failed: ${msg}` });
+            setTimeout(() => setOrderHistoryRestoreMessage(null), 8000);
+        } finally {
+            setOrderHistoryRestoringId(null);
+        }
+    }
+
+    /** Canonicalize config for comparison: only include defined, non-empty content so history and live orderConfig produce same signature when order is the same. */
+    function canonicalizeOrderForComparison(c: any): any {
+        if (!c || typeof c !== 'object') return {};
+        const out: any = {};
+        if (c.serviceType != null && c.serviceType !== '') out.serviceType = c.serviceType;
+        if (c.caseId != null && c.caseId !== '') out.caseId = c.caseId;
+        if (c.deliveryDay != null && c.deliveryDay !== '') out.deliveryDay = c.deliveryDay;
+        if (c.vendorId != null && c.vendorId !== '') out.vendorId = c.vendorId;
+        if (c.custom_name != null && c.custom_name !== '') out.custom_name = c.custom_name;
+        if (c.custom_price != null && c.custom_price !== '') out.custom_price = c.custom_price;
+        if (c.vendorSelections != null && Array.isArray(c.vendorSelections) && c.vendorSelections.length > 0) {
+            out.vendorSelections = c.vendorSelections;
+        }
+        if (c.deliveryDayOrders != null && typeof c.deliveryDayOrders === 'object' && Object.keys(c.deliveryDayOrders).length > 0) {
+            out.deliveryDayOrders = c.deliveryDayOrders;
+        }
+        if (c.mealSelections != null && typeof c.mealSelections === 'object' && Object.keys(c.mealSelections).length > 0) {
+            out.mealSelections = c.mealSelections;
+        }
+        if (c.customOrder != null && typeof c.customOrder === 'object') {
+            out.customOrder = c.customOrder;
+        }
+        if (c.boxOrders != null && Array.isArray(c.boxOrders) && c.boxOrders.length > 0) {
+            out.boxOrders = c.boxOrders.map((b: any) => {
+                const box: any = {};
+                if (b.boxTypeId != null) box.boxTypeId = b.boxTypeId;
+                if (b.vendorId != null) box.vendorId = b.vendorId;
+                if (b.quantity != null) box.quantity = b.quantity;
+                if (b.items != null && typeof b.items === 'object' && Object.keys(b.items).length > 0) box.items = b.items;
+                if (b.itemPrices != null && typeof b.itemPrices === 'object' && Object.keys(b.itemPrices).length > 0) box.itemPrices = b.itemPrices;
+                if (b.itemNotes != null && typeof b.itemNotes === 'object' && Object.keys(b.itemNotes).length > 0) box.itemNotes = b.itemNotes;
+                return box;
+            });
+        }
+        return out;
+    }
+
+    /** Stable string for comparing two order configs (same content => same string). Uses canonical form so live orderConfig and history entry match when order is the same. */
+    function orderConfigSignature(c: any): string {
+        if (!c || typeof c !== 'object') return '';
+        const stable = (obj: any): string => {
+            if (obj == null) return 'null';
+            if (Array.isArray(obj)) return '[' + obj.map(stable).join(',') + ']';
+            if (typeof obj === 'object') {
+                const keys = Object.keys(obj).sort();
+                return '{' + keys.map(k => JSON.stringify(k) + ':' + stable(obj[k])).join(',') + '}';
+            }
+            return JSON.stringify(obj);
+        };
+        return stable(canonicalizeOrderForComparison(c));
+    }
+
     const renderOrderHistorySection = () => (
         <section className={styles.card} style={{ marginTop: 'var(--spacing-lg)' }}>
             <div
@@ -3359,18 +3538,94 @@ export function ClientProfileDetail({
                 {orderHistoryExpanded ? <ChevronUp size={20} /> : <ChevronDown size={20} />}
             </div>
 
+            {orderHistoryRestoreMessage && (
+                <div
+                    role="alert"
+                    style={{
+                        marginTop: '0.75rem',
+                        padding: '0.5rem 0.75rem',
+                        borderRadius: '6px',
+                        backgroundColor: orderHistoryRestoreMessage.type === 'success' ? 'var(--color-success-bg, #d4edda)' : 'var(--color-error-bg, #f8d7da)',
+                        color: orderHistoryRestoreMessage.type === 'success' ? 'var(--color-success, #155724)' : 'var(--color-error, #721c24)',
+                        fontSize: '0.9rem'
+                    }}
+                >
+                    {orderHistoryRestoreMessage.text}
+                </div>
+            )}
+
             {orderHistoryExpanded && (
                 <div className={styles.historyList} style={{ marginTop: '1rem' }}>
                     {clientOrderHistory.length > 0 ? (
-                        clientOrderHistory.map((entry, index) => (
-                            <div key={index} className={styles.card} style={{ marginBottom: '1rem', borderLeft: '4px solid var(--color-primary)', backgroundColor: 'var(--bg-surface)' }}>
-                                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem', borderBottom: '1px solid var(--border-color)', paddingBottom: '0.5rem' }}>
+                        clientOrderHistory.map((entry, index) => {
+                            const entryKey = entry.actionId || `history-${entry.timestamp}-${index}`;
+                            const isRestoring = orderHistoryRestoringId === entryKey;
+                            const od = entry.orderDetails || entry.orderConfig || {};
+                            const hasRestorableDetails = !!(od && (od.vendorSelections || od.deliveryDayOrders || od.mealSelections || od.boxOrders || od.customOrder));
+                            const entryConfig = historyEntryToOrderConfiguration(entry);
+                            const entryCanon = canonicalizeOrderForComparison(entryConfig);
+                            const currentCanon = orderConfig ? canonicalizeOrderForComparison(orderConfig) : {};
+                            const entrySig = orderConfigSignature(entryConfig);
+                            const currentSig = orderConfig ? orderConfigSignature(orderConfig) : '';
+                            const isCurrentOrder = !!orderConfig && entrySig === currentSig;
+                            // Find first character where signatures differ (for debugging)
+                            let firstDiffAt = -1;
+                            if (entrySig !== currentSig) {
+                                for (let i = 0; i < Math.max(entrySig.length, currentSig.length); i++) {
+                                    if (entrySig[i] !== currentSig[i]) { firstDiffAt = i; break; }
+                                }
+                            }
+                            // Log comparison for each history entry
+                            console.log('[History match]', {
+                                index,
+                                timestamp: entry.timestamp,
+                                serviceType: entryConfig.serviceType,
+                                entryCanonicalKeys: Object.keys(entryCanon),
+                                currentCanonicalKeys: Object.keys(currentCanon),
+                                hasOrderConfig: !!orderConfig,
+                                orderConfigKeys: orderConfig ? Object.keys(orderConfig) : [],
+                                entrySigLength: entrySig.length,
+                                currentSigLength: currentSig.length,
+                                match: isCurrentOrder,
+                                firstDiffAt: firstDiffAt >= 0 ? firstDiffAt : null,
+                                atFirstDiff: firstDiffAt >= 0 ? { entryChar: entrySig[firstDiffAt], currentChar: currentSig[firstDiffAt], entrySlice: entrySig.slice(Math.max(0, firstDiffAt - 20), firstDiffAt + 30), currentSlice: currentSig.slice(Math.max(0, firstDiffAt - 20), firstDiffAt + 30) } : null,
+                                entrySigFull: entrySig,
+                                currentSigFull: currentSig
+                            });
+                            if (index === 0 && (entry.orderDetails || entry.orderConfig) && !hasRestorableDetails) {
+                                console.log('[Restore] First history entry has orderDetails/orderConfig but hasRestorableDetails=false. keys:', Object.keys(od));
+                            }
+                            return (
+                            <div key={entryKey} className={styles.card} style={{ marginBottom: '1.5rem', borderLeft: isCurrentOrder ? '4px solid rgb(34, 197, 94)' : '4px solid var(--color-primary)', backgroundColor: 'var(--bg-surface)' }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem', borderBottom: '1px solid var(--border-color)', paddingBottom: '0.5rem' }}>
                                     <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
                                         <strong>{entry.type === 'order_created' ? 'Order Created' : 'Order Updated'}</strong>
                                         <span className={styles.budget} style={{ fontSize: '0.8rem' }}>{entry.serviceType}</span>
                                     </div>
-                                    <div style={{ fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
-                                        {new Date(entry.timestamp).toLocaleString()}
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                                        {hasRestorableDetails && (
+                                            <button
+                                                type="button"
+                                                className="btn btn-sm btn-primary"
+                                                onClick={(e) => { e.preventDefault(); e.stopPropagation(); console.log('[Restore] Button clicked for entry:', entry?.timestamp); handleRestoreFromHistory(entry, entryKey); }}
+                                                disabled={isRestoring}
+                                                title={isRestoring ? 'Restoring…' : 'Restore this order as the current upcoming order and active order'}
+                                                style={{
+                                                    display: 'inline-flex',
+                                                    alignItems: 'center',
+                                                    gap: '0.35rem',
+                                                    opacity: isRestoring ? 0.8 : 1,
+                                                    cursor: isRestoring ? 'wait' : 'pointer',
+                                                    pointerEvents: isRestoring ? 'none' : 'auto'
+                                                }}
+                                            >
+                                                {isRestoring ? <Loader2 size={14} className="spin" style={{ flexShrink: 0 }} /> : <RotateCcw size={14} />}
+                                                {isRestoring ? 'Restoring…' : 'Restore'}
+                                            </button>
+                                        )}
+                                        <span style={{ fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
+                                            {new Date(entry.timestamp).toLocaleString()}
+                                        </span>
                                     </div>
                                 </div>
 
@@ -3541,7 +3796,8 @@ export function ClientProfileDetail({
                                     )}
                                 </div>
                             </div>
-                        ))
+                            );
+                        })
                     ) : (
                         <div className={styles.empty}>No order history available.</div>
                     )}

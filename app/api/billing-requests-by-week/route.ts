@@ -2,90 +2,120 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getBillingRequestsByWeek } from '@/lib/actions';
 import { getDependentsByParentId } from '@/lib/actions';
 
+/** Format dependents for API response */
+function formatDependents(dependents: { fullName?: string | null; dob?: string | null; cin?: string | null }[]) {
+    return dependents.map((dep) => {
+        let birthday = '';
+        if (dep.dob) {
+            try {
+                const dobDate = new Date(dep.dob);
+                const month = String(dobDate.getMonth() + 1).padStart(2, '0');
+                const day = String(dobDate.getDate()).padStart(2, '0');
+                const year = dobDate.getFullYear();
+                birthday = `${month}/${day}/${year}`;
+            } catch {
+                birthday = dep.dob;
+            }
+        }
+        return {
+            name: dep.fullName || '',
+            Birthday: birthday,
+            CIN: dep.cin || ''
+        };
+    });
+}
+
 export async function GET(request: NextRequest) {
     try {
         // Get all billing requests (no date filter)
         const allBillingRequests = await getBillingRequestsByWeek();
 
-        // Filter to only include requests that are ready for billing (all orders have proof)
-        // Also exclude requests with billing_successful or billing_failed status (these are already completed)
-        const billingRequests = allBillingRequests.filter(req => {
-            return req.readyForBilling && 
-                   req.billingStatus !== 'success' && 
+        // --- Standard (food/meal/boxes) requests: combined per client+week ---
+        // Only include requests that have standard orders, are ready for billing, and not yet completed
+        const standardRequests = allBillingRequests.filter(req => {
+            const hasStandard = (req.orders?.length ?? 0) > 0;
+            return hasStandard &&
+                   req.readyForBilling &&
+                   req.billingStatus !== 'success' &&
                    req.billingStatus !== 'failed';
         });
 
-        // Format the response
-        const formattedRequests = await Promise.all(
-            billingRequests.map(async (req) => {
-                // Get dependents for this client
+        const billingRequests = await Promise.all(
+            standardRequests.map(async (req) => {
                 const dependents = await getDependentsByParentId(req.clientId);
+                const formattedDependents = formatDependents(dependents);
 
-                // Format dependents
-                const formattedDependents = dependents.map((dep) => {
-                    // Format birthday from ISO date (YYYY-MM-DD) to MM/DD/YYYY
-                    let birthday = '';
-                    if (dep.dob) {
-                        try {
-                            const dobDate = new Date(dep.dob);
-                            const month = String(dobDate.getMonth() + 1).padStart(2, '0');
-                            const day = String(dobDate.getDate()).padStart(2, '0');
-                            const year = dobDate.getFullYear();
-                            birthday = `${month}/${day}/${year}`;
-                        } catch (e) {
-                            birthday = dep.dob;
-                        }
-                    }
-
-                    return {
-                        name: dep.fullName || '',
-                        Birthday: birthday,
-                        CIN: dep.cin || ''
-                    };
-                });
-
-                // Collect all proof URLs from orders (remove duplicates and nulls)
                 const proofURLs: string[] = [];
                 const orderIds: string[] = [];
                 let caseId: string | null = null;
 
-                for (const order of req.orders) {
+                // Only standard orders (no equipment)
+                for (const order of req.orders ?? []) {
                     orderIds.push(order.id);
-                    
-                    // Get case_id from first order that has one
-                    if (!caseId && order.case_id) {
-                        caseId = order.case_id;
+                    if (!caseId && order.case_id) caseId = order.case_id;
+                    if (order.proof_of_delivery_image && !proofURLs.includes(order.proof_of_delivery_image)) {
+                        proofURLs.push(order.proof_of_delivery_image);
                     }
-
-                    // Collect proof URLs
-                    if (order.proof_of_delivery_image) {
-                        if (!proofURLs.includes(order.proof_of_delivery_image)) {
-                            proofURLs.push(order.proof_of_delivery_image);
-                        }
-                    }
-                    if (order.delivery_proof_url) {
-                        if (!proofURLs.includes(order.delivery_proof_url)) {
-                            proofURLs.push(order.delivery_proof_url);
-                        }
+                    if (order.delivery_proof_url && !proofURLs.includes(order.delivery_proof_url)) {
+                        proofURLs.push(order.delivery_proof_url);
                     }
                 }
 
-                // Get the week start date from the request
-                const weekStartDateStr = req.weekStart ? req.weekStart.split('T')[0] : ''; // YYYY-MM-DD format
+                const weekStartDateStr = req.weekStart ? req.weekStart.split('T')[0] : '';
+                // Amount is only from standard orders (exclude equipment)
+                const standardAmount = (req.orders ?? []).reduce((sum: number, o: any) => sum + (o.amount ?? o.total_value ?? 0), 0);
 
                 return {
                     name: req.clientName || 'Unknown',
                     url: caseId || '',
-                    date: weekStartDateStr, // First date of the week (Sunday) in YYYY-MM-DD format
-                    amount: req.totalAmount,
+                    date: weekStartDateStr,
+                    amount: standardAmount,
                     proofURL: proofURLs,
                     dependants: formattedDependents,
-                    orderIds: orderIds
+                    orderIds
                 };
             })
         );
 
-        return NextResponse.json(formattedRequests);
+        // --- Equipment requests: one entry per equipment order (each billed for itself, separate tab) ---
+        const equipmentBillingRequests: any[] = [];
+        for (const req of allBillingRequests) {
+            const equipmentOrders = req.equipmentOrders ?? [];
+            if (equipmentOrders.length === 0) continue;
+            // Only include equipment that is ready for billing and not yet completed
+            if (!req.equipmentReadyForBilling || req.equipmentBillingStatus === 'success' || req.equipmentBillingStatus === 'failed') {
+                continue;
+            }
+
+            const dependents = await getDependentsByParentId(req.clientId);
+            const formattedDependents = formatDependents(dependents);
+
+            // One API entry per equipment order (do not combine)
+            for (const order of equipmentOrders) {
+                const proofURLs: string[] = [];
+                if (order.proof_of_delivery_image) proofURLs.push(order.proof_of_delivery_image);
+                if (order.delivery_proof_url && !proofURLs.includes(order.delivery_proof_url)) {
+                    proofURLs.push(order.delivery_proof_url);
+                }
+                const weekStartDateStr = req.weekStart ? req.weekStart.split('T')[0] : '';
+                const amount = order.amount ?? order.total_value ?? 0;
+
+                equipmentBillingRequests.push({
+                    name: req.clientName || 'Unknown',
+                    url: order.case_id || '',
+                    date: weekStartDateStr,
+                    amount: Number(amount),
+                    proofURL: proofURLs,
+                    dependants: formattedDependents,
+                    orderIds: [order.id]
+                });
+            }
+        }
+
+        return NextResponse.json({
+            billingRequests,
+            equipmentBillingRequests
+        });
 
     } catch (error: any) {
         console.error('Error in billing-requests-by-week API:', error);

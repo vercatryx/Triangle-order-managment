@@ -2,7 +2,6 @@ import { createClient } from '@supabase/supabase-js';
 import { OrderDeliveryFlow } from './OrderDeliveryFlow';
 import { notFound } from 'next/navigation';
 import '../delivery.css';
-import '../delivery.css';
 
 export default async function OrderDeliveryPage({ params }: { params: Promise<{ id: string }> }) {
     const { id } = await params;

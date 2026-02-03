@@ -16,11 +16,5 @@ export default async function OrdersLayout({
         redirect('/vendor');
     }
 
-    // Navigators usually don't need access to raw orders list, but if they do, we can relax this.
-    // For now, strict to Admin.
-    if (session.role === 'navigator') {
-        redirect('/clients');
-    }
-
     return <>{children}</>;
 }

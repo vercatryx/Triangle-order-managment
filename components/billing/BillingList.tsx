@@ -17,7 +17,7 @@ export function BillingList() {
     const [expandedRequest, setExpandedRequest] = useState<string | null>(null);
     const [isLoading, setIsLoading] = useState(true);
     const [weekOptions, setWeekOptions] = useState<Date[]>([]);
-    const [statusDropdownOpen, setStatusDropdownOpen] = useState<string | null>(null);
+    const [statusDropdownOpen, setStatusDropdownOpen] = useState<string | null>(null); // requestKey or requestKey-orders | requestKey-equipment
     const selectedWeekRef = useRef<Date | 'all' | null>(null);
 
     useEffect(() => {
@@ -217,27 +217,18 @@ export function BillingList() {
                         const requestKey = getRequestKey(request);
                         const isExpanded = expandedRequest === requestKey;
                         
-                        // Determine status label and class
-                        let statusLabel: string;
-                        let statusClass: string;
-                        
-                        // Check billing status first (based on all orders)
-                        if (request.billingStatus === 'success') {
-                            statusLabel = 'Billing Success';
-                            statusClass = styles.statusSuccess;
-                        } else if (request.billingStatus === 'failed') {
-                            statusLabel = 'Billing Failed';
-                            statusClass = styles.statusFailed;
-                        } else if (request.billingCompleted) {
-                            statusLabel = 'Billing Completed';
-                            statusClass = styles.statusSuccess;
-                        } else if (request.readyForBilling) {
-                            statusLabel = 'Ready for Billing';
-                            statusClass = styles.statusReady;
-                        } else {
-                            statusLabel = 'Waiting for Proof';
-                            statusClass = styles.statusPending;
-                        }
+                        // Status helper for one group
+                        const getStatusLabel = (status: 'success' | 'failed' | 'pending', ready: boolean, completed: boolean) => {
+                            if (status === 'success') return { label: 'Billing Success', class: styles.statusSuccess };
+                            if (status === 'failed') return { label: 'Billing Failed', class: styles.statusFailed };
+                            if (completed) return { label: 'Billing Completed', class: styles.statusSuccess };
+                            if (ready) return { label: 'Ready for Billing', class: styles.statusReady };
+                            return { label: 'Waiting for Proof', class: styles.statusPending };
+                        };
+                        const ordersStatus = getStatusLabel(request.billingStatus, request.readyForBilling, request.billingCompleted);
+                        const equipmentStatus = getStatusLabel(request.equipmentBillingStatus, request.equipmentReadyForBilling, request.equipmentBillingCompleted);
+                        const hasEquipment = (request.equipmentOrders?.length ?? 0) > 0;
+                        const hasOrders = (request.orders?.length ?? 0) > 0;
 
                         return (
                             <div key={requestKey}>
@@ -256,92 +247,80 @@ export function BillingList() {
                                     </span>
                                     <span style={{ flex: 1 }}>{request.orderCount}</span>
                                     <span style={{ flex: 1, fontWeight: 600 }}>${request.totalAmount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                                <span style={{ flex: 1.5, position: 'relative' }}>
-                                    <span 
-                                        className={statusClass}
-                                        style={{ cursor: 'pointer', display: 'inline-block' }}
-                                        onClick={(e) => {
-                                            e.stopPropagation();
-                                            setStatusDropdownOpen(statusDropdownOpen === requestKey ? null : requestKey);
-                                        }}
-                                    >
-                                        {statusLabel.toUpperCase()}
-                                    </span>
-                                    {/* Show billing notes if available */}
-                                    {request.orders.some(o => o.billing_notes) && (
-                                        <div style={{ 
-                                            fontSize: '0.75rem', 
-                                            color: 'var(--text-tertiary)', 
-                                            marginTop: '2px',
-                                            fontStyle: 'italic'
-                                        }}>
-                                            {Array.from(new Set(
-                                                request.orders
-                                                    .filter(o => o.billing_notes)
-                                                    .map(o => o.billing_notes)
-                                                    .filter(Boolean)
-                                            )).join(' | ')}
-                                        </div>
-                                    )}
-                                    {/* Status dropdown */}
-                                    {statusDropdownOpen === requestKey && (
-                                        <div 
-                                            className={styles.statusDropdown}
-                                            onClick={(e) => e.stopPropagation()}
+                                <span style={{ flex: 1.5, position: 'relative', display: 'flex', flexDirection: 'column', gap: 2 }}>
+                                    {hasOrders && (
+                                        <span
+                                            className={ordersStatus.class}
+                                            style={{ cursor: hasEquipment ? 'default' : 'pointer', display: 'inline-block', fontSize: '0.85rem' }}
+                                            onClick={(e) => { if (!hasEquipment) { e.stopPropagation(); setStatusDropdownOpen(statusDropdownOpen === requestKey ? null : requestKey); } }}
                                         >
+                                            {hasEquipment ? 'Food/Meal: ' : ''}{ordersStatus.label.toUpperCase()}
+                                        </span>
+                                    )}
+                                    {hasEquipment && (
+                                        <span
+                                            className={equipmentStatus.class}
+                                            style={{ cursor: 'pointer', display: 'inline-block', fontSize: '0.85rem' }}
+                                            onClick={(e) => { e.stopPropagation(); setStatusDropdownOpen(statusDropdownOpen === requestKey + '-equipment' ? null : requestKey + '-equipment'); }}
+                                        >
+                                            Equipment: {equipmentStatus.label.toUpperCase()}
+                                        </span>
+                                    )}
+                                    {!hasOrders && !hasEquipment && (
+                                        <span className={styles.statusNeutral}>—</span>
+                                    )}
+                                    {/* Single dropdown in row: orders (when no equipment) or equipment */}
+                                    {!hasEquipment && hasOrders && statusDropdownOpen === requestKey && (
+                                        <div className={styles.statusDropdown} onClick={(e) => e.stopPropagation()}>
                                             <select
                                                 className="input"
                                                 style={{ width: '100%', marginBottom: '0.5rem' }}
-                                                value={(() => {
-                                                    // Determine current status from orders
-                                                    const allSuccessful = request.orders.every(o => o.status === 'billing_successful');
-                                                    const hasFailed = request.orders.some(o => o.status === 'billing_failed');
-                                                    if (allSuccessful) return 'billing_successful';
-                                                    if (hasFailed) return 'billing_failed';
-                                                    return 'billing_pending';
-                                                })()}
+                                                value={request.orders.every(o => o.status === 'billing_successful') ? 'billing_successful' : request.orders.some(o => o.status === 'billing_failed') ? 'billing_failed' : 'billing_pending'}
                                                 onChange={async (e) => {
                                                     const newStatus = e.target.value;
                                                     try {
-                                                        const orderIds = request.orders.map(o => o.id);
-                                                        
-                                                        const response = await fetch('/api/update-order-billing-status', {
-                                                            method: 'POST',
-                                                            headers: { 'Content-Type': 'application/json' },
-                                                            body: JSON.stringify({
-                                                                orderIds,
-                                                                status: newStatus
-                                                            })
-                                                        });
-                                                        
+                                                        const response = await fetch('/api/update-order-billing-status', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ orderIds: request.orders.map(o => o.id), status: newStatus }) });
                                                         const result = await response.json();
-                                                        
-                                                        if (result.success) {
-                                                            setStatusDropdownOpen(null);
-                                                            // Reload data
-                                                            if (selectedWeek) {
-                                                                loadData();
-                                                            }
-                                                        } else {
-                                                            alert(`Failed to update status: ${result.error || 'Unknown error'}`);
-                                                        }
-                                                    } catch (error: any) {
-                                                        console.error('Error updating status:', error);
-                                                        alert(`Error: ${error.message || 'Failed to update status'}`);
-                                                    }
+                                                        if (result.success) { setStatusDropdownOpen(null); if (selectedWeek) loadData(); } else alert(`Failed: ${result.error || 'Unknown error'}`);
+                                                    } catch (err: any) { console.error(err); alert(err.message || 'Failed to update status'); }
                                                 }}
                                             >
                                                 <option value="billing_pending">Billing Pending</option>
                                                 <option value="billing_successful">Billing Successful</option>
                                                 <option value="billing_failed">Billing Failed</option>
                                             </select>
-                                            <button
-                                                className="btn btn-secondary"
-                                                style={{ width: '100%', fontSize: '0.875rem' }}
-                                                onClick={() => setStatusDropdownOpen(null)}
+                                            <button className="btn btn-secondary" style={{ width: '100%', fontSize: '0.875rem' }} onClick={() => setStatusDropdownOpen(null)}>Close</button>
+                                        </div>
+                                    )}
+                                    {hasEquipment && statusDropdownOpen === requestKey + '-equipment' && (
+                                        <div className={styles.statusDropdown} onClick={(e) => e.stopPropagation()}>
+                                            <select
+                                                className="input"
+                                                style={{ width: '100%', marginBottom: '0.5rem' }}
+                                                value={(request.equipmentOrders ?? []).every((o: any) => o.status === 'billing_successful') ? 'billing_successful' : (request.equipmentOrders ?? []).some((o: any) => o.status === 'billing_failed') ? 'billing_failed' : 'billing_pending'}
+                                                onChange={async (e) => {
+                                                    const newStatus = e.target.value;
+                                                    try {
+                                                        const response = await fetch('/api/update-order-billing-status', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ orderIds: (request.equipmentOrders ?? []).map((o: any) => o.id), status: newStatus }) });
+                                                        const result = await response.json();
+                                                        if (result.success) { setStatusDropdownOpen(null); if (selectedWeek) loadData(); } else alert(`Failed: ${result.error || 'Unknown error'}`);
+                                                    } catch (err: any) { console.error(err); alert(err.message || 'Failed'); }
+                                                }}
                                             >
-                                                Close
-                                            </button>
+                                                <option value="billing_pending">Billing Pending</option>
+                                                <option value="billing_successful">Billing Successful</option>
+                                                <option value="billing_failed">Billing Failed</option>
+                                            </select>
+                                            <button className="btn btn-secondary" style={{ width: '100%', fontSize: '0.875rem' }} onClick={() => setStatusDropdownOpen(null)}>Close</button>
+                                        </div>
+                                    )}
+                                    {/* Billing notes */}
+                                    {(request.orders.some(o => o.billing_notes) || (request.equipmentOrders ?? []).some((o: any) => o.billing_notes)) && (
+                                        <div style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)', marginTop: '2px', fontStyle: 'italic' }}>
+                                            {Array.from(new Set([
+                                                ...request.orders.filter(o => o.billing_notes).map(o => o.billing_notes),
+                                                ...(request.equipmentOrders ?? []).filter((o: any) => o.billing_notes).map((o: any) => o.billing_notes)
+                                            ].filter(Boolean))).join(' | ')}
                                         </div>
                                     )}
                                 </span>
@@ -351,21 +330,46 @@ export function BillingList() {
                             </div>
                             {isExpanded && (
                                 <div className={styles.ordersDetail}>
-                                    <div className={styles.ordersDetailHeader}>
-                                        <h3>Orders in this billing request</h3>
-                                        <span className={styles.ordersCount}>{request.orders.length} order{request.orders.length !== 1 ? 's' : ''}</span>
-                                    </div>
-                                    <div className={styles.ordersList}>
-                                        <div className={styles.ordersListHeader}>
-                                            <span style={{ width: '100px' }}>Order #</span>
-                                            <span style={{ flex: 1 }}>Service</span>
-                                            <span style={{ flex: 1 }}>Amount</span>
-                                            <span style={{ flex: 1.5 }}>Delivery Date</span>
-                                            <span style={{ flex: 1 }}>Status</span>
-                                            <span style={{ flex: 1 }}>Proof of Delivery</span>
-                                            <span style={{ width: '40px' }}></span>
-                                        </div>
-                                        {/* Show ALL orders for this client/week - both with and without proof */}
+                                    {/* Food / Meal / Boxes section */}
+                                    {hasOrders && (
+                                        <>
+                                            <div className={styles.ordersDetailHeader}>
+                                                <h3>Food / Meal / Boxes orders</h3>
+                                                <span className={styles.ordersCount}>{request.orders.length} order{request.orders.length !== 1 ? 's' : ''} · ${(request.totalAmount - (request.equipmentTotalAmount ?? 0)).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                                            </div>
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                                                <span className={ordersStatus.class} style={{ fontSize: '0.85rem' }}>{ordersStatus.label}</span>
+                                                <span style={{ position: 'relative' }}>
+                                                    <button type="button" className="btn btn-secondary" style={{ fontSize: '0.8rem' }} onClick={(e) => { e.stopPropagation(); setStatusDropdownOpen(statusDropdownOpen === requestKey + '-orders' ? null : requestKey + '-orders'); }}>Update status</button>
+                                                    {statusDropdownOpen === requestKey + '-orders' && (
+                                                        <div className={styles.statusDropdown} onClick={(e) => e.stopPropagation()}>
+                                                            <select className="input" style={{ width: '100%', marginBottom: '0.5rem' }} value={request.orders.every(o => o.status === 'billing_successful') ? 'billing_successful' : request.orders.some(o => o.status === 'billing_failed') ? 'billing_failed' : 'billing_pending'} onChange={async (e) => {
+                                                                const newStatus = e.target.value;
+                                                                try {
+                                                                    const response = await fetch('/api/update-order-billing-status', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ orderIds: request.orders.map(o => o.id), status: newStatus }) });
+                                                                    const result = await response.json();
+                                                                    if (result.success) { setStatusDropdownOpen(null); if (selectedWeek) loadData(); } else alert(`Failed: ${result.error || 'Unknown error'}`);
+                                                                } catch (err: any) { console.error(err); alert(err.message || 'Failed'); }
+                                                            }}>
+                                                                <option value="billing_pending">Billing Pending</option>
+                                                                <option value="billing_successful">Billing Successful</option>
+                                                                <option value="billing_failed">Billing Failed</option>
+                                                            </select>
+                                                            <button className="btn btn-secondary" style={{ width: '100%', fontSize: '0.875rem' }} onClick={() => setStatusDropdownOpen(null)}>Close</button>
+                                                        </div>
+                                                    )}
+                                                </span>
+                                            </div>
+                                            <div className={styles.ordersList}>
+                                                <div className={styles.ordersListHeader}>
+                                                    <span style={{ width: '100px' }}>Order #</span>
+                                                    <span style={{ flex: 1 }}>Service</span>
+                                                    <span style={{ flex: 1 }}>Amount</span>
+                                                    <span style={{ flex: 1.5 }}>Delivery Date</span>
+                                                    <span style={{ flex: 1 }}>Status</span>
+                                                    <span style={{ flex: 1 }}>Proof of Delivery</span>
+                                                    <span style={{ width: '40px' }}></span>
+                                                </div>
                                         {request.orders.map(order => {
                                             const deliveryDate = order.actual_delivery_date
                                                 ? new Date(order.actual_delivery_date).toLocaleDateString('en-US', { timeZone: 'UTC' })
@@ -459,7 +463,70 @@ export function BillingList() {
                                                 </div>
                                             );
                                         })}
-                                    </div>
+                                            </div>
+                                        </>
+                                    )}
+                                    {/* Equipment orders section - processed separately */}
+                                    {hasEquipment && (
+                                        <>
+                                            <div className={styles.ordersDetailHeader}>
+                                                <h3>Equipment orders</h3>
+                                                <span className={styles.ordersCount}>{(request.equipmentOrders ?? []).length} order{((request.equipmentOrders ?? []).length) !== 1 ? 's' : ''} · ${(request.equipmentTotalAmount ?? 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                                            </div>
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                                                <span className={equipmentStatus.class} style={{ fontSize: '0.85rem' }}>{equipmentStatus.label}</span>
+                                                <span style={{ position: 'relative' }}>
+                                                    <button type="button" className="btn btn-secondary" style={{ fontSize: '0.8rem' }} onClick={(e) => { e.stopPropagation(); setStatusDropdownOpen(statusDropdownOpen === requestKey + '-equipment' ? null : requestKey + '-equipment'); }}>Update status</button>
+                                                    {statusDropdownOpen === requestKey + '-equipment' && (
+                                                        <div className={styles.statusDropdown} onClick={(e) => e.stopPropagation()}>
+                                                            <select className="input" style={{ width: '100%', marginBottom: '0.5rem' }} value={(request.equipmentOrders ?? []).every((o: any) => o.status === 'billing_successful') ? 'billing_successful' : (request.equipmentOrders ?? []).some((o: any) => o.status === 'billing_failed') ? 'billing_failed' : 'billing_pending'} onChange={async (e) => {
+                                                                const newStatus = e.target.value;
+                                                                try {
+                                                                    const response = await fetch('/api/update-order-billing-status', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ orderIds: (request.equipmentOrders ?? []).map((o: any) => o.id), status: newStatus }) });
+                                                                    const result = await response.json();
+                                                                    if (result.success) { setStatusDropdownOpen(null); if (selectedWeek) loadData(); } else alert(`Failed: ${result.error || 'Unknown error'}`);
+                                                                } catch (err: any) { console.error(err); alert(err.message || 'Failed'); }
+                                                            }}>
+                                                                <option value="billing_pending">Billing Pending</option>
+                                                                <option value="billing_successful">Billing Successful</option>
+                                                                <option value="billing_failed">Billing Failed</option>
+                                                            </select>
+                                                            <button className="btn btn-secondary" style={{ width: '100%', fontSize: '0.875rem' }} onClick={() => setStatusDropdownOpen(null)}>Close</button>
+                                                        </div>
+                                                    )}
+                                                </span>
+                                            </div>
+                                            <div className={styles.ordersList}>
+                                                <div className={styles.ordersListHeader}>
+                                                    <span style={{ width: '100px' }}>Order #</span>
+                                                    <span style={{ flex: 1 }}>Service</span>
+                                                    <span style={{ flex: 1 }}>Amount</span>
+                                                    <span style={{ flex: 1.5 }}>Delivery Date</span>
+                                                    <span style={{ flex: 1 }}>Status</span>
+                                                    <span style={{ flex: 1 }}>Proof of Delivery</span>
+                                                    <span style={{ width: '40px' }}></span>
+                                                </div>
+                                                {(request.equipmentOrders ?? []).map((order: any) => {
+                                                    const deliveryDate = order.actual_delivery_date ? new Date(order.actual_delivery_date).toLocaleDateString('en-US', { timeZone: 'UTC' }) : order.scheduled_delivery_date ? new Date(order.scheduled_delivery_date).toLocaleDateString('en-US', { timeZone: 'UTC' }) : '-';
+                                                    const proofUrl = order.proof_of_delivery_image || order.delivery_proof_url || null;
+                                                    const formatOrderStatus = (status: string) => ({ pending: 'Pending', confirmed: 'Confirmed', completed: 'Completed', waiting_for_proof: 'Waiting for Proof', billing_pending: 'Billing Pending', billing_successful: 'Billing Successful', billing_failed: 'Billing Failed', cancelled: 'Cancelled' }[status] || status);
+                                                    const orderStatus = formatOrderStatus(order.status || 'pending');
+                                                    const orderStatusClass = order.status === 'billing_pending' || order.status === 'billing_successful' || order.status === 'completed' ? styles.statusSuccess : order.status === 'waiting_for_proof' ? styles.statusPending : styles.statusNeutral;
+                                                    return (
+                                                        <div key={order.id} className={styles.orderRow}>
+                                                            <Link href={`/orders/${order.id}`} style={{ width: '100px', fontWeight: 600, textDecoration: 'none', color: 'inherit' }} onClick={(e) => e.stopPropagation()}>{order.order_number || 'N/A'}</Link>
+                                                            <Link href={`/orders/${order.id}`} style={{ flex: 1, textDecoration: 'none', color: 'inherit' }} onClick={(e) => e.stopPropagation()}>{order.service_type}</Link>
+                                                            <Link href={`/orders/${order.id}`} style={{ flex: 1, textDecoration: 'none', color: 'inherit' }} onClick={(e) => e.stopPropagation()}>${(order.amount ?? order.total_value ?? 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</Link>
+                                                            <Link href={`/orders/${order.id}`} style={{ flex: 1.5, fontSize: '0.85rem', color: 'var(--text-secondary)', textDecoration: 'none' }} onClick={(e) => e.stopPropagation()}>{deliveryDate}</Link>
+                                                            <span style={{ flex: 1 }}><span className={orderStatusClass} style={{ fontSize: '0.85rem' }}>{orderStatus.toUpperCase()}</span></span>
+                                                            <span style={{ flex: 1, display: 'flex', alignItems: 'center', gap: '8px' }}>{proofUrl ? <a href={proofUrl} target="_blank" rel="noopener noreferrer" className={styles.proofLink} onClick={(e) => e.stopPropagation()} title="View proof of delivery"><Image size={14} /><span>View Proof</span></a> : <span style={{ fontSize: '0.85rem', color: 'var(--text-tertiary)' }}>No proof</span>}</span>
+                                                            <Link href={`/orders/${order.id}`} style={{ width: '40px', display: 'flex', justifyContent: 'center', textDecoration: 'none', color: 'inherit' }} onClick={(e) => e.stopPropagation()}><ChevronRight size={14} /></Link>
+                                                        </div>
+                                                    );
+                                                })}
+                                            </div>
+                                        </>
+                                    )}
                                 </div>
                             )}
                         </div>

@@ -83,10 +83,10 @@ async function fixOrderTotalValues() {
     }
 
     // First, find orders with total_value = 0 (or very close to 0)
-    // Include Equipment orders too
+    // Include Equipment orders too. We need status to skip billing-completed orders.
     const { data: zeroOrders, error: zeroOrdersError } = await supabase
         .from('orders')
-        .select('id, service_type, total_value, order_number, notes')
+        .select('id, service_type, total_value, order_number, notes, status')
         .in('service_type', ['Food', 'Meal', 'Equipment'])
         .lte('total_value', 0.01); // Orders with total_value <= 0.01
 
@@ -106,9 +106,20 @@ async function fixOrderTotalValues() {
     let errorCount = 0;
     let skippedCount = 0;
     const fixedOrders: Array<{ id: string; orderNumber: number | null; oldValue: number; newValue: number }> = [];
+    const billingCompletedSkipped: Array<{ id: string; orderNumber: number | null; status: string }> = [];
 
     for (const order of zeroOrders) {
         try {
+            // Do not update orders that have billing completed - leave them as-is and report
+            if (order.status === 'billing_successful') {
+                billingCompletedSkipped.push({
+                    id: order.id,
+                    orderNumber: order.order_number,
+                    status: order.status || 'billing_successful'
+                });
+                continue;
+            }
+
             let calculatedTotal = 0;
 
             if (order.service_type === 'Equipment') {
@@ -175,9 +186,13 @@ async function fixOrderTotalValues() {
                             menuItem = mealItemsMap.get(item.meal_item_id);
                         }
 
-                        // Use the exact same logic as getOrderById: menuItem?.priceEach ?? parseFloat(item.unit_value)
+                        // Meal items: use only price_each (never quota_value). Menu items: price_each or value or unit_value.
                         if (menuItem) {
-                            itemPrice = menuItem.priceEach ?? parseFloat(item.unit_value?.toString() || '0');
+                            const itemKey = item.meal_item_id || item.menu_item_id;
+                            const isMealItem = order.service_type === 'Meal' && itemKey && mealItemsMap.has(itemKey);
+                            itemPrice = isMealItem
+                                ? ((menuItem as any).priceEach ?? 0)
+                                : ((menuItem as any).priceEach ?? (menuItem as any).value ?? parseFloat(item.unit_value?.toString() || '0'));
                         } else {
                             // No menu item found, use unit_value directly (fallback)
                             itemPrice = parseFloat(item.unit_value?.toString() || '0');
@@ -242,12 +257,21 @@ async function fixOrderTotalValues() {
     console.log(`Total orders with total_value = 0: ${zeroOrders.length}`);
     console.log(`Orders fixed: ${fixedCount}`);
     console.log(`Orders skipped (no items or all items have 0 value): ${skippedCount}`);
+    console.log(`Orders skipped (billing already completed - not updated): ${billingCompletedSkipped.length}`);
     console.log(`Errors: ${errorCount}`);
 
     if (fixedOrders.length > 0) {
         console.log('\n=== Fixed Orders ===');
         fixedOrders.forEach(order => {
             console.log(`Order #${order.orderNumber}: ${order.oldValue.toFixed(2)} → ${order.newValue.toFixed(2)}`);
+        });
+    }
+
+    if (billingCompletedSkipped.length > 0) {
+        console.log('\n=== Orders NOT updated (billing already completed) ===');
+        console.log('The following orders have total_value = 0 but were not updated because their billing is completed. Update these manually if needed.');
+        billingCompletedSkipped.forEach(o => {
+            console.log(`  Order #${o.orderNumber} (id: ${o.id}, status: ${o.status})`);
         });
     }
 }
