@@ -100,6 +100,24 @@
     animation: fadeIn 0.3s ease-out;
 }
 
+.maintenanceMessage {
+    color: var(--text-primary);
+    font-size: 1.125rem;
+    text-align: center;
+    line-height: 1.6;
+    margin: 0 0 0.75rem;
+}
+
+.maintenancePhone {
+    color: var(--color-primary);
+    font-weight: 600;
+    text-decoration: none;
+}
+
+.maintenancePhone:hover {
+    text-decoration: underline;
+}
+
 .btnLarge {
     width: 100%;
     display: flex;

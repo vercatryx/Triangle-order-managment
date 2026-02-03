@@ -6,6 +6,9 @@ import Image from 'next/image';
 import { login, checkEmailIdentity, sendOtp, verifyOtp } from '@/lib/auth-actions';
 import styles from './page.module.css';
 
+/** Set to true to show maintenance message for clients (no password/OTP). Set to false for normal login. */
+const UNDER_MAINTENANCE = true;
+
 export default function LoginPage() {
     const router = useRouter();
     const [state, action, isPending] = useActionState(login, undefined);
@@ -20,6 +23,7 @@ export default function LoginPage() {
     const [verifyingOtp, setVerifyingOtp] = useState(false);
     const [otpMessage, setOtpMessage] = useState('');
     const [resendTimer, setResendTimer] = useState(0);
+    const [showMaintenanceMessage, setShowMaintenanceMessage] = useState(false);
 
     const handleNext = async () => {
         if (!username.trim()) {
@@ -29,6 +33,7 @@ export default function LoginPage() {
 
         setCheckingIdentity(true);
         setIdentityError('');
+        setShowMaintenanceMessage(false);
 
         try {
             console.log('Checking identity for:', username);
@@ -45,6 +50,13 @@ export default function LoginPage() {
             }
 
             if (result.exists) {
+                // Under maintenance: show message for clients only (no OTP, no password)
+                if (UNDER_MAINTENANCE && result.type === 'client') {
+                    setShowMaintenanceMessage(true);
+                    setCheckingIdentity(false);
+                    return;
+                }
+
                 // Check if client is allowed to login
                 if (result.type === 'client' && (result as any).serviceType === 'Custom') {
                     setIdentityError('Contact admin to change your order.');
@@ -159,13 +171,31 @@ export default function LoginPage() {
                         />
                     </div>
                     <h2 className={styles.title}>
-                        {step === 1 ? 'Welcome Back' : (useOtp ? 'Enter Code' : 'Welcome Back')}
+                        {showMaintenanceMessage ? 'System Maintenance' : (step === 1 ? 'Welcome Back' : (useOtp ? 'Enter Code' : 'Welcome Back'))}
                     </h2>
                     <p className={styles.subtitle}>
                     </p>
                 </div>
 
-
+                {showMaintenanceMessage ? (
+                    <div className={styles.form}>
+                        <p className={styles.maintenanceMessage}>
+                            Our system is currently under maintenance. We hope to have it back up soon.
+                        </p>
+                        <p className={styles.maintenanceMessage}>
+                            In the meantime, please call <a href="tel:8456820558" className={styles.maintenancePhone}>845-682-0558</a> or email <a href="mailto:Info@trianglesquareservices.com" className={styles.maintenancePhone}>Info@trianglesquareservices.com</a> for help.
+                          
+                        </p>
+                        <button
+                            type="button"
+                            onClick={() => { setShowMaintenanceMessage(false); setIdentityError(''); }}
+                            className={styles.btnLarge}
+                            style={{ marginTop: '1.5rem' }}
+                        >
+                            Try different email
+                        </button>
+                    </div>
+                ) : (
                 <form className={styles.form} action={useOtp ? () => { } : action} onSubmit={useOtp ? handleVerifyOtp : undefined}>
                     <div className={styles.formGroup}>
                         {step === 1 && (
@@ -317,6 +347,7 @@ export default function LoginPage() {
                         Protected by secure authentication
                     </p>
                 </form>
+                )}
             </div>
         </div>
     );
