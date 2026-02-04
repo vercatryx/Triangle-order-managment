@@ -1940,16 +1940,10 @@ export async function orderHasDeliveryProof(orderId: string) {
 }
 
 export async function updateOrderDeliveryProof(orderId: string, proofUrl: string) {
-    // Security check
+    // Security check: must be logged in (admin or vendor). Vendors can upload proof for any order.
     const session = await getSession();
     if (!session) return { success: false, error: 'Unauthorized' };
 
-    if (session.role === 'vendor') {
-        const authorized = await isOrderUnderVendor(orderId, session.userId);
-        if (!authorized) {
-            return { success: false, error: 'Unauthorized: Order does not belong to this vendor' };
-        }
-    }
     // 1. Update Order Status
     const { data: order, error } = await supabase
         .from('orders')
