@@ -1,4 +1,4 @@
-import { getPublicClient, getStatuses, getNavigators, getVendors, getMenuItems, getBoxTypes, getCategories, getUpcomingOrderForClient, getActiveOrderForClient, getMealCategories, getMealItems, getClientFoodOrder, getClientMealOrder, getClientBoxOrder } from '@/lib/actions';
+import { getPublicClient, getStatuses, getNavigators, getVendors, getMenuItems, getBoxTypes, getCategories, getUpcomingOrderForClient, getActiveOrderForClient, getMealCategories, getMealItems } from '@/lib/actions';
 
 import { ClientPortalInterface } from '@/components/clients/ClientPortalInterface';
 import { getSession } from '@/lib/session';
@@ -40,10 +40,7 @@ export default async function ClientPortalPage({ params }: { params: { id: strin
             upcomingOrder,
             activeOrder,
             mealCategories,
-            mealItems,
-            foodOrder,
-            mealOrder,
-            boxOrders
+            mealItems
         ] = await Promise.all([
             getPublicClient(id),
             getStatuses(),
@@ -55,10 +52,7 @@ export default async function ClientPortalPage({ params }: { params: { id: strin
             getUpcomingOrderForClient(id),
             getActiveOrderForClient(id),
             getMealCategories(),
-            getMealItems(),
-            getClientFoodOrder(id),
-            getClientMealOrder(id),
-            getClientBoxOrder(id)
+            getMealItems()
         ]);
 
         console.log('[ClientPortalPage] Data fetched:', {
@@ -72,10 +66,7 @@ export default async function ClientPortalPage({ params }: { params: { id: strin
             hasUpcomingOrder: !!upcomingOrder,
             hasActiveOrder: !!activeOrder,
             mealCategories: mealCategories?.length,
-            mealItems: mealItems?.length,
-            hasFoodOrder: !!foodOrder,
-            hasMealOrder: !!mealOrder,
-            boxOrders: boxOrders?.length
+            mealItems: mealItems?.length
         });
 
         if (!client) {
@@ -97,9 +88,9 @@ export default async function ClientPortalPage({ params }: { params: { id: strin
                 activeOrder={activeOrder}
                 mealCategories={mealCategories}
                 mealItems={mealItems}
-                foodOrder={foodOrder}
-                mealOrder={mealOrder}
-                boxOrders={boxOrders}
+                foodOrder={null}
+                mealOrder={null}
+                boxOrders={[]}
             />
         );
     } catch (error: any) {

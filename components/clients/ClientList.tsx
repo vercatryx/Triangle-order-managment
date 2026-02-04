@@ -393,7 +393,7 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
 
                 // 5. Check if meal orders exist but no vendor is assigned
                 let mealNeedsVendor = false;
-                const mealSelections = c.mealOrder?.mealSelections || c.activeOrder?.mealSelections;
+                const mealSelections = c.mealOrder?.mealSelections || c.upcomingOrder?.mealSelections;
                 if (mealSelections) {
                     const mealTypes = Object.keys(mealSelections);
                     if (mealTypes.length > 0) {
@@ -404,7 +404,7 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
                 // 6. Check if any box order (regardless of service type) has no vendor attached
                 let boxOrderNeedsVendor = false;
                 // Check both activeOrder and detailsCache for box orders
-                const activeBoxOrders = c.activeOrder?.boxOrders || [];
+                const activeBoxOrders = c.upcomingOrder?.boxOrders || [];
                 const clientDetails = detailsCache[c.id];
                 const cachedBoxOrders = clientDetails?.boxOrders || [];
                 // Combine both sources, prioritizing activeOrder
@@ -473,7 +473,7 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
             }
 
             // Check Meals
-            const mealSelections = c.mealOrder?.mealSelections || c.activeOrder?.mealSelections;
+            const mealSelections = c.mealOrder?.mealSelections || c.upcomingOrder?.mealSelections;
             if (mealSelections) {
                 const mealTypes = Object.keys(mealSelections);
                 if (mealTypes.length > 0) {
@@ -504,8 +504,8 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
     // Helper function to compare clients based on sort column
     function compareClients(a: ClientProfile, b: ClientProfile): number {
         // Always sort clients needing vendor assignment to the top
-        const aNeedsVendor = a.serviceType === 'Boxes' && (!a.activeOrder || (a.activeOrder.serviceType === 'Boxes' && !a.activeOrder.vendorId && !boxTypes.find(bt => bt.id === a.activeOrder?.boxTypeId)?.vendorId));
-        const bNeedsVendor = b.serviceType === 'Boxes' && (!b.activeOrder || (b.activeOrder.serviceType === 'Boxes' && !b.activeOrder.vendorId && !boxTypes.find(bt => bt.id === b.activeOrder?.boxTypeId)?.vendorId));
+        const aNeedsVendor = a.serviceType === 'Boxes' && (!a.upcomingOrder || (a.upcomingOrder.serviceType === 'Boxes' && !a.upcomingOrder.vendorId && !boxTypes.find(bt => bt.id === a.upcomingOrder?.boxTypeId)?.vendorId));
+        const bNeedsVendor = b.serviceType === 'Boxes' && (!b.upcomingOrder || (b.upcomingOrder.serviceType === 'Boxes' && !b.upcomingOrder.vendorId && !boxTypes.find(bt => bt.id === b.upcomingOrder?.boxTypeId)?.vendorId));
 
         if (aNeedsVendor !== bNeedsVendor) {
             return aNeedsVendor ? -1 : 1; // Clients needing vendor come first
@@ -733,9 +733,9 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
     }
 
     function getOrderSummaryText(client: ClientProfile) {
-        if (!client.activeOrder) return '-';
-        const st = client.serviceType;
-        const conf = client.activeOrder;
+        if (!client.upcomingOrder) return '-';
+        const conf = client.upcomingOrder;
+        const st = conf.serviceType || client.serviceType;
 
         let content = '';
 
@@ -819,7 +819,7 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
     }
 
     function getMealOrderSummaryText(client: ClientProfile): string {
-        const selections = client.mealOrder?.mealSelections || client.activeOrder?.mealSelections;
+        const selections = client.mealOrder?.mealSelections || client.upcomingOrder?.mealSelections;
         if (!selections) return '';
 
         const mealTypes = Object.keys(selections);
@@ -855,7 +855,7 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
 
     function getMealOrderSummaryJSX(client: ClientProfile) {
         // Fallback to activeOrder if mealOrder not present (legacy support / hybrid state)
-        const selections = client.mealOrder?.mealSelections || client.activeOrder?.mealSelections;
+        const selections = client.mealOrder?.mealSelections || client.upcomingOrder?.mealSelections;
 
         if (!selections) {
             return (
@@ -916,9 +916,9 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
     }
 
     function getOrderSummary(client: ClientProfile, forceDetails: boolean = false) {
-        if (!client.activeOrder) return <span style={{ color: 'var(--text-tertiary)', fontStyle: 'italic' }}>No active order</span>;
+        if (!client.upcomingOrder) return <span style={{ color: 'var(--text-tertiary)', fontStyle: 'italic' }}>No active order</span>;
 
-        const conf = client.activeOrder;
+        const conf = client.upcomingOrder;
         const st = conf.serviceType || client.serviceType;
 
         // If we are just showing the simple list table cell (forceDetails=false)
@@ -1041,7 +1041,7 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
             }
 
             // Add Meal Items
-            const mealSelections = client.mealOrder?.mealSelections || client.activeOrder?.mealSelections;
+            const mealSelections = client.mealOrder?.mealSelections || client.upcomingOrder?.mealSelections;
             if (mealSelections) {
                 Object.keys(mealSelections).forEach(type => {
                     const sel = mealSelections[type];
@@ -1275,7 +1275,7 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
         }
 
         // 5. Check if meal orders exist but no vendor is assigned
-        const mealSelections = client.mealOrder?.mealSelections || client.activeOrder?.mealSelections;
+        const mealSelections = client.mealOrder?.mealSelections || client.upcomingOrder?.mealSelections;
         if (mealSelections) {
             const mealTypes = Object.keys(mealSelections);
             if (mealTypes.length > 0) {
@@ -1288,7 +1288,7 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
 
         // 6. Check if any box order (regardless of service type) has no vendor attached
         // Check both activeOrder and detailsCache for box orders
-        const activeBoxOrders = client.activeOrder?.boxOrders || [];
+        const activeBoxOrders = client.upcomingOrder?.boxOrders || [];
         const clientDetails = detailsCache[client.id];
         const cachedBoxOrders = clientDetails?.boxOrders || [];
         // Combine both sources, prioritizing activeOrder
@@ -1333,7 +1333,7 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
                 const isEligible = status ? status.deliveriesAllowed : false;
 
                 if (isEligible) {
-                    const boxNeedsVendor = c.serviceType === 'Boxes' && (!c.activeOrder || (c.activeOrder.serviceType === 'Boxes' && !c.activeOrder.vendorId && !boxTypes.find(bt => bt.id === c.activeOrder?.boxTypeId)?.vendorId));
+                    const boxNeedsVendor = c.serviceType === 'Boxes' && (!c.upcomingOrder || (c.upcomingOrder.serviceType === 'Boxes' && !c.upcomingOrder.vendorId && !boxTypes.find(bt => bt.id === c.upcomingOrder?.boxTypeId)?.vendorId));
                     // ... (rest of logic) ...
                     // To avoid duplicating ALL the complex logic above, let's assume if it produces a reason string != "No reason specified"
                     // AND it is eligible, it's in the list.

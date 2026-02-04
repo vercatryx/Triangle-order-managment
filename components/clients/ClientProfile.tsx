@@ -4,7 +4,7 @@ import { useState, useEffect, Fragment, useMemo, useRef, ReactNode } from 'react
 import { useRouter, useParams } from 'next/navigation';
 import Link from 'next/link';
 import { ClientProfile, ClientStatus, Navigator, Vendor, MenuItem, BoxType, ServiceType, AppSettings, DeliveryRecord, ItemCategory, ClientFullDetails, BoxQuota, MealCategory, MealItem, ClientFoodOrder, ClientMealOrder, ClientBoxOrder, Equipment, OrderConfiguration } from '@/lib/types';
-import { updateClient, addClient, deleteClient, updateDeliveryProof, recordClientChange, syncCurrentOrderToUpcoming, logNavigatorAction, getBoxQuotas, saveEquipmentOrder, getRegularClients, getDependentsByParentId, addDependent, checkClientNameExists, getClientFullDetails, getClientFoodOrder, getClientMealOrder, getClientBoxOrder, saveClientFoodOrder, saveClientMealOrder, saveClientBoxOrder, saveClientCustomOrder, getEquipment, getClientProfileData, appendOrderHistory, updateClientUpcomingOrder } from '@/lib/actions';
+import { updateClient, addClient, deleteClient, updateDeliveryProof, recordClientChange, logNavigatorAction, getBoxQuotas, saveEquipmentOrder, getRegularClients, getDependentsByParentId, addDependent, checkClientNameExists, getClientFullDetails, saveClientCustomOrder, getEquipment, getClientProfileData, appendOrderHistory, updateClientUpcomingOrder } from '@/lib/actions';
 import { getSingleForm, getClientSubmissions } from '@/lib/form-actions';
 import { getClient, getStatuses, getNavigators, getVendors, getMenuItems, getBoxTypes, getSettings, getCategories, getClients, invalidateClientData, invalidateReferenceData, getActiveOrderForClient, getUpcomingOrderForClient, getOrderHistory, getClientHistory, getBillingHistory, invalidateOrderData, getMealCategories, getMealItems, getRecentOrdersForClient, getClientsLight } from '@/lib/cached-data';
 import { areAnyDeliveriesLocked, getEarliestEffectiveDate, getLockedWeekDescription } from '@/lib/weekly-lock';
@@ -774,8 +774,8 @@ export function ClientProfileDetail({
             if (data.client.serviceType === 'Food') {
                 console.log(`[ClientProfile] Setting orderConfig to Food for ${data.client?.id}`);
                 const conf: any = { ...foodOrderForUI, serviceType: 'Food' };
-                if (!conf.caseId && data.client.activeOrder?.caseId) {
-                    conf.caseId = data.client.activeOrder.caseId;
+                if (!conf.caseId && data.client.upcomingOrder?.caseId) {
+                    conf.caseId = data.client.upcomingOrder.caseId;
                 }
 
                 // CRITICAL: Merge mealSelections from mealOrder if it exists
@@ -810,8 +810,8 @@ export function ClientProfileDetail({
 
             if (data.client.serviceType === 'Meal') {
                 const conf: any = { ...data.mealOrder, serviceType: 'Meal' };
-                if (!conf.caseId && data.client.activeOrder?.caseId) {
-                    conf.caseId = data.client.activeOrder.caseId;
+                if (!conf.caseId && data.client.upcomingOrder?.caseId) {
+                    conf.caseId = data.client.upcomingOrder.caseId;
                 }
                 setOrderConfig(conf);
                 setOriginalOrderConfig(JSON.parse(JSON.stringify(conf)));
@@ -840,7 +840,7 @@ export function ClientProfileDetail({
                 const conf: any = {
                     boxOrders: data.boxOrders,
                     serviceType: 'Boxes',
-                    caseId: data.client.activeOrder?.caseId
+                    caseId: data.client.upcomingOrder?.caseId
                 };
                 setOrderConfig(conf);
                 setOriginalOrderConfig(JSON.parse(JSON.stringify(conf)));
@@ -876,7 +876,7 @@ export function ClientProfileDetail({
 
                 const conf = {
                     serviceType: 'Custom',
-                    caseId: customData.caseId || data.client.activeOrder?.caseId,
+                    caseId: customData.caseId || data.client.upcomingOrder?.caseId,
                     custom_name: customData.custom_name || customData.notes, // custom_name comes from local-db, notes from direct DB?
                     custom_price: customData.custom_price || customData.totalValue,
                     vendorId: customData.vendorId,
@@ -887,10 +887,10 @@ export function ClientProfileDetail({
                 };
                 setOrderConfig(conf);
                 setOriginalOrderConfig(JSON.parse(JSON.stringify(conf)));
-            } else if (data.client.activeOrder && data.client.activeOrder.serviceType === 'Custom') {
+            } else if (data.client.upcomingOrder && data.client.upcomingOrder.serviceType === 'Custom') {
                 // Fallback to activeOrder from client profile if upcoming not found
 
-                const conf = { ...data.client.activeOrder };
+                const conf = { ...data.client.upcomingOrder };
                 setOrderConfig(conf);
                 setOriginalOrderConfig(JSON.parse(JSON.stringify(conf)));
             }
@@ -965,39 +965,9 @@ export function ClientProfileDetail({
             typeof upcomingOrderData === 'object' &&
             (upcomingOrderData.serviceType || upcomingOrderData.caseId || upcomingOrderData.id || Object.keys(upcomingOrderData).length > 0);
 
-        // Check if clients.active_order is valid (has meaningful content)
-        const hasValidActiveOrder = data.client.activeOrder &&
-            typeof data.client.activeOrder === 'object' &&
-            Object.keys(data.client.activeOrder).length > 0 &&
-            (data.client.activeOrder.vendorId || (data.client.activeOrder.vendorSelections?.length ?? 0) > 0 ||
-                data.client.activeOrder.boxTypeId || (data.client.activeOrder.boxOrders?.length ?? 0) > 0 ||
-                data.client.activeOrder.caseId);
-
-        // DEBUG LOG: Show what we see in clients.active_order (this is the key debug for "open order details")
-        console.log(`[ORDER_DEBUG] Client ${data.client?.id} (${data.client?.fullName}): active_order =`, {
-            hasValidActiveOrder,
-            raw: data.client.activeOrder,
-            vendorId: data.client.activeOrder?.vendorId,
-            vendorSelectionsLen: data.client.activeOrder?.vendorSelections?.length,
-            caseId: data.client.activeOrder?.caseId
-        });
-
-        // PRIORITY: Use clients.active_order first, fallback to upcomingOrderData
-        if (hasValidActiveOrder) {
-            // Primary source: clients.active_order
-            const activeOrderConfig = { ...data.client.activeOrder };
-            if (!activeOrderConfig.serviceType) {
-                activeOrderConfig.serviceType = data.client.serviceType;
-            }
-            if (activeOrderConfig.serviceType === 'Food' && (!activeOrderConfig.vendorSelections || activeOrderConfig.vendorSelections.length === 0)) {
-                activeOrderConfig.vendorSelections = [{ vendorId: '', items: {} }];
-            }
-            setOrderConfig(activeOrderConfig);
+        // Use clients.upcoming_order as single source
+        if (hasValidUpcomingOrder) {
             setUsingFallbackOrder(false);
-        } else if (hasValidUpcomingOrder) {
-            // FALLBACK: Using upcoming order because clients.active_order is empty
-            console.log(`[ORDER_DEBUG] Client ${data.client?.id}: FALLBACK to upcomingOrder (active_order empty)`);
-            setUsingFallbackOrder(true);
 
             // Check if it's the multi-day format
             const isMultiDayFormat = upcomingOrderData && typeof upcomingOrderData === 'object' &&
@@ -1059,13 +1029,8 @@ export function ClientProfileDetail({
             setOrderConfig((prev: any) => {
                 const conf = { ...prev };
 
-                // NEW: Handle boxOrders array from backend
-                // If we have boxOrders from the backend (data.boxOrders), use that
-                if (data.boxOrders && data.boxOrders.length > 0) {
-                    conf.boxOrders = data.boxOrders;
-                }
-                // Fallback: migrate legacy fields to boxOrders array if array is missing
-                else if (!conf.boxOrders || conf.boxOrders.length === 0) {
+                // Migrate legacy fields to boxOrders array if array is missing
+                if (!conf.boxOrders || conf.boxOrders.length === 0) {
                     const legacyBox = {
                         boxTypeId: conf.boxTypeId || '',
                         vendorId: conf.vendorId || '',
@@ -1269,7 +1234,7 @@ export function ClientProfileDetail({
 
     async function loadDataLegacy() {
         setLoadingOrderDetails(true);
-        const [c, s, n, v, m, b, appSettings, catData, eData, allClientsData, regularClientsData, mealCatData, mealItemData, upcomingOrderData, activeOrderData, historyData, orderHistoryData, billingHistoryData, foodOrderData, mealOrderData, boxOrdersData] = await Promise.all([
+        const [c, s, n, v, m, b, appSettings, catData, eData, allClientsData, regularClientsData, mealCatData, mealItemData, upcomingOrderData, activeOrderData, historyData, orderHistoryData, billingHistoryData] = await Promise.all([
             getClient(clientId),
             getStatuses(),
             getNavigators(),
@@ -1287,10 +1252,7 @@ export function ClientProfileDetail({
             getRecentOrdersForClient(clientId),
             getClientHistory(clientId),
             getOrderHistory(clientId),
-            getBillingHistory(clientId),
-            getClientFoodOrder(clientId),
-            getClientMealOrder(clientId),
-            getClientBoxOrder(clientId)
+            getBillingHistory(clientId)
         ]);
 
         if (c) {
@@ -1335,96 +1297,13 @@ export function ClientProfileDetail({
             setDependents(dependentsData);
         }
 
-        // Set order config: PRIORITY is clients.active_order first, fallback to other sources
+        // Set order config from clients.upcoming_order (single source)
         if (c) {
-
             let configToSet: any = null;
             let isUsingFallback = false;
 
-            // Check if clients.active_order is valid
-            const hasValidActiveOrder = c.activeOrder &&
-                typeof c.activeOrder === 'object' &&
-                Object.keys(c.activeOrder).length > 0 &&
-                (c.activeOrder.vendorId || (c.activeOrder.vendorSelections?.length ?? 0) > 0 ||
-                    c.activeOrder.boxTypeId || (c.activeOrder.boxOrders?.length ?? 0) > 0 ||
-                    c.activeOrder.caseId);
-
-            // DEBUG LOG: Show what we see when loading in sidebar (loadDataLegacy)
-            console.log(`[SIDEBAR_DEBUG] Client ${c.id} (${c.fullName}): active_order =`, {
-                hasValidActiveOrder,
-                raw: c.activeOrder,
-                vendorId: c.activeOrder?.vendorId,
-                vendorSelectionsLen: c.activeOrder?.vendorSelections?.length,
-                caseId: c.activeOrder?.caseId
-            });
-
-            // PRIORITY 1: Use clients.active_order (PRIMARY SOURCE)
-            if (hasValidActiveOrder) {
-                configToSet = { ...c.activeOrder };
-                if (!configToSet.serviceType) {
-                    configToSet.serviceType = c.serviceType;
-                }
-                isUsingFallback = false;
-            }
-            // FALLBACK: Try other sources
-            else {
-                console.log(`[SIDEBAR_DEBUG] Client ${c.id}: FALLBACK (active_order empty)`);
-                isUsingFallback = true;
-
-                // 1. Try Food Order (New Table)
-                if (c.serviceType === 'Food' && foodOrderData) {
-                    let foodOrderForUI = { ...foodOrderData } as any;
-                    if (foodOrderForUI.deliveryDayOrders) {
-                        const vendorMap = new Map<string, any>();
-                        for (const [day, dayData] of Object.entries(foodOrderForUI.deliveryDayOrders)) {
-                            const vendorSelections = (dayData as any).vendorSelections || [];
-                            for (const selection of vendorSelections) {
-                                if (!selection.vendorId) continue;
-                                if (!vendorMap.has(selection.vendorId)) {
-                                    vendorMap.set(selection.vendorId, {
-                                        vendorId: selection.vendorId,
-                                        items: {},
-                                        selectedDeliveryDays: [],
-                                        itemsByDay: {}
-                                    });
-                                }
-                                const vendor = vendorMap.get(selection.vendorId)!;
-                                vendor.selectedDeliveryDays.push(day);
-                                vendor.itemsByDay[day] = selection.items || {};
-                                if (!vendor.itemNotesByDay) vendor.itemNotesByDay = {};
-                                vendor.itemNotesByDay[day] = selection.itemNotes || {};
-                            }
-                        }
-                        foodOrderForUI.vendorSelections = Array.from(vendorMap.values());
-                        delete foodOrderForUI.deliveryDayOrders;
-                    }
-                    configToSet = { ...foodOrderForUI, serviceType: 'Food' };
-                    if (!configToSet.caseId && c.activeOrder?.caseId) {
-                        configToSet.caseId = c.activeOrder.caseId;
-                    }
-                    if (mealOrderData && mealOrderData.mealSelections) {
-                        configToSet.mealSelections = mealOrderData.mealSelections;
-                    }
-                }
-                // 2. Try Meal Order (New Table)
-                else if (c.serviceType === 'Meal' && mealOrderData) {
-                    configToSet = { ...mealOrderData, serviceType: 'Meal' };
-                    if (!configToSet.caseId && c.activeOrder?.caseId) {
-                        configToSet.caseId = c.activeOrder.caseId;
-                    }
-                }
-                // 3. Try Box Order (New Table)
-                else if (c.serviceType === 'Boxes' && boxOrdersData && boxOrdersData.length > 0) {
-                    configToSet = {
-                        boxOrders: boxOrdersData,
-                        serviceType: 'Boxes',
-                        caseId: boxOrdersData[0].caseId || c.activeOrder?.caseId
-                    };
-                }
-                // 4. Fallback to Upcoming Order (Legacy)
-                else if (upcomingOrderData) {
-                    const isMultiDayFormat = upcomingOrderData && typeof upcomingOrderData === 'object' &&
-                        !upcomingOrderData.serviceType &&
+            if (upcomingOrderData && typeof upcomingOrderData === 'object') {
+                    const isMultiDayFormat = !upcomingOrderData.serviceType &&
                         !upcomingOrderData.deliveryDayOrders &&
                         Object.keys(upcomingOrderData).some(key => {
                             const val = (upcomingOrderData as any)[key];
@@ -1471,7 +1350,6 @@ export function ClientProfileDetail({
                     } else {
                         configToSet = upcomingOrderData;
                     }
-                }
             }
 
             // Validate Config: If Boxes and missing critical fields, reject it
@@ -1539,7 +1417,7 @@ export function ClientProfileDetail({
 
             // DEBUG LOG: Final decision for Sidebar
             console.log(`[SIDEBAR_DEBUG] Final Order Config for ${c.id}:`, {
-                source: isUsingFallback ? 'FALLBACK' : 'PRIMARY (active_order)',
+                source: 'upcoming_order',
                 serviceType: configToSet?.serviceType,
                 vendorSelectionsLen: configToSet?.vendorSelections?.length,
                 boxOrdersLen: configToSet?.boxOrders?.length,
@@ -1799,16 +1677,16 @@ export function ClientProfileDetail({
 
     // Helper functions for displaying order info
     function getOrderSummaryText(client: ClientProfile) {
-        if (!client.activeOrder) return '-';
+        const conf = client.upcomingOrder;
+        if (!conf || typeof conf !== 'object') return '-';
         const st = client.serviceType;
-        const conf = client.activeOrder;
 
         let content = '';
 
         if (st === 'Food') {
             const limit = client.approvedMealsPerWeek || 0;
             const vendorsSummary = (conf.vendorSelections || [])
-                .map(v => {
+                .map((v: any) => {
                     const vendorName = vendors.find(ven => ven.id === v.vendorId)?.name || 'Unknown';
                     const itemCount = Object.values(v.items || {}).reduce((a: number, b: any) => a + Number(b), 0);
                     return itemCount > 0 ? `${vendorName} (${itemCount})` : '';
@@ -2104,55 +1982,19 @@ export function ClientProfileDetail({
                 (orderConfig?.boxTypeId && orderConfig.boxTypeId.trim() !== '');
 
             if (hasCaseId && (hasVendorSelections || hasDeliveryDayOrders || hasBoxConfig)) {
-                const cleanedOrderConfig = prepareActiveOrder();
+                const cleanedOrderConfig = prepareNewColumnOrder();
                 if (cleanedOrderConfig) {
-                    await updateClient(newClient.id, { activeOrder: cleanedOrderConfig });
+                    await updateClientUpcomingOrder(newClient.id, cleanedOrderConfig);
 
-                    // Sync to new independent tables
-                    // Sync to new independent tables
-                    const serviceType = newClient.serviceType;
-
-                    if (serviceType === 'Custom') {
-                        if (cleanedOrderConfig.custom_name && cleanedOrderConfig.custom_price && cleanedOrderConfig.vendorId && cleanedOrderConfig.deliveryDay) {
-                            await saveClientCustomOrder(
-                                newClient.id,
-                                cleanedOrderConfig.vendorId,
-                                cleanedOrderConfig.custom_name,
-                                Number(cleanedOrderConfig.custom_price),
-                                cleanedOrderConfig.deliveryDay,
-                                cleanedOrderConfig.caseId
-                            );
-                            // Skip syncCurrentOrderToUpcoming for Custom - saveClientCustomOrder already handles it
-                        }
-                    } else {
-                        // Only sync for non-Custom service types
-                        if (serviceType === 'Food') {
-                            // ALWAYS save food orders if service type is Food, even if empty (to handle deletions/clearing)
-                            await saveClientFoodOrder(newClient.id, {
-                                caseId: cleanedOrderConfig.caseId,
-                                deliveryDayOrders: cleanedOrderConfig.deliveryDayOrders || {}
-                            });
-                        }
-
-                        if (serviceType === 'Meal' || (cleanedOrderConfig.mealSelections && Object.keys(cleanedOrderConfig.mealSelections).length > 0)) {
-                            // Save meal orders if service type is Meal OR if there are meal selections (e.g. Breakfast for Food clients)
-                            if (cleanedOrderConfig.mealSelections) {
-                                await saveClientMealOrder(newClient.id, {
-                                    caseId: cleanedOrderConfig.caseId,
-                                    mealSelections: cleanedOrderConfig.mealSelections
-                                });
-                            }
-                        }
-
-                        if (serviceType === 'Boxes') {
-                            await saveClientBoxOrder(newClient.id, (cleanedOrderConfig.boxOrders || []).map((box: any) => ({
-                                ...box,
-                                caseId: cleanedOrderConfig.caseId
-                            })));
-                        }
-
-                        // Legacy sync for backward compatibility
-                        await syncCurrentOrderToUpcoming(newClient.id, { ...newClient, activeOrder: cleanedOrderConfig }, true);
+                    if (newClient.serviceType === 'Custom' && cleanedOrderConfig.custom_name && cleanedOrderConfig.custom_price && cleanedOrderConfig.vendorId && cleanedOrderConfig.deliveryDay) {
+                        await saveClientCustomOrder(
+                            newClient.id,
+                            cleanedOrderConfig.vendorId,
+                            cleanedOrderConfig.custom_name,
+                            Number(cleanedOrderConfig.custom_price),
+                            cleanedOrderConfig.deliveryDay,
+                            cleanedOrderConfig.caseId
+                        );
                     }
                 }
             }
@@ -3179,24 +3021,6 @@ export function ClientProfileDetail({
     const renderServiceConfigSection = () => (
         <section className={styles.card} style={{ marginTop: 'var(--spacing-lg)' }}>
             <h3 className={styles.sectionTitle}>Service Configuration</h3>
-            {usingFallbackOrder && (
-                <div style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '8px',
-                    padding: '8px 12px',
-                    backgroundColor: 'rgba(220, 38, 38, 0.1)',
-                    border: '1px solid #dc2626',
-                    borderRadius: '6px',
-                    marginBottom: '12px',
-                    color: '#dc2626',
-                    fontSize: '0.875rem',
-                    fontWeight: 500
-                }}>
-                    <AlertTriangle size={16} />
-                    <span>Using fallback order source (active_order is empty)</span>
-                </div>
-            )}
             <div className={styles.grid2}>
                 <div className={styles.formGroup}>
                     <label className={styles.label}>Service Type</label>
@@ -3822,9 +3646,10 @@ export function ClientProfileDetail({
             if (restored.serviceType && formData.serviceType !== restored.serviceType) {
                 setFormData((prev: any) => ({ ...prev, serviceType: restored.serviceType }));
             }
-            console.log('[Restore] Calling updateClient...');
-            const updated = await updateClient(clientId, { activeOrder: restored }, { skipHistory: false }); // Record restore as a new history entry
-            console.log('[Restore] updateClient result:', updated ? 'ok' : 'null', updated?.activeOrder ? 'has activeOrder' : '');
+            console.log('[Restore] Calling updateClientUpcomingOrder...');
+            await updateClientUpcomingOrder(clientId, restored);
+            const updated = await getClient(clientId);
+            console.log('[Restore] Result:', updated ? 'ok' : 'null', updated?.upcomingOrder ? 'has upcomingOrder' : '');
             if (updated) setClient(updated);
             console.log('[Restore] Done – form should show restored order.');
             setOrderHistoryRestoreMessage({ type: 'success', text: 'Order restored. Form updated and saved to server.' });
@@ -4534,7 +4359,7 @@ export function ClientProfileDetail({
                                             <input
                                                 type="date"
                                                 className="input"
-                                                value={formData.expirationDate ? (formData.expirationDate.includes('T') ? formData.expirationDate.split('T')[0] : formData.expirationDate) : ''}
+                                                value={(() => { const ed = formData.expirationDate ?? ''; return ed ? (ed.includes('T') ? ed.split('T')[0] : ed) : ''; })()}
                                                 onChange={e => setFormData({ ...formData, expirationDate: e.target.value || null })}
                                             />
                                         </div>
@@ -4801,7 +4626,7 @@ export function ClientProfileDetail({
                                                             <input
                                                                 type="date"
                                                                 className="input"
-                                                                value={formData.expirationDate ? (formData.expirationDate.includes('T') ? formData.expirationDate.split('T')[0] : formData.expirationDate) : ''}
+                                                                value={(() => { const ed = formData.expirationDate ?? ''; return ed ? (ed.includes('T') ? ed.split('T')[0] : ed) : ''; })()}
                                                                 onChange={e => setFormData({ ...formData, expirationDate: e.target.value || null })}
                                                             />
                                                         </>
@@ -4830,7 +4655,7 @@ export function ClientProfileDetail({
                                                             <input
                                                                 type="date"
                                                                 className="input"
-                                                                value={formData.expirationDate ? (formData.expirationDate.includes('T') ? formData.expirationDate.split('T')[0] : formData.expirationDate) : ''}
+                                                                value={(() => { const ed = formData.expirationDate ?? ''; return ed ? (ed.includes('T') ? ed.split('T')[0] : ed) : ''; })()}
                                                                 onChange={e => setFormData({ ...formData, expirationDate: e.target.value || null })}
                                                             />
                                                         </>
@@ -4975,8 +4800,9 @@ export function ClientProfileDetail({
 
                                                                     if (orderConfig.vendorId) {
                                                                         const selectedVendor = vendors.find(v => v.id === orderConfig.vendorId);
-                                                                        if (selectedVendor && selectedVendor.deliveryDays && selectedVendor.deliveryDays.length > 0) {
-                                                                            availableDays = selectedVendor.deliveryDays;
+                                                                        const sv = selectedVendor;
+                                                                        if (sv?.deliveryDays?.length) {
+                                                                            availableDays = sv!.deliveryDays;
                                                                         }
                                                                     }
 
@@ -5463,7 +5289,7 @@ export function ClientProfileDetail({
                                                         ))}
 
                                                         {/* Add Box Button */}
-                                                        {(!formData.approvedMealsPerWeek || currentBoxes.length < formData.approvedMealsPerWeek) && (
+                                                        {(!(formData.approvedMealsPerWeek ?? 0) || currentBoxes.length < (formData.approvedMealsPerWeek ?? 0)) && (
                                                             <button
                                                                 type="button"
                                                                 className="btn btn-outline"
@@ -5571,11 +5397,11 @@ export function ClientProfileDetail({
                                                             <input
                                                                 type="text"
                                                                 className="input"
-                                                                value={equipmentOrder.caseId}
-                                                                onChange={e => setEquipmentOrder({
+                                                                value={equipmentOrder?.caseId ?? ''}
+                                                                onChange={e => setEquipmentOrder(equipmentOrder ? {
                                                                     ...equipmentOrder,
                                                                     caseId: e.target.value
-                                                                })}
+                                                                } : null)}
                                                                 placeholder="Enter Case ID for this order"
                                                             />
                                                             <p style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)', marginTop: '0.25rem' }}>
@@ -5589,7 +5415,7 @@ export function ClientProfileDetail({
                                                             <button
                                                                 className="btn btn-primary"
                                                                 onClick={async () => {
-                                                                    if (!equipmentOrder.vendorId || !equipmentOrder.equipmentId) {
+                                                                    if (!equipmentOrder?.vendorId || !equipmentOrder?.equipmentId) {
                                                                         alert('Please select both vendor and equipment item');
                                                                         return;
                                                                     }
@@ -5601,9 +5427,9 @@ export function ClientProfileDetail({
                                                                         setSubmittingEquipmentOrder(true);
                                                                         await saveEquipmentOrder(
                                                                             clientId,
-                                                                            equipmentOrder.vendorId,
-                                                                            equipmentOrder.equipmentId,
-                                                                            equipmentOrder.caseId
+                                                                            equipmentOrder!.vendorId,
+                                                                            equipmentOrder!.equipmentId,
+                                                                            equipmentOrder!.caseId ?? ''
                                                                         );
                                                                         setMessage('Equipment order submitted successfully!');
                                                                         setTimeout(() => setMessage(null), 3000);
@@ -5967,7 +5793,7 @@ export function ClientProfileDetail({
                                                                 </div>
                                                             </div>
                                                         ))}
-                                                        {(!formData.approvedMealsPerWeek || currentBoxes.length < formData.approvedMealsPerWeek) && (
+                                                        {(!(formData.approvedMealsPerWeek ?? 0) || currentBoxes.length < (formData.approvedMealsPerWeek ?? 0)) && (
                                                             <button type="button" className="btn btn-outline" style={{ width: '100%', borderStyle: 'dashed', padding: '1rem', display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '0.5rem' }} onClick={handleNewColumnAddBox} disabled={savingNewColumn}>
                                                                 <Plus size={16} /> Add Another Box
                                                             </button>
@@ -7122,67 +6948,30 @@ export function ClientProfileDetail({
                 setClient(updatedClient);
                 setFormData(updatedClient);
 
-                // Set orderConfig from the updated client's activeOrder
-                if (updatedClient.activeOrder && Object.keys(updatedClient.activeOrder).length > 0) {
-
-                    setOrderConfig(updatedClient.activeOrder);
-                    setOriginalOrderConfig(updatedClient.activeOrder);
-                } else {
-                    // If no activeOrder, keep the current orderConfig
-
+                // Set orderConfig from upcomingOrder
+                const upcoming = updatedClient.upcomingOrder;
+                if (upcoming && typeof upcoming === 'object' && Object.keys(upcoming).length > 0) {
+                    setOrderConfig(upcoming);
+                    setOriginalOrderConfig(JSON.parse(JSON.stringify(upcoming)));
                 }
 
                 invalidateClientData();
                 setMessage('Client created successfully.');
 
-                // Sync to new independent tables if there's order data
-                if (updatedClient.activeOrder && updatedClient.activeOrder.caseId) {
-                    const serviceType = updatedClient.serviceType;
-
-                    if (serviceType === 'Custom') {
-                        // Check for required fields with strict checks (allow price to be 0)
-                        if (updatedClient.activeOrder.custom_name &&
-                            updatedClient.activeOrder.custom_price !== undefined &&
-                            updatedClient.activeOrder.custom_price !== null &&
-                            updatedClient.activeOrder.vendorId &&
-                            updatedClient.activeOrder.deliveryDay) {
-
-                            await saveClientCustomOrder(
-                                updatedClient.id,
-                                updatedClient.activeOrder.vendorId,
-                                updatedClient.activeOrder.custom_name,
-                                Number(updatedClient.activeOrder.custom_price),
-                                updatedClient.activeOrder.deliveryDay,
-                                updatedClient.activeOrder.caseId,
-                                { skipHistory: true }
-                            );
-                            // Skip syncCurrentOrderToUpcoming for Custom - saveClientCustomOrder already handles it
-                        } else {
-                            console.error('[ClientProfile] Custom order missing required fields during creation:', updatedClient.activeOrder);
-                            setMessage('Client created, but Custom Order could not be saved due to missing details (Description, Price, Vendor, or Day).');
-                        }
-                    } else {
-                        // Save to appropriate independent table based on service type
-                        if (serviceType === 'Food' && foodOrderConfig) {
-                            await saveClientFoodOrder(updatedClient.id, {
-                                caseId: updatedClient.activeOrder.caseId,
-                                deliveryDayOrders: foodOrderConfig.deliveryDayOrders || updatedClient.activeOrder.deliveryDayOrders
-                            });
-                        } else if (serviceType === 'Meal' && mealOrderConfig) {
-                            await saveClientMealOrder(updatedClient.id, {
-                                caseId: updatedClient.activeOrder.caseId,
-                                mealSelections: mealOrderConfig.mealSelections || updatedClient.activeOrder.mealSelections
-                            });
-                        } else if (serviceType === 'Boxes' && (boxOrderConfig || updatedClient.activeOrder?.boxOrders)) {
-                            const boxesToSave = boxOrderConfig || updatedClient.activeOrder?.boxOrders || [];
-                            await saveClientBoxOrder(updatedClient.id, boxesToSave.map((box: any) => ({
-                                ...box,
-                                caseId: updatedClient.activeOrder?.caseId
-                            })), { skipHistory: true });
-                        }
-
-                        // Still call legacy sync for backward compatibility during migration
-                        await syncCurrentOrderToUpcoming(updatedClient.id, updatedClient, true);
+                // Save order to clients.upcoming_order
+                const newOrderPayload = prepareNewColumnOrder();
+                if (newOrderPayload && newOrderPayload.caseId) {
+                    await updateClientUpcomingOrder(updatedClient.id, newOrderPayload);
+                    if (updatedClient.serviceType === 'Custom' && newOrderPayload.custom_name && newOrderPayload.custom_price !== undefined && newOrderPayload.vendorId && newOrderPayload.deliveryDay) {
+                        await saveClientCustomOrder(
+                            updatedClient.id,
+                            newOrderPayload.vendorId,
+                            newOrderPayload.custom_name,
+                            Number(newOrderPayload.custom_price),
+                            newOrderPayload.deliveryDay,
+                            newOrderPayload.caseId,
+                            { skipHistory: true }
+                        );
                     }
                 }
 
@@ -7327,94 +7116,7 @@ export function ClientProfileDetail({
                 }
             }
 
-            // Legacy active-order sync block disabled: main save only updates client profile + upcoming_order
-            const _legacyActiveOrder = updateData.activeOrder;
-            if (false && _legacyActiveOrder?.caseId) {
-                const ao = _legacyActiveOrder!;
-                const serviceType = formData.serviceType;
-                const savePromises: Promise<any>[] = [];
-
-                if (serviceType === 'Custom') {
-                    console.log('[ClientProfile] Saving Custom Order...');
-                    if (ao.custom_name &&
-                        ao.custom_price !== undefined &&
-                        ao.custom_price !== null &&
-                        ao.vendorId &&
-                        ao.deliveryDay) {
-
-                        savePromises.push(
-                            saveClientCustomOrder(
-                                clientId,
-                                ao.vendorId!,
-                                ao.custom_name!,
-                                Number(ao.custom_price),
-                                ao.deliveryDay!,
-                                ao.caseId,
-                                { skipHistory: true }
-                            )
-                        );
-                    } else {
-                        console.warn('[ClientProfile] Custom order missing required fields, skipping save.', ao);
-                        setMessage('Error: Custom Order details are incomplete (Check Description, Price, Vendor, and Day).');
-                        setSaving(false);
-                        return false;
-                    }
-                }
-
-                if (serviceType === 'Food') {
-                    console.log('[ClientProfile] Saving Food Order...');
-                    savePromises.push(
-                        saveClientFoodOrder(clientId, {
-                            caseId: ao.caseId,
-                            deliveryDayOrders: ao.deliveryDayOrders || {}
-                        }, { skipHistory: true })
-                    );
-                }
-
-                if (ao.mealSelections || serviceType === 'Meal' || serviceType === 'Food') {
-                    console.log('[ClientProfile] Saving Meal Order...');
-                    savePromises.push(
-                        saveClientMealOrder(clientId, {
-                            caseId: ao.caseId,
-                            mealSelections: ao.mealSelections || {}
-                        }, { skipHistory: true })
-                    );
-                }
-
-                if (serviceType === 'Boxes') {
-                    console.log('[ClientProfile] Saving Box Orders...');
-                    const boxesFromActiveOrder = ao?.boxOrders || [];
-                    const boxesFromOrderConfig = orderConfig?.boxOrders || [];
-
-                    const boxesToSave = boxesFromActiveOrder.length > 0 ? boxesFromActiveOrder : boxesFromOrderConfig;
-
-                    console.log('[ClientProfile] DEBUG Box Save:', {
-                        activeOrderBoxesCount: boxesFromActiveOrder.length,
-                        orderConfigBoxesCount: boxesFromOrderConfig.length,
-                        finalBoxesCount: boxesToSave.length,
-                        caseId: ao?.caseId || orderConfig?.caseId
-                    });
-
-                    if (boxesToSave.length === 0) {
-                        console.warn('[ClientProfile] WARNING: No box orders to save! Both activeOrder and orderConfig have empty boxOrders.');
-                    } else {
-                        savePromises.push(
-                            saveClientBoxOrder(clientId, boxesToSave.map((box: any) => ({
-                                ...box,
-                                caseId: ao?.caseId || orderConfig?.caseId
-                            })), { skipHistory: true })
-                        );
-                    }
-                }
-
-                // Execute all save operations in parallel
-                console.log(`[ClientProfile] Awaiting ${savePromises.length} save operations...`);
-                await Promise.all(savePromises);
-                console.log('[ClientProfile] All save operations completed.');
-            } else {
-                console.warn('[ClientProfile] Skipping order save: Missing activeOrder or caseId.');
-            }
-            // REMOVED: Duplicate syncCurrentOrderToUpcoming call - updateClient already handles this
+            // Order saved via updateClientUpcomingOrder above
 
             // Reload upcoming order if we had order changes
             // COMMENTED OUT: We rely on updatedClient.activeOrder which we just loaded above (line 3475).

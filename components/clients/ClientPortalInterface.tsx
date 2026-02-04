@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { ClientProfile, ClientStatus, Navigator, Vendor, MenuItem, BoxType, ItemCategory, BoxQuota, MealCategory, MealItem, AppSettings } from '@/lib/types';
-import { syncCurrentOrderToUpcoming, getBoxQuotas, invalidateOrderData, updateClient, saveClientFoodOrder, saveClientMealOrder, saveClientBoxOrder } from '@/lib/actions';
+import { getBoxQuotas, invalidateOrderData, updateClient, updateClientUpcomingOrder } from '@/lib/actions';
 import { getSettings } from '@/lib/cached-data';
 import { getNextDeliveryDate as getNextDeliveryDateUtil, getTakeEffectDate, formatDeliveryDate, calculateVendorEffectiveDate } from '@/lib/order-dates';
 import { isMeetingMinimum, isExceedingMaximum, isMeetingExactTarget } from '@/lib/utils';
@@ -99,108 +99,13 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
     const lastSavedTimestampRef = useRef<string | null>(null);
     const lastUpcomingOrderIdRef = useRef<string | null>(null);
 
-    // Initialize order config - PRIORITIZE NEW INDEPENDENT TABLES
+    // Initialize order config from clients.upcoming_order (single source)
     useEffect(() => {
         if (!client) return;
 
         let configToSet: any = {};
-        let source = '';
 
-        // Priority 0: New Independent Tables (if available and matching service type)
-        const serviceType = client.serviceType;
-
-        if (serviceType === 'Food' && foodOrder) {
-
-            let foodOrderForUI = { ...foodOrder } as any;
-
-            // Convert deliveryDayOrders from DB back to vendorSelections with itemsByDay for UI
-            if (foodOrderForUI.deliveryDayOrders) {
-                const vendorMap = new Map<string, any>();
-                for (const [day, dayData] of Object.entries(foodOrderForUI.deliveryDayOrders)) {
-                    const vendorSelections = (dayData as any).vendorSelections || [];
-                    for (const selection of vendorSelections) {
-                        if (!selection.vendorId) continue;
-                        if (!vendorMap.has(selection.vendorId)) {
-                            vendorMap.set(selection.vendorId, {
-                                vendorId: selection.vendorId,
-                                items: {},
-                                selectedDeliveryDays: [],
-                                itemsByDay: {}
-                            });
-                        }
-                        const vendor = vendorMap.get(selection.vendorId)!;
-                        vendor.selectedDeliveryDays.push(day);
-                        vendor.itemsByDay[day] = selection.items || {};
-                        // Ensure itemNotes are populated
-                        if (!vendor.itemNotesByDay) vendor.itemNotesByDay = {};
-                        vendor.itemNotesByDay[day] = selection.itemNotes || {};
-                    }
-                }
-                foodOrderForUI.vendorSelections = Array.from(vendorMap.values());
-                delete foodOrderForUI.deliveryDayOrders; // Clean up legacy format to avoid confusion
-            }
-
-            configToSet = { ...foodOrderForUI, serviceType: 'Food' };
-            if (!configToSet.caseId && client.activeOrder?.caseId) {
-                configToSet.caseId = client.activeOrder.caseId;
-            }
-
-            // Merge mealSelections if available (e.g. Breakfast)
-            if (mealOrder && mealOrder.mealSelections) {
-                configToSet.mealSelections = mealOrder.mealSelections;
-            }
-            source = 'foodOrder';
-
-        } else if (serviceType === 'Meal' && mealOrder) {
-
-            configToSet = { ...mealOrder, serviceType: 'Meal' };
-            if (!configToSet.caseId && client.activeOrder?.caseId) {
-                configToSet.caseId = client.activeOrder.caseId;
-            }
-            source = 'mealOrder';
-
-        } else if (serviceType === 'Boxes' && boxOrders && boxOrders.length > 0) {
-
-            configToSet = {
-                boxOrders,
-                serviceType: 'Boxes',
-                caseId: boxOrders[0].caseId || client.activeOrder?.caseId
-            };
-            source = 'boxOrders';
-
-        } else {
-            // Fallback to Legacy Logic
-            // ... (keep existing fallback logic for safety)
-
-            // Get the upcoming order ID and timestamp for comparison
-            const upcomingOrderId = upcomingOrder ? (
-                typeof upcomingOrder === 'object' && !(upcomingOrder as any).serviceType ?
-                    (upcomingOrder as any)['default']?.id :
-                    (upcomingOrder as any)?.id
-            ) : null;
-
-            const upcomingOrderTimestamp = upcomingOrder ? (
-                typeof upcomingOrder === 'object' && !(upcomingOrder as any).serviceType ?
-                    (upcomingOrder as any)['default']?.lastUpdated :
-                    (upcomingOrder as any)?.lastUpdated
-            ) : null;
-
-            const clientActiveOrderTimestamp = (client?.activeOrder as any)?.lastUpdated;
-            const upcomingOrderUnchanged = upcomingOrderId === lastUpcomingOrderIdRef.current;
-            const clientActiveOrderIsNewer = clientActiveOrderTimestamp && upcomingOrderTimestamp &&
-                new Date(clientActiveOrderTimestamp) > new Date(upcomingOrderTimestamp);
-
-            const shouldPreferClientActiveOrder = hasInitializedRef.current &&
-                upcomingOrderUnchanged &&
-                clientActiveOrderIsNewer &&
-                client.activeOrder;
-
-            if (shouldPreferClientActiveOrder) {
-                configToSet = { ...client.activeOrder };
-                if (!configToSet.serviceType) configToSet.serviceType = client.serviceType;
-                source = 'client.activeOrder (cached)';
-            } else if (upcomingOrder) {
-                source = 'upcomingOrder';
+        if (upcomingOrder && typeof upcomingOrder === 'object') {
                 // ... (existing upcomingOrder logic) ...
                 // Minimal copy of upcoming logic:
                 const isMultiDayFormat = upcomingOrder && typeof upcomingOrder === 'object' &&
@@ -227,24 +132,15 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
                         deliveryDayOrders
                     };
                 } else {
-                    configToSet = upcomingOrder;
+                    configToSet = { ...upcomingOrder };
                 }
-            } else if (activeOrder) {
-                source = 'activeOrder';
-                configToSet = { ...activeOrder };
-                if (!configToSet.serviceType) configToSet.serviceType = client.serviceType;
-            } else if (client.activeOrder) {
-                source = 'client.activeOrder';
-                configToSet = { ...client.activeOrder };
-                if (!configToSet.serviceType) configToSet.serviceType = client.serviceType;
-            } else {
-                source = 'default';
-                const defaultOrder: any = { serviceType: client.serviceType };
-                if (client.serviceType === 'Food') {
-                    defaultOrder.vendorSelections = [{ vendorId: '', items: {} }];
-                }
-                configToSet = defaultOrder;
+            if (!configToSet.serviceType) configToSet.serviceType = client.serviceType;
+        } else {
+            const defaultOrder: any = { serviceType: client.serviceType };
+            if (client.serviceType === 'Food') {
+                defaultOrder.vendorSelections = [{ vendorId: '', items: {} }];
             }
+            configToSet = defaultOrder;
         }
 
 
@@ -261,7 +157,7 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
         ) : null;
         lastUpcomingOrderIdRef.current = currentUpcomingOrderId;
 
-    }, [upcomingOrder, activeOrder, client, foodOrder, mealOrder, boxOrders]);
+    }, [upcomingOrder, activeOrder, client]);
 
     // Box Logic - Load quotas for all active box types to support multiple boxes with different types
     useEffect(() => {
@@ -616,7 +512,7 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
         }
 
         const serviceType = client.serviceType;
-        const caseId = orderConfig?.caseId || (client as any).caseID || (client.activeOrder as any)?.caseId;
+        const caseId = orderConfig?.caseId || (client as any).caseID || (client.upcomingOrder as any)?.caseId;
 
         console.error("!!! [handleSave] CALLED !!!", { validationStatus, totalMealCount });
         console.log("DEBUG: Full orderConfig:", JSON.stringify(orderConfig, null, 2));
@@ -762,51 +658,16 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
                 cleanedOrderConfig.itemPrices = orderConfig.itemPrices || {};
             }
 
-            // Create a temporary client object for syncCurrentOrderToUpcoming
-            const tempClient: ClientProfile = {
-                ...client,
-                activeOrder: {
-                    ...cleanedOrderConfig,
-                    serviceType: serviceType,
-                    lastUpdated: new Date().toISOString(),
-                    updatedBy: `Client: ${client.fullName}`,
-                    snapshot: orderSnapshot // Pass snapshot to syncCurrentOrderToUpcoming
-                }
-            } as ClientProfile;
+            const payload = {
+                ...cleanedOrderConfig,
+                serviceType: serviceType,
+                notes: cleanedOrderConfig.notes
+            };
 
             setSaving(true);
             setMessage('Saving...');
 
-            // Sync to new independent tables first (mimicking ClientProfile)
-            if (serviceType === 'Food') {
-                await saveClientFoodOrder(client.id, {
-                    caseId: cleanedOrderConfig.caseId,
-                    deliveryDayOrders: cleanedOrderConfig.deliveryDayOrders || {}
-                });
-            }
-
-            // Save meal orders independently (if exists) - allowing Food + Breakfast combo
-            if (serviceType === 'Meal' || cleanedOrderConfig.mealSelections) {
-                // Save meal orders if service type is Meal OR if there are meal selections
-                // Note: We intentionally save empty objects {} to clear data if user deleted all meals
-                if (cleanedOrderConfig.mealSelections) {
-
-                    await saveClientMealOrder(client.id, {
-                        caseId: cleanedOrderConfig.caseId,
-                        mealSelections: cleanedOrderConfig.mealSelections
-                    });
-                }
-            }
-
-            if (serviceType === 'Boxes') {
-                await saveClientBoxOrder(client.id, (cleanedOrderConfig.boxOrders || []).map((box: any) => ({
-                    ...box,
-                    caseId: cleanedOrderConfig.caseId
-                })));
-            }
-
-            // Sync to upcoming_orders table
-            await syncCurrentOrderToUpcoming(client.id, tempClient);
+            await updateClientUpcomingOrder(client.id, payload);
 
             // Refresh the router to refetch server data
             router.refresh();

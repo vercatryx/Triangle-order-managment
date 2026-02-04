@@ -68,7 +68,7 @@ export function ClientInfoShelf({
         authorizedAmount: client.authorizedAmount || 0,
         expirationDate: client.expirationDate || '',
         approvedMealsPerWeek: client.approvedMealsPerWeek || 0,
-        caseId: client.activeOrder?.caseId || ''
+        caseId: client.upcomingOrder?.caseId || ''
     });
 
     // Dependent State
@@ -176,16 +176,16 @@ export function ClientInfoShelf({
             // Use pending form if available (from modal flow), otherwise current editForm
             const formToSave = pendingEditForm || editForm;
 
-            // Include caseId in activeOrder if it was modified
-            const updatedActiveOrder = {
-                ...(client.activeOrder || { serviceType: client.serviceType }),
+            // Include caseId in upcomingOrder if it was modified
+            const updatedUpcomingOrder = {
+                ...(client.upcomingOrder || { serviceType: client.serviceType }),
                 caseId: formToSave.caseId,
-                serviceType: client.activeOrder?.serviceType || client.serviceType
+                serviceType: client.upcomingOrder?.serviceType || client.serviceType
             };
 
             await updateClient(client.id, {
                 ...formToSave,
-                activeOrder: updatedActiveOrder
+                upcomingOrder: updatedUpcomingOrder
             });
 
             // Log units if applicable
@@ -408,7 +408,7 @@ export function ClientInfoShelf({
                                         authorizedAmount: client.authorizedAmount || 0,
                                         expirationDate: client.expirationDate || '',
                                         approvedMealsPerWeek: client.approvedMealsPerWeek || 0,
-                                        caseId: client.activeOrder?.caseId || ''
+                                        caseId: client.upcomingOrder?.caseId || ''
                                     });
                                 }}>
                                     <X size={18} />
@@ -530,7 +530,7 @@ export function ClientInfoShelf({
                                             placeholder="Case ID"
                                         />
                                     ) : (
-                                        client.activeOrder?.caseId || '-'
+                                        client.upcomingOrder?.caseId || '-'
                                     )}
                                 </div>
                             </div>

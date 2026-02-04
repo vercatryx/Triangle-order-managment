@@ -1518,11 +1518,7 @@ function mapClientFromDB(c: any): ClientProfile {
         cin: c.cin ?? null,
         authorizedAmount: c.authorized_amount ?? null,
         expirationDate: c.expiration_date || null,
-        activeOrder: c.active_order, // Metadata matches structure
-        upcomingOrder: c.upcoming_order ?? undefined, // New column: JSON order for upcoming (load/save only here)
-        mealOrder: c.client_meal_orders && Array.isArray(c.client_meal_orders) && c.client_meal_orders.length > 0
-            ? c.client_meal_orders[0] // Take the first one if array (should be one-to-one effectively)
-            : (c.client_meal_orders && !Array.isArray(c.client_meal_orders) ? c.client_meal_orders : undefined),
+        upcomingOrder: c.upcoming_order ?? c.active_order ?? undefined, // Prefer upcoming_order; fallback to active_order during migration
         locationId: c.location_id || null,
         createdAt: c.created_at,
         updatedAt: c.updated_at,
@@ -1656,12 +1652,7 @@ export async function addClient(data: Omit<ClientProfile, 'id' | 'createdAt' | '
             id: await generateNextClientId(lastAttemptedId ?? undefined)
         };
 
-        // Save active_order if provided (ClientProfile component handles validation)
-        if (data.activeOrder !== undefined && data.activeOrder !== null) {
-            payload.active_order = data.activeOrder;
-        } else {
-            payload.active_order = {};
-        }
+        payload.upcoming_order = data.upcomingOrder ?? (data as any).activeOrder ?? null;
 
         const { data: res, error } = await supabase.from('clients').insert([payload]).select().single();
 
@@ -1680,10 +1671,6 @@ export async function addClient(data: Omit<ClientProfile, 'id' | 'createdAt' | '
         }
 
         const newClient = mapClientFromDB(res);
-
-        if (newClient.activeOrder && newClient.activeOrder.caseId) {
-            await syncCurrentOrderToUpcoming(newClient.id, newClient, true);
-        }
 
         revalidatePath('/clients');
 
@@ -1732,7 +1719,7 @@ export async function addDependent(name: string, parentClientId: string, dob?: s
             approved_meals_per_week: 0,
             authorized_amount: null,
             expiration_date: null,
-            active_order: {},
+            upcoming_order: null,
             parent_client_id: parentClientId,
             dob: dob || null,
             cin: cin ?? null,
@@ -1854,11 +1841,6 @@ export async function getDependentsByParentId(parentClientId: string) {
 }
 
 export async function updateClient(id: string, data: Partial<ClientProfile>, options?: { skipHistory?: boolean }) {
-    console.log('[updateClient] Server Action Received:', id);
-    if (data.activeOrder) {
-        console.log('[updateClient] Payload activeOrder mealSelections:', JSON.stringify((data.activeOrder as any).mealSelections, null, 2));
-    }
-
     const payload: any = {};
     if (data.fullName) payload.full_name = data.fullName;
     if (data.email !== undefined) payload.email = data.email;
@@ -1879,7 +1861,6 @@ export async function updateClient(id: string, data: Partial<ClientProfile>, opt
     if (data.authorizedAmount !== undefined) payload.authorized_amount = data.authorizedAmount !== null ? roundCurrency(data.authorizedAmount) : null;
     if (data.expirationDate !== undefined) payload.expiration_date = data.expirationDate || null;
     if (data.locationId !== undefined) payload.location_id = data.locationId || null;
-    if (data.activeOrder) payload.active_order = data.activeOrder;
     if (data.upcomingOrder !== undefined) payload.upcoming_order = data.upcomingOrder;
     if (data.orderHistory !== undefined) payload.order_history = data.orderHistory;
 
@@ -1887,14 +1868,6 @@ export async function updateClient(id: string, data: Partial<ClientProfile>, opt
 
     const { data: updatedData, error } = await supabase.from('clients').update(payload).eq('id', id).select().single();
     handleError(error);
-
-    if (data.activeOrder && updatedData) {
-        const mappedClient = mapClientFromDB(updatedData);
-        // Don't sync if service type is Custom - saveClientCustomOrder already handles it
-        if (mappedClient.serviceType !== 'Custom') {
-            await syncCurrentOrderToUpcoming(id, mappedClient, true, options?.skipHistory);
-        }
-    }
 
     // Targeted local DB sync for this client (non-blocking for better performance)
     const { updateClientInLocalDB } = await import('./local-db');
@@ -2264,24 +2237,31 @@ export async function generateDeliveriesForDate(dateStr: string) {
     if (!clients || !vendors) return 0;
 
     for (const c of clients) {
-        if (!c.active_order || !c.active_order.vendorId) continue;
+        const uo = c.upcoming_order;
+        if (!uo || typeof uo !== 'object') continue;
 
-        const vendor = vendors.find((v: any) => v.id === c.active_order.vendorId);
+        let vendorId = uo.vendorId;
+        if (!vendorId && uo.boxOrders?.[0]?.vendorId) vendorId = uo.boxOrders[0].vendorId;
+        if (!vendorId && uo.vendorSelections?.[0]?.vendorId) vendorId = uo.vendorSelections[0].vendorId;
+        if (!vendorId && uo.deliveryDayOrders) {
+            const firstDay = Object.values(uo.deliveryDayOrders)[0] as any;
+            vendorId = firstDay?.vendorSelections?.[0]?.vendorId;
+        }
+        if (!vendorId) continue;
+
+        const vendor = vendors.find((v: any) => v.id === vendorId);
         if (!vendor) continue;
 
-        // Check day
         const deliveryDays = vendor.delivery_days || [];
         if (deliveryDays.includes(dayName)) {
-            // Check duplication
-            // (Simplified: assuming we don't want duplicate per day)
-            // We'll skip the duplication check in code for now to save complexity, or assume UI handles idempotency
-
             let summary = '';
             if (c.service_type === 'Food') {
-                summary = `Food Order: ${Object.keys(c.active_order.menuSelections || {}).length} items`;
+                const itemCount = uo.deliveryDayOrders ? Object.values(uo.deliveryDayOrders).reduce((n: number, d: any) => n + (d?.vendorSelections?.length || 0), 0) : (uo.vendorSelections?.length || 0);
+                summary = `Food Order: ${itemCount} items`;
             } else if (c.service_type === 'Boxes') {
-                const box = boxTypes?.find((b: any) => b.id === c.active_order.boxTypeId);
-                summary = `${box?.name || 'Box'} x${c.active_order.boxQuantity}`;
+                const box = boxTypes?.find((b: any) => b.id === (uo.boxOrders?.[0]?.boxTypeId ?? uo.boxTypeId));
+                const qty = uo.boxOrders?.[0]?.quantity ?? uo.boxQuantity ?? 1;
+                summary = `${box?.name || 'Box'} x${qty}`;
             }
 
             const { error } = await supabase.from('delivery_history').insert([{
@@ -5508,21 +5488,21 @@ export async function getActiveOrderForClient(clientId: string) {
 }
 
 /**
- * Get upcoming order from upcoming_orders table for a client
- * This is used for "Current Order Request" form
- */
-/**
- * Get upcoming order from upcoming_orders table for a client
- * This is used for "Current Order Request" form
- * Now uses local database for fast access
+ * Get upcoming order from clients.upcoming_order column for a client.
+ * Single source of truth for order configuration.
  */
 export async function getUpcomingOrderForClient(clientId: string) {
     if (!clientId) return null;
 
     try {
-        // Use local database for fast access
-        const { getUpcomingOrderForClientLocal } = await import('./local-db');
-        return await getUpcomingOrderForClientLocal(clientId);
+        const { data, error } = await supabase
+            .from('clients')
+            .select('upcoming_order, active_order')
+            .eq('id', clientId)
+            .single();
+
+        if (error || !data) return null;
+        return data.upcoming_order ?? data.active_order ?? null;
     } catch (err) {
         console.error('Error in getUpcomingOrderForClient:', err);
         return null;
@@ -5797,9 +5777,6 @@ export async function getClientFullDetails(clientId: string) {
             billingHistory,
             activeOrder,
             upcomingOrder,
-            foodOrder,
-            mealOrder,
-            boxOrders,
             submissions
         ] = await Promise.all([
             getClient(clientId),
@@ -5808,9 +5785,6 @@ export async function getClientFullDetails(clientId: string) {
             getBillingHistory(clientId),
             getRecentOrdersForClient(clientId),
             getUpcomingOrderForClient(clientId),
-            getClientFoodOrder(clientId),
-            getClientMealOrder(clientId),
-            getClientBoxOrder(clientId),
             getClientSubmissions(clientId)
         ]);
 
@@ -5823,9 +5797,9 @@ export async function getClientFullDetails(clientId: string) {
             billingHistory,
             activeOrder,
             upcomingOrder,
-            foodOrder,
-            mealOrder,
-            boxOrders,
+            foodOrder: null,
+            mealOrder: null,
+            boxOrders: [],
             submissions: submissions?.data || []
         };
     } catch (error) {
@@ -5838,30 +5812,14 @@ export async function getClientProfileData(clientId: string) {
     if (!clientId) return null;
 
     try {
-        const {
-            getActiveOrderForClientLocal,
-            getUpcomingOrderForClientLocal,
-            getClientFoodOrderLocal,
-            getClientMealOrderLocal,
-            getClientBoxOrderLocal
-        } = await import('./local-db');
-
-        // Fetch ONLY critical data for initial render
-        // Moved history, billing, ordered history to lazy loading
         const [
             client,
             activeOrder,
-            upcomingOrder,
-            foodOrder,
-            mealOrder,
-            boxOrders
+            upcomingOrder
         ] = await Promise.all([
             getClient(clientId),
-            getActiveOrderForClientLocal(clientId),
-            getUpcomingOrderForClientLocal(clientId),
-            getClientFoodOrderLocal(clientId),
-            getClientMealOrderLocal(clientId),
-            getClientBoxOrderLocal(clientId)
+            getActiveOrderForClient(clientId),
+            getUpcomingOrderForClient(clientId)
         ]);
 
         if (!client) return null;
@@ -5870,9 +5828,9 @@ export async function getClientProfileData(clientId: string) {
             client,
             activeOrder,
             upcomingOrder,
-            foodOrder,
-            mealOrder,
-            boxOrders
+            foodOrder: null,
+            mealOrder: null,
+            boxOrders: []
         };
     } catch (error) {
         console.error('Error fetching client profile data:', error);
@@ -6016,23 +5974,21 @@ export async function processVendorOrderDetails(supabaseClient: any, order: any,
         if (bs) {
             result.boxSelection = bs;
 
-            // If items field is empty, try to fetch from client's active_order (same source as client profile uses)
-            if (!bs.items || Object.keys(bs.items).length === 0) {
-                // Get the client's active_order from clients table (this is where client profile gets box items from)
-                const { data: clientData } = await supabaseClient
-                    .from('clients')
-                    .select('active_order')
-                    .eq('id', order.client_id)
-                    .maybeSingle();
+            // If items field is empty, try to fetch from client's upcoming_order
+                if (!bs.items || Object.keys(bs.items).length === 0) {
+                    const { data: clientData } = await supabaseClient
+                        .from('clients')
+                        .select('upcoming_order')
+                        .eq('id', order.client_id)
+                        .maybeSingle();
 
-                if (clientData && clientData.active_order) {
-                    const activeOrder = clientData.active_order;
-                    // Check if this is a box order and has items
-                    if (activeOrder.serviceType === 'Boxes' && activeOrder.items && Object.keys(activeOrder.items).length > 0) {
-                        // Use items from client's active_order (same as client profile uses)
+                if (clientData && clientData.upcoming_order) {
+                    const uo = clientData.upcoming_order;
+                    const items = uo.boxOrders?.[0]?.items ?? uo.items;
+                    if (uo.serviceType === 'Boxes' && items && Object.keys(items).length > 0) {
                         result.boxSelection = {
                             ...bs,
-                            items: activeOrder.items
+                            items
                         };
                     }
                 }
@@ -7481,10 +7437,6 @@ export async function getBatchClientDetails(clientIds: string[]) {
             orderHistoryData,
             billingHistoryData,
             ordersData,
-            allUpcomingOrdersData,
-            foodOrdersData,
-            mealOrdersData,
-            boxOrdersData,
             submissionsData
         ] = await Promise.all([
             supabase.from('clients').select('*').in('id', clientIds),
@@ -7492,11 +7444,7 @@ export async function getBatchClientDetails(clientIds: string[]) {
             supabase.from('orders').select('*').in('client_id', clientIds).order('created_at', { ascending: false }),
             supabase.from('billing_history').select('*').in('client_id', clientIds).order('created_at', { ascending: false }),
             supabase.from('orders').select('*').in('client_id', clientIds).order('created_at', { ascending: false }).limit(20 * clientIds.length), // Get enough for recent orders
-            supabase.from('upcoming_orders').select('*').in('client_id', clientIds),
-            supabase.from('client_food_orders').select('*').in('client_id', clientIds),
-            supabase.from('client_meal_orders').select('*').in('client_id', clientIds),
-            supabase.from('client_box_orders').select('*').in('client_id', clientIds),
-            getClientSubmissions(clientIds[0]) // Note: submissions might need a specific batch version, but for now we follow existing pattern or skip if too complex
+            getClientSubmissions(clientIds[0])
         ]);
 
         // Helper to organize data per client
@@ -7515,9 +7463,6 @@ export async function getBatchClientDetails(clientIds: string[]) {
             // but for a true fallback or remote-only batch, we filtered them above.
             // Ideally we also fetch orders for the local-db to be populated.
 
-            // For now, let's use the individual getters for complex nested logic (activeOrder/upcomingOrder)
-            // BUT we already fetched the raw rows above to potentially optimize.
-            // To maintain compatibility with the complex mapping logic in individual getters:
             const [activeOrder, upcomingOrder] = await Promise.all([
                 getRecentOrdersForClient(id),
                 getUpcomingOrderForClient(id)
@@ -7530,10 +7475,10 @@ export async function getBatchClientDetails(clientIds: string[]) {
                 billingHistory,
                 activeOrder,
                 upcomingOrder,
-                foodOrder: (foodOrdersData.data || []).find(fo => fo.client_id === id),
-                mealOrder: (mealOrdersData.data || []).find(mo => mo.client_id === id),
-                boxOrders: (boxOrdersData.data || []).filter(bo => bo.client_id === id),
-                submissions: id === clientIds[0] ? (submissionsData?.data || []) : [] // Submissions only for first for now to avoid complexity
+                foodOrder: null,
+                mealOrder: null,
+                boxOrders: [],
+                submissions: id === clientIds[0] ? (submissionsData?.data || []) : []
             };
         }
 

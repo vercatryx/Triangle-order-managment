@@ -346,7 +346,7 @@ const PAGE_SIZE = 1000;
 
 /** Fetch all client rows using range pagination (same as getRegularClients). */
 async function fetchAllClients(
-    supabaseAdmin: ReturnType<typeof supabase>,
+    supabaseAdmin: any,
     clientSelect: string
 ): Promise<Record<string, any>[]> {
     const out: Record<string, any>[] = [];
@@ -370,7 +370,7 @@ async function fetchAllClients(
 
 /** Fetch all client_box_orders for given client IDs (guarantees all rows, avoids embed limits). */
 async function fetchClientBoxOrders(
-    supabaseAdmin: ReturnType<typeof supabase>,
+    supabaseAdmin: any,
     clientIds: string[]
 ): Promise<Map<string, any[]>> {
     const result = new Map<string, any[]>();
@@ -389,7 +389,7 @@ async function fetchClientBoxOrders(
 
 /** Fetch all upcoming_orders for given client IDs (source of old orders to migrate into clients.upcoming_order). */
 async function fetchUpcomingOrdersByClients(
-    supabaseAdmin: ReturnType<typeof supabase>,
+    supabaseAdmin: any,
     clientIds: string[]
 ): Promise<Map<string, { orders: any[]; vendorSelections: any[]; items: any[]; boxSelections: any[] }>> {
     const result = new Map<string, { orders: any[]; vendorSelections: any[]; items: any[]; boxSelections: any[] }>();
@@ -399,8 +399,9 @@ async function fetchUpcomingOrdersByClients(
         .select('*')
         .in('client_id', clientIds)
         .eq('status', 'scheduled');
-    if (!orders || orders.length === 0) return result;
-    const orderIds = orders.map(o => o.id);
+    const ordersArr = (orders ?? []) as any[];
+    if (ordersArr.length === 0) return result;
+    const orderIds = ordersArr.map((o: any) => o.id);
     const [vsData, itemsData, boxData] = await Promise.all([
         supabaseAdmin.from('upcoming_order_vendor_selections').select('*').in('upcoming_order_id', orderIds),
         supabaseAdmin.from('upcoming_order_items').select('*').in('upcoming_order_id', orderIds),
@@ -410,7 +411,7 @@ async function fetchUpcomingOrdersByClients(
     const items = itemsData.data ?? [];
     const boxSelections = boxData.data ?? [];
     for (const cid of clientIds) {
-        const clientOrders = orders.filter(o => o.client_id === cid);
+        const clientOrders = ordersArr.filter((o: any) => o.client_id === cid);
         if (clientOrders.length > 0) {
             result.set(cid, { orders: clientOrders, vendorSelections, items, boxSelections });
         }
