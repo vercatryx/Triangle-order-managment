@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import { Inter } from 'next/font/google';
+import { Toaster } from 'sonner';
 import './globals.css';
 import { LayoutShell } from '@/components/LayoutShell';
 import { TimeProvider } from '@/lib/time-context';
@@ -34,6 +35,7 @@ export default async function RootLayout({
   return (
     <html lang="en">
       <body className={inter.className}>
+        <Toaster richColors position="top-center" />
         <TimeProvider initialFakeTime={initialFakeTime}>
           <LayoutShell userName={userName} userRole={userRole} userId={userId}>
             {children}

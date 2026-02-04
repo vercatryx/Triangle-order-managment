@@ -36,7 +36,10 @@ export interface ClientProfile {
   // Order Configuration (Active Request)
   activeOrder?: OrderConfiguration;
 
-  mealOrder?: ClientMealOrder; // Start including linked meal orders for display
+  mealOrder?: ClientMealOrder; // Linked meal orders
+
+  // New column for upcoming order storage (JSONB)
+  upcomingOrder?: any;
 
   // Location Binding
   locationId?: string | null;

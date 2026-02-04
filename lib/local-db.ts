@@ -829,7 +829,7 @@ export async function getUpcomingOrderForClientLocal(clientId: string) {
                     }
                 }
             }
-            
+
             // Always return the order config, even if it's empty
             // This ensures orders without vendor selections/items can still be displayed and edited
             console.log(`[getUpcomingOrderForClientLocal] Returning order config for ${clientId}:`, {
@@ -1137,8 +1137,9 @@ export async function getClientBoxOrderLocal(clientId: string) {
         caseId: order.case_id,
         boxTypeId: order.box_type_id,
         vendorId: order.vendor_id,
-        quantity: order.box_quantity,
+        quantity: order.quantity, // Correct mapping from DB field
         items: order.items,
+        itemNotes: order.item_notes, // Map item_notes from DB
         notes: order.notes,
         created_at: order.created_at,
         updated_at: order.updated_at,

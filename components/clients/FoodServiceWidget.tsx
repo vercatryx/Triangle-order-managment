@@ -306,12 +306,33 @@ export default function FoodServiceWidget({
     function handleAddVendorBlock() {
         setOrderConfig((prev: any) => {
             const newConfig = { ...prev };
-            // FIX: Deep copy the array to prevent double-push in Strict Mode
-            newConfig.vendorSelections = newConfig.vendorSelections ? [...newConfig.vendorSelections] : [];
-            newConfig.vendorSelections.push({
-                vendorId: '',
-                items: {}
-            });
+            // Merge with existing: if we have deliveryDayOrders but no vendorSelections, convert first so we don't lose data
+            let existingSelections = newConfig.vendorSelections ? [...newConfig.vendorSelections] : [];
+            if (existingSelections.length === 0 && newConfig.deliveryDayOrders && typeof newConfig.deliveryDayOrders === 'object') {
+                const vendorMap = new Map<string, any>();
+                for (const day of Object.keys(newConfig.deliveryDayOrders).sort()) {
+                    const dayOrder = newConfig.deliveryDayOrders[day];
+                    const daySelections = dayOrder?.vendorSelections || [];
+                    for (const sel of daySelections) {
+                        if (!sel.vendorId) continue;
+                        if (!vendorMap.has(sel.vendorId)) {
+                            vendorMap.set(sel.vendorId, {
+                                vendorId: sel.vendorId,
+                                selectedDeliveryDays: [],
+                                itemsByDay: {},
+                                itemNotesByDay: {}
+                            });
+                        }
+                        const v = vendorMap.get(sel.vendorId)!;
+                        if (!v.selectedDeliveryDays.includes(day)) v.selectedDeliveryDays.push(day);
+                        v.itemsByDay[day] = sel.items || {};
+                        v.itemNotesByDay[day] = sel.itemNotes || {};
+                    }
+                }
+                existingSelections = Array.from(vendorMap.values());
+            }
+            newConfig.vendorSelections = [...existingSelections, { vendorId: '', items: {} }];
+            delete newConfig.deliveryDayOrders; // Use vendorSelections as single source of truth after edit
             return newConfig;
         });
     }
@@ -333,18 +354,26 @@ export default function FoodServiceWidget({
             const newConfig = { ...prev };
             if (newConfig.vendorSelections) {
                 const updated = [...newConfig.vendorSelections];
+                const existing = updated[index];
+                const previousVendorId = existing?.vendorId;
+                // Only clear items when vendor actually changed — preserves items when re-selecting same vendor
+                const vendorChanged = previousVendorId !== vendorId;
 
-                // Find vendor to check delivery days
                 const vendor = vendors.find(v => v.id === vendorId);
-                // Auto-select day if vendor only has one delivery day
                 const autoSelectDay = (vendor?.deliveryDays?.length === 1) ? vendor.deliveryDays[0] : null;
 
                 updated[index] = {
                     ...updated[index],
                     vendorId,
-                    items: {},
-                    itemsByDay: autoSelectDay ? { [autoSelectDay]: {} } : {},
-                    selectedDeliveryDays: autoSelectDay ? [autoSelectDay] : []
+                    items: vendorChanged ? {} : (existing?.items || {}),
+                    itemsByDay: vendorChanged
+                        ? (autoSelectDay ? { [autoSelectDay]: {} } : {})
+                        : (existing?.itemsByDay || (autoSelectDay ? { [autoSelectDay]: existing?.items || {} } : {})),
+                    itemNotes: vendorChanged ? {} : (existing?.itemNotes || {}),
+                    itemNotesByDay: vendorChanged ? {} : (existing?.itemNotesByDay || {}),
+                    selectedDeliveryDays: vendorChanged
+                        ? (autoSelectDay ? [autoSelectDay] : [])
+                        : (existing?.selectedDeliveryDays || (autoSelectDay ? [autoSelectDay] : []))
                 };
                 newConfig.vendorSelections = updated;
             }
@@ -492,8 +521,40 @@ export default function FoodServiceWidget({
         setOpenShelf(openShelf === shelfId ? null : shelfId);
     };
 
+    /** Resolved vendor list for display: use vendorSelections if present, else build from deliveryDayOrders so food orders show when only deliveryDayOrders is stored. */
+    const getResolvedVendorSelections = (): any[] => {
+        if (orderConfig.vendorSelections && orderConfig.vendorSelections.length > 0) {
+            return orderConfig.vendorSelections;
+        }
+        if (orderConfig.deliveryDayOrders && typeof orderConfig.deliveryDayOrders === 'object') {
+            const deliveryDays = Object.keys(orderConfig.deliveryDayOrders).sort();
+            const vendorMap = new Map<string, any>();
+            for (const day of deliveryDays) {
+                const daySelections = orderConfig.deliveryDayOrders[day].vendorSelections || [];
+                for (const sel of daySelections) {
+                    if (!sel.vendorId) continue;
+                    if (!vendorMap.has(sel.vendorId)) {
+                        vendorMap.set(sel.vendorId, {
+                            vendorId: sel.vendorId,
+                            selectedDeliveryDays: [],
+                            itemsByDay: {},
+                            itemNotesByDay: {}
+                        });
+                    }
+                    const vendorSel = vendorMap.get(sel.vendorId);
+                    if (!vendorSel.selectedDeliveryDays.includes(day)) vendorSel.selectedDeliveryDays.push(day);
+                    vendorSel.itemsByDay[day] = sel.items || {};
+                    if (!vendorSel.itemNotesByDay) vendorSel.itemNotesByDay = {};
+                    vendorSel.itemNotesByDay[day] = sel.itemNotes || {};
+                }
+            }
+            if (vendorMap.size > 0) return Array.from(vendorMap.values());
+        }
+        return orderConfig.vendorSelections || [];
+    };
+
     const renderVendorBlocks = () => {
-        const selections = orderConfig.vendorSelections || [];
+        const selections = getResolvedVendorSelections();
 
         return (
             <>
@@ -1168,56 +1229,8 @@ export default function FoodServiceWidget({
         });
     };
 
-    // Main Render Logic
-    // Multi-day parsing logic for UI
-    const isAlreadyMultiDay = orderConfig.deliveryDayOrders && typeof orderConfig.deliveryDayOrders === 'object';
-    let currentSelections = orderConfig.vendorSelections || [];
-
-    if (isAlreadyMultiDay && (!orderConfig.vendorSelections || orderConfig.vendorSelections.length === 0)) {
-        // Convert saved deliveryDayOrders back to per-vendor format for editing if not already done
-        const deliveryDays = Object.keys(orderConfig.deliveryDayOrders).sort();
-        const vendorMap = new Map<string, any>();
-
-        const vendorsByDay: { [day: string]: any[] } = {};
-        for (const day of deliveryDays) {
-            const daySelections = orderConfig.deliveryDayOrders[day].vendorSelections || [];
-            for (const sel of daySelections) {
-                if (!sel.vendorId) continue;
-                if (!vendorsByDay[day]) vendorsByDay[day] = [];
-                vendorsByDay[day].push(sel);
-            }
-        }
-
-        for (const day of deliveryDays) {
-            for (const sel of vendorsByDay[day] || []) {
-                if (!vendorMap.has(sel.vendorId)) {
-                    vendorMap.set(sel.vendorId, {
-                        vendorId: sel.vendorId,
-                        selectedDeliveryDays: [],
-                        itemsByDay: {},
-                        itemNotesByDay: {}
-                    });
-                }
-                const vendorSel = vendorMap.get(sel.vendorId);
-                if (!vendorSel.selectedDeliveryDays.includes(day)) {
-                    vendorSel.selectedDeliveryDays.push(day);
-                }
-                vendorSel.itemsByDay[day] = sel.items || {};
-
-                // Populate item notes
-                if (!vendorSel.itemNotesByDay) vendorSel.itemNotesByDay = {};
-                vendorSel.itemNotesByDay[day] = sel.itemNotes || {};
-            }
-        }
-        if (Array.from(vendorMap.values()).length > 0) {
-            currentSelections = Array.from(vendorMap.values());
-
-        }
-    }
-
-    const selectionsToRender = (orderConfig.vendorSelections && orderConfig.vendorSelections.length > 0)
-        ? orderConfig.vendorSelections
-        : currentSelections;
+    // Main Render Logic — use same resolved list as renderVendorBlocks so deliveryDayOrders show when only that is stored
+    const selectionsToRender = getResolvedVendorSelections();
 
     const totalMeals = getTotalMealCountAllDays();
 
@@ -1279,8 +1292,8 @@ export default function FoodServiceWidget({
                     flexWrap: 'wrap'
                 }}>
                     <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
-                        {/* Add Vendor Button - Food Only */}
-                        {client.serviceType === 'Food' && (
+                        {/* Add Vendor Button - for Food order (delivery/vendor) and Meals both */}
+                        {(client.serviceType === 'Food' || client.serviceType === 'Meal') && (
                             <button
                                 type="button"
                                 onClick={handleAddVendorBlock}
@@ -1336,7 +1349,7 @@ export default function FoodServiceWidget({
 
 
                     {/* Effective Date For Admin Header */}
-                    {client.serviceType === 'Food' && (
+                    {(client.serviceType === 'Food' || client.serviceType === 'Meal') && (
                         <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
 
                             {/* Meal Counter */}

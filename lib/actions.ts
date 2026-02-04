@@ -1519,6 +1519,7 @@ function mapClientFromDB(c: any): ClientProfile {
         authorizedAmount: c.authorized_amount ?? null,
         expirationDate: c.expiration_date || null,
         activeOrder: c.active_order, // Metadata matches structure
+        upcomingOrder: c.upcoming_order ?? undefined, // New column: JSON order for upcoming (load/save only here)
         mealOrder: c.client_meal_orders && Array.isArray(c.client_meal_orders) && c.client_meal_orders.length > 0
             ? c.client_meal_orders[0] // Take the first one if array (should be one-to-one effectively)
             : (c.client_meal_orders && !Array.isArray(c.client_meal_orders) ? c.client_meal_orders : undefined),
@@ -1879,6 +1880,7 @@ export async function updateClient(id: string, data: Partial<ClientProfile>, opt
     if (data.expirationDate !== undefined) payload.expiration_date = data.expirationDate || null;
     if (data.locationId !== undefined) payload.location_id = data.locationId || null;
     if (data.activeOrder) payload.active_order = data.activeOrder;
+    if (data.upcomingOrder !== undefined) payload.upcoming_order = data.upcomingOrder;
     if (data.orderHistory !== undefined) payload.order_history = data.orderHistory;
 
     payload.updated_at = new Date().toISOString();
@@ -1907,6 +1909,194 @@ export async function updateClient(id: string, data: Partial<ClientProfile>, opt
     } catch (e) { }
 
     return updatedData ? mapClientFromDB(updatedData) : null;
+}
+
+/**
+ * Build enriched orderDetails from raw clients.upcoming_order payload for order history display.
+ * Resolves vendor/box/item names so the UI shows full snapshot (not "No details captured").
+ */
+async function buildOrderDetailsFromUpcomingOrder(upcomingOrder: any): Promise<any> {
+    if (!upcomingOrder || typeof upcomingOrder !== 'object') return null;
+    const [vendors, menuItems, boxTypes, mealItemsList] = await Promise.all([
+        getVendors(),
+        getMenuItems(),
+        getBoxTypes(),
+        getMealItems()
+    ]);
+    const orderDetails: any = {
+        serviceType: upcomingOrder.serviceType || 'Food',
+        caseId: upcomingOrder.caseId ?? null,
+        deliveryDay: upcomingOrder.deliveryDay ?? null,
+        mealType: upcomingOrder.mealType ?? null
+    };
+    const st = orderDetails.serviceType;
+
+    if (st === 'Boxes' && Array.isArray(upcomingOrder.boxOrders) && upcomingOrder.boxOrders.length > 0) {
+        orderDetails.boxOrders = upcomingOrder.boxOrders.map((box: any) => {
+            const boxType = boxTypes.find((bt: any) => bt.id === box.boxTypeId);
+            const vendor = vendors.find((v: any) => v.id === box.vendorId);
+            const itemsDetails = Object.entries(box.items || {}).map(([itemId, qty]: [string, any]) => {
+                const menuItem = menuItems.find((mi: any) => mi.id === itemId);
+                return {
+                    itemId,
+                    itemName: menuItem?.name || 'Unknown Item',
+                    quantity: qty,
+                    unitValue: box.itemPrices?.[itemId] ?? menuItem?.priceEach ?? menuItem?.value ?? 0,
+                    totalValue: (box.itemPrices?.[itemId] ?? menuItem?.priceEach ?? menuItem?.value ?? 0) * (qty as number),
+                    note: box.itemNotes?.[itemId] || null
+                };
+            });
+            return {
+                boxTypeId: box.boxTypeId,
+                boxTypeName: boxType?.name || 'Unknown Box',
+                vendorId: box.vendorId,
+                vendorName: vendor?.name || 'Unknown Vendor',
+                vendorEmail: vendor?.email || null,
+                quantity: box.quantity,
+                items: box.items || {},
+                itemPrices: box.itemPrices || {},
+                itemNotes: box.itemNotes || {},
+                itemsDetails
+            };
+        });
+    }
+    if (st === 'Food' && Array.isArray(upcomingOrder.vendorSelections) && upcomingOrder.vendorSelections.length > 0) {
+        orderDetails.vendorSelections = upcomingOrder.vendorSelections.map((vs: any) => {
+            const vendor = vendors.find((v: any) => v.id === vs.vendorId);
+            const itemsDetails = Object.entries(vs.items || {}).map(([itemId, qty]: [string, any]) => {
+                const menuItem = menuItems.find((mi: any) => mi.id === itemId);
+                return {
+                    itemId,
+                    itemName: menuItem?.name || 'Unknown Item',
+                    quantity: qty,
+                    unitValue: menuItem?.priceEach ?? menuItem?.value ?? 0,
+                    totalValue: (menuItem?.priceEach ?? menuItem?.value ?? 0) * (qty as number),
+                    note: vs.itemNotes?.[itemId] || null
+                };
+            });
+            return {
+                vendorId: vs.vendorId,
+                vendorName: vendor?.name || 'Unknown Vendor',
+                vendorEmail: vendor?.email || null,
+                items: vs.items || {},
+                itemNotes: vs.itemNotes || {},
+                itemsDetails
+            };
+        });
+    }
+    if ((st === 'Food' || st === 'Meal') && upcomingOrder.deliveryDayOrders && Object.keys(upcomingOrder.deliveryDayOrders).length > 0) {
+        orderDetails.deliveryDayOrders = {};
+        for (const [day, dayData] of Object.entries(upcomingOrder.deliveryDayOrders)) {
+            const dayObj = dayData as any;
+            const selections = Array.isArray(dayObj?.vendorSelections) ? dayObj.vendorSelections : [];
+            orderDetails.deliveryDayOrders[day] = {
+                vendorSelections: selections.map((vs: any) => {
+                    const vendor = vendors.find((v: any) => v.id === vs.vendorId);
+                    const itemsDetails = Object.entries(vs.items || {}).map(([itemId, qty]: [string, any]) => {
+                        const menuItem = menuItems.find((mi: any) => mi.id === itemId);
+                        return {
+                            itemId,
+                            itemName: menuItem?.name || 'Unknown Item',
+                            quantity: qty,
+                            unitValue: menuItem?.priceEach ?? menuItem?.value ?? 0,
+                            totalValue: (menuItem?.priceEach ?? menuItem?.value ?? 0) * (qty as number),
+                            note: vs.itemNotes?.[itemId] || null
+                        };
+                    });
+                    return {
+                        vendorId: vs.vendorId,
+                        vendorName: vendor?.name || 'Unknown Vendor',
+                        vendorEmail: vendor?.email || null,
+                        items: vs.items || {},
+                        itemNotes: vs.itemNotes || {},
+                        itemsDetails
+                    };
+                })
+            };
+        }
+    }
+    if ((st === 'Food' || st === 'Meal') && upcomingOrder.mealSelections && typeof upcomingOrder.mealSelections === 'object') {
+        const mealSelectionsObj: Record<string, any> = {};
+        for (const [key, selection] of Object.entries(upcomingOrder.mealSelections)) {
+            const sel = selection as any;
+            const vendor = vendors.find((v: any) => v.id === sel.vendorId);
+            const itemsDetails = Object.entries(sel.items || {}).map(([itemId, qty]: [string, any]) => {
+                const mealItem = mealItemsList.find((mi: any) => mi.id === itemId);
+                return {
+                    itemId,
+                    itemName: mealItem?.name || 'Unknown Item',
+                    quantity: qty,
+                    unitValue: mealItem?.priceEach ?? mealItem?.value ?? 0,
+                    totalValue: (mealItem?.priceEach ?? mealItem?.value ?? 0) * (qty as number),
+                    note: sel.itemNotes?.[itemId] || null
+                };
+            });
+            mealSelectionsObj[key] = {
+                mealType: sel.mealType || key,
+                vendorId: sel.vendorId,
+                vendorName: vendor?.name || 'Unknown Vendor',
+                vendorEmail: vendor?.email || null,
+                items: sel.items || {},
+                itemNotes: sel.itemNotes || {},
+                itemsDetails
+            };
+        }
+        orderDetails.mealSelections = mealSelectionsObj;
+    }
+    if (st === 'Custom') {
+        const vendor = vendors.find((v: any) => v.id === upcomingOrder.vendorId);
+        orderDetails.customOrder = {
+            vendorId: upcomingOrder.vendorId,
+            vendorName: vendor?.name || 'Unknown Vendor',
+            vendorEmail: vendor?.email || null,
+            description: upcomingOrder.custom_name || (upcomingOrder as any).description || 'Custom Order',
+            price: (Number(upcomingOrder.custom_price) || (upcomingOrder as any).totalValue) ?? 0,
+            deliveryDay: upcomingOrder.deliveryDay ?? null
+        };
+    }
+    return orderDetails;
+}
+
+/** Update only the clients.upcoming_order column (new JSONB column). No sync to upcoming_orders table or active_order. */
+export async function updateClientUpcomingOrder(clientId: string, upcomingOrder: any) {
+    const payload: { upcoming_order: any; updated_at: string } = {
+        upcoming_order: upcomingOrder ?? null,
+        updated_at: new Date().toISOString()
+    };
+    const { data, error } = await supabase.from('clients').update(payload).eq('id', clientId).select().single();
+    handleError(error);
+
+    // Append to client order history with full snapshot so UI shows details (not "No details captured")
+    if (upcomingOrder && typeof upcomingOrder === 'object') {
+        try {
+            const session = await getSession();
+            const updatedBy = session?.name || 'Admin';
+            const serviceType = (upcomingOrder.serviceType || 'Food') as ServiceType;
+            const summary = `Upcoming order saved (${serviceType})`;
+            const orderDetails = await buildOrderDetailsFromUpcomingOrder(upcomingOrder);
+            await appendOrderHistory(clientId, {
+                type: 'upcoming',
+                orderId: randomUUID(),
+                serviceType,
+                caseId: upcomingOrder.caseId ?? null,
+                notes: upcomingOrder.notes ?? null,
+                updatedBy,
+                timestamp: new Date().toISOString(),
+                orderData: upcomingOrder,
+                orderDetails: orderDetails || undefined,
+                details: summary,
+                summary,
+            });
+        } catch (historyError: any) {
+            console.warn('[updateClientUpcomingOrder] Error appending to order history:', historyError);
+        }
+    }
+
+    try {
+        revalidatePath('/clients');
+        revalidatePath(`/clients/${clientId}`);
+    } catch (e) { }
+    return data ? mapClientFromDB(data) : null;
 }
 
 export async function deleteClient(id: string) {
@@ -4071,6 +4261,7 @@ export async function syncCurrentOrderToUpcoming(clientId: string, client: Clien
     if (!skipClientUpdate && client.activeOrder) {
         const { error: updateError } = await supabaseClient.from('clients').update({
             active_order: client.activeOrder,
+            upcoming_order: client.activeOrder, // Save to new column as well
             updated_at: currentTime.toISOString()
         }).eq('id', clientId);
 

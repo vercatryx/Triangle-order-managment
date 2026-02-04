@@ -38,6 +38,7 @@
     "react-signature-canvas": "^1.1.0-alpha.2",
     "react-textarea-autosize": "^8.5.9",
     "react-webcam": "^7.2.0",
+    "sonner": "^2.0.7",
     "uuid": "^13.0.0",
     "xlsx": "^0.18.5"
   },

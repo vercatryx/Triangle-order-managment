@@ -4,7 +4,7 @@ import { useState, useEffect, Fragment, useMemo, useRef, ReactNode } from 'react
 import { useRouter, useParams } from 'next/navigation';
 import Link from 'next/link';
 import { ClientProfile, ClientStatus, Navigator, Vendor, MenuItem, BoxType, ServiceType, AppSettings, DeliveryRecord, ItemCategory, ClientFullDetails, BoxQuota, MealCategory, MealItem, ClientFoodOrder, ClientMealOrder, ClientBoxOrder, Equipment, OrderConfiguration } from '@/lib/types';
-import { updateClient, addClient, deleteClient, updateDeliveryProof, recordClientChange, syncCurrentOrderToUpcoming, logNavigatorAction, getBoxQuotas, saveEquipmentOrder, getRegularClients, getDependentsByParentId, addDependent, checkClientNameExists, getClientFullDetails, getClientFoodOrder, getClientMealOrder, getClientBoxOrder, saveClientFoodOrder, saveClientMealOrder, saveClientBoxOrder, saveClientCustomOrder, getEquipment, getClientProfileData, appendOrderHistory } from '@/lib/actions';
+import { updateClient, addClient, deleteClient, updateDeliveryProof, recordClientChange, syncCurrentOrderToUpcoming, logNavigatorAction, getBoxQuotas, saveEquipmentOrder, getRegularClients, getDependentsByParentId, addDependent, checkClientNameExists, getClientFullDetails, getClientFoodOrder, getClientMealOrder, getClientBoxOrder, saveClientFoodOrder, saveClientMealOrder, saveClientBoxOrder, saveClientCustomOrder, getEquipment, getClientProfileData, appendOrderHistory, updateClientUpcomingOrder } from '@/lib/actions';
 import { getSingleForm, getClientSubmissions } from '@/lib/form-actions';
 import { getClient, getStatuses, getNavigators, getVendors, getMenuItems, getBoxTypes, getSettings, getCategories, getClients, invalidateClientData, invalidateReferenceData, getActiveOrderForClient, getUpcomingOrderForClient, getOrderHistory, getClientHistory, getBillingHistory, invalidateOrderData, getMealCategories, getMealItems, getRecentOrdersForClient, getClientsLight } from '@/lib/cached-data';
 import { areAnyDeliveriesLocked, getEarliestEffectiveDate, getLockedWeekDescription } from '@/lib/weekly-lock';
@@ -23,6 +23,7 @@ import TextareaAutosize from 'react-textarea-autosize';
 import SubmissionsList from './SubmissionsList';
 import styles from './ClientProfile.module.css';
 import FoodServiceWidget from './FoodServiceWidget';
+import MenuItemCard from './MenuItemCard';
 
 
 interface Props {
@@ -281,6 +282,19 @@ export function ClientProfileDetail({
         }
     };
 
+    // Same shelf state for Upcoming (new column) section so both sections can have independent open/close
+    const [openNewColumnCategoryShelf, setOpenNewColumnCategoryShelf] = useState<string | null>(null);
+    const getNewColumnCategoryShelfId = (boxIndex: number, categoryId: string) => `newColumn-box-${boxIndex}-cat-${categoryId}`;
+    const isNewColumnCategoryShelfOpen = (boxIndex: number, categoryId: string) =>
+        openNewColumnCategoryShelf === getNewColumnCategoryShelfId(boxIndex, categoryId);
+    const toggleNewColumnCategoryShelf = (boxIndex: number, categoryId: string) => {
+        const shelfId = getNewColumnCategoryShelfId(boxIndex, categoryId);
+        if (openNewColumnCategoryShelf === shelfId) {
+            setOpenNewColumnCategoryShelf(null);
+        } else {
+            setOpenNewColumnCategoryShelf(shelfId);
+        }
+    };
 
     const [settings, setSettings] = useState<AppSettings | null>(initialSettings || null);
     const [history, setHistory] = useState<DeliveryRecord[]>([]);
@@ -309,6 +323,97 @@ export function ClientProfileDetail({
     const [orderConfig, setOrderConfig] = useState<any>({}); // Current Order Request (from upcoming_orders)
     const [originalOrderConfig, setOriginalOrderConfig] = useState<any>({}); // Original Order Request for comparison
 
+    // New column: clients.upcoming_order (JSON) — load/save only this column, same UI as current order
+    const [newColumnOrderConfig, setNewColumnOrderConfig] = useState<any>({});
+    const [savingNewColumn, setSavingNewColumn] = useState(false);
+
+    // Track which client we last loaded upcoming order for — only sync when client changes (don't overwrite during editing)
+    const lastUpcomingOrderClientIdRef = useRef<string | null>(null);
+
+    // Sync new-column order from client.upcomingOrder when client loads. Loads ONLY from clients.upcoming_order column.
+    // Normalize deliveryDayOrders → vendorSelections so the widget can add/subtract items. Only runs when navigating to a different client.
+    useEffect(() => {
+        const raw = (client as any)?.upcomingOrder;
+        if (!client?.id || raw === undefined) return;
+        // Only load when we switch to a different client — prevents overwriting user edits
+        if (lastUpcomingOrderClientIdRef.current === client.id) return;
+        lastUpcomingOrderClientIdRef.current = client.id;
+
+        const parsed = raw && typeof raw === 'object' ? (typeof raw.serviceType === 'string' || raw.caseId || Object.keys(raw).length > 0 ? raw : {}) : {};
+        let config: any = parsed ? { ...parsed } : {};
+        const st = config.serviceType;
+
+        if (st === 'Boxes') {
+            // Normalize Boxes per UPCOMING_ORDER_SCHEMA: serviceType, caseId, boxOrders, notes
+            const rawBoxOrders = config.boxOrders ?? config.box_orders;
+            const boxOrdersArray = Array.isArray(rawBoxOrders) ? rawBoxOrders : [];
+            config = {
+                serviceType: 'Boxes',
+                caseId: config.caseId ?? config.case_id ?? '',
+                boxOrders: boxOrdersArray.map((box: any) => ({
+                    boxTypeId: box.boxTypeId ?? box.box_type_id ?? '',
+                    vendorId: box.vendorId ?? box.vendor_id ?? '',
+                    quantity: typeof box.quantity === 'number' ? box.quantity : (parseInt(box.quantity, 10) || 1),
+                    items: box.items && typeof box.items === 'object' ? box.items : {},
+                    itemNotes: box.itemNotes && typeof box.itemNotes === 'object' ? box.itemNotes : {}
+                })),
+                notes: config.notes ?? ''
+            };
+            if (config.boxOrders.length === 0) {
+                config.boxOrders = [{ boxTypeId: '', vendorId: '', quantity: 1, items: {}, itemNotes: {} }];
+            }
+        } else if (st === 'Food' || st === 'Meal') {
+            // Normalize: if we have deliveryDayOrders but no vendorSelections, convert so widget can edit
+            const hasVendorSelections = config.vendorSelections && config.vendorSelections.length > 0 && config.vendorSelections.some((s: any) => s?.vendorId || (s?.items && Object.keys(s.items || {}).length > 0));
+            if (!hasVendorSelections && config.deliveryDayOrders && typeof config.deliveryDayOrders === 'object' && Object.keys(config.deliveryDayOrders).length > 0) {
+                const vendorMap = new Map<string, any>();
+                for (const day of Object.keys(config.deliveryDayOrders).sort()) {
+                    const dayOrder = config.deliveryDayOrders[day];
+                    const daySelections = dayOrder?.vendorSelections || [];
+                    for (const sel of daySelections) {
+                        if (!sel.vendorId) continue;
+                        if (!vendorMap.has(sel.vendorId)) {
+                            vendorMap.set(sel.vendorId, {
+                                vendorId: sel.vendorId,
+                                selectedDeliveryDays: [],
+                                itemsByDay: {},
+                                itemNotesByDay: {}
+                            });
+                        }
+                        const v = vendorMap.get(sel.vendorId);
+                        if (!v.selectedDeliveryDays.includes(day)) v.selectedDeliveryDays.push(day);
+                        v.itemsByDay[day] = sel.items || {};
+                        v.itemNotesByDay[day] = sel.itemNotes || {};
+                    }
+                }
+                config = { ...config, vendorSelections: Array.from(vendorMap.values()) };
+            }
+            const hasVendorData = (config.vendorSelections && config.vendorSelections.length > 0) ||
+                (config.deliveryDayOrders && Object.keys(config.deliveryDayOrders || {}).length > 0) ||
+                (config.mealSelections && Object.keys(config.mealSelections || {}).length > 0);
+            if (config.caseId && !hasVendorData) {
+                config = { ...config, serviceType: st || config.serviceType, vendorSelections: [{ vendorId: '', items: {} }] };
+            }
+        }
+        setNewColumnOrderConfig(config);
+    }, [client?.id, (client as any)?.upcomingOrder]);
+
+    // When new-column section shows Boxes and boxOrders is empty, initialize one empty box. Use functional update to avoid overwriting loaded data (React batching).
+    useEffect(() => {
+        const st = newColumnOrderConfig.serviceType || formData.serviceType;
+        if (st !== 'Boxes') return;
+        setNewColumnOrderConfig((prev: any) => {
+            if (prev.serviceType && prev.serviceType !== 'Boxes') return prev;
+            if (prev.boxOrders && prev.boxOrders.length > 0) return prev; // Already loaded from DB, don't overwrite
+            const firstActiveBoxType = boxTypes?.find((bt: any) => bt.isActive);
+            return {
+                ...prev,
+                serviceType: 'Boxes',
+                boxOrders: [{ boxTypeId: firstActiveBoxType?.id || '', vendorId: firstActiveBoxType?.vendorId || '', quantity: 1, items: {}, itemNotes: {} }]
+            };
+        });
+    }, [formData.serviceType, newColumnOrderConfig.serviceType, boxTypes]);
+
     // Debug: Log when orderConfig changes
     useEffect(() => {
         if (clientId) {
@@ -335,6 +440,9 @@ export function ClientProfileDetail({
     const [originalBoxOrderConfig, setOriginalBoxOrderConfig] = useState<Partial<ClientBoxOrder>[] | null>(null);
 
     const [activeOrder, setActiveOrder] = useState<any>(null); // Recent Orders (from orders table)
+
+    // Track if we're using the fallback order source (not clients.active_order)
+    const [usingFallbackOrder, setUsingFallbackOrder] = useState<boolean>(false);
 
     const [saving, setSaving] = useState(false);
     const [message, setMessage] = useState<string | null>(null);
@@ -718,7 +826,9 @@ export function ClientProfileDetail({
         console.log(`[ClientProfile] Processing box orders for ${data.client?.id}:`, {
             hasBoxOrders: !!data.boxOrders,
             boxOrdersCount: data.boxOrders?.length || 0,
-            serviceType: data.client.serviceType
+            serviceType: data.client.serviceType,
+            firstBox: data.boxOrders && data.boxOrders.length > 0 ? data.boxOrders[0] : undefined, // DUMP THE BOX CONTENT
+            firstBoxItemNotes: data.boxOrders && data.boxOrders.length > 0 && data.boxOrders[0] ? data.boxOrders[0].itemNotes : undefined
         });
         if (data.boxOrders && data.boxOrders.length > 0) {
             console.log(`[ClientProfile] Setting box order config for ${data.client?.id} with ${data.boxOrders.length} boxes`);
@@ -851,12 +961,45 @@ export function ClientProfileDetail({
         // IMPORTANT: Check if upcomingOrderData is actually valid
         // An empty object {} or null should not be treated as having an upcoming order
         // But an object with keys (even if vendorSelections is empty) is valid
-        const hasValidUpcomingOrder = upcomingOrderData && 
-            typeof upcomingOrderData === 'object' && 
+        const hasValidUpcomingOrder = upcomingOrderData &&
+            typeof upcomingOrderData === 'object' &&
             (upcomingOrderData.serviceType || upcomingOrderData.caseId || upcomingOrderData.id || Object.keys(upcomingOrderData).length > 0);
 
-        if (hasValidUpcomingOrder) {
-            // Check if it's the multi-day format (object keyed by delivery day, not deliveryDayOrders)
+        // Check if clients.active_order is valid (has meaningful content)
+        const hasValidActiveOrder = data.client.activeOrder &&
+            typeof data.client.activeOrder === 'object' &&
+            Object.keys(data.client.activeOrder).length > 0 &&
+            (data.client.activeOrder.vendorId || (data.client.activeOrder.vendorSelections?.length ?? 0) > 0 ||
+                data.client.activeOrder.boxTypeId || (data.client.activeOrder.boxOrders?.length ?? 0) > 0 ||
+                data.client.activeOrder.caseId);
+
+        // DEBUG LOG: Show what we see in clients.active_order (this is the key debug for "open order details")
+        console.log(`[ORDER_DEBUG] Client ${data.client?.id} (${data.client?.fullName}): active_order =`, {
+            hasValidActiveOrder,
+            raw: data.client.activeOrder,
+            vendorId: data.client.activeOrder?.vendorId,
+            vendorSelectionsLen: data.client.activeOrder?.vendorSelections?.length,
+            caseId: data.client.activeOrder?.caseId
+        });
+
+        // PRIORITY: Use clients.active_order first, fallback to upcomingOrderData
+        if (hasValidActiveOrder) {
+            // Primary source: clients.active_order
+            const activeOrderConfig = { ...data.client.activeOrder };
+            if (!activeOrderConfig.serviceType) {
+                activeOrderConfig.serviceType = data.client.serviceType;
+            }
+            if (activeOrderConfig.serviceType === 'Food' && (!activeOrderConfig.vendorSelections || activeOrderConfig.vendorSelections.length === 0)) {
+                activeOrderConfig.vendorSelections = [{ vendorId: '', items: {} }];
+            }
+            setOrderConfig(activeOrderConfig);
+            setUsingFallbackOrder(false);
+        } else if (hasValidUpcomingOrder) {
+            // FALLBACK: Using upcoming order because clients.active_order is empty
+            console.log(`[ORDER_DEBUG] Client ${data.client?.id}: FALLBACK to upcomingOrder (active_order empty)`);
+            setUsingFallbackOrder(true);
+
+            // Check if it's the multi-day format
             const isMultiDayFormat = upcomingOrderData && typeof upcomingOrderData === 'object' &&
                 !upcomingOrderData.serviceType &&
                 !upcomingOrderData.deliveryDayOrders &&
@@ -866,39 +1009,24 @@ export function ClientProfileDetail({
                 });
 
             if (isMultiDayFormat) {
-                console.log(`[ClientProfile] Processing multi-day format for ${data.client?.id}`, {
-                    dayCount: Object.keys(upcomingOrderData).length
-                });
-                // Convert to deliveryDayOrders format
                 const deliveryDayOrders: any = {};
                 const aggregatedMealSelections: any = {};
-
                 for (const day of Object.keys(upcomingOrderData)) {
                     const dayOrder = (upcomingOrderData as any)[day];
                     if (dayOrder && dayOrder.serviceType) {
-                        deliveryDayOrders[day] = {
-                            vendorSelections: dayOrder.vendorSelections || []
-                        };
-
-                        // Merge meal selections to top level for display
+                        deliveryDayOrders[day] = { vendorSelections: dayOrder.vendorSelections || [] };
                         if (dayOrder.mealSelections) {
                             Object.entries(dayOrder.mealSelections).forEach(([key, val]) => {
-                                if (!aggregatedMealSelections[key]) {
-                                    aggregatedMealSelections[key] = val;
-                                }
+                                if (!aggregatedMealSelections[key]) aggregatedMealSelections[key] = val;
                             });
                         }
                     }
                 }
-                // Check if it's Boxes - if so, flatten it to single order config
                 const firstDayKey = Object.keys(upcomingOrderData)[0];
                 const firstDayOrder = (upcomingOrderData as any)[firstDayKey];
-
                 if (firstDayOrder?.serviceType === 'Boxes') {
-                    console.log(`[ClientProfile] Setting Boxes order config from multi-day for ${data.client?.id}`);
                     setOrderConfig(firstDayOrder);
                 } else {
-                    console.log(`[ClientProfile] Setting multi-day order config for ${data.client?.id}`);
                     setOrderConfig({
                         serviceType: firstDayOrder?.serviceType || data.client.serviceType,
                         caseId: firstDayOrder?.caseId,
@@ -907,74 +1035,22 @@ export function ClientProfileDetail({
                     });
                 }
             } else if (upcomingOrderData.serviceType === 'Food' && (!upcomingOrderData.vendorSelections || upcomingOrderData.vendorSelections.length === 0) && !upcomingOrderData.deliveryDayOrders) {
-                console.log(`[ClientProfile] Migrating old Food order format for ${data.client?.id}`, {
-                    hasVendorId: !!upcomingOrderData.vendorId,
-                    vendorId: upcomingOrderData.vendorId,
-                    hasMenuSelections: !!upcomingOrderData.menuSelections,
-                    currentVendorSelections: upcomingOrderData.vendorSelections,
-                    currentVendorSelectionsLength: upcomingOrderData.vendorSelections?.length,
-                    caseId: upcomingOrderData.caseId,
-                    id: upcomingOrderData.id,
-                    serviceType: upcomingOrderData.serviceType
-                });
                 if (upcomingOrderData.vendorId) {
                     upcomingOrderData.vendorSelections = [{ vendorId: upcomingOrderData.vendorId, items: upcomingOrderData.menuSelections || {} }];
-                } else {
-                    // Ensure vendorSelections exists even if empty - allows order to be displayed and edited
-                    // IMPORTANT: Empty array [] is truthy in JavaScript, so we need to check length
-                    if (!upcomingOrderData.vendorSelections || upcomingOrderData.vendorSelections.length === 0) {
-                        upcomingOrderData.vendorSelections = [{ vendorId: '', items: {} }];
-                    }
+                } else if (!upcomingOrderData.vendorSelections || upcomingOrderData.vendorSelections.length === 0) {
+                    upcomingOrderData.vendorSelections = [{ vendorId: '', items: {} }];
                 }
-                // Ensure all critical fields are preserved
-                const migratedConfig = {
-                    ...upcomingOrderData,
-                    vendorSelections: upcomingOrderData.vendorSelections
-                };
-                console.log(`[ClientProfile] After migration, setting order config:`, {
-                    vendorSelections: migratedConfig.vendorSelections,
-                    vendorSelectionsLength: migratedConfig.vendorSelections?.length,
-                    serviceType: migratedConfig.serviceType,
-                    caseId: migratedConfig.caseId,
-                    id: migratedConfig.id,
-                    hasCaseId: !!migratedConfig.caseId
-                });
-                setOrderConfig(migratedConfig);
+                setOrderConfig({ ...upcomingOrderData, vendorSelections: upcomingOrderData.vendorSelections });
             } else {
-                console.log(`[ClientProfile] Setting order config directly for ${data.client?.id}:`, {
-                    serviceType: upcomingOrderData.serviceType,
-                    hasVendorSelections: !!upcomingOrderData.vendorSelections,
-                    hasDeliveryDayOrders: !!upcomingOrderData.deliveryDayOrders
-                });
                 setOrderConfig(upcomingOrderData);
             }
-        } else if (data.client.activeOrder) {
-            // No upcoming order, but we have active_order from clients table - use that
-            // This ensures vendorId, items, and other Boxes data are preserved even if sync to upcoming_orders failed
-            const activeOrderConfig = { ...data.client.activeOrder };
-            // Ensure serviceType matches client's service type
-            if (!activeOrderConfig.serviceType) {
-                activeOrderConfig.serviceType = data.client.serviceType;
-            }
-            
-            // Ensure vendorSelections exists for Food orders
-            if (activeOrderConfig.serviceType === 'Food' && (!activeOrderConfig.vendorSelections || activeOrderConfig.vendorSelections.length === 0)) {
-                activeOrderConfig.vendorSelections = [{ vendorId: '', items: {} }];
-            }
-
-            console.log(`[ClientProfile] Using activeOrder from clients table for ${data.client?.id}:`, {
-                serviceType: activeOrderConfig.serviceType,
-                hasVendorSelections: !!activeOrderConfig.vendorSelections,
-                vendorSelectionsLength: activeOrderConfig.vendorSelections?.length,
-                hasCaseId: !!activeOrderConfig.caseId
-            });
-            setOrderConfig(activeOrderConfig);
         } else {
             const defaultOrder: any = { serviceType: data.client.serviceType };
             if (data.client.serviceType === 'Food') {
                 defaultOrder.vendorSelections = [{ vendorId: '', items: {} }];
             }
             setOrderConfig(defaultOrder);
+            setUsingFallbackOrder(false);
         }
 
         // Fix for Boxes: If vendorId is missing but boxTypeId exists, try to find vendor from boxType
@@ -1023,6 +1099,13 @@ export function ClientProfileDetail({
                 return conf;
             });
         }
+
+        // DEBUG LOG: Final decision for Profile (Sidebar)
+        // Note: orderConfig state update is async, so we can't log 'orderConfig' here directly.
+        // But we know what logic path we took above.
+        console.log(`[PROFILE_DEBUG] _hydrateFromInitialDataLegacy completed for ${data.client?.id}`);
+
+
     }
 
     async function loadLookups() {
@@ -1252,155 +1335,157 @@ export function ClientProfileDetail({
             setDependents(dependentsData);
         }
 
-        // Set order config from upcoming_orders table (Current Order Request)
-        // If no upcoming order exists, fall back to active_order from clients table
-        // If no active_order exists, initialize with default based on service type
+        // Set order config: PRIORITY is clients.active_order first, fallback to other sources
         if (c) {
 
             let configToSet: any = null;
+            let isUsingFallback = false;
 
-            // 1. Try Food Order (New Table)
-            if (c.serviceType === 'Food' && foodOrderData) {
-                let foodOrderForUI = { ...foodOrderData } as any;
+            // Check if clients.active_order is valid
+            const hasValidActiveOrder = c.activeOrder &&
+                typeof c.activeOrder === 'object' &&
+                Object.keys(c.activeOrder).length > 0 &&
+                (c.activeOrder.vendorId || (c.activeOrder.vendorSelections?.length ?? 0) > 0 ||
+                    c.activeOrder.boxTypeId || (c.activeOrder.boxOrders?.length ?? 0) > 0 ||
+                    c.activeOrder.caseId);
 
-                // Convert deliveryDayOrders from DB back to vendorSelections with itemsByDay for UI
-                if (foodOrderForUI.deliveryDayOrders) {
-                    const vendorMap = new Map<string, any>();
-                    for (const [day, dayData] of Object.entries(foodOrderForUI.deliveryDayOrders)) {
-                        const vendorSelections = (dayData as any).vendorSelections || [];
-                        for (const selection of vendorSelections) {
-                            if (!selection.vendorId) continue;
-                            if (!vendorMap.has(selection.vendorId)) {
-                                vendorMap.set(selection.vendorId, {
-                                    vendorId: selection.vendorId,
-                                    items: {},
-                                    selectedDeliveryDays: [],
-                                    itemsByDay: {}
-                                });
+            // DEBUG LOG: Show what we see when loading in sidebar (loadDataLegacy)
+            console.log(`[SIDEBAR_DEBUG] Client ${c.id} (${c.fullName}): active_order =`, {
+                hasValidActiveOrder,
+                raw: c.activeOrder,
+                vendorId: c.activeOrder?.vendorId,
+                vendorSelectionsLen: c.activeOrder?.vendorSelections?.length,
+                caseId: c.activeOrder?.caseId
+            });
+
+            // PRIORITY 1: Use clients.active_order (PRIMARY SOURCE)
+            if (hasValidActiveOrder) {
+                configToSet = { ...c.activeOrder };
+                if (!configToSet.serviceType) {
+                    configToSet.serviceType = c.serviceType;
+                }
+                isUsingFallback = false;
+            }
+            // FALLBACK: Try other sources
+            else {
+                console.log(`[SIDEBAR_DEBUG] Client ${c.id}: FALLBACK (active_order empty)`);
+                isUsingFallback = true;
+
+                // 1. Try Food Order (New Table)
+                if (c.serviceType === 'Food' && foodOrderData) {
+                    let foodOrderForUI = { ...foodOrderData } as any;
+                    if (foodOrderForUI.deliveryDayOrders) {
+                        const vendorMap = new Map<string, any>();
+                        for (const [day, dayData] of Object.entries(foodOrderForUI.deliveryDayOrders)) {
+                            const vendorSelections = (dayData as any).vendorSelections || [];
+                            for (const selection of vendorSelections) {
+                                if (!selection.vendorId) continue;
+                                if (!vendorMap.has(selection.vendorId)) {
+                                    vendorMap.set(selection.vendorId, {
+                                        vendorId: selection.vendorId,
+                                        items: {},
+                                        selectedDeliveryDays: [],
+                                        itemsByDay: {}
+                                    });
+                                }
+                                const vendor = vendorMap.get(selection.vendorId)!;
+                                vendor.selectedDeliveryDays.push(day);
+                                vendor.itemsByDay[day] = selection.items || {};
+                                if (!vendor.itemNotesByDay) vendor.itemNotesByDay = {};
+                                vendor.itemNotesByDay[day] = selection.itemNotes || {};
                             }
-                            const vendor = vendorMap.get(selection.vendorId)!;
-                            vendor.selectedDeliveryDays.push(day);
-                            vendor.itemsByDay[day] = selection.items || {};
-                            // Ensure itemNotes are populated
-                            if (!vendor.itemNotesByDay) vendor.itemNotesByDay = {};
-                            vendor.itemNotesByDay[day] = selection.itemNotes || {};
                         }
+                        foodOrderForUI.vendorSelections = Array.from(vendorMap.values());
+                        delete foodOrderForUI.deliveryDayOrders;
                     }
-                    foodOrderForUI.vendorSelections = Array.from(vendorMap.values());
-                    delete foodOrderForUI.deliveryDayOrders; // Clean up legacy format to avoid confusion
+                    configToSet = { ...foodOrderForUI, serviceType: 'Food' };
+                    if (!configToSet.caseId && c.activeOrder?.caseId) {
+                        configToSet.caseId = c.activeOrder.caseId;
+                    }
+                    if (mealOrderData && mealOrderData.mealSelections) {
+                        configToSet.mealSelections = mealOrderData.mealSelections;
+                    }
                 }
-
-                configToSet = { ...foodOrderForUI, serviceType: 'Food' };
-                if (!configToSet.caseId && c.activeOrder?.caseId) {
-                    configToSet.caseId = c.activeOrder.caseId;
+                // 2. Try Meal Order (New Table)
+                else if (c.serviceType === 'Meal' && mealOrderData) {
+                    configToSet = { ...mealOrderData, serviceType: 'Meal' };
+                    if (!configToSet.caseId && c.activeOrder?.caseId) {
+                        configToSet.caseId = c.activeOrder.caseId;
+                    }
                 }
-                // Merge mealSelections if available (e.g. Breakfast)
-                if (mealOrderData && mealOrderData.mealSelections) {
-                    configToSet.mealSelections = mealOrderData.mealSelections;
+                // 3. Try Box Order (New Table)
+                else if (c.serviceType === 'Boxes' && boxOrdersData && boxOrdersData.length > 0) {
+                    configToSet = {
+                        boxOrders: boxOrdersData,
+                        serviceType: 'Boxes',
+                        caseId: boxOrdersData[0].caseId || c.activeOrder?.caseId
+                    };
                 }
+                // 4. Fallback to Upcoming Order (Legacy)
+                else if (upcomingOrderData) {
+                    const isMultiDayFormat = upcomingOrderData && typeof upcomingOrderData === 'object' &&
+                        !upcomingOrderData.serviceType &&
+                        !upcomingOrderData.deliveryDayOrders &&
+                        Object.keys(upcomingOrderData).some(key => {
+                            const val = (upcomingOrderData as any)[key];
+                            return val && (val.serviceType || val.id);
+                        });
 
-            }
-            // 2. Try Meal Order (New Table)
-            else if (c.serviceType === 'Meal' && mealOrderData) {
-                configToSet = { ...mealOrderData, serviceType: 'Meal' };
-                if (!configToSet.caseId && c.activeOrder?.caseId) {
-                    configToSet.caseId = c.activeOrder.caseId;
-                }
-            }
-            // 3. Try Box Order (New Table)
-            else if (c.serviceType === 'Boxes' && boxOrdersData && boxOrdersData.length > 0) {
-                configToSet = {
-                    boxOrders: boxOrdersData,
-                    serviceType: 'Boxes',
-                    caseId: boxOrdersData[0].caseId || c.activeOrder?.caseId
-                };
-            }
-            // 4. Fallback to Upcoming/Active Order (Legacy)
-            else if (upcomingOrderData) {
-
-                // Check if it's the multi-day format (object keyed by delivery day, not deliveryDayOrders)
-                const isMultiDayFormat = upcomingOrderData && typeof upcomingOrderData === 'object' &&
-                    !upcomingOrderData.serviceType &&
-                    !upcomingOrderData.deliveryDayOrders &&
-                    Object.keys(upcomingOrderData).some(key => {
-                        const val = (upcomingOrderData as any)[key];
-                        return val && (val.serviceType || val.id);
-                    });
-
-                if (isMultiDayFormat) {
-                    // Convert to deliveryDayOrders format
-                    const deliveryDayOrders: any = {};
-                    const allMealSelections: any = {};
-                    for (const day of Object.keys(upcomingOrderData)) {
-                        const dayOrder = (upcomingOrderData as any)[day];
-                        if (dayOrder && (dayOrder.serviceType || dayOrder.id)) {
-                            deliveryDayOrders[day] = {
-                                vendorSelections: dayOrder.vendorSelections || [],
-                                mealSelections: dayOrder.mealSelections || {}
+                    if (isMultiDayFormat) {
+                        const deliveryDayOrders: any = {};
+                        const allMealSelections: any = {};
+                        for (const day of Object.keys(upcomingOrderData)) {
+                            const dayOrder = (upcomingOrderData as any)[day];
+                            if (dayOrder && (dayOrder.serviceType || dayOrder.id)) {
+                                deliveryDayOrders[day] = {
+                                    vendorSelections: dayOrder.vendorSelections || [],
+                                    mealSelections: dayOrder.mealSelections || {}
+                                };
+                                if (dayOrder.mealSelections) {
+                                    Object.entries(dayOrder.mealSelections).forEach(([key, val]) => {
+                                        if (!allMealSelections[key]) allMealSelections[key] = val;
+                                    });
+                                }
+                            }
+                        }
+                        const firstDayKey = Object.keys(upcomingOrderData)[0];
+                        const firstDayOrder = (upcomingOrderData as any)[firstDayKey];
+                        if (firstDayOrder?.serviceType === 'Boxes' || c.serviceType === 'Boxes') {
+                            configToSet = firstDayOrder;
+                            if (!configToSet.serviceType) configToSet.serviceType = 'Boxes';
+                        } else {
+                            configToSet = {
+                                serviceType: firstDayOrder?.serviceType || c.serviceType,
+                                caseId: firstDayOrder?.caseId,
+                                deliveryDayOrders,
+                                mealSelections: allMealSelections
                             };
-
-                            // Merge meal selections to top level for display
-                            if (dayOrder.mealSelections) {
-                                Object.entries(dayOrder.mealSelections).forEach(([key, val]) => {
-                                    if (!allMealSelections[key]) {
-                                        allMealSelections[key] = val;
-                                    }
-                                });
-                            }
                         }
-                    }
-                    // Check if it's Boxes - if so, flatten it to single order config
-                    const firstDayKey = Object.keys(upcomingOrderData)[0];
-                    const firstDayOrder = (upcomingOrderData as any)[firstDayKey];
-
-                    if (firstDayOrder?.serviceType === 'Boxes' || c.serviceType === 'Boxes') {
-                        configToSet = firstDayOrder;
-                        if (!configToSet.serviceType) configToSet.serviceType = 'Boxes';
+                    } else if (upcomingOrderData.serviceType === 'Food' && !upcomingOrderData.vendorSelections && !upcomingOrderData.deliveryDayOrders) {
+                        if (upcomingOrderData.vendorId) {
+                            upcomingOrderData.vendorSelections = [{ vendorId: upcomingOrderData.vendorId, items: upcomingOrderData.menuSelections || {} }];
+                        } else {
+                            upcomingOrderData.vendorSelections = [{ vendorId: '', items: {} }];
+                        }
+                        configToSet = upcomingOrderData;
                     } else {
-                        configToSet = {
-                            serviceType: firstDayOrder?.serviceType || c.serviceType,
-                            caseId: firstDayOrder?.caseId,
-                            deliveryDayOrders,
-                            mealSelections: allMealSelections
-                        };
+                        configToSet = upcomingOrderData;
                     }
-                } else if (upcomingOrderData.serviceType === 'Food' && !upcomingOrderData.vendorSelections && !upcomingOrderData.deliveryDayOrders) {
-                    // Migration/Safety: Ensure vendorSelections exists for Food
-                    if (upcomingOrderData.vendorId) {
-                        // Migrate old format
-                        upcomingOrderData.vendorSelections = [{ vendorId: upcomingOrderData.vendorId, items: upcomingOrderData.menuSelections || {} }];
-                    } else {
-                        upcomingOrderData.vendorSelections = [{ vendorId: '', items: {} }];
-                    }
-                    configToSet = upcomingOrderData;
-                } else {
-                    configToSet = upcomingOrderData;
                 }
             }
 
             // Validate Config: If Boxes and missing critical fields, reject it
             if (configToSet && c.serviceType === 'Boxes' && !configToSet.vendorId && !configToSet.boxTypeId) {
-
                 configToSet = null;
             }
 
-            if (!configToSet && c.activeOrder) {
-                // No upcoming order, but we have active_order from clients table - use that
-                // This ensures vendorId, items, and other Boxes data are preserved even if sync to upcoming_orders failed
-                configToSet = { ...c.activeOrder };
-                // Ensure serviceType matches client's service type
-                if (!configToSet.serviceType) {
-                    configToSet.serviceType = c.serviceType;
-                }
-            }
-
             if (!configToSet) {
-                // No upcoming order and no active_order, initialize with default
                 const defaultOrder: any = { serviceType: c.serviceType };
                 if (c.serviceType === 'Food') {
                     defaultOrder.vendorSelections = [{ vendorId: '', items: {} }];
                 }
                 configToSet = defaultOrder;
+                isUsingFallback = false;
             }
 
             // Fix for Boxes: If vendorId is missing but boxTypeId exists, try to find vendor from boxType
@@ -1450,6 +1535,16 @@ export function ClientProfileDetail({
 
             setOrderConfig(configToSet);
             setOriginalOrderConfig(JSON.parse(JSON.stringify(configToSet))); // Deep copy for comparison
+            setUsingFallbackOrder(isUsingFallback);
+
+            // DEBUG LOG: Final decision for Sidebar
+            console.log(`[SIDEBAR_DEBUG] Final Order Config for ${c.id}:`, {
+                source: isUsingFallback ? 'FALLBACK' : 'PRIMARY (active_order)',
+                serviceType: configToSet?.serviceType,
+                vendorSelectionsLen: configToSet?.vendorSelections?.length,
+                boxOrdersLen: configToSet?.boxOrders?.length,
+                caseId: configToSet?.caseId
+            });
         }
     }
 
@@ -2247,6 +2342,138 @@ export function ClientProfileDetail({
         setOrderConfig({ ...orderConfig, boxOrders: currentBoxes });
     }
 
+    // --- New column (clients.upcoming_order) handlers — same UX, load/save only this column ---
+    function handleNewColumnAddBox() {
+        const currentBoxes = newColumnOrderConfig.boxOrders || [];
+        const firstActiveBoxType = boxTypes.find(bt => bt.isActive);
+        setNewColumnOrderConfig({
+            ...newColumnOrderConfig,
+            serviceType: newColumnOrderConfig.serviceType || formData.serviceType || 'Boxes',
+            boxOrders: [
+                ...currentBoxes,
+                { boxTypeId: firstActiveBoxType?.id || '', vendorId: firstActiveBoxType?.vendorId || '', quantity: 1, items: {} }
+            ]
+        });
+    }
+    function getNewColumnBoxOrders(): any[] {
+        return newColumnOrderConfig.boxOrders && newColumnOrderConfig.boxOrders.length > 0
+            ? [...newColumnOrderConfig.boxOrders]
+            : [{ boxTypeId: '', vendorId: '', quantity: 1, items: {} }];
+    }
+    function handleNewColumnRemoveBox(index: number) {
+        const currentBoxes = getNewColumnBoxOrders();
+        if (currentBoxes.length <= 1) {
+            const firstActiveBoxType = boxTypes.find(bt => bt.isActive);
+            setNewColumnOrderConfig({
+                ...newColumnOrderConfig,
+                serviceType: 'Boxes',
+                boxOrders: [{ boxTypeId: firstActiveBoxType?.id || '', vendorId: firstActiveBoxType?.vendorId || '', quantity: 1, items: {} }]
+            });
+            return;
+        }
+        currentBoxes.splice(index, 1);
+        setNewColumnOrderConfig({ ...newColumnOrderConfig, boxOrders: currentBoxes });
+    }
+    function handleNewColumnBoxUpdate(index: number, field: string, value: any) {
+        const currentBoxes = getNewColumnBoxOrders();
+        if (!currentBoxes[index]) return;
+        currentBoxes[index] = { ...currentBoxes[index], [field]: value };
+        if (field === 'vendorId') {
+            const validBoxType = boxTypes.find(bt => bt.isActive && bt.vendorId === value);
+            if (validBoxType) currentBoxes[index].boxTypeId = validBoxType.id;
+        }
+        setNewColumnOrderConfig({ ...newColumnOrderConfig, serviceType: 'Boxes', boxOrders: currentBoxes });
+    }
+    function handleNewColumnBoxItemUpdate(boxIndex: number, itemId: string, quantity: number, note?: string) {
+        const currentBoxes = getNewColumnBoxOrders();
+        if (!currentBoxes[boxIndex]) return;
+        const currentItems = { ...(currentBoxes[boxIndex].items || {}) };
+        const currentNotes = { ...(currentBoxes[boxIndex].itemNotes || {}) };
+        if (quantity > 0) {
+            currentItems[itemId] = quantity;
+            if (note !== undefined) currentNotes[itemId] = note || undefined;
+        } else {
+            delete currentItems[itemId];
+            delete currentNotes[itemId];
+        }
+        currentBoxes[boxIndex] = { ...currentBoxes[boxIndex], items: currentItems, itemNotes: currentNotes };
+        setNewColumnOrderConfig({ ...newColumnOrderConfig, serviceType: 'Boxes', boxOrders: currentBoxes });
+    }
+    /** Build payload for upcoming_order: only keep fields valid for current service type. Replaces entire column (no merge). */
+    function prepareNewColumnOrder(): any {
+        if (!newColumnOrderConfig || typeof newColumnOrderConfig !== 'object') return null;
+        const raw = { ...newColumnOrderConfig };
+        const serviceType = (raw.serviceType || formData.serviceType || client?.serviceType || 'Food') as ServiceType;
+
+        if (serviceType === 'Boxes') {
+            const boxOrders = Array.isArray(raw.boxOrders) ? raw.boxOrders : [];
+            return {
+                serviceType: 'Boxes',
+                caseId: raw.caseId ?? undefined,
+                boxOrders: boxOrders.map((box: any) => ({
+                    boxTypeId: box.boxTypeId ?? box.box_type_id ?? undefined,
+                    vendorId: box.vendorId ?? box.vendor_id ?? undefined,
+                    quantity: typeof box.quantity === 'number' ? box.quantity : (parseInt(box.quantity, 10) || 1),
+                    items: box.items && typeof box.items === 'object' ? box.items : {},
+                    itemNotes: box.itemNotes && typeof box.itemNotes === 'object' ? box.itemNotes : {}
+                })),
+                notes: raw.notes ?? undefined
+            };
+        }
+        if (serviceType === 'Custom') {
+            return {
+                serviceType: 'Custom',
+                caseId: raw.caseId ?? undefined,
+                custom_name: raw.custom_name ?? undefined,
+                custom_price: raw.custom_price ?? undefined,
+                vendorId: raw.vendorId ?? undefined,
+                deliveryDay: raw.deliveryDay ?? undefined,
+                notes: raw.notes ?? undefined
+            };
+        }
+        // Food or Meal: allow Food + Meal together; strip Boxes and Custom.
+        // Omit vendorSelections/mealSelections when they are empty or only placeholder rows (so caseId-only stays caseId-only).
+        const hasRealVendor = Array.isArray(raw.vendorSelections) && raw.vendorSelections.some((s: any) => s?.vendorId || (s?.items && Object.keys(s.items).length > 0));
+        const vendorSelections = hasRealVendor ? raw.vendorSelections : undefined;
+        const deliveryDayOrders = raw.deliveryDayOrders && Object.keys(raw.deliveryDayOrders).length > 0 ? raw.deliveryDayOrders : undefined;
+        const mealSelectionsFiltered = raw.mealSelections && typeof raw.mealSelections === 'object'
+            ? Object.fromEntries(
+                Object.entries(raw.mealSelections).filter(([, m]: [string, any]) => m && ((m.items && Object.keys(m.items || {}).length > 0) || !!m.vendorId))
+            )
+            : undefined;
+        const mealSelections = mealSelectionsFiltered && Object.keys(mealSelectionsFiltered).length > 0 ? mealSelectionsFiltered : undefined;
+
+        return {
+            serviceType: raw.serviceType || 'Food',
+            caseId: raw.caseId ?? undefined,
+            vendorSelections,
+            deliveryDayOrders,
+            mealSelections,
+            notes: raw.notes ?? undefined
+        };
+    }
+    async function handleSaveNewColumnOrder() {
+        if (!client?.id) return;
+        setSavingNewColumn(true);
+        try {
+            const payload = prepareNewColumnOrder();
+            await updateClientUpcomingOrder(client.id, payload ?? null);
+            invalidateClientData();
+            const fresh = await getClient(client.id);
+            if (fresh) {
+                lastUpcomingOrderClientIdRef.current = null; // Allow useEffect to re-sync with fresh DB state
+                setClient(fresh);
+            }
+            setMessage('Saved to new upcoming order column.');
+            setTimeout(() => setMessage(null), 3000);
+        } catch (e) {
+            console.error(e);
+            setMessage('Failed to save new column.');
+        } finally {
+            setSavingNewColumn(false);
+        }
+    }
+
     // Helper: Get all delivery days from selected vendors
     function getAllDeliveryDaysFromVendors(vendorSelections: any[]): string[] {
         const allDays = new Set<string>();
@@ -2939,6 +3166,24 @@ export function ClientProfileDetail({
     const renderServiceConfigSection = () => (
         <section className={styles.card} style={{ marginTop: 'var(--spacing-lg)' }}>
             <h3 className={styles.sectionTitle}>Service Configuration</h3>
+            {usingFallbackOrder && (
+                <div style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '8px',
+                    padding: '8px 12px',
+                    backgroundColor: 'rgba(220, 38, 38, 0.1)',
+                    border: '1px solid #dc2626',
+                    borderRadius: '6px',
+                    marginBottom: '12px',
+                    color: '#dc2626',
+                    fontSize: '0.875rem',
+                    fontWeight: 500
+                }}>
+                    <AlertTriangle size={16} />
+                    <span>Using fallback order source (active_order is empty)</span>
+                </div>
+            )}
             <div className={styles.grid2}>
                 <div className={styles.formGroup}>
                     <label className={styles.label}>Service Type</label>
@@ -3030,39 +3275,66 @@ export function ClientProfileDetail({
         </section>
     );
 
-    // --- ORDER CONFIG SECTION ---
-    const renderOrderConfigSection = () => (
+    // --- SHARED: same UI and logic for Current Order and Upcoming; only save target differs ---
+    function renderOrderConfigUI(useNewColumn: boolean) {
+        const config = useNewColumn ? newColumnOrderConfig : orderConfig;
+        const setConfig = useNewColumn ? setNewColumnOrderConfig : setOrderConfig;
+        const serviceType = useNewColumn ? (newColumnOrderConfig.serviceType || formData.serviceType || 'Food') : formData.serviceType;
+        const removeBox = useNewColumn ? handleNewColumnRemoveBox : handleRemoveBox;
+        const updateBox = useNewColumn ? handleNewColumnBoxUpdate : handleBoxUpdate;
+        const addBox = useNewColumn ? handleNewColumnAddBox : handleAddBox;
+        const updateBoxItem = useNewColumn ? handleNewColumnBoxItemUpdate : handleBoxItemUpdate;
+        const isSaving = useNewColumn ? savingNewColumn : saving;
+        const sectionTitle = useNewColumn ? 'Upcoming orders configuration' : 'Current Order Configuration';
+        const badge = useNewColumn ? (<span className={styles.badge} style={{ backgroundColor: 'var(--bg-surface-active)', color: 'var(--text-secondary)' }}>Saves to clients.upcoming_order only</span>) : (client && orderConfig.caseId ? <span className={styles.badge} style={{ backgroundColor: 'var(--bg-success)', color: 'var(--text-success)' }}>Active Order Configured</span> : null);
+        const boxOrders = (config.boxOrders?.length ? config.boxOrders : [{ boxTypeId: '', vendorId: '', quantity: 1, items: {} }]);
+        const boxCount = (config.boxOrders?.length ?? 0) || 1;
+        return (
         <section className={styles.card} style={{ marginTop: 'var(--spacing-lg)' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-                <h3 className={styles.sectionTitle}>Current Order Configuration</h3>
-                {client && orderConfig.caseId && (
-                    <span className={styles.badge} style={{ backgroundColor: 'var(--bg-success)', color: 'var(--text-success)' }}>
-                        Active Order Configured
-                    </span>
-                )}
+                <h3 className={styles.sectionTitle}>{sectionTitle}</h3>
+                {badge}
             </div>
+
+            {useNewColumn && (
+                <div className={styles.formGroup}>
+                    <label className={styles.label}>Client type</label>
+                    <div className={styles.serviceTypes} style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)' }}>
+                        {(['Food', 'Boxes', 'Custom'] as const).map(type => (
+                            <button
+                                key={type}
+                                type="button"
+                                className={`${styles.serviceBtn} ${serviceType === type ? styles.activeService : ''}`}
+                                onClick={() => setConfig({ ...config, serviceType: type })}
+                                disabled={isSaving}
+                            >
+                                {type}
+                            </button>
+                        ))}
+                    </div>
+                </div>
+            )}
 
             <div className={styles.formGroup}>
                 <label className={styles.label}>Case ID <span className={styles.required}>*</span></label>
                 <input
                     type="text"
                     className={styles.input}
-                    value={orderConfig.caseId || ''}
-                    onChange={(e) => setOrderConfig({ ...orderConfig, caseId: e.target.value })}
+                    value={config.caseId || ''}
+                    onChange={(e) => setConfig({ ...config, caseId: e.target.value })}
                     placeholder="Enter Case ID to enable configuration"
-                    disabled={saving}
+                    disabled={isSaving}
                 />
             </div>
 
-            {/* Only show configuration if Case ID is present */}
-            {orderConfig.caseId ? (
+            {config.caseId ? (
                 <>
-                    {(formData.serviceType === 'Food' || formData.serviceType === 'Meal') && (
+                    {(serviceType === 'Food' || serviceType === 'Meal') && (
                         <div className="animate-fade-in" style={{ marginTop: '1rem' }}>
                             <FoodServiceWidget
-                                orderConfig={orderConfig}
-                                setOrderConfig={setOrderConfig}
-                                client={{ ...client, ...formData } as ClientProfile}
+                                orderConfig={config}
+                                setOrderConfig={setConfig}
+                                client={{ ...client, ...formData, serviceType: (serviceType === 'Food' || serviceType === 'Meal' ? serviceType : formData.serviceType) || 'Food' } as ClientProfile}
                                 vendors={vendors}
                                 menuItems={menuItems}
                                 mealCategories={mealCategories}
@@ -3074,16 +3346,17 @@ export function ClientProfileDetail({
                                 <textarea
                                     className={`${styles.input} ${styles.textarea}`}
                                     placeholder="Add general notes for this order..."
-                                    value={orderConfig.notes || ''}
-                                    onChange={(e) => setOrderConfig({ ...orderConfig, notes: e.target.value })}
+                                    value={config.notes || ''}
+                                    onChange={(e) => setConfig({ ...config, notes: e.target.value })}
                                     rows={2}
+                                    disabled={isSaving}
                                 />
                             </div>
                         </div>
                     )}
 
                     {/* Custom Service Configuration */}
-                    {formData.serviceType === 'Custom' && (
+                    {serviceType === 'Custom' && (
                         <div className={styles.section} style={{ marginTop: '24px' }}>
                             <h3 className={styles.sectionTitle}>Custom Order Configuration</h3>
                             <div className={styles.card} style={{ backgroundColor: '#f9fafb' }}>
@@ -3093,7 +3366,7 @@ export function ClientProfileDetail({
                                         <textarea
                                             className={styles.input}
                                             placeholder="e.g. Weekly Catering Platter"
-                                            value={orderConfig.custom_name || ''}
+                                            value={config.custom_name || ''}
                                             rows={1}
                                             style={{ resize: 'none', overflow: 'hidden', minHeight: '3rem' }}
                                             onInput={(e) => {
@@ -3102,10 +3375,11 @@ export function ClientProfileDetail({
                                                 target.style.height = target.scrollHeight + 'px';
                                             }}
                                             onChange={e => {
-                                                setOrderConfig({ ...orderConfig, custom_name: e.target.value });
-                                                e.target.style.height = 'auto';
-                                                e.target.style.height = e.target.scrollHeight + 'px';
+                                                setConfig({ ...config, custom_name: e.target.value });
+                                                (e.target as HTMLTextAreaElement).style.height = 'auto';
+                                                (e.target as HTMLTextAreaElement).style.height = (e.target as HTMLTextAreaElement).scrollHeight + 'px';
                                             }}
+                                            disabled={isSaving}
                                         />
                                     </div>
                                     <div>
@@ -3116,8 +3390,9 @@ export function ClientProfileDetail({
                                                 type="number"
                                                 className={`${styles.input} pl-8`}
                                                 placeholder="0.00"
-                                                value={orderConfig.custom_price || ''}
-                                                onChange={e => setOrderConfig({ ...orderConfig, custom_price: e.target.value })}
+                                                value={config.custom_price || ''}
+                                                onChange={e => setConfig({ ...config, custom_price: e.target.value })}
+                                                disabled={isSaving}
                                             />
                                         </div>
                                     </div>
@@ -3125,23 +3400,21 @@ export function ClientProfileDetail({
                                         <label className={styles.label}>Vendor <span className="text-red-500">*</span></label>
                                         <select
                                             className={styles.input}
-                                            value={orderConfig.vendorId || ''}
+                                            value={config.vendorId || ''}
                                             onChange={e => {
                                                 const newVendorId = e.target.value;
-                                                let newDeliveryDay = orderConfig.deliveryDay;
-
-                                                // Check if current day is valid for new vendor
+                                                let newDeliveryDay = config.deliveryDay;
                                                 if (newVendorId && newDeliveryDay) {
                                                     const selectedVendor = vendors.find(v => v.id === newVendorId);
                                                     if (selectedVendor && selectedVendor.deliveryDays && selectedVendor.deliveryDays.length > 0) {
                                                         if (!selectedVendor.deliveryDays.includes(newDeliveryDay)) {
-                                                            newDeliveryDay = ''; // Reset if invalid
+                                                            newDeliveryDay = '';
                                                         }
                                                     }
                                                 }
-
-                                                setOrderConfig({ ...orderConfig, vendorId: newVendorId, deliveryDay: newDeliveryDay });
+                                                setConfig({ ...config, vendorId: newVendorId, deliveryDay: newDeliveryDay });
                                             }}
+                                            disabled={isSaving}
                                         >
                                             <option value="">Select Vendor</option>
                                             {vendors.filter(v => v.isActive).map(v => (
@@ -3153,21 +3426,19 @@ export function ClientProfileDetail({
                                         <label className={styles.label}>Delivery Day <span className="text-red-500">*</span></label>
                                         <select
                                             className={styles.input}
-                                            value={orderConfig.deliveryDay || ''}
-                                            onChange={e => setOrderConfig({ ...orderConfig, deliveryDay: e.target.value })}
+                                            value={config.deliveryDay || ''}
+                                            onChange={e => setConfig({ ...config, deliveryDay: e.target.value })}
+                                            disabled={isSaving}
                                         >
                                             <option value="">Select Day</option>
                                             {(() => {
-                                                // Determine available days
                                                 let availableDays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
-
-                                                if (orderConfig.vendorId) {
-                                                    const selectedVendor = vendors.find(v => v.id === orderConfig.vendorId);
+                                                if (config.vendorId) {
+                                                    const selectedVendor = vendors.find(v => v.id === config.vendorId);
                                                     if (selectedVendor && selectedVendor.deliveryDays && selectedVendor.deliveryDays.length > 0) {
                                                         availableDays = selectedVendor.deliveryDays;
                                                     }
                                                 }
-
                                                 return availableDays.map(day => (
                                                     <option key={day} value={day}>{day}</option>
                                                 ));
@@ -3179,14 +3450,15 @@ export function ClientProfileDetail({
                         </div>
                     )}
 
-                    {formData.serviceType === 'Boxes' && (
+                    {/* Boxes Configuration */}
+                    {(serviceType === 'Boxes' || (!serviceType && config.serviceType === 'Boxes')) && (
                         <div className="animate-fade-in" style={{ marginTop: '1rem' }}>
-                            {orderConfig.boxOrders && orderConfig.boxOrders.map((box: any, index: number) => (
+                            {boxOrders.map((box: any, index: number) => (
                                 <div key={index} className={styles.boxConfigCard} style={{ marginBottom: '1.5rem', padding: '1rem', border: '1px solid var(--border-color)', borderRadius: '8px' }}>
                                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
                                         <h4 style={{ margin: 0 }}>Box #{index + 1}</h4>
-                                        {orderConfig.boxOrders!.length > 1 && (
-                                            <button type="button" className={styles.linkBtn} onClick={() => handleRemoveBox(index)} style={{ color: 'var(--color-danger)' }}>
+                                        {boxCount > 1 && (
+                                            <button type="button" className={styles.linkBtn} onClick={() => removeBox(index)} style={{ color: 'var(--color-danger)' }}>
                                                 <Trash2 size={16} /> Remove
                                             </button>
                                         )}
@@ -3197,7 +3469,8 @@ export function ClientProfileDetail({
                                         <select
                                             className={styles.select}
                                             value={box.boxTypeId || ''}
-                                            onChange={(e) => handleBoxUpdate(index, 'boxTypeId', e.target.value)}
+                                            onChange={(e) => updateBox(index, 'boxTypeId', e.target.value)}
+                                            disabled={isSaving}
                                         >
                                             <option value="">Select Box Type</option>
                                             {boxTypes.filter(b => b.isActive).map(b => (
@@ -3209,19 +3482,110 @@ export function ClientProfileDetail({
                                     <div className={styles.formGroup}>
                                         <label className={styles.label}>Quantity</label>
                                         <div className={styles.quantityControl}>
-                                            <button type="button" onClick={() => handleBoxUpdate(index, 'quantity', Math.max(1, (box.quantity || 1) - 1))}>-</button>
+                                            <button type="button" onClick={() => updateBox(index, 'quantity', Math.max(1, (box.quantity || 1) - 1))} disabled={isSaving}>-</button>
                                             <span>{box.quantity || 1}</span>
-                                            <button type="button" onClick={() => handleBoxUpdate(index, 'quantity', (box.quantity || 1) + 1)}>+</button>
+                                            <button type="button" onClick={() => updateBox(index, 'quantity', (box.quantity || 1) + 1)} disabled={isSaving}>+</button>
                                         </div>
                                     </div>
 
-                                    {/* Box Items Selection Logic Goes Here - Simplified for restoration */}
-                                    <div style={{ marginTop: '1rem' }}>
-                                        <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>Box contents configuration enabled.</p>
+                                    {/* Box Items Selection Logic */}
+                                    <div style={{ marginTop: '1rem', borderTop: '1px solid var(--border-color)', paddingTop: '1rem' }}>
+                                        {box.vendorId && !getNextDeliveryDateForVendor(box.vendorId) ? (
+                                            <div style={{
+                                                padding: '1.5rem',
+                                                backgroundColor: 'var(--bg-surface-active)',
+                                                borderRadius: 'var(--radius-md)',
+                                                border: '1px dashed var(--color-danger)',
+                                                color: 'var(--text-secondary)',
+                                                textAlign: 'center',
+                                                display: 'flex',
+                                                flexDirection: 'column',
+                                                alignItems: 'center',
+                                                gap: '0.5rem',
+                                                opacity: 0.7
+                                            }}>
+                                                <AlertTriangle size={24} color="var(--color-danger)" />
+                                                <span style={{ color: 'var(--color-danger)', fontWeight: 600 }}>Action Required</span>
+                                                <span style={{ fontSize: '0.9rem' }}>
+                                                    Vendor has no upcoming delivery dates.
+                                                </span>
+                                            </div>
+                                        ) : (
+                                            <>
+                                                {categories.map(category => {
+                                                    const searchTerm = '';
+                                                    const availableItems = menuItems.filter(i =>
+                                                        ((i.vendorId === null || i.vendorId === '') || i.vendorId === box.vendorId) &&
+                                                        i.isActive &&
+                                                        i.categoryId === category.id
+                                                    );
+                                                    if (availableItems.length === 0) return null;
+                                                    const selectedItems = box.items || {};
+
+                                                    // Calculate quota for THIS box/category
+                                                    let categoryQuotaValue = 0;
+                                                    Object.entries(selectedItems).forEach(([itemId, qty]) => {
+                                                        const item = menuItems.find(i => i.id === itemId);
+                                                        if (item && item.categoryId === category.id) {
+                                                            const itemQuotaValue = item.quotaValue || 1;
+                                                            categoryQuotaValue += (qty as number) * itemQuotaValue;
+                                                        }
+                                                    });
+
+                                                    let requiredQuotaValue: number | null = null;
+                                                    if (category.setValue !== undefined && category.setValue !== null) {
+                                                        requiredQuotaValue = category.setValue;
+                                                    } else if (box.boxTypeId) {
+                                                        const quota = boxQuotas.find(q => q.boxTypeId === box.boxTypeId && q.categoryId === category.id);
+                                                        if (quota) {
+                                                            requiredQuotaValue = quota.targetValue;
+                                                        }
+                                                    }
+                                                    const meetsQuota = requiredQuotaValue !== null ? isMeetingExactTarget(categoryQuotaValue, requiredQuotaValue) : true;
+
+                                                    return (
+                                                        <div key={category.id} style={{ marginBottom: '1rem', background: 'var(--bg-surface-hover)', padding: '0.75rem', borderRadius: '6px', border: requiredQuotaValue !== null && !meetsQuota ? '2px solid var(--color-danger)' : '1px solid var(--border-color)' }}>
+                                                            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem', fontSize: '0.85rem' }}>
+                                                                <span style={{ fontWeight: 600 }}>{category.name}</span>
+                                                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                                                    {requiredQuotaValue !== null && (
+                                                                        <span style={{
+                                                                            color: meetsQuota ? 'var(--color-success)' : 'var(--color-danger)',
+                                                                            fontSize: '0.8rem',
+                                                                            fontWeight: 500
+                                                                        }}>
+                                                                            Quota: {categoryQuotaValue} / {requiredQuotaValue}
+                                                                        </span>
+                                                                    )}
+                                                                    {categoryQuotaValue > 0 && requiredQuotaValue === null && (
+                                                                        <span style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>
+                                                                            Total: {categoryQuotaValue}
+                                                                        </span>
+                                                                    )}
+                                                                </div>
+                                                            </div>
+
+                                                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '16px' }}>
+                                                                {availableItems.map(item => (
+                                                                    <MenuItemCard
+                                                                        key={item.id}
+                                                                        item={item}
+                                                                        quantity={selectedItems[item.id] || 0}
+                                                                        note={box.itemNotes?.[item.id] || ''}
+                                                                        onQuantityChange={(qty) => updateBoxItem(index, item.id, qty)}
+                                                                        onNoteChange={(note) => updateBoxItem(index, item.id, selectedItems[item.id] || 0, note)}
+                                                                    />
+                                                                ))}
+                                                            </div>
+                                                        </div>
+                                                    );
+                                                })}
+                                            </>
+                                        )}
                                     </div>
                                 </div>
                             ))}
-                            <button type="button" className={styles.btnSecondary} onClick={handleAddBox} style={{ width: '100%' }}>
+                            <button type="button" className={styles.btnSecondary} onClick={addBox} style={{ width: '100%' }} disabled={isSaving}>
                                 <Plus size={16} /> Add Another Box
                             </button>
                         </div>
@@ -3233,8 +3597,20 @@ export function ClientProfileDetail({
                     <span>Please enter a Case ID to configure the order.</span>
                 </div>
             )}
+
+            {useNewColumn && (
+                <div style={{ marginTop: '1rem', display: 'flex', justifyContent: 'flex-end' }}>
+                    <button type="button" className={styles.btnPrimary} onClick={handleSaveNewColumnOrder} disabled={isSaving}>
+                        {isSaving ? <Loader2 size={16} className={styles.spin} /> : <Save size={16} />}
+                        {isSaving ? ' Saving…' : ' Save to new column'}
+                    </button>
+                </div>
+            )}
         </section>
-    );
+        );
+    }
+    const renderOrderConfigSection = () => renderOrderConfigUI(false);
+    const renderNewColumnOrderSection = () => renderOrderConfigUI(true);
 
     // --- RECENT ORDERS SECTION ---
     const renderRecentOrdersSection = () => (
@@ -3596,206 +3972,206 @@ export function ClientProfileDetail({
                                 console.log('[Restore] First history entry has orderDetails/orderConfig but hasRestorableDetails=false. keys:', Object.keys(od));
                             }
                             return (
-                            <div key={entryKey} className={styles.card} style={{ marginBottom: '1.5rem', borderLeft: isCurrentOrder ? '4px solid rgb(34, 197, 94)' : '4px solid var(--color-primary)', backgroundColor: 'var(--bg-surface)' }}>
-                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem', borderBottom: '1px solid var(--border-color)', paddingBottom: '0.5rem' }}>
-                                    <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
-                                        <strong>{entry.type === 'order_created' ? 'Order Created' : 'Order Updated'}</strong>
-                                        <span className={styles.budget} style={{ fontSize: '0.8rem' }}>{entry.serviceType}</span>
+                                <div key={entryKey} className={styles.card} style={{ marginBottom: '1.5rem', borderLeft: isCurrentOrder ? '4px solid rgb(34, 197, 94)' : '4px solid var(--color-primary)', backgroundColor: 'var(--bg-surface)' }}>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem', borderBottom: '1px solid var(--border-color)', paddingBottom: '0.5rem' }}>
+                                        <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
+                                            <strong>{entry.type === 'order_created' ? 'Order Created' : 'Order Updated'}</strong>
+                                            <span className={styles.budget} style={{ fontSize: '0.8rem' }}>{entry.serviceType}</span>
+                                        </div>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                                            {hasRestorableDetails && (
+                                                <button
+                                                    type="button"
+                                                    className="btn btn-sm btn-primary"
+                                                    onClick={(e) => { e.preventDefault(); e.stopPropagation(); console.log('[Restore] Button clicked for entry:', entry?.timestamp); handleRestoreFromHistory(entry, entryKey); }}
+                                                    disabled={isRestoring}
+                                                    title={isRestoring ? 'Restoring…' : 'Restore this order as the current upcoming order and active order'}
+                                                    style={{
+                                                        display: 'inline-flex',
+                                                        alignItems: 'center',
+                                                        gap: '0.35rem',
+                                                        opacity: isRestoring ? 0.8 : 1,
+                                                        cursor: isRestoring ? 'wait' : 'pointer',
+                                                        pointerEvents: isRestoring ? 'none' : 'auto'
+                                                    }}
+                                                >
+                                                    {isRestoring ? <Loader2 size={14} className="spin" style={{ flexShrink: 0 }} /> : <RotateCcw size={14} />}
+                                                    {isRestoring ? 'Restoring…' : 'Restore'}
+                                                </button>
+                                            )}
+                                            <span style={{ fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
+                                                {new Date(entry.timestamp).toLocaleString()}
+                                            </span>
+                                        </div>
                                     </div>
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                                        {hasRestorableDetails && (
-                                            <button
-                                                type="button"
-                                                className="btn btn-sm btn-primary"
-                                                onClick={(e) => { e.preventDefault(); e.stopPropagation(); console.log('[Restore] Button clicked for entry:', entry?.timestamp); handleRestoreFromHistory(entry, entryKey); }}
-                                                disabled={isRestoring}
-                                                title={isRestoring ? 'Restoring…' : 'Restore this order as the current upcoming order and active order'}
-                                                style={{
-                                                    display: 'inline-flex',
-                                                    alignItems: 'center',
-                                                    gap: '0.35rem',
-                                                    opacity: isRestoring ? 0.8 : 1,
-                                                    cursor: isRestoring ? 'wait' : 'pointer',
-                                                    pointerEvents: isRestoring ? 'none' : 'auto'
-                                                }}
-                                            >
-                                                {isRestoring ? <Loader2 size={14} className="spin" style={{ flexShrink: 0 }} /> : <RotateCcw size={14} />}
-                                                {isRestoring ? 'Restoring…' : 'Restore'}
-                                            </button>
+
+                                    <div style={{ fontSize: '0.95rem' }}>
+                                        {entry.orderNumber && (
+                                            <div style={{ marginBottom: '0.5rem' }}>
+                                                <strong>Order #:</strong> {entry.orderNumber}
+                                            </div>
                                         )}
-                                        <span style={{ fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
-                                            {new Date(entry.timestamp).toLocaleString()}
-                                        </span>
+
+                                        {/* Render Order Details depending on Service Type */}
+                                        {entry.orderDetails && (
+                                            <div style={{ marginTop: '0.5rem' }}>
+                                                {/* Food / Meal / Custom - Vendor Selections */}
+                                                {entry.orderDetails.vendorSelections && Array.isArray(entry.orderDetails.vendorSelections) && (
+                                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                                                        {entry.orderDetails.vendorSelections.map((vs: any, vIdx: number) => (
+                                                            <div key={vIdx} style={{ backgroundColor: 'var(--bg-surface-hover)', padding: '0.5rem', borderRadius: '4px' }}>
+                                                                <div style={{ fontWeight: 600, marginBottom: '0.25rem' }}>{vs.vendorName || 'Unknown Vendor'}</div>
+                                                                {/* Items List */}
+                                                                {vs.itemsDetails && Array.isArray(vs.itemsDetails) ? (
+                                                                    <ul style={{ margin: 0, paddingLeft: '1.2rem', fontSize: '0.9rem' }}>
+                                                                        {vs.itemsDetails.map((item: any, iIdx: number) => (
+                                                                            <li key={iIdx}>
+                                                                                {item.itemName} x{item.quantity}
+                                                                            </li>
+                                                                        ))}
+                                                                    </ul>
+                                                                ) : (
+                                                                    <div style={{ fontSize: '0.9rem', fontStyle: 'italic' }}>Items: {Object.keys(vs.items || {}).length}</div>
+                                                                )}
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                )}
+
+                                                {/* Custom Orders */}
+                                                {entry.orderDetails.customOrder && (
+                                                    <div style={{ backgroundColor: 'var(--bg-surface-hover)', padding: '0.8rem', borderRadius: '4px' }}>
+                                                        <div style={{ fontWeight: 600, marginBottom: '0.4rem', color: 'var(--color-primary)' }}>Custom Order Details</div>
+                                                        <div style={{ display: 'grid', gridTemplateColumns: '100px 1fr', gap: '0.4rem', fontSize: '0.9rem' }}>
+                                                            <span style={{ color: 'var(--text-tertiary)' }}>Vendor:</span>
+                                                            <span style={{ fontWeight: 500 }}>{entry.orderDetails.customOrder.vendorName}</span>
+
+                                                            <span style={{ color: 'var(--text-tertiary)' }}>Item:</span>
+                                                            <span>{entry.orderDetails.customOrder.description}</span>
+
+                                                            <span style={{ color: 'var(--text-tertiary)' }}>Price:</span>
+                                                            <span style={{ fontWeight: 600 }}>${entry.orderDetails.customOrder.price?.toFixed(2)}</span>
+
+                                                            <span style={{ color: 'var(--text-tertiary)' }}>Delivery:</span>
+                                                            <span>{entry.orderDetails.customOrder.deliveryDay}</span>
+                                                        </div>
+                                                    </div>
+                                                )}
+
+                                                {/* Meal Selections */}
+                                                {entry.orderDetails.mealSelections && (
+                                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.8rem' }}>
+                                                        {Object.entries(entry.orderDetails.mealSelections).map(([key, selection]: [string, any]) => (
+                                                            <div key={key} style={{ backgroundColor: 'var(--bg-surface-hover)', padding: '0.8rem', borderRadius: '4px' }}>
+                                                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.4rem' }}>
+                                                                    <span style={{ fontWeight: 600, color: 'var(--color-primary)' }}>{selection.mealType || key}</span>
+                                                                    <span style={{ fontSize: '0.8rem', padding: '2px 8px', borderRadius: '12px', backgroundColor: 'var(--bg-surface)', fontWeight: 500 }}>
+                                                                        {selection.vendorName}
+                                                                    </span>
+                                                                </div>
+                                                                {selection.itemsDetails && Array.isArray(selection.itemsDetails) ? (
+                                                                    <ul style={{ margin: 0, paddingLeft: '1.2rem', fontSize: '0.9rem' }}>
+                                                                        {selection.itemsDetails.map((item: any, iIdx: number) => (
+                                                                            <li key={iIdx}>
+                                                                                <strong>{item.itemName}</strong> x{item.quantity}
+                                                                                {item.note && <span style={{ marginLeft: '0.5rem', fontStyle: 'italic', color: 'var(--text-tertiary)' }}>({item.note})</span>}
+                                                                            </li>
+                                                                        ))}
+                                                                    </ul>
+                                                                ) : (
+                                                                    <div style={{ fontSize: '0.85rem', fontStyle: 'italic', color: 'var(--text-tertiary)' }}>
+                                                                        Items: {Object.keys(selection.items || {}).length}
+                                                                    </div>
+                                                                )}
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                )}
+
+                                                {/* Delivery Day Orders (Food Alternative Structure) */}
+                                                {entry.orderDetails.deliveryDayOrders && !entry.orderDetails.vendorSelections && !entry.orderDetails.mealSelections && (
+                                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                                                        {Object.entries(entry.orderDetails.deliveryDayOrders).map(([day, dayData]: [string, any]) => (
+                                                            <div key={day}>
+                                                                <div style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '0.25rem' }}>{day}</div>
+                                                                {(dayData.vendorSelections || []).map((vs: any, vIdx: number) => (
+                                                                    <div key={vIdx} style={{ backgroundColor: 'var(--bg-surface-hover)', padding: '0.5rem', borderRadius: '4px', marginBottom: '0.5rem' }}>
+                                                                        <div style={{ fontWeight: 600, marginBottom: '0.25rem' }}>{vs.vendorName || 'Unknown Vendor'}</div>
+                                                                        {/* Items List */}
+                                                                        {vs.itemsDetails && Array.isArray(vs.itemsDetails) ? (
+                                                                            <ul style={{ margin: 0, paddingLeft: '1.2rem', fontSize: '0.9rem' }}>
+                                                                                {vs.itemsDetails.map((item: any, iIdx: number) => (
+                                                                                    <li key={iIdx}>
+                                                                                        {item.itemName} x{item.quantity}
+                                                                                    </li>
+                                                                                ))}
+                                                                            </ul>
+                                                                        ) : (
+                                                                            <div style={{ fontSize: '0.9rem', fontStyle: 'italic' }}>Items: {Object.keys(vs.items || {}).length}</div>
+                                                                        )}
+                                                                    </div>
+                                                                ))}
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                )}
+
+                                                {/* Box Orders */}
+                                                {entry.orderDetails.boxOrders && Array.isArray(entry.orderDetails.boxOrders) && (
+                                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                                                        {entry.orderDetails.boxOrders.map((box: any, bIdx: number) => (
+                                                            <div key={bIdx} style={{ backgroundColor: 'var(--bg-surface-hover)', padding: '0.5rem', borderRadius: '4px' }}>
+                                                                <div style={{ fontWeight: 600, marginBottom: '0.25rem' }}>
+                                                                    {box.boxTypeName || 'Unknown Box'} ({box.vendorName}) x{box.quantity}
+                                                                </div>
+                                                                {/* Box Contents */}
+                                                                {box.itemsDetails && Array.isArray(box.itemsDetails) && (
+                                                                    <ul style={{ margin: 0, paddingLeft: '1.2rem', fontSize: '0.9rem' }}>
+                                                                        {box.itemsDetails.map((item: any, iIdx: number) => (
+                                                                            <li key={iIdx}>
+                                                                                {item.itemName} x{item.quantity}
+                                                                            </li>
+                                                                        ))}
+                                                                    </ul>
+                                                                )}
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                )}
+
+                                                {/* Render Snapshot for save_event or if orderDetails render was minimal */}
+                                                {entry.type === 'save_event' && entry.snapshot && (
+                                                    <div style={{
+                                                        marginTop: '0.8rem',
+                                                        padding: '0.8rem',
+                                                        backgroundColor: 'var(--bg-surface)',
+                                                        borderLeft: '2px solid var(--color-primary-light)',
+                                                        fontSize: '0.85rem',
+                                                        whiteSpace: 'pre-wrap',
+                                                        fontFamily: 'monospace',
+                                                        color: 'var(--text-secondary)',
+                                                        borderRadius: '4px'
+                                                    }}>
+                                                        {entry.snapshot}
+                                                    </div>
+                                                )}
+                                            </div>
+                                        )}
+
+                                        {/* Fallback for entries with no orderDetails */}
+                                        {!entry.orderDetails && (
+                                            <div style={{ marginTop: '0.5rem', fontStyle: 'italic', color: 'var(--text-secondary)' }}>
+                                                {entry.notes ? `Note: ${entry.notes}` : (entry.details || 'Order updated (No details captured)')}
+                                            </div>
+                                        )}
+
+                                        {entry.updatedBy && (
+                                            <div style={{ marginTop: '0.5rem', fontSize: '0.8rem', color: 'var(--text-tertiary)', textAlign: 'right' }}>
+                                                Updated by: {entry.updatedBy}
+                                            </div>
+                                        )}
                                     </div>
                                 </div>
-
-                                <div style={{ fontSize: '0.95rem' }}>
-                                    {entry.orderNumber && (
-                                        <div style={{ marginBottom: '0.5rem' }}>
-                                            <strong>Order #:</strong> {entry.orderNumber}
-                                        </div>
-                                    )}
-
-                                    {/* Render Order Details depending on Service Type */}
-                                    {entry.orderDetails && (
-                                        <div style={{ marginTop: '0.5rem' }}>
-                                            {/* Food / Meal / Custom - Vendor Selections */}
-                                            {entry.orderDetails.vendorSelections && Array.isArray(entry.orderDetails.vendorSelections) && (
-                                                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                                                    {entry.orderDetails.vendorSelections.map((vs: any, vIdx: number) => (
-                                                        <div key={vIdx} style={{ backgroundColor: 'var(--bg-surface-hover)', padding: '0.5rem', borderRadius: '4px' }}>
-                                                            <div style={{ fontWeight: 600, marginBottom: '0.25rem' }}>{vs.vendorName || 'Unknown Vendor'}</div>
-                                                            {/* Items List */}
-                                                            {vs.itemsDetails && Array.isArray(vs.itemsDetails) ? (
-                                                                <ul style={{ margin: 0, paddingLeft: '1.2rem', fontSize: '0.9rem' }}>
-                                                                    {vs.itemsDetails.map((item: any, iIdx: number) => (
-                                                                        <li key={iIdx}>
-                                                                            {item.itemName} x{item.quantity}
-                                                                        </li>
-                                                                    ))}
-                                                                </ul>
-                                                            ) : (
-                                                                <div style={{ fontSize: '0.9rem', fontStyle: 'italic' }}>Items: {Object.keys(vs.items || {}).length}</div>
-                                                            )}
-                                                        </div>
-                                                    ))}
-                                                </div>
-                                            )}
-
-                                            {/* Custom Orders */}
-                                            {entry.orderDetails.customOrder && (
-                                                <div style={{ backgroundColor: 'var(--bg-surface-hover)', padding: '0.8rem', borderRadius: '4px' }}>
-                                                    <div style={{ fontWeight: 600, marginBottom: '0.4rem', color: 'var(--color-primary)' }}>Custom Order Details</div>
-                                                    <div style={{ display: 'grid', gridTemplateColumns: '100px 1fr', gap: '0.4rem', fontSize: '0.9rem' }}>
-                                                        <span style={{ color: 'var(--text-tertiary)' }}>Vendor:</span>
-                                                        <span style={{ fontWeight: 500 }}>{entry.orderDetails.customOrder.vendorName}</span>
-
-                                                        <span style={{ color: 'var(--text-tertiary)' }}>Item:</span>
-                                                        <span>{entry.orderDetails.customOrder.description}</span>
-
-                                                        <span style={{ color: 'var(--text-tertiary)' }}>Price:</span>
-                                                        <span style={{ fontWeight: 600 }}>${entry.orderDetails.customOrder.price?.toFixed(2)}</span>
-
-                                                        <span style={{ color: 'var(--text-tertiary)' }}>Delivery:</span>
-                                                        <span>{entry.orderDetails.customOrder.deliveryDay}</span>
-                                                    </div>
-                                                </div>
-                                            )}
-
-                                            {/* Meal Selections */}
-                                            {entry.orderDetails.mealSelections && (
-                                                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.8rem' }}>
-                                                    {Object.entries(entry.orderDetails.mealSelections).map(([key, selection]: [string, any]) => (
-                                                        <div key={key} style={{ backgroundColor: 'var(--bg-surface-hover)', padding: '0.8rem', borderRadius: '4px' }}>
-                                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.4rem' }}>
-                                                                <span style={{ fontWeight: 600, color: 'var(--color-primary)' }}>{selection.mealType || key}</span>
-                                                                <span style={{ fontSize: '0.8rem', padding: '2px 8px', borderRadius: '12px', backgroundColor: 'var(--bg-surface)', fontWeight: 500 }}>
-                                                                    {selection.vendorName}
-                                                                </span>
-                                                            </div>
-                                                            {selection.itemsDetails && Array.isArray(selection.itemsDetails) ? (
-                                                                <ul style={{ margin: 0, paddingLeft: '1.2rem', fontSize: '0.9rem' }}>
-                                                                    {selection.itemsDetails.map((item: any, iIdx: number) => (
-                                                                        <li key={iIdx}>
-                                                                            <strong>{item.itemName}</strong> x{item.quantity}
-                                                                            {item.note && <span style={{ marginLeft: '0.5rem', fontStyle: 'italic', color: 'var(--text-tertiary)' }}>({item.note})</span>}
-                                                                        </li>
-                                                                    ))}
-                                                                </ul>
-                                                            ) : (
-                                                                <div style={{ fontSize: '0.85rem', fontStyle: 'italic', color: 'var(--text-tertiary)' }}>
-                                                                    Items: {Object.keys(selection.items || {}).length}
-                                                                </div>
-                                                            )}
-                                                        </div>
-                                                    ))}
-                                                </div>
-                                            )}
-
-                                            {/* Delivery Day Orders (Food Alternative Structure) */}
-                                            {entry.orderDetails.deliveryDayOrders && !entry.orderDetails.vendorSelections && !entry.orderDetails.mealSelections && (
-                                                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                                                    {Object.entries(entry.orderDetails.deliveryDayOrders).map(([day, dayData]: [string, any]) => (
-                                                        <div key={day}>
-                                                            <div style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '0.25rem' }}>{day}</div>
-                                                            {(dayData.vendorSelections || []).map((vs: any, vIdx: number) => (
-                                                                <div key={vIdx} style={{ backgroundColor: 'var(--bg-surface-hover)', padding: '0.5rem', borderRadius: '4px', marginBottom: '0.5rem' }}>
-                                                                    <div style={{ fontWeight: 600, marginBottom: '0.25rem' }}>{vs.vendorName || 'Unknown Vendor'}</div>
-                                                                    {/* Items List */}
-                                                                    {vs.itemsDetails && Array.isArray(vs.itemsDetails) ? (
-                                                                        <ul style={{ margin: 0, paddingLeft: '1.2rem', fontSize: '0.9rem' }}>
-                                                                            {vs.itemsDetails.map((item: any, iIdx: number) => (
-                                                                                <li key={iIdx}>
-                                                                                    {item.itemName} x{item.quantity}
-                                                                                </li>
-                                                                            ))}
-                                                                        </ul>
-                                                                    ) : (
-                                                                        <div style={{ fontSize: '0.9rem', fontStyle: 'italic' }}>Items: {Object.keys(vs.items || {}).length}</div>
-                                                                    )}
-                                                                </div>
-                                                            ))}
-                                                        </div>
-                                                    ))}
-                                                </div>
-                                            )}
-
-                                            {/* Box Orders */}
-                                            {entry.orderDetails.boxOrders && Array.isArray(entry.orderDetails.boxOrders) && (
-                                                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                                                    {entry.orderDetails.boxOrders.map((box: any, bIdx: number) => (
-                                                        <div key={bIdx} style={{ backgroundColor: 'var(--bg-surface-hover)', padding: '0.5rem', borderRadius: '4px' }}>
-                                                            <div style={{ fontWeight: 600, marginBottom: '0.25rem' }}>
-                                                                {box.boxTypeName || 'Unknown Box'} ({box.vendorName}) x{box.quantity}
-                                                            </div>
-                                                            {/* Box Contents */}
-                                                            {box.itemsDetails && Array.isArray(box.itemsDetails) && (
-                                                                <ul style={{ margin: 0, paddingLeft: '1.2rem', fontSize: '0.9rem' }}>
-                                                                    {box.itemsDetails.map((item: any, iIdx: number) => (
-                                                                        <li key={iIdx}>
-                                                                            {item.itemName} x{item.quantity}
-                                                                        </li>
-                                                                    ))}
-                                                                </ul>
-                                                            )}
-                                                        </div>
-                                                    ))}
-                                                </div>
-                                            )}
-
-                                            {/* Render Snapshot for save_event or if orderDetails render was minimal */}
-                                            {entry.type === 'save_event' && entry.snapshot && (
-                                                <div style={{
-                                                    marginTop: '0.8rem',
-                                                    padding: '0.8rem',
-                                                    backgroundColor: 'var(--bg-surface)',
-                                                    borderLeft: '2px solid var(--color-primary-light)',
-                                                    fontSize: '0.85rem',
-                                                    whiteSpace: 'pre-wrap',
-                                                    fontFamily: 'monospace',
-                                                    color: 'var(--text-secondary)',
-                                                    borderRadius: '4px'
-                                                }}>
-                                                    {entry.snapshot}
-                                                </div>
-                                            )}
-                                        </div>
-                                    )}
-
-                                    {/* Fallback for entries with no orderDetails */}
-                                    {!entry.orderDetails && (
-                                        <div style={{ marginTop: '0.5rem', fontStyle: 'italic', color: 'var(--text-secondary)' }}>
-                                            {entry.notes ? `Note: ${entry.notes}` : (entry.details || 'Order updated (No details captured)')}
-                                        </div>
-                                    )}
-
-                                    {entry.updatedBy && (
-                                        <div style={{ marginTop: '0.5rem', fontSize: '0.8rem', color: 'var(--text-tertiary)', textAlign: 'right' }}>
-                                            Updated by: {entry.updatedBy}
-                                        </div>
-                                    )}
-                                </div>
-                            </div>
                             );
                         })
                     ) : (
@@ -5211,6 +5587,371 @@ export function ClientProfileDetail({
                                 }
                             </section>
 
+                            {/* Upcoming orders configuration — verbatim copy of Current Order UI; saves to clients.upcoming_order only */}
+                            {(() => {
+                                const nc = newColumnOrderConfig;
+                                const setNc = setNewColumnOrderConfig;
+                                const svcType = nc.serviceType ?? formData.serviceType ?? 'Food';
+                                const currentBoxes = nc.boxOrders || [];
+                                return (
+                                    <section className={styles.card} style={{ marginTop: 'var(--spacing-lg)' }}>
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+                                            <h3 className={styles.sectionTitle}>Upcoming orders configuration</h3>
+                                            <span className={styles.badge} style={{ backgroundColor: 'var(--bg-surface-active)', color: 'var(--text-secondary)' }}>Saves to clients.upcoming_order only</span>
+                                        </div>
+                                        <div className={styles.formGroup}>
+                                            <label className="label">Client type</label>
+                                            <div className={styles.serviceTypes}>
+                                                {(['Food', 'Boxes', 'Custom'] as const).map(type => (
+                                                    <button
+                                                        key={type}
+                                                        type="button"
+                                                        className={`${styles.serviceBtn} ${svcType === type ? styles.activeService : ''}`}
+                                                        onClick={() => setNc({ ...nc, serviceType: type })}
+                                                        disabled={savingNewColumn}
+                                                    >
+                                                        {type}
+                                                    </button>
+                                                ))}
+                                            </div>
+                                        </div>
+                                        <div className={styles.formGroup}>
+                                            <label className="label">Case ID (Required)</label>
+                                            <input
+                                                className="input"
+                                                value={nc.caseId || ''}
+                                                placeholder="Enter Case ID to enable configuration..."
+                                                onChange={e => setNc({ ...nc, caseId: e.target.value })}
+                                                disabled={savingNewColumn}
+                                            />
+                                        </div>
+                                        {!nc.caseId && (
+                                            <div className={styles.alert} style={{ marginTop: '16px', backgroundColor: 'var(--bg-surface-hover)' }}>
+                                                <AlertTriangle size={16} />
+                                                Please enter a Case ID to configure the service.
+                                            </div>
+                                        )}
+                                        {nc.caseId && (
+                                            <>
+                                                {(svcType === 'Food' || svcType === 'Meal') && (
+                                                    <div className="animate-fade-in" style={{ marginTop: '1rem' }}>
+                                                        <FoodServiceWidget
+                                                            orderConfig={nc}
+                                                            setOrderConfig={setNc}
+                                                            client={{ ...client, ...formData, serviceType: svcType } as ClientProfile}
+                                                            vendors={vendors}
+                                                            menuItems={menuItems}
+                                                            mealCategories={mealCategories}
+                                                            mealItems={mealItems}
+                                                            settings={settings}
+                                                        />
+                                                        <div style={{ marginTop: '1rem' }}>
+                                                            <label className={styles.label}>Order Notes</label>
+                                                            <textarea
+                                                                className="input"
+                                                                placeholder="Add general notes for this order..."
+                                                                value={nc.notes || ''}
+                                                                onChange={(e) => setNc({ ...nc, notes: e.target.value })}
+                                                                rows={2}
+                                                                style={{ resize: 'vertical', minHeight: '3rem' }}
+                                                                disabled={savingNewColumn}
+                                                            />
+                                                        </div>
+                                                    </div>
+                                                )}
+                                                {svcType === 'Custom' && (
+                                                    <div className={styles.section} style={{ marginTop: '24px' }}>
+                                                        <h3 className={styles.sectionTitle}>Custom Order Configuration</h3>
+                                                        <div className={styles.card} style={{ backgroundColor: '#f9fafb' }}>
+                                                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                                                <div className="col-span-2">
+                                                                    <label className={styles.label}>Item Description <span className="text-red-500">*</span></label>
+                                                                    <textarea
+                                                                        className="input"
+                                                                        placeholder="e.g. Weekly Catering Platter"
+                                                                        value={nc.custom_name || ''}
+                                                                        rows={1}
+                                                                        style={{ resize: 'none', overflow: 'hidden', minHeight: '3rem' }}
+                                                                        onInput={(e) => {
+                                                                            const target = e.target as HTMLTextAreaElement;
+                                                                            target.style.height = 'auto';
+                                                                            target.style.height = target.scrollHeight + 'px';
+                                                                        }}
+                                                                        onChange={e => { setNc({ ...nc, custom_name: e.target.value }); (e.target as HTMLTextAreaElement).style.height = 'auto'; (e.target as HTMLTextAreaElement).style.height = (e.target as HTMLTextAreaElement).scrollHeight + 'px'; }}
+                                                                        disabled={savingNewColumn}
+                                                                    />
+                                                                </div>
+                                                                <div>
+                                                                    <label className={styles.label}>Price per Order <span className="text-red-500">*</span></label>
+                                                                    <div className="relative">
+                                                                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500">$</span>
+                                                                        <input
+                                                                            type="number"
+                                                                            className="input pl-8"
+                                                                            placeholder="0.00"
+                                                                            value={nc.custom_price || ''}
+                                                                            onChange={e => setNc({ ...nc, custom_price: e.target.value })}
+                                                                            disabled={savingNewColumn}
+                                                                        />
+                                                                    </div>
+                                                                </div>
+                                                                <div>
+                                                                    <label className={styles.label}>Vendor <span className="text-red-500">*</span></label>
+                                                                    <select
+                                                                        className="input"
+                                                                        value={nc.vendorId || ''}
+                                                                        onChange={e => {
+                                                                            const newVendorId = e.target.value;
+                                                                            let newDeliveryDay = nc.deliveryDay;
+                                                                            if (newVendorId && newDeliveryDay) {
+                                                                                const selectedVendor = vendors.find(v => v.id === newVendorId);
+                                                                                if (selectedVendor?.deliveryDays?.length && !selectedVendor.deliveryDays.includes(newDeliveryDay)) newDeliveryDay = '';
+                                                                            }
+                                                                            setNc({ ...nc, vendorId: newVendorId, deliveryDay: newDeliveryDay });
+                                                                        }}
+                                                                        disabled={savingNewColumn}
+                                                                    >
+                                                                        <option value="">Select Vendor</option>
+                                                                        {vendors.filter(v => v.isActive).map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
+                                                                    </select>
+                                                                </div>
+                                                                <div>
+                                                                    <label className={styles.label}>Delivery Day <span className="text-red-500">*</span></label>
+                                                                    <select className="input" value={nc.deliveryDay || ''} onChange={e => setNc({ ...nc, deliveryDay: e.target.value })} disabled={savingNewColumn}>
+                                                                        <option value="">Select Day</option>
+                                                                        {((() => {
+                                                                            let days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+                                                                            if (nc.vendorId) {
+                                                                                const v = vendors.find(x => x.id === nc.vendorId);
+                                                                                if (v?.deliveryDays?.length) days = v.deliveryDays;
+                                                                            }
+                                                                            return days;
+                                                                        })()).map(day => <option key={day} value={day}>{day}</option>)}
+                                                                    </select>
+                                                                </div>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                )}
+                                                {svcType === 'Boxes' && (
+                                                    <div className="animate-fade-in">
+                                                        {currentBoxes.map((box: any, index: number) => (
+                                                            <div key={index} style={{ marginBottom: '2rem', padding: '1.5rem', backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', position: 'relative' }}>
+                                                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', borderBottom: '1px solid var(--border-color)', paddingBottom: '0.5rem' }}>
+                                                                    <h4 style={{ margin: 0, fontSize: '1rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.5rem' }}><Package size={16} /> Box #{index + 1}</h4>
+                                                                    {currentBoxes.length > 1 && (
+                                                                        <button type="button" className="btn btn-ghost btn-sm" onClick={() => handleNewColumnRemoveBox(index)} style={{ color: 'var(--color-danger)', fontSize: '0.8rem', padding: '4px 8px' }}><Trash2 size={14} style={{ marginRight: '4px' }} /> Remove</button>
+                                                                    )}
+                                                                </div>
+                                                                <div className={styles.formGroup}>
+                                                                    <label className="label">Vendor</label>
+                                                                    <select className="input" value={box.vendorId || ''} onChange={e => handleNewColumnBoxUpdate(index, 'vendorId', e.target.value)} disabled={savingNewColumn}>
+                                                                        <option value="">Select Vendor...</option>
+                                                                        {vendors.filter(v => v.serviceTypes.includes('Boxes') && v.isActive).map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
+                                                                    </select>
+                                                                </div>
+                                                                {box.vendorId && settings && (() => {
+                                                                    const nextDate = getNextDeliveryDateForVendor(box.vendorId);
+                                                                    if (nextDate) {
+                                                                        return (
+                                                                            <div style={{ marginTop: 'var(--spacing-md)', padding: '0.75rem', backgroundColor: 'var(--bg-surface-hover)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)', fontSize: '0.85rem', color: 'var(--text-secondary)', textAlign: 'center' }}>
+                                                                                Changes may not take effect till next week
+                                                                            </div>
+                                                                        );
+                                                                    }
+                                                                    return (
+                                                                        <div style={{ marginTop: 'var(--spacing-md)', padding: '0.75rem', backgroundColor: 'rgba(239, 68, 68, 0.1)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--color-danger)', fontSize: '0.85rem', color: 'var(--color-danger)', display: 'flex', alignItems: 'center', gap: '0.5rem', textAlign: 'center', justifyContent: 'center' }}>
+                                                                            <AlertTriangle size={16} /><span><strong>Warning:</strong> This vendor has no delivery days configured. Orders will NOT be created.</span>
+                                                                        </div>
+                                                                    );
+                                                                })()}
+                                                                <div style={{ marginTop: '1rem', borderTop: '1px solid var(--border-color)', paddingTop: '1rem' }}>
+                                                                    {box.vendorId && !getNextDeliveryDateForVendor(box.vendorId) ? (
+                                                                        <div style={{ padding: '1.5rem', backgroundColor: 'var(--bg-surface-active)', borderRadius: 'var(--radius-md)', border: '1px dashed var(--color-danger)', color: 'var(--text-secondary)', textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.5rem', opacity: 0.7 }}>
+                                                                            <AlertTriangle size={24} color="var(--color-danger)" /><span style={{ color: 'var(--color-danger)', fontWeight: 600 }}>Action Required</span>
+                                                                            <span style={{ fontSize: '0.9rem' }}>Please configure <strong>Delivery Days</strong> for this vendor in Settings before adding items.</span>
+                                                                        </div>
+                                                                    ) : (
+                                                                        <>
+                                                                            {categories.map(category => {
+                                                                                const availableItems = menuItems.filter(i => (i.vendorId === null || i.vendorId === '') && i.isActive && i.categoryId === category.id);
+                                                                                if (availableItems.length === 0) return null;
+                                                                                const selectedItems = box.items || {};
+                                                                                let categoryQuotaValue = 0;
+                                                                                Object.entries(selectedItems).forEach(([itemId, qty]) => {
+                                                                                    const item = menuItems.find(i => i.id === itemId);
+                                                                                    if (item && item.categoryId === category.id) categoryQuotaValue += (qty as number) * (item.quotaValue || 1);
+                                                                                });
+                                                                                let requiredQuotaValue: number | null = null;
+                                                                                if (category.setValue !== undefined && category.setValue !== null) requiredQuotaValue = category.setValue;
+                                                                                else if (box.boxTypeId) {
+                                                                                    const quota = boxQuotas.find(q => q.boxTypeId === box.boxTypeId && q.categoryId === category.id);
+                                                                                    if (quota) requiredQuotaValue = quota.targetValue;
+                                                                                }
+                                                                                const meetsQuota = requiredQuotaValue !== null ? isMeetingExactTarget(categoryQuotaValue, requiredQuotaValue) : true;
+                                                                                const selectedItemsForCategory = availableItems.filter(item => Number(selectedItems[item.id] || 0) > 0).map(item => ({ item, qty: Number(selectedItems[item.id] || 0) }));
+                                                                                const shelfId = getNewColumnCategoryShelfId(index, category.id);
+                                                                                const isOpen = isNewColumnCategoryShelfOpen(index, category.id);
+                                                                                return (
+                                                                                    <div key={category.id} style={{ marginBottom: '1rem', background: 'var(--bg-surface)', borderRadius: '8px', border: requiredQuotaValue !== null && !meetsQuota ? '2px solid var(--color-danger)' : '1px solid var(--border-color)', overflow: 'hidden', transition: 'all 0.2s ease' }}>
+                                                                                        <div onClick={() => toggleNewColumnCategoryShelf(index, category.id)} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', backgroundColor: isOpen ? 'var(--bg-surface-hover)' : 'var(--bg-surface)', cursor: 'pointer', borderBottom: isOpen ? '1px solid var(--border-color)' : 'none', transition: 'background-color 0.2s ease' }}>
+                                                                                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flex: 1, flexWrap: 'wrap' }}>
+                                                                                                <span style={{ fontWeight: 600, fontSize: '1rem', color: 'var(--text-primary)' }}>{category.name}</span>
+                                                                                                {requiredQuotaValue !== null && <span style={{ color: meetsQuota ? 'var(--color-success)' : 'var(--color-danger)', fontSize: '0.85rem', padding: '2px 8px', backgroundColor: meetsQuota ? '#d1fae5' : '#fee2e2', borderRadius: '4px', fontWeight: 500 }}>{categoryQuotaValue} / {requiredQuotaValue}</span>}
+                                                                                                {categoryQuotaValue > 0 && requiredQuotaValue === null && <span style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', padding: '2px 8px', backgroundColor: 'var(--bg-surface-hover)', borderRadius: '4px' }}>Total: {categoryQuotaValue}</span>}
+                                                                                                {selectedItemsForCategory.length > 0 && <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexWrap: 'wrap', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>{selectedItemsForCategory.map(({ item, qty }) => <span key={item.id} style={{ padding: '2px 8px', backgroundColor: 'var(--bg-surface-hover)', borderRadius: '4px', fontSize: '0.8rem' }}>{item.name} {qty > 1 && `(${qty})`}</span>)}</div>}
+                                                                                                {selectedItemsForCategory.length === 0 && <span style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)', fontStyle: 'italic' }}>No items selected</span>}
+                                                                                            </div>
+                                                                                            <div style={{ transform: isOpen ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 0.2s ease', marginLeft: '8px' }}><ChevronRight size={20} /></div>
+                                                                                        </div>
+                                                                                        {isOpen && (
+                                                                                            <div style={{ padding: '16px', backgroundColor: 'var(--bg-surface)', animation: 'fadeIn 0.2s ease' }}>
+                                                                                                {requiredQuotaValue !== null && !meetsQuota && (
+                                                                                                    <div style={{ marginBottom: '1rem', padding: '0.75rem', backgroundColor: 'rgba(239, 68, 68, 0.1)', borderRadius: '6px', fontSize: '0.85rem', color: 'var(--color-danger)', display: 'flex', alignItems: 'center', gap: '0.5rem', border: '1px solid var(--color-danger)' }}>
+                                                                                                        <AlertTriangle size={16} /><span>You must have a total of {requiredQuotaValue} {category.name} points</span>
+                                                                                                    </div>
+                                                                                                )}
+                                                                                                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '1rem' }}>
+                                                                                                    {availableItems.map(item => {
+                                                                                                        const qty = Number(selectedItems[item.id] || 0);
+                                                                                                        const note = box.itemNotes?.[item.id] || '';
+                                                                                                        const isSelected = qty > 0;
+                                                                                                        return (
+                                                                                                            <div key={item.id} style={{ border: isSelected ? '1px solid var(--color-primary)' : '1px solid var(--border-color)', backgroundColor: isSelected ? 'rgba(var(--color-primary-rgb), 0.05)' : 'var(--bg-app)', borderRadius: '8px', padding: '12px', display: 'flex', flexDirection: 'column', gap: '10px', transition: 'all 0.2s ease', boxShadow: isSelected ? '0 2px 4px rgba(0,0,0,0.05)' : 'none' }}>
+                                                                                                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '10px' }}>
+                                                                                                                    <div style={{ flex: 1 }}>
+                                                                                                                        <div style={{ fontWeight: 600, fontSize: '0.9rem', color: isSelected ? 'var(--color-primary)' : 'var(--text-primary)' }}>{item.name}</div>
+                                                                                                                        {(item.quotaValue || 1) !== 1 && <div style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)', marginTop: '2px' }}>Counts as {item.quotaValue} meals</div>}
+                                                                                                                    </div>
+                                                                                                                    <div className={styles.quantityControl} style={{ display: 'flex', alignItems: 'center', gap: '8px', backgroundColor: 'var(--bg-surface)', padding: '2px', borderRadius: '6px', border: '1px solid var(--border-color)' }}>
+                                                                                                                        <button onClick={() => handleNewColumnBoxItemUpdate(index, item.id, Math.max(0, qty - 1), note)} className="btn btn-ghost btn-sm" style={{ width: '24px', height: '24px', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }} disabled={qty === 0}>-</button>
+                                                                                                                        <span style={{ width: '24px', textAlign: 'center', fontWeight: 600, fontSize: '0.9rem' }}>{qty}</span>
+                                                                                                                        <button onClick={() => handleNewColumnBoxItemUpdate(index, item.id, qty + 1, note)} className="btn btn-ghost btn-sm" style={{ width: '24px', height: '24px', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>+</button>
+                                                                                                                    </div>
+                                                                                                                </div>
+                                                                                                                {isSelected && (
+                                                                                                                    <div style={{ marginTop: '0px' }}>
+                                                                                                                        <TextareaAutosize minRows={1} placeholder="Add notes for this item..." value={note} onChange={(e) => handleNewColumnBoxItemUpdate(index, item.id, qty, e.target.value)} style={{ width: '100%', fontSize: '0.85rem', padding: '6px 8px', borderRadius: '6px', border: '1px solid rgba(0,0,0,0.1)', backgroundColor: 'rgba(255,255,255,0.5)', resize: 'none' }} />
+                                                                                                                    </div>
+                                                                                                                )}
+                                                                                                            </div>
+                                                                                                        );
+                                                                                                    })}
+                                                                                                </div>
+                                                                                            </div>
+                                                                                        )}
+                                                                                    </div>
+                                                                                );
+                                                                            })}
+                                                                            {(() => {
+                                                                                const uncategorizedItems = menuItems.filter(i => (i.vendorId === null || i.vendorId === '') && i.isActive && (!i.categoryId || i.categoryId === ''));
+                                                                                if (uncategorizedItems.length === 0) return null;
+                                                                                const selectedItems = box.items || {};
+                                                                                return (
+                                                                                    <div style={{ marginBottom: '1rem', background: 'var(--bg-surface-hover)', padding: '0.75rem', borderRadius: '6px' }}>
+                                                                                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem', fontSize: '0.85rem' }}><span style={{ fontWeight: 600 }}>Uncategorized</span></div>
+                                                                                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '1rem' }}>
+                                                                                            {uncategorizedItems.map(item => {
+                                                                                                const qty = Number(selectedItems[item.id] || 0);
+                                                                                                const note = box.itemNotes?.[item.id] || '';
+                                                                                                const isSelected = qty > 0;
+                                                                                                return (
+                                                                                                    <div key={item.id} style={{ border: isSelected ? '1px solid var(--color-primary)' : '1px solid var(--border-color)', backgroundColor: isSelected ? 'rgba(var(--color-primary-rgb), 0.05)' : 'var(--bg-app)', borderRadius: '8px', padding: '12px', display: 'flex', flexDirection: 'column', gap: '10px', transition: 'all 0.2s ease', boxShadow: isSelected ? '0 2px 4px rgba(0,0,0,0.05)' : 'none' }}>
+                                                                                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '10px' }}>
+                                                                                                            <div style={{ flex: 1 }}><div style={{ fontWeight: 600, fontSize: '0.9rem', color: isSelected ? 'var(--color-primary)' : 'var(--text-primary)' }}>{item.name}</div>{(item.quotaValue || 1) !== 1 && <div style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)', marginTop: '2px' }}>Counts as {item.quotaValue} meals</div>}</div>
+                                                                                                            <div className={styles.quantityControl} style={{ display: 'flex', alignItems: 'center', gap: '8px', backgroundColor: 'var(--bg-surface)', padding: '2px', borderRadius: '6px', border: '1px solid var(--border-color)' }}>
+                                                                                                                <button onClick={() => handleNewColumnBoxItemUpdate(index, item.id, Math.max(0, qty - 1), note)} className="btn btn-ghost btn-sm" style={{ width: '24px', height: '24px', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }} disabled={qty === 0}>-</button>
+                                                                                                                <span style={{ width: '24px', textAlign: 'center', fontWeight: 600, fontSize: '0.9rem' }}>{qty}</span>
+                                                                                                                <button onClick={() => handleNewColumnBoxItemUpdate(index, item.id, qty + 1, note)} className="btn btn-ghost btn-sm" style={{ width: '24px', height: '24px', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>+</button>
+                                                                                                            </div>
+                                                                                                        </div>
+                                                                                                        {isSelected && <div style={{ marginTop: '0px' }}><TextareaAutosize minRows={1} placeholder="Add notes for this item..." value={note} onChange={(e) => handleNewColumnBoxItemUpdate(index, item.id, qty, e.target.value)} style={{ width: '100%', fontSize: '0.85rem', padding: '6px 8px', borderRadius: '6px', border: '1px solid rgba(0,0,0,0.1)', backgroundColor: 'rgba(255,255,255,0.5)', resize: 'none' }} /></div>}
+                                                                                                    </div>
+                                                                                                );
+                                                                                            })}
+                                                                                        </div>
+                                                                                    </div>
+                                                                                );
+                                                                            })()}
+                                                                        </>
+                                                                    )}
+                                                                </div>
+                                                            </div>
+                                                        ))}
+                                                        {(!formData.approvedMealsPerWeek || currentBoxes.length < formData.approvedMealsPerWeek) && (
+                                                            <button type="button" className="btn btn-outline" style={{ width: '100%', borderStyle: 'dashed', padding: '1rem', display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '0.5rem' }} onClick={handleNewColumnAddBox} disabled={savingNewColumn}>
+                                                                <Plus size={16} /> Add Another Box
+                                                            </button>
+                                                        )}
+                                                    </div>
+                                                )}
+                                                <div className={styles.divider} style={{ marginTop: '2rem', marginBottom: '1rem' }} />
+                                                <div style={{ marginTop: '1rem' }}>
+                                                    <h4 style={{ fontSize: '0.9rem', marginBottom: '0.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}><Wrench size={14} /> Equipment Order</h4>
+                                                    {!showEquipmentOrder ? (
+                                                        <button className="btn btn-secondary" onClick={async () => { setShowEquipmentOrder(true); try { const freshEquipment = await getEquipment(); if (freshEquipment?.length) setEquipment(freshEquipment); } catch (err) { console.error('Error fetching equipment:', err); } }} style={{ width: '100%' }}>Equipment Order</button>
+                                                    ) : (
+                                                        <div style={{ padding: '1rem', backgroundColor: 'var(--bg-surface-hover)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)' }}>
+                                                            <div className={styles.formGroup}>
+                                                                <label className="label">Vendor</label>
+                                                                <select className="input" value={equipmentOrder?.vendorId || ''} onChange={e => setEquipmentOrder({ ...equipmentOrder, vendorId: e.target.value, equipmentId: '', caseId: orderConfig.caseId || '' })}>
+                                                                    <option value="">Select Vendor...</option>
+                                                                    {vendors.filter(v => v.serviceTypes?.includes('Equipment') && v.isActive).map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
+                                                                </select>
+                                                            </div>
+                                                            {equipmentOrder?.vendorId && (
+                                                                <div className={styles.formGroup}>
+                                                                    <label className="label">Equipment Item</label>
+                                                                    <select className="input" value={equipmentOrder?.equipmentId || ''} onChange={e => setEquipmentOrder({ ...equipmentOrder!, equipmentId: e.target.value })}>
+                                                                        <option value="">Select Equipment Item...</option>
+                                                                        {equipment.map(eq => <option key={eq.id} value={eq.id}>{eq.name} - ${eq.price.toFixed(2)}</option>)}
+                                                                    </select>
+                                                                </div>
+                                                            )}
+                                                            {equipmentOrder?.equipmentId && (
+                                                                <>
+                                                                    <div className={styles.formGroup}>
+                                                                        <label className="label">Case ID (Equipment Only)</label>
+                                                                        <input type="text" className="input" value={equipmentOrder.caseId} onChange={e => setEquipmentOrder({ ...equipmentOrder, caseId: e.target.value })} placeholder="Enter Case ID for this order" />
+                                                                    </div>
+                                                                    <div style={{ marginTop: '1rem', display: 'flex', gap: '0.5rem' }}>
+                                                                        <button className="btn btn-primary" onClick={async () => {
+                                                                            if (!equipmentOrder.vendorId || !equipmentOrder.equipmentId) { alert('Please select both vendor and equipment item'); return; }
+                                                                            if (isNewClient) { alert('Please save the client first before creating an equipment order.'); return; }
+                                                                            try {
+                                                                                setSubmittingEquipmentOrder(true);
+                                                                                await saveEquipmentOrder(clientId, equipmentOrder.vendorId, equipmentOrder.equipmentId, equipmentOrder.caseId);
+                                                                                setMessage('Equipment order submitted successfully!');
+                                                                                setTimeout(() => setMessage(null), 3000);
+                                                                                setShowEquipmentOrder(false);
+                                                                                setEquipmentOrder(null);
+                                                                                setLoadingRecentOrders(true);
+                                                                                const [activeOrderData, orderHistoryData] = await Promise.all([getActiveOrderForClient(clientId), getOrderHistory(clientId)]);
+                                                                                setActiveOrder(activeOrderData);
+                                                                                setOrderHistory(orderHistoryData || []);
+                                                                                setLoadingRecentOrders(false);
+                                                                            } catch (error: any) { alert(`Error submitting equipment order: ${error.message || 'Unknown error'}`); }
+                                                                            finally { setSubmittingEquipmentOrder(false); }
+                                                                        }} disabled={submittingEquipmentOrder}>{submittingEquipmentOrder ? 'Submitting...' : 'Submit Equipment Order'}</button>
+                                                                        <button className="btn btn-secondary" onClick={() => { setShowEquipmentOrder(false); setEquipmentOrder(null); }}>Cancel</button>
+                                                                    </div>
+                                                                </>
+                                                            )}
+                                                        </div>
+                                                    )}
+                                                </div>
+                                                <div style={{ marginTop: '1rem', display: 'flex', justifyContent: 'flex-end' }}>
+                                                    <button type="button" className={styles.btnPrimary} onClick={handleSaveNewColumnOrder} disabled={savingNewColumn}>
+                                                        {savingNewColumn ? <Loader2 size={16} className={styles.spin} /> : <Save size={16} />}
+                                                        {savingNewColumn ? ' Saving…' : ' Save to new column'}
+                                                    </button>
+                                                </div>
+                                            </>
+                                        )}
+                                    </section>
+                                );
+                            })()}
+
                             {/* Recent Orders Panel - Collapsible Shelf */}
                             <section className={styles.card} style={{ marginTop: 'var(--spacing-lg)' }}>
                                 <button
@@ -5861,8 +6602,8 @@ export function ClientProfileDetail({
             // CRITICAL FIX: Redistribute the fresh unified vendorSelections into deliveryDayOrders.
             // This ensures day-specific logic (Regular Orders) is respected, and universal items (Meals) are applied to all days.
      
-            const newDeliveryDayOrders: any = {};
-            const clientDeliveryDays = (formData as any).delivery_days || client?.delivery_days || [];
+            const newDeliveryDayOrders: any = { };
+                    const clientDeliveryDays = (formData as any).delivery_days || client?.delivery_days || [];
      
             vendorMap.forEach((selection: any) => {
                 const daysToApply = (selection.selectedDeliveryDays && selection.selectedDeliveryDays.length > 0)
@@ -5876,21 +6617,21 @@ export function ClientProfileDetail({
                     // Check if this vendor is already added to this day (merge if needed, though vendorMap is unique by vendorId)
                     newDeliveryDayOrders[day].vendorSelections.push({
                         vendorId: selection.vendorId,
-                        items: selection.items
+                    items: selection.items
                     });
                 });
             });
      
             if (Object.keys(newDeliveryDayOrders).length > 0) {
-                cleanedOrderConfig.deliveryDayOrders = newDeliveryDayOrders;
-                // We don't send flat vendorSelections since we are sending day-specific orders
-                delete cleanedOrderConfig.vendorSelections;
+                        cleanedOrderConfig.deliveryDayOrders = newDeliveryDayOrders;
+                    // We don't send flat vendorSelections since we are sending day-specific orders
+                    delete cleanedOrderConfig.vendorSelections;
             } else {
-                // Fallback if no days found (unlikely), send flat selections
-                cleanedOrderConfig.vendorSelections = Array.from(vendorMap.values());
+                        // Fallback if no days found (unlikely), send flat selections
+                        cleanedOrderConfig.vendorSelections = Array.from(vendorMap.values());
             }
         }
-        */
+                    */
 
         if (formData.serviceType === 'Food') {
             // PRIORITY 1: Check if we have per-vendor delivery days (itemsByDay format) - this is the new format
@@ -6000,7 +6741,7 @@ export function ClientProfileDetail({
         } else if (formData.serviceType === 'Boxes') {
             console.log('[ClientProfile] prepareActiveOrder: Processing Boxes service');
             console.log('[ClientProfile] prepareActiveOrder: orderConfig.boxOrders:', orderConfig.boxOrders?.length || 0, 'boxes');
-            
+
             if (orderConfig.vendorId !== undefined) {
                 cleanedOrderConfig.vendorId = orderConfig.vendorId;
             }
@@ -6591,17 +7332,17 @@ export function ClientProfileDetail({
                     // This handles cases where prepareActiveOrder() might have filtered out boxOrders incorrectly
                     const boxesFromActiveOrder = updateData.activeOrder?.boxOrders || [];
                     const boxesFromOrderConfig = orderConfig?.boxOrders || [];
-                    
+
                     // Prefer activeOrder.boxOrders, but fallback to orderConfig.boxOrders if activeOrder is empty
                     const boxesToSave = boxesFromActiveOrder.length > 0 ? boxesFromActiveOrder : boxesFromOrderConfig;
-                    
+
                     console.log('[ClientProfile] DEBUG Box Save:', {
                         activeOrderBoxesCount: boxesFromActiveOrder.length,
                         orderConfigBoxesCount: boxesFromOrderConfig.length,
                         finalBoxesCount: boxesToSave.length,
                         caseId: updateData.activeOrder?.caseId || orderConfig?.caseId
                     });
-                    
+
                     if (boxesToSave.length === 0) {
                         console.warn('[ClientProfile] WARNING: No box orders to save! Both activeOrder and orderConfig have empty boxOrders.');
                     } else {
@@ -6630,12 +7371,12 @@ export function ClientProfileDetail({
             /*
             if (hasOrderConfigChanges || hasOrderChanges) {
                 const updatedUpcomingOrder = await getUpcomingOrderForClient(clientId);
-                if (updatedUpcomingOrder) {
-                    setOrderConfig(updatedUpcomingOrder);
-                    setOriginalOrderConfig(JSON.parse(JSON.stringify(updatedUpcomingOrder)));
+                                    if (updatedUpcomingOrder) {
+                                        setOrderConfig(updatedUpcomingOrder);
+                                    setOriginalOrderConfig(JSON.parse(JSON.stringify(updatedUpcomingOrder)));
                 }
             }
-            */
+                                    */
 
             // Show cutoff-aware confirmation message if order was saved
             let confirmationMessage = 'Changes saved successfully.';
@@ -6942,6 +7683,7 @@ export function ClientProfileDetail({
                     {renderClientInfoSection()}
                     {renderServiceConfigSection()}
                     {renderOrderConfigSection()}
+                    {renderNewColumnOrderSection()}
                     {renderRecentOrdersSection()}
                     {renderOrderHistorySection()}
                     {renderBillingHistorySection()}
