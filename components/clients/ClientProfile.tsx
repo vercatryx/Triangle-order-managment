@@ -2345,6 +2345,8 @@ export function ClientProfileDetail({
     // --- New column (clients.upcoming_order) handlers — same UX, load/save only this column ---
     function handleNewColumnAddBox() {
         const currentBoxes = newColumnOrderConfig.boxOrders || [];
+        const limit = formData.approvedMealsPerWeek;
+        if (limit && currentBoxes.length >= limit) return;
         const firstActiveBoxType = boxTypes.find(bt => bt.isActive);
         setNewColumnOrderConfig({
             ...newColumnOrderConfig,
@@ -2458,11 +2460,22 @@ export function ClientProfileDetail({
         try {
             const payload = prepareNewColumnOrder();
             await updateClientUpcomingOrder(client.id, payload ?? null);
-            invalidateClientData();
+            invalidateClientData(client.id);
             const fresh = await getClient(client.id);
             if (fresh) {
                 lastUpcomingOrderClientIdRef.current = null; // Allow useEffect to re-sync with fresh DB state
                 setClient(fresh);
+                // Refresh Order History section so the new "Upcoming order saved" entry appears
+                try {
+                    const raw = (fresh as any).orderHistory ?? (fresh as any).order_history;
+                    if (raw != null) {
+                        const parsed = Array.isArray(raw) ? raw : (typeof raw === 'string' ? JSON.parse(raw) : []);
+                        const sorted = [...parsed].sort((a: any, b: any) => new Date(b.timestamp || 0).getTime() - new Date(a.timestamp || 0).getTime());
+                        setClientOrderHistory(sorted);
+                    }
+                } catch (_) {
+                    // ignore parse errors; section will refresh on next full load
+                }
             }
             setMessage('Saved to new upcoming order column.');
             setTimeout(() => setMessage(null), 3000);
@@ -3598,14 +3611,7 @@ export function ClientProfileDetail({
                 </div>
             )}
 
-            {useNewColumn && (
-                <div style={{ marginTop: '1rem', display: 'flex', justifyContent: 'flex-end' }}>
-                    <button type="button" className={styles.btnPrimary} onClick={handleSaveNewColumnOrder} disabled={isSaving}>
-                        {isSaving ? <Loader2 size={16} className={styles.spin} /> : <Save size={16} />}
-                        {isSaving ? ' Saving…' : ' Save to new column'}
-                    </button>
-                </div>
-            )}
+            {/* Save to new column removed: main Save button at bottom now performs this action */}
         </section>
         );
     }
@@ -3975,7 +3981,7 @@ export function ClientProfileDetail({
                                 <div key={entryKey} className={styles.card} style={{ marginBottom: '1.5rem', borderLeft: isCurrentOrder ? '4px solid rgb(34, 197, 94)' : '4px solid var(--color-primary)', backgroundColor: 'var(--bg-surface)' }}>
                                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem', borderBottom: '1px solid var(--border-color)', paddingBottom: '0.5rem' }}>
                                         <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
-                                            <strong>{entry.type === 'order_created' ? 'Order Created' : 'Order Updated'}</strong>
+                                            <strong>{entry.type === 'upcoming' ? 'Upcoming order saved' : entry.type === 'order_created' ? 'Order Created' : 'Order Updated'}</strong>
                                             <span className={styles.budget} style={{ fontSize: '0.8rem' }}>{entry.serviceType}</span>
                                         </div>
                                         <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
@@ -4018,13 +4024,41 @@ export function ClientProfileDetail({
                                                 {/* Food / Meal / Custom - Vendor Selections */}
                                                 {entry.orderDetails.vendorSelections && Array.isArray(entry.orderDetails.vendorSelections) && (
                                                     <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                                                        {entry.orderDetails.vendorSelections.map((vs: any, vIdx: number) => (
+                                                        {entry.orderDetails.vendorSelections.map((vs: any, vIdx: number) => {
+                                                            const rawVs = entry.orderData?.vendorSelections?.[vIdx];
+                                                            const hasItemsByDay = rawVs?.itemsByDay && typeof rawVs.itemsByDay === 'object' && Object.keys(rawVs.itemsByDay).length > 0;
+                                                            const fallbackItems: { itemName: string; quantity: number }[] = [];
+                                                            if (hasItemsByDay && (!vs.itemsDetails || vs.itemsDetails.length === 0)) {
+                                                                const merged: Record<string, number> = {};
+                                                                for (const day of Object.keys(rawVs.itemsByDay)) {
+                                                                    const dayItems = rawVs.itemsByDay[day];
+                                                                    if (dayItems && typeof dayItems === 'object') {
+                                                                        for (const [itemId, qty] of Object.entries(dayItems)) {
+                                                                            const n = typeof qty === 'number' ? qty : parseInt(String(qty), 10) || 0;
+                                                                            if (n > 0) merged[itemId] = (merged[itemId] || 0) + n;
+                                                                        }
+                                                                    }
+                                                                }
+                                                                for (const [itemId, qty] of Object.entries(merged)) {
+                                                                    const menuItem = menuItems.find((m: any) => m.id === itemId);
+                                                                    fallbackItems.push({ itemName: menuItem?.name || 'Unknown Item', quantity: qty as number });
+                                                                }
+                                                            }
+                                                            return (
                                                             <div key={vIdx} style={{ backgroundColor: 'var(--bg-surface-hover)', padding: '0.5rem', borderRadius: '4px' }}>
                                                                 <div style={{ fontWeight: 600, marginBottom: '0.25rem' }}>{vs.vendorName || 'Unknown Vendor'}</div>
-                                                                {/* Items List */}
-                                                                {vs.itemsDetails && Array.isArray(vs.itemsDetails) ? (
+                                                                {/* Items List — use itemsDetails, or fallback from orderData.itemsByDay for older entries */}
+                                                                {vs.itemsDetails && Array.isArray(vs.itemsDetails) && vs.itemsDetails.length > 0 ? (
                                                                     <ul style={{ margin: 0, paddingLeft: '1.2rem', fontSize: '0.9rem' }}>
                                                                         {vs.itemsDetails.map((item: any, iIdx: number) => (
+                                                                            <li key={iIdx}>
+                                                                                {item.itemName} x{item.quantity}
+                                                                            </li>
+                                                                        ))}
+                                                                    </ul>
+                                                                ) : fallbackItems.length > 0 ? (
+                                                                    <ul style={{ margin: 0, paddingLeft: '1.2rem', fontSize: '0.9rem' }}>
+                                                                        {fallbackItems.map((item: any, iIdx: number) => (
                                                                             <li key={iIdx}>
                                                                                 {item.itemName} x{item.quantity}
                                                                             </li>
@@ -4034,7 +4068,8 @@ export function ClientProfileDetail({
                                                                     <div style={{ fontSize: '0.9rem', fontStyle: 'italic' }}>Items: {Object.keys(vs.items || {}).length}</div>
                                                                 )}
                                                             </div>
-                                                        ))}
+                                                            );
+                                                        })}
                                                     </div>
                                                 )}
 
@@ -4088,17 +4123,41 @@ export function ClientProfileDetail({
                                                     </div>
                                                 )}
 
-                                                {/* Delivery Day Orders (Food Alternative Structure) */}
-                                                {entry.orderDetails.deliveryDayOrders && !entry.orderDetails.vendorSelections && !entry.orderDetails.mealSelections && (
-                                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                                                        {Object.entries(entry.orderDetails.deliveryDayOrders).map(([day, dayData]: [string, any]) => (
+                                                {/* Delivery Day Orders (Food by day — show whenever present, can appear with vendorSelections/mealSelections) */}
+                                                {(() => {
+                                                    const dayOrders = entry.orderDetails.deliveryDayOrders && Object.keys(entry.orderDetails.deliveryDayOrders).length > 0
+                                                        ? entry.orderDetails.deliveryDayOrders
+                                                        : null;
+                                                    const fromOrderDataByDay: Record<string, { vendorSelections: { vendorName: string; itemsDetails: { itemName: string; quantity: number }[] }[] }> = {};
+                                                    if (!dayOrders && entry.orderData?.vendorSelections) {
+                                                        for (const vs of entry.orderData.vendorSelections) {
+                                                            if (!vs?.itemsByDay || typeof vs.itemsByDay !== 'object') continue;
+                                                            const vendorName = vendors.find((v: any) => v.id === vs.vendorId)?.name || 'Unknown Vendor';
+                                                            for (const [day, dayItems] of Object.entries(vs.itemsByDay)) {
+                                                                const items = (dayItems && typeof dayItems === 'object') ? dayItems : {};
+                                                                if (Object.keys(items).length === 0) continue;
+                                                                if (!fromOrderDataByDay[day]) fromOrderDataByDay[day] = { vendorSelections: [] };
+                                                                const itemsDetails = Object.entries(items).map(([itemId, qty]) => {
+                                                                    const menuItem = menuItems.find((m: any) => m.id === itemId);
+                                                                    return { itemName: menuItem?.name || 'Unknown Item', quantity: typeof qty === 'number' ? qty : parseInt(String(qty), 10) || 0 };
+                                                                });
+                                                                fromOrderDataByDay[day].vendorSelections.push({ vendorName, itemsDetails });
+                                                            }
+                                                        }
+                                                    }
+                                                    const showByDay = dayOrders || (Object.keys(fromOrderDataByDay).length > 0 ? fromOrderDataByDay : null);
+                                                    return showByDay ? (
+                                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginTop: entry.orderDetails.vendorSelections || entry.orderDetails.mealSelections ? '0.75rem' : 0 }}>
+                                                        {(entry.orderDetails.vendorSelections || entry.orderDetails.mealSelections) && (
+                                                            <div style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-tertiary)', marginBottom: '0.25rem' }}>Food (by delivery day)</div>
+                                                        )}
+                                                        {Object.entries(showByDay).map(([day, dayData]: [string, any]) => (
                                                             <div key={day}>
                                                                 <div style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '0.25rem' }}>{day}</div>
                                                                 {(dayData.vendorSelections || []).map((vs: any, vIdx: number) => (
                                                                     <div key={vIdx} style={{ backgroundColor: 'var(--bg-surface-hover)', padding: '0.5rem', borderRadius: '4px', marginBottom: '0.5rem' }}>
                                                                         <div style={{ fontWeight: 600, marginBottom: '0.25rem' }}>{vs.vendorName || 'Unknown Vendor'}</div>
-                                                                        {/* Items List */}
-                                                                        {vs.itemsDetails && Array.isArray(vs.itemsDetails) ? (
+                                                                        {vs.itemsDetails && Array.isArray(vs.itemsDetails) && vs.itemsDetails.length > 0 ? (
                                                                             <ul style={{ margin: 0, paddingLeft: '1.2rem', fontSize: '0.9rem' }}>
                                                                                 {vs.itemsDetails.map((item: any, iIdx: number) => (
                                                                                     <li key={iIdx}>
@@ -4114,7 +4173,8 @@ export function ClientProfileDetail({
                                                             </div>
                                                         ))}
                                                     </div>
-                                                )}
+                                                    ) : null;
+                                                })()}
 
                                                 {/* Box Orders */}
                                                 {entry.orderDetails.boxOrders && Array.isArray(entry.orderDetails.boxOrders) && (
@@ -4688,6 +4748,8 @@ export function ClientProfileDetail({
                         )}
 
                         <div className={styles.column}>
+                            {/* HIDE: regular Service Configuration / Current Order — show only Upcoming orders configuration. Wrapped in false && to avoid nested comment issues. */}
+                            {false && (
                             <section className={styles.card}>
                                 <h3 className={styles.sectionTitle}>Service Configuration</h3>
 
@@ -5586,6 +5648,33 @@ export function ClientProfileDetail({
                                 )
                                 }
                             </section>
+                            )}
+
+                            {/* Authorization & limits — follows Client type (Food/Boxes); saves to clients.approved_meals_per_week; same structure as Upcoming orders card */}
+                            {(currentUser?.role === 'admin' || currentUser?.role === 'super_admin') && (() => {
+                                const authType = newColumnOrderConfig?.serviceType ?? formData.serviceType ?? 'Food';
+                                const isBoxes = authType === 'Boxes';
+                                const isFoodOrMeal = authType === 'Food' || authType === 'Meal';
+                                if (!isBoxes && !isFoodOrMeal) return null;
+                                return (
+                                    <section className={styles.card} style={{ marginTop: 'var(--spacing-lg)' }}>
+                                        <h3 className={styles.sectionTitle}>Authorization & limits</h3>
+                                        <div className={styles.formGroup}>
+                                            <label className="label">{isBoxes ? 'Max Boxes' : 'Max Meals'}</label>
+                                            <input
+                                                type="number"
+                                                className="input"
+                                                value={formData.approvedMealsPerWeek ?? ''}
+                                                onChange={e => setFormData({ ...formData, approvedMealsPerWeek: e.target.value ? parseInt(e.target.value) : undefined })}
+                                                min={isBoxes ? 1 : MIN_APPROVED_MEALS_PER_WEEK}
+                                                max={isBoxes ? undefined : MAX_APPROVED_MEALS_PER_WEEK}
+                                                placeholder={isBoxes ? '1' : '21'}
+                                                disabled={saving}
+                                            />
+                                        </div>
+                                    </section>
+                                );
+                            })()}
 
                             {/* Upcoming orders configuration — verbatim copy of Current Order UI; saves to clients.upcoming_order only */}
                             {(() => {
@@ -5940,12 +6029,7 @@ export function ClientProfileDetail({
                                                         </div>
                                                     )}
                                                 </div>
-                                                <div style={{ marginTop: '1rem', display: 'flex', justifyContent: 'flex-end' }}>
-                                                    <button type="button" className={styles.btnPrimary} onClick={handleSaveNewColumnOrder} disabled={savingNewColumn}>
-                                                        {savingNewColumn ? <Loader2 size={16} className={styles.spin} /> : <Save size={16} />}
-                                                        {savingNewColumn ? ' Saving…' : ' Save to new column'}
-                                                    </button>
-                                                </div>
+                                                {/* Save to new column removed: main Save button performs this action */}
                                             </>
                                         )}
                                     </section>
@@ -6387,59 +6471,41 @@ export function ClientProfileDetail({
         </>
     );
 
+    /** Check if both current order config and upcoming order config are empty. If upcoming has content, we consider order not empty (main save now saves upcoming order). */
     function isOrderCompletelyEmpty(): boolean {
-        const st = formData.serviceType;
+        const nc = newColumnOrderConfig;
+        const st = (nc?.serviceType || formData.serviceType) as string;
+        const config = nc ?? orderConfig;
         if (st === 'Food') {
-            const hasDeliveryDays = orderConfig?.deliveryDayOrders && Object.keys(orderConfig.deliveryDayOrders).length > 0;
-            const hasItemsInDeliveryDays = hasDeliveryDays && Object.values(orderConfig.deliveryDayOrders).some((dayData: any) => {
+            const hasDeliveryDays = config?.deliveryDayOrders && Object.keys(config.deliveryDayOrders).length > 0;
+            const hasItemsInDeliveryDays = hasDeliveryDays && Object.values(config.deliveryDayOrders).some((dayData: any) => {
                 const selections = dayData?.vendorSelections || [];
                 return selections.some((s: any) => s.vendorId && ((s.items && Object.keys(s.items).length > 0) || (s.itemsByDay && Object.keys(s.itemsByDay).length > 0)));
             });
-            const hasVendorItems = orderConfig?.vendorSelections?.some((s: any) => s.vendorId && ((s.items && Object.keys(s.items).length > 0) || (s.itemsByDay && Object.keys(s.itemsByDay).length > 0)));
+            const hasVendorItems = config?.vendorSelections?.some((s: any) => s.vendorId && ((s.items && Object.keys(s.items).length > 0) || (s.itemsByDay && Object.keys(s.itemsByDay).length > 0)));
             return !hasItemsInDeliveryDays && !hasVendorItems;
         }
         if (st === 'Meal') {
-            const hasMeals = orderConfig?.mealSelections && Object.keys(orderConfig.mealSelections).length > 0;
+            const hasMeals = config?.mealSelections && Object.keys(config.mealSelections).length > 0;
             return !hasMeals;
         }
         if (st === 'Boxes') {
-            const boxes = orderConfig?.boxOrders || [];
-
-            console.log('DEBUG_EMPTY_CHECK: Checking boxes...', {
-                boxCount: boxes.length,
-                rootItems: orderConfig?.items,
-                fullConfig: orderConfig
-            });
-
-            // Check boxOrders if they exist
+            const boxes = config?.boxOrders || [];
             let hasItemsInBoxes = false;
             if (boxes.length > 0) {
                 hasItemsInBoxes = boxes.some((b: any) => {
                     const items = b.items;
-                    const has = items && typeof items === 'object' && Object.values(items).some((qty: any) => Number(qty) > 0);
-                    console.log('DEBUG_EMPTY_CHECK: Box items check:', { items, has });
-                    return has;
+                    return items && typeof items === 'object' && Object.values(items).some((qty: any) => Number(qty) > 0);
                 });
             }
-
-            console.log('DEBUG_EMPTY_CHECK: hasItemsInBoxes result:', hasItemsInBoxes);
-
             if (hasItemsInBoxes) return false;
-
-            // Fallback: Check root items (Single Box / Legacy mode)
-            // This handles updates from handleBoxItemChange which sets items on root
-            // even if boxOrders array exists (e.g. initialized but not updated by legacy handlers)
-            const rootItems = orderConfig?.items;
+            const rootItems = config?.items;
             const hasRootItems = rootItems && typeof rootItems === 'object' && Object.values(rootItems).some((qty: any) => Number(qty) > 0);
-
-            console.log('DEBUG_EMPTY_CHECK: hasRootItems result:', { rootItems, hasRootItems });
-
             return !hasRootItems;
         }
         if (st === 'Custom') {
-            return !orderConfig?.custom_name?.trim() || (orderConfig.custom_price !== 0 && (orderConfig.custom_price == null || orderConfig.custom_price === '')) || !orderConfig.vendorId || !orderConfig.deliveryDay;
+            return !config?.custom_name?.trim() || (config.custom_price !== 0 && (config.custom_price == null || config.custom_price === '')) || !config.vendorId || !config.deliveryDay;
         }
-        // Equipment and other types: no order-config empty check
         return false;
     }
 
@@ -6475,8 +6541,8 @@ export function ClientProfileDetail({
             }
         }
 
-        // Validate Order Config before saving (if we have config)
-        if (orderConfig && orderConfig.caseId) {
+        // Validate order config before saving (validateOrder uses orderConfig; we save newColumnOrderConfig)
+        if (orderConfig?.caseId) {
             const validation = await validateOrder();
             if (!validation.isValid) {
                 setValidationError(validation.messages.join('\n'));
@@ -7174,12 +7240,13 @@ export function ClientProfileDetail({
                 changes.push(`Expiration Date: ${client.expirationDate || 'null'} -> ${formData.expirationDate || 'null'}`);
             }
 
-            // Check if any functional change occurred
-            const hasOrderConfigChanges = JSON.stringify(orderConfig) !== JSON.stringify(originalOrderConfig);
-            const hasOrderChanges = !!(orderConfig && orderConfig.caseId);
+            // Check if any functional change occurred (main save now persists upcoming order only)
+            const prevUpcoming = (client as any)?.upcoming_order ?? client?.upcomingOrder ?? {};
+            const hasOrderConfigChanges = JSON.stringify(newColumnOrderConfig) !== JSON.stringify(prevUpcoming);
+            const hasOrderChanges = !!(newColumnOrderConfig && newColumnOrderConfig.caseId);
 
-            // Generate the full snapshot
-            const orderSnapshot = generateOrderSnapshot(orderConfig);
+            // Generate the full snapshot from upcoming order config (what we save)
+            const orderSnapshot = generateOrderSnapshot(newColumnOrderConfig);
 
             let summary = '';
             if (changes.length > 0 || hasOrderConfigChanges) {
@@ -7210,10 +7277,10 @@ export function ClientProfileDetail({
             // Prepare the updated JSONB history for the clients table
             // This is the "One Thing" that gets saved to persist history
 
-            // Prepare the updated JSONB history for the clients table
+            // Prepare the updated JSONB history for the clients table (reflects upcoming order we save)
             const newHistoryEntry = {
                 type: 'save_event',
-                orderDetails: orderConfig,
+                orderDetails: newColumnOrderConfig,
                 snapshot: orderSnapshot,
                 timestamp: new Date().toISOString(),
                 updatedBy: currentUser?.role || currentUser?.id || 'Admin'
@@ -7237,110 +7304,95 @@ export function ClientProfileDetail({
                 });
             }
 
-            // Sync Current Order Request
-            if (hasOrderConfigChanges || hasOrderChanges) {
-
-
-                // Add activeOrder to updateData so updateClient handles the full save + sync efficiently
-                // efficiently with only ONE revalidation
-                updateData.activeOrder = prepareActiveOrder();
-
-
-            }
-
-            // CRITICAL: Execute the single update call
-            const payloadLog = {
-                id: clientId,
-                hasActiveOrder: !!updateData.activeOrder,
-                activeOrderKeys: updateData.activeOrder ? Object.keys(updateData.activeOrder) : [],
-                mealSelections: updateData.activeOrder?.mealSelections
-            };
-
+            // Main save now only persists upcoming order (no activeOrder sync to food/meal/box tables)
 
             await updateClient(clientId, updateData, { skipHistory: true });
 
-            // Sync to new independent tables if there's order data
-            // Sync to new independent tables if there's order data OR if we need to clear data
-            // PERFORMANCE: Parallelize all save operations since they're independent
-            console.log('[ClientProfile] Checking if order save is needed:', {
-                hasActiveOrder: !!updateData.activeOrder,
-                caseId: updateData.activeOrder?.caseId,
-                serviceType: formData.serviceType
-            });
+            // Save upcoming order (same as former "Save to new column" button)
+            await updateClientUpcomingOrder(clientId, prepareNewColumnOrder());
+            invalidateClientData(clientId);
+            lastUpcomingOrderClientIdRef.current = null;
+            const fresh = await getClient(clientId);
+            if (fresh) {
+                setClient(fresh);
+                try {
+                    const raw = (fresh as any).orderHistory ?? (fresh as any).order_history;
+                    if (raw != null) {
+                        const parsed = Array.isArray(raw) ? raw : (typeof raw === 'string' ? JSON.parse(raw) : []);
+                        const sorted = [...parsed].sort((a: any, b: any) => new Date(b.timestamp || 0).getTime() - new Date(a.timestamp || 0).getTime());
+                        setClientOrderHistory(sorted);
+                    }
+                } catch (_) {
+                    // ignore parse errors
+                }
+            }
 
-            if (updateData.activeOrder && updateData.activeOrder.caseId) {
+            // Legacy active-order sync block disabled: main save only updates client profile + upcoming_order
+            const _legacyActiveOrder = updateData.activeOrder;
+            if (false && _legacyActiveOrder?.caseId) {
+                const ao = _legacyActiveOrder!;
                 const serviceType = formData.serviceType;
                 const savePromises: Promise<any>[] = [];
 
                 if (serviceType === 'Custom') {
                     console.log('[ClientProfile] Saving Custom Order...');
-                    // Check for required fields with strict checks (allow price to be 0)
-                    if (updateData.activeOrder.custom_name &&
-                        updateData.activeOrder.custom_price !== undefined &&
-                        updateData.activeOrder.custom_price !== null &&
-                        updateData.activeOrder.vendorId &&
-                        updateData.activeOrder.deliveryDay) {
+                    if (ao.custom_name &&
+                        ao.custom_price !== undefined &&
+                        ao.custom_price !== null &&
+                        ao.vendorId &&
+                        ao.deliveryDay) {
 
                         savePromises.push(
                             saveClientCustomOrder(
                                 clientId,
-                                updateData.activeOrder.vendorId,
-                                updateData.activeOrder.custom_name,
-                                Number(updateData.activeOrder.custom_price),
-                                updateData.activeOrder.deliveryDay,
-                                updateData.activeOrder.caseId,
+                                ao.vendorId!,
+                                ao.custom_name!,
+                                Number(ao.custom_price),
+                                ao.deliveryDay!,
+                                ao.caseId,
                                 { skipHistory: true }
                             )
                         );
                     } else {
-                        console.warn('[ClientProfile] Custom order missing required fields, skipping save.', updateData.activeOrder);
+                        console.warn('[ClientProfile] Custom order missing required fields, skipping save.', ao);
                         setMessage('Error: Custom Order details are incomplete (Check Description, Price, Vendor, and Day).');
                         setSaving(false);
-                        return false; // Stop the save
+                        return false;
                     }
                 }
 
-                // Save to appropriate independent tables based on what data exists
-                // NOTE: A Food service client can have BOTH deliveryDayOrders AND mealSelections (e.g., Breakfast)
-
-                // Save food orders: ALWAYS if service type is Food, to allow clearing
                 if (serviceType === 'Food') {
                     console.log('[ClientProfile] Saving Food Order...');
                     savePromises.push(
                         saveClientFoodOrder(clientId, {
-                            caseId: updateData.activeOrder.caseId,
-                            deliveryDayOrders: updateData.activeOrder.deliveryDayOrders || {}
+                            caseId: ao.caseId,
+                            deliveryDayOrders: ao.deliveryDayOrders || {}
                         }, { skipHistory: true })
                     );
                 }
 
-                // Save meal orders if mealSelections exists OR if service type is Meal OR if service type is Food (to allow clearing)
-                if (updateData.activeOrder.mealSelections || serviceType === 'Meal' || serviceType === 'Food') {
+                if (ao.mealSelections || serviceType === 'Meal' || serviceType === 'Food') {
                     console.log('[ClientProfile] Saving Meal Order...');
                     savePromises.push(
                         saveClientMealOrder(clientId, {
-                            caseId: updateData.activeOrder.caseId,
-                            mealSelections: updateData.activeOrder.mealSelections || {}
+                            caseId: ao.caseId,
+                            mealSelections: ao.mealSelections || {}
                         }, { skipHistory: true })
                     );
                 }
 
-                // Save box orders if it's a Boxes service
                 if (serviceType === 'Boxes') {
                     console.log('[ClientProfile] Saving Box Orders...');
-                    // CRITICAL FIX: Use orderConfig.boxOrders directly if updateData.activeOrder.boxOrders is empty
-                    // This handles cases where prepareActiveOrder() might have filtered out boxOrders incorrectly
-                    const boxesFromActiveOrder = updateData.activeOrder?.boxOrders || [];
+                    const boxesFromActiveOrder = ao?.boxOrders || [];
                     const boxesFromOrderConfig = orderConfig?.boxOrders || [];
 
-                    // Prefer activeOrder.boxOrders, but fallback to orderConfig.boxOrders if activeOrder is empty
                     const boxesToSave = boxesFromActiveOrder.length > 0 ? boxesFromActiveOrder : boxesFromOrderConfig;
 
                     console.log('[ClientProfile] DEBUG Box Save:', {
                         activeOrderBoxesCount: boxesFromActiveOrder.length,
                         orderConfigBoxesCount: boxesFromOrderConfig.length,
                         finalBoxesCount: boxesToSave.length,
-                        caseId: updateData.activeOrder?.caseId || orderConfig?.caseId
+                        caseId: ao?.caseId || orderConfig?.caseId
                     });
 
                     if (boxesToSave.length === 0) {
@@ -7349,7 +7401,7 @@ export function ClientProfileDetail({
                         savePromises.push(
                             saveClientBoxOrder(clientId, boxesToSave.map((box: any) => ({
                                 ...box,
-                                caseId: updateData.activeOrder?.caseId || orderConfig?.caseId
+                                caseId: ao?.caseId || orderConfig?.caseId
                             })), { skipHistory: true })
                         );
                     }
@@ -7378,18 +7430,10 @@ export function ClientProfileDetail({
             }
                                     */
 
-            // Show cutoff-aware confirmation message if order was saved
-            let confirmationMessage = 'Changes saved successfully.';
-            if (hasOrderChanges && orderConfig && orderConfig.caseId) {
-                const cutoffPassed = isCutoffPassed();
-                const takeEffectDate = getEarliestTakeEffectDateForOrder();
-
-                if (cutoffPassed && takeEffectDate) {
-                    confirmationMessage = `Order saved. The weekly cutoff has passed, so this order will take effect on ${takeEffectDate.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', timeZone: 'UTC' })} (earliest effective date is always a Sunday). View Recent Orders section to see what will be delivered this week.`;
-                } else if (takeEffectDate) {
-                    confirmationMessage = `Order saved successfully. This order will take effect on ${takeEffectDate.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', timeZone: 'UTC' })}.`;
-                }
-            }
+            // Show confirmation message (main save now persists upcoming order)
+            let confirmationMessage = hasOrderChanges && newColumnOrderConfig?.caseId
+                ? 'Saved to upcoming order.'
+                : 'Changes saved successfully.';
 
             // Always close modal and client portal after saving (especially for navigators adding units)
             const wasNavigatorAddingUnits = currentUser?.role === 'navigator' && pendingStatusChange !== null;

@@ -1960,10 +1960,35 @@ async function buildOrderDetailsFromUpcomingOrder(upcomingOrder: any): Promise<a
             };
         });
     }
-    if (st === 'Food' && Array.isArray(upcomingOrder.vendorSelections) && upcomingOrder.vendorSelections.length > 0) {
+    // Food and Meal can coexist in same payload; include flat vendorSelections (food) for both
+    // When UI uses itemsByDay (per-day), merge into a single items map so order history shows food items
+    if ((st === 'Food' || st === 'Meal') && Array.isArray(upcomingOrder.vendorSelections) && upcomingOrder.vendorSelections.length > 0) {
         orderDetails.vendorSelections = upcomingOrder.vendorSelections.map((vs: any) => {
             const vendor = vendors.find((v: any) => v.id === vs.vendorId);
-            const itemsDetails = Object.entries(vs.items || {}).map(([itemId, qty]: [string, any]) => {
+            const flatItems: Record<string, number> = { ...(vs.items && typeof vs.items === 'object' ? vs.items : {}) };
+            if (vs.itemsByDay && typeof vs.itemsByDay === 'object') {
+                for (const day of Object.keys(vs.itemsByDay)) {
+                    const dayItems = vs.itemsByDay[day];
+                    if (dayItems && typeof dayItems === 'object') {
+                        for (const [itemId, qty] of Object.entries(dayItems)) {
+                            const n = typeof qty === 'number' ? qty : parseInt(String(qty), 10) || 0;
+                            if (n > 0) flatItems[itemId] = (flatItems[itemId] || 0) + n;
+                        }
+                    }
+                }
+            }
+            const itemNotesMerged: Record<string, string> = { ...(vs.itemNotes && typeof vs.itemNotes === 'object' ? vs.itemNotes : {}) };
+            if (vs.itemNotesByDay && typeof vs.itemNotesByDay === 'object') {
+                for (const day of Object.keys(vs.itemNotesByDay)) {
+                    const dayNotes = vs.itemNotesByDay[day];
+                    if (dayNotes && typeof dayNotes === 'object') {
+                        for (const [itemId, note] of Object.entries(dayNotes)) {
+                            if (note != null && note !== '') itemNotesMerged[itemId] = String(note);
+                        }
+                    }
+                }
+            }
+            const itemsDetails = Object.entries(flatItems).map(([itemId, qty]: [string, any]) => {
                 const menuItem = menuItems.find((mi: any) => mi.id === itemId);
                 return {
                     itemId,
@@ -1971,48 +1996,88 @@ async function buildOrderDetailsFromUpcomingOrder(upcomingOrder: any): Promise<a
                     quantity: qty,
                     unitValue: menuItem?.priceEach ?? menuItem?.value ?? 0,
                     totalValue: (menuItem?.priceEach ?? menuItem?.value ?? 0) * (qty as number),
-                    note: vs.itemNotes?.[itemId] || null
+                    note: itemNotesMerged[itemId] ?? vs.itemNotes?.[itemId] ?? null
                 };
             });
             return {
                 vendorId: vs.vendorId,
                 vendorName: vendor?.name || 'Unknown Vendor',
                 vendorEmail: vendor?.email || null,
-                items: vs.items || {},
-                itemNotes: vs.itemNotes || {},
+                items: flatItems,
+                itemNotes: itemNotesMerged,
                 itemsDetails
             };
         });
     }
-    if ((st === 'Food' || st === 'Meal') && upcomingOrder.deliveryDayOrders && Object.keys(upcomingOrder.deliveryDayOrders).length > 0) {
-        orderDetails.deliveryDayOrders = {};
-        for (const [day, dayData] of Object.entries(upcomingOrder.deliveryDayOrders)) {
-            const dayObj = dayData as any;
-            const selections = Array.isArray(dayObj?.vendorSelections) ? dayObj.vendorSelections : [];
-            orderDetails.deliveryDayOrders[day] = {
-                vendorSelections: selections.map((vs: any) => {
-                    const vendor = vendors.find((v: any) => v.id === vs.vendorId);
-                    const itemsDetails = Object.entries(vs.items || {}).map(([itemId, qty]: [string, any]) => {
+    // deliveryDayOrders: from explicit deliveryDayOrders OR from vendorSelections[].itemsByDay (UI per-day structure)
+    if (st === 'Food' || st === 'Meal') {
+        if (upcomingOrder.deliveryDayOrders && Object.keys(upcomingOrder.deliveryDayOrders).length > 0) {
+            orderDetails.deliveryDayOrders = orderDetails.deliveryDayOrders || {};
+            for (const [day, dayData] of Object.entries(upcomingOrder.deliveryDayOrders)) {
+                const dayObj = dayData as any;
+                const selections = Array.isArray(dayObj?.vendorSelections) ? dayObj.vendorSelections : [];
+                orderDetails.deliveryDayOrders[day] = {
+                    vendorSelections: selections.map((vs: any) => {
+                        const vendor = vendors.find((v: any) => v.id === vs.vendorId);
+                        const itemsDetails = Object.entries(vs.items || {}).map(([itemId, qty]: [string, any]) => {
+                            const menuItem = menuItems.find((mi: any) => mi.id === itemId);
+                            return {
+                                itemId,
+                                itemName: menuItem?.name || 'Unknown Item',
+                                quantity: qty,
+                                unitValue: menuItem?.priceEach ?? menuItem?.value ?? 0,
+                                totalValue: (menuItem?.priceEach ?? menuItem?.value ?? 0) * (qty as number),
+                                note: vs.itemNotes?.[itemId] || null
+                            };
+                        });
+                        return {
+                            vendorId: vs.vendorId,
+                            vendorName: vendor?.name || 'Unknown Vendor',
+                            vendorEmail: vendor?.email || null,
+                            items: vs.items || {},
+                            itemNotes: vs.itemNotes || {},
+                            itemsDetails
+                        };
+                    })
+                };
+            }
+        }
+        // Build deliveryDayOrders from vendorSelections[].itemsByDay so "which days" and "items per day" are saved and displayed
+        if (Array.isArray(upcomingOrder.vendorSelections) && upcomingOrder.vendorSelections.length > 0) {
+            const byDay: Record<string, { vendorSelections: any[] }> = {};
+            for (const vs of upcomingOrder.vendorSelections) {
+                if (!vs.itemsByDay || typeof vs.itemsByDay !== 'object') continue;
+                const vendor = vendors.find((v: any) => v.id === vs.vendorId);
+                for (const [day, dayItems] of Object.entries(vs.itemsByDay)) {
+                    const items = (dayItems && typeof dayItems === 'object') ? dayItems : {};
+                    if (Object.keys(items).length === 0) continue;
+                    const dayNotes = (vs.itemNotesByDay && vs.itemNotesByDay[day] && typeof vs.itemNotesByDay[day] === 'object') ? vs.itemNotesByDay[day] : {};
+                    const itemsDetails = Object.entries(items).map(([itemId, qty]: [string, any]) => {
                         const menuItem = menuItems.find((mi: any) => mi.id === itemId);
+                        const n = typeof qty === 'number' ? qty : parseInt(String(qty), 10) || 0;
                         return {
                             itemId,
                             itemName: menuItem?.name || 'Unknown Item',
-                            quantity: qty,
+                            quantity: n,
                             unitValue: menuItem?.priceEach ?? menuItem?.value ?? 0,
-                            totalValue: (menuItem?.priceEach ?? menuItem?.value ?? 0) * (qty as number),
-                            note: vs.itemNotes?.[itemId] || null
+                            totalValue: (menuItem?.priceEach ?? menuItem?.value ?? 0) * n,
+                            note: dayNotes[itemId] ?? vs.itemNotes?.[itemId] ?? null
                         };
                     });
-                    return {
+                    if (!byDay[day]) byDay[day] = { vendorSelections: [] };
+                    byDay[day].vendorSelections.push({
                         vendorId: vs.vendorId,
                         vendorName: vendor?.name || 'Unknown Vendor',
                         vendorEmail: vendor?.email || null,
-                        items: vs.items || {},
-                        itemNotes: vs.itemNotes || {},
+                        items,
+                        itemNotes: dayNotes,
                         itemsDetails
-                    };
-                })
-            };
+                    });
+                }
+            }
+            if (Object.keys(byDay).length > 0) {
+                orderDetails.deliveryDayOrders = { ...(orderDetails.deliveryDayOrders || {}), ...byDay };
+            }
         }
     }
     if ((st === 'Food' || st === 'Meal') && upcomingOrder.mealSelections && typeof upcomingOrder.mealSelections === 'object') {
