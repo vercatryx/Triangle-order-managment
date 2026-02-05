@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import Link from 'next/link';
 import styles from './Admin.module.css';
 import { StatusManagement } from '@/components/admin/StatusManagement';
 import { VendorManagement } from '@/components/admin/VendorManagement';
@@ -26,6 +27,13 @@ export default function AdminPage() {
             <header className={styles.header}>
                 <h1 className={styles.title}>Admin Control Panel</h1>
                 <p className={styles.subtitle}>Manage global configurations and resources.</p>
+                <p className={styles.subtitle} style={{ marginTop: '0.5rem' }}>
+                    Tools: <Link href="/admin/order-sync" className={styles.toolsLink}>Order sync</Link>
+                    {' · '}
+                    <Link href="/admin/vendor-day-mismatches" className={styles.toolsLink}>Vendor day mismatches</Link>
+                    {' · '}
+                    <Link href="/admin/cleanup" className={styles.toolsLink}>Cleanup (invalid meal types)</Link>
+                </p>
             </header>
 
             <div className={styles.tabs}>

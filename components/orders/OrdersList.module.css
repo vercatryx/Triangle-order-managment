@@ -56,7 +56,61 @@
     display: flex;
     gap: var(--spacing-md);
     margin-bottom: var(--spacing-lg);
+    align-items: flex-end;
+    flex-wrap: wrap;
+}
+
+.searchForm {
+    display: flex;
     align-items: center;
+    gap: 8px;
+}
+
+.searchBtn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 0.5rem 1rem;
+    font-size: 0.875rem;
+    font-weight: 500;
+    color: var(--text-primary);
+    background-color: var(--bg-surface);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    transition: background-color 0.15s, border-color 0.15s;
+}
+
+.searchBtn:hover {
+    background-color: var(--bg-surface-hover, rgba(0, 0, 0, 0.04));
+    border-color: var(--text-tertiary, rgba(0, 0, 0, 0.2));
+}
+
+.filterGroup {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+}
+
+.filterGroup.filterGroupStatus { width: 160px; }
+.filterGroup.filterGroupCreationId { width: 110px; }
+
+.filterGroup .label {
+    margin-bottom: 0;
+    white-space: nowrap;
+    font-size: 0.875rem;
+    color: var(--text-secondary);
+}
+
+.filterGroup .input {
+    width: 100%;
+    min-width: 0;
+}
+
+.filterGroup select.input {
+    width: 100%;
+    min-width: 80px;
 }
 
 .filters input[type="number"] {
@@ -71,7 +125,12 @@
 
 .searchBox {
     position: relative;
-    max-width: 400px;
+    max-width: 320px;
+}
+
+.searchInput {
+    padding-left: 2.5rem !important;
+    width: 100%;
 }
 
 .searchIcon {
@@ -138,6 +197,55 @@
 .empty {
     padding: var(--spacing-xl);
     text-align: center;
+    color: var(--text-secondary);
+}
+
+.pagination {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-top: 1rem;
+    padding: 0.75rem 0;
+    flex-wrap: wrap;
+    gap: 1rem;
+}
+
+.paginationSummary {
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+}
+
+.paginationControls {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    flex-wrap: wrap;
+}
+
+.perPageLabel {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.875rem;
+    color: var(--text-secondary);
+    margin: 0;
+}
+
+.perPageLabel .input {
+    width: auto;
+    min-width: 4.5rem;
+    padding: 0.35rem 0.5rem;
+    font-size: 0.875rem;
+}
+
+.pageBtn {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.pageInfo {
+    font-size: 0.9rem;
     color: var(--text-secondary);
 }
 

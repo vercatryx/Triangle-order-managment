@@ -4,13 +4,14 @@ import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Search, ChevronRight, Download, ChevronDown, ChevronUp, ExternalLink, Image } from 'lucide-react';
-import { getBillingRequestsByWeek, type BillingRequest } from '@/lib/actions';
+import { getBillingRequestsByWeek, type BillingRequest, type BillingRequestsResult } from '@/lib/actions';
 import { getWeekStart, getWeekOptions, getWeekRangeString } from '@/lib/utils';
 import styles from './BillingList.module.css';
 
 export function BillingList() {
     const router = useRouter();
     const [billingRequests, setBillingRequests] = useState<BillingRequest[]>([]);
+    const [loadStats, setLoadStats] = useState<{ totalOrdersFetched: number; ordersInSelectedWeek: number } | null>(null);
     const [search, setSearch] = useState('');
     const [statusFilter, setStatusFilter] = useState<'all' | 'ready' | 'completed' | 'success' | 'failed'>('all');
     const [selectedWeek, setSelectedWeek] = useState<Date | 'all' | null>(null);
@@ -44,11 +45,15 @@ export function BillingList() {
         setIsLoading(true);
         try {
             const weekArg = selectedWeek === 'all' ? undefined : selectedWeek;
-            const data = await getBillingRequestsByWeek(weekArg);
+            const data: BillingRequestsResult = await getBillingRequestsByWeek(weekArg);
             const current = selectedWeekRef.current;
             const currentKey = !current ? null : current === 'all' ? 'all' : current.getTime();
             if (currentKey !== weekKey) return;
-            setBillingRequests(data);
+            setBillingRequests(data.requests);
+            setLoadStats({
+                totalOrdersFetched: data.totalOrdersFetched,
+                ordersInSelectedWeek: data.ordersInSelectedWeek
+            });
         } catch (error) {
             const current = selectedWeekRef.current;
             const currentKey = !current ? null : current === 'all' ? 'all' : current.getTime();
@@ -549,7 +554,19 @@ export function BillingList() {
                     </div>
                 )}
             </div>
-            
+
+            {loadStats && !isLoading && (
+                <div className={styles.loadFooter}>
+                    <span className={styles.loadFooterText}>
+                        Loaded <strong>{loadStats.totalOrdersFetched.toLocaleString()}</strong> orders from database.
+                        {selectedWeek && selectedWeek !== 'all' ? (
+                            <> For this week: <strong>{loadStats.ordersInSelectedWeek.toLocaleString()}</strong> orders in <strong>{billingRequests.length}</strong> billing request(s). All orders for this week are included.</>
+                        ) : (
+                            <> <strong>{loadStats.ordersInSelectedWeek.toLocaleString()}</strong> total orders in <strong>{billingRequests.length}</strong> billing request(s).</>
+                        )}
+                    </span>
+                </div>
+            )}
         </div>
     );
 }

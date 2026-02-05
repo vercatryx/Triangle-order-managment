@@ -3123,7 +3123,7 @@ export function ClientProfileDetail({
         const updateBoxItem = useNewColumn ? handleNewColumnBoxItemUpdate : handleBoxItemUpdate;
         const isSaving = useNewColumn ? savingNewColumn : saving;
         const sectionTitle = useNewColumn ? 'Upcoming orders configuration' : 'Current Order Configuration';
-        const badge = useNewColumn ? (<span className={styles.badge} style={{ backgroundColor: 'var(--bg-surface-active)', color: 'var(--text-secondary)' }}>Saves to clients.upcoming_order only</span>) : (client && orderConfig.caseId ? <span className={styles.badge} style={{ backgroundColor: 'var(--bg-success)', color: 'var(--text-success)' }}>Active Order Configured</span> : null);
+        const badge = useNewColumn ? (<span className={styles.badge} style={{ backgroundColor: 'var(--bg-surface-active)', color: 'var(--text-secondary)' }}></span>) : (client && orderConfig.caseId ? <span className={styles.badge} style={{ backgroundColor: 'var(--bg-success)', color: 'var(--text-success)' }}>Active Order Configured</span> : null);
         const boxOrders = (config.boxOrders?.length ? config.boxOrders : [{ boxTypeId: '', vendorId: '', quantity: 1, items: {} }]);
         const boxCount = (config.boxOrders?.length ?? 0) || 1;
         return (

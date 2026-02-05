@@ -2873,7 +2873,15 @@ export interface BillingRequest {
     equipmentBillingStatus: 'success' | 'failed' | 'pending';
 }
 
-export async function getBillingRequestsByWeek(weekStartDate?: Date): Promise<BillingRequest[]> {
+export interface BillingRequestsResult {
+    requests: BillingRequest[];
+    /** Total orders fetched from DB (paginated until no more; confirms we loaded everything) */
+    totalOrdersFetched: number;
+    /** Orders that fall in the selected week (or all orders when "All weeks") */
+    ordersInSelectedWeek: number;
+}
+
+export async function getBillingRequestsByWeek(weekStartDate?: Date): Promise<BillingRequestsResult> {
     // Use Service Role if available to bypass RLS so all users see the same billing data
     let supabaseClient = supabase;
     const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -2905,7 +2913,7 @@ export async function getBillingRequestsByWeek(weekStartDate?: Date): Promise<Bi
 
         if (ordersError) {
             console.error('Error fetching orders:', ordersError);
-            return [];
+            return { requests: [], totalOrdersFetched: 0, ordersInSelectedWeek: 0 };
         }
         const rows = page || [];
         allOrdersData.push(...rows);
@@ -3081,7 +3089,14 @@ export async function getBillingRequestsByWeek(weekStartDate?: Date): Promise<Bi
         });
     }
 
-    return billingRequests;
+    const totalOrdersFetched = allOrdersData.length;
+    const ordersInSelectedWeek = weekStartDate ? filteredOrders.length : allOrders.length;
+
+    return {
+        requests: billingRequests,
+        totalOrdersFetched,
+        ordersInSelectedWeek
+    };
 }
 
 export async function getAllBillingRecords() {
@@ -3662,20 +3677,37 @@ export async function syncSingleOrderForDeliveryDay(
         const allVendorSelections: any[] = [];
         const allItemsToInsert: any[] = [];
 
-        // First, batch insert all vendor selections
-        // Note: vendorId can be null (e.g., breakfast items without a vendor)
-        const vendorSelectionsToInsert = orderConfig.vendorSelections
-            .filter((selection: any) => selection.items && Object.keys(selection.items).length > 0)
-            .map((selection: any, index: number) => ({
+        // First, batch insert all vendor selections (one row per vendor per order — unique constraint)
+        // Note: vendorId can be null (e.g., breakfast items without a vendor). Deduplicate by vendor_id
+        // so we never insert duplicate (upcoming_order_id, vendor_id) e.g. after merging days in migration.
+        const selectionsWithItems = orderConfig.vendorSelections
+            .map((selection: any, index: number) => ({ selection, index }))
+            .filter(({ selection }: { selection: any }) => selection.items && Object.keys(selection.items).length > 0);
+
+        const seenVendorKey = new Set<string>();
+        const vendorSelectionsToInsert: { upcoming_order_id: string; vendor_id: string | null; _temp_indices: number[] }[] = [];
+        for (const { selection, index } of selectionsWithItems) {
+            const vid = selection.vendorId ?? '';
+            const key = `${upcomingOrderId}:${vid}`;
+            if (seenVendorKey.has(key)) {
+                const existing = vendorSelectionsToInsert.find(
+                    (v) => (v.vendor_id || '') === (selection.vendorId || '')
+                );
+                if (existing) existing._temp_indices.push(index);
+                continue;
+            }
+            seenVendorKey.add(key);
+            vendorSelectionsToInsert.push({
                 upcoming_order_id: upcomingOrderId,
                 vendor_id: selection.vendorId || null,
-                _temp_index: index // Track which selection this corresponds to
-            }));
+                _temp_indices: [index]
+            });
+        }
 
         if (vendorSelectionsToInsert.length > 0) {
             const { data: insertedVendorSelections, error: vsBatchError } = await supabaseClient
                 .from('upcoming_order_vendor_selections')
-                .insert(vendorSelectionsToInsert.map((vs: { upcoming_order_id: string; vendor_id: string | null }) => ({
+                .insert(vendorSelectionsToInsert.map((vs) => ({
                     upcoming_order_id: vs.upcoming_order_id,
                     vendor_id: vs.vendor_id
                 })))
@@ -3687,11 +3719,13 @@ export async function syncSingleOrderForDeliveryDay(
             }
 
             if (insertedVendorSelections) {
-                // Associate inserted selections with original selections by order
-                allVendorSelections.push(...insertedVendorSelections.map((vs: any, i: number) => ({
-                    ...vs,
-                    _temp_index: vendorSelectionsToInsert[i]._temp_index
-                })));
+                for (let i = 0; i < insertedVendorSelections.length; i++) {
+                    const vs = insertedVendorSelections[i];
+                    const indices = vendorSelectionsToInsert[i]._temp_indices;
+                    for (const idx of indices) {
+                        allVendorSelections.push({ ...vs, _temp_index: idx });
+                    }
+                }
             }
         }
 

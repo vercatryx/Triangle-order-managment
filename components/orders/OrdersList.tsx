@@ -1,92 +1,79 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { Search, ChevronRight, Package, ArrowLeft, Loader2, ArrowUpDown, Trash2 } from 'lucide-react';
-import { getAllOrders, deleteOrder } from '@/lib/actions';
+import { Search, ChevronRight, Loader2, ArrowUpDown, Trash2, ChevronLeft } from 'lucide-react';
+import { deleteOrder } from '@/lib/actions';
 import styles from './OrdersList.module.css';
+
+const PAGE_SIZE_OPTIONS = [50, 100, 500, 1000] as const;
 
 export function OrdersList() {
     const router = useRouter();
     const [orders, setOrders] = useState<any[]>([]);
-    const [search, setSearch] = useState('');
+    const [total, setTotal] = useState(0);
+    const [page, setPage] = useState(1);
+    const [pageSize, setPageSize] = useState(50);
+    const [searchInput, setSearchInput] = useState('');
+    const [searchQuery, setSearchQuery] = useState('');
     const [statusFilter, setStatusFilter] = useState('all');
     const [creationIdFilter, setCreationIdFilter] = useState('');
-    const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'asc' | 'desc' } | null>(null);
+    const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'asc' | 'desc' }>({ key: 'created_at', direction: 'desc' });
     const [isLoading, setIsLoading] = useState(true);
     const [selectedOrders, setSelectedOrders] = useState<Set<string>>(new Set());
     const [isDeleting, setIsDeleting] = useState(false);
 
-    useEffect(() => {
-        loadData();
-    }, []);
-
-    async function loadData() {
+    const loadData = useCallback(async (pageNum: number) => {
         setIsLoading(true);
         try {
-            const data = await getAllOrders();
+            const params = new URLSearchParams();
+            params.set('page', String(pageNum));
+            params.set('pageSize', String(pageSize));
+            if (searchQuery) params.set('search', searchQuery);
+            if (statusFilter !== 'all') params.set('status', statusFilter);
+            if (creationIdFilter.trim()) params.set('creationId', creationIdFilter.trim());
+            params.set('sortBy', sortConfig.key);
+            params.set('sortDirection', sortConfig.direction);
+            const res = await fetch(`/api/orders?${params.toString()}`);
+            if (!res.ok) throw new Error(await res.text());
+            const { orders: data, total: totalCount } = await res.json();
             setOrders(data);
+            setTotal(totalCount ?? 0);
         } catch (error) {
             console.error('Failed to load orders:', error);
+            setOrders([]);
+            setTotal(0);
         } finally {
             setIsLoading(false);
         }
-    }
+    }, [searchQuery, statusFilter, creationIdFilter, sortConfig.key, sortConfig.direction, pageSize]);
 
-    const handleSort = (key: string) => {
-        let direction: 'asc' | 'desc' = 'asc';
-        if (sortConfig && sortConfig.key === key && sortConfig.direction === 'asc') {
-            direction = 'desc';
-        }
-        setSortConfig({ key, direction });
+    // Fetch when page or any server-side param changes
+    useEffect(() => {
+        loadData(page);
+    }, [page, loadData]);
+
+    const runSearch = () => {
+        setSearchQuery(searchInput.trim());
+        setPage(1);
     };
 
-    const sortedOrders = [...orders].sort((a, b) => {
-        if (!sortConfig) return 0;
+    // When filters, sort, or page size change, go to page 1
+    useEffect(() => {
+        setPage(1);
+    }, [statusFilter, creationIdFilter, sortConfig.key, sortConfig.direction, pageSize]);
 
-        let aValue = a[sortConfig.key];
-        let bValue = b[sortConfig.key];
+    const handleSort = (key: string) => {
+        setSortConfig(prev => ({
+            key,
+            direction: prev.key === key && prev.direction === 'asc' ? 'desc' : 'asc'
+        }));
+        setPage(1);
+    };
 
-        // Handle nested or special properties
-        if (sortConfig.key === 'items') {
-            aValue = a.total_items || 0;
-            bValue = b.total_items || 0;
-        } else if (sortConfig.key === 'deliveryDate') {
-            aValue = new Date(a.scheduled_delivery_date || 0).getTime();
-            bValue = new Date(b.scheduled_delivery_date || 0).getTime();
-        } else if (sortConfig.key === 'order_number') {
-            aValue = Number(a.order_number || 0);
-            bValue = Number(b.order_number || 0);
-        } else if (sortConfig.key === 'vendors') {
-            aValue = (a.vendorNames || []).join(', ') || '';
-            bValue = (b.vendorNames || []).join(', ') || '';
-        }
-
-        if (aValue < bValue) {
-            return sortConfig.direction === 'asc' ? -1 : 1;
-        }
-        if (aValue > bValue) {
-            return sortConfig.direction === 'asc' ? 1 : -1;
-        }
-        return 0;
-    });
-
-    const filteredOrders = sortedOrders.filter(o => {
-        const vendorStr = (o.vendorNames || []).join(' ').toLowerCase();
-        const matchesSearch =
-            (o.clientName || '').toLowerCase().includes(search.toLowerCase()) ||
-            (o.order_number || '').toString().includes(search) ||
-            vendorStr.includes(search.toLowerCase());
-
-        const matchesStatus = statusFilter === 'all' || o.status === statusFilter;
-
-        const matchesCreationId = !creationIdFilter || 
-            (o.creation_id !== null && o.creation_id !== undefined && 
-             o.creation_id.toString() === creationIdFilter.trim());
-
-        return matchesSearch && matchesStatus && matchesCreationId;
-    });
+    const totalPages = Math.max(1, Math.ceil(total / pageSize));
+    const filteredOrders = orders;
 
     const getStatusStyle = (status: string) => {
         switch (status) {
@@ -122,6 +109,7 @@ export function OrdersList() {
             setSelectedOrders(new Set(filteredOrders.map(o => o.id)));
         }
     };
+    const rowStartIndex = (page - 1) * pageSize;
 
     const handleDeleteSelected = async () => {
         if (selectedOrders.size === 0) return;
@@ -148,7 +136,7 @@ export function OrdersList() {
             }
 
             setSelectedOrders(new Set());
-            await loadData();
+            await loadData(page);
 
             if (failCount === 0) {
                 alert(`Successfully deleted ${successCount} order(s).`);
@@ -218,39 +206,52 @@ export function OrdersList() {
             </div>
 
             <div className={styles.filters}>
-                <div className={styles.searchBox}>
-                    <Search size={18} className={styles.searchIcon} />
-                    <input
+                <form
+                    className={styles.searchForm}
+                    onSubmit={(e) => { e.preventDefault(); runSearch(); }}
+                >
+                    <div className={styles.searchBox}>
+                        <Search size={18} className={styles.searchIcon} />
+                        <input
+                            className={`input ${styles.searchInput}`}
+                            placeholder="Client name or order #..."
+                            value={searchInput}
+                            onChange={e => setSearchInput(e.target.value)}
+                            onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); runSearch(); } }}
+                        />
+                    </div>
+                    <button type="submit" className={styles.searchBtn} aria-label="Search">
+                        <Search size={18} />
+                        <span>Search</span>
+                    </button>
+                </form>
+
+                <div className={`${styles.filterGroup} ${styles.filterGroupStatus}`}>
+                    <label className="label">Status</label>
+                    <select
                         className="input"
-                        placeholder="Search by client, order # or vendor..."
-                        style={{ paddingLeft: '2.5rem', width: '300px' }}
-                        value={search}
-                        onChange={e => setSearch(e.target.value)}
-                    />
+                        value={statusFilter}
+                        onChange={(e) => setStatusFilter(e.target.value)}
+                    >
+                        <option value="all">All Statuses</option>
+                        <option value="pending">Pending</option>
+                        <option value="confirmed">Confirmed</option>
+                        <option value="completed">Completed</option>
+                        <option value="cancelled">Cancelled</option>
+                    </select>
                 </div>
 
-                <select
-                    className="input"
-                    value={statusFilter}
-                    onChange={(e) => setStatusFilter(e.target.value)}
-                    style={{ width: '200px' }}
-                >
-                    <option value="all">All Statuses</option>
-                    <option value="pending">Pending</option>
-                    <option value="confirmed">Confirmed</option>
-                    <option value="completed">Completed</option>
-                    <option value="cancelled">Cancelled</option>
-                </select>
-
-                <input
-                    className="input"
-                    type="number"
-                    placeholder="Creation ID (e.g., 1)"
-                    style={{ width: '180px' }}
-                    value={creationIdFilter}
-                    onChange={e => setCreationIdFilter(e.target.value)}
-                    min="1"
-                />
+                <div className={`${styles.filterGroup} ${styles.filterGroupCreationId}`}>
+                    <label className="label">Creation ID</label>
+                    <input
+                        className="input"
+                        type="number"
+                        placeholder="e.g. 1"
+                        value={creationIdFilter}
+                        onChange={e => setCreationIdFilter(e.target.value)}
+                        min="1"
+                    />
+                </div>
 
                 <button
                     className="button"
@@ -259,7 +260,7 @@ export function OrdersList() {
                 >
                     {selectedOrders.size === filteredOrders.length && filteredOrders.length > 0
                         ? 'Deselect All'
-                        : 'Select All'}
+                        : 'Select All (page)'}
                 </button>
 
                 {selectedOrders.size > 0 && (
@@ -356,7 +357,7 @@ export function OrdersList() {
                                 style={{ cursor: 'pointer', width: '18px', height: '18px' }}
                             />
                         </span>
-                        <span style={{ width: '40px', fontWeight: 'bold', color: 'var(--text-secondary)' }}>{index + 1}</span>
+                        <span style={{ width: '40px', fontWeight: 'bold', color: 'var(--text-secondary)' }}>{rowStartIndex + index + 1}</span>
                         <span style={{ width: '100px', fontWeight: 600 }}>{order.order_number || 'N/A'}</span>
                         <span style={{ flex: 2 }}>{order.clientName}</span>
                         <span style={{ flex: 1 }}>{order.service_type}</span>
@@ -377,12 +378,55 @@ export function OrdersList() {
                         <span style={{ width: '40px' }}><ChevronRight size={16} /></span>
                     </div>
                 ))}
-                {filteredOrders.length === 0 && (
+                {filteredOrders.length === 0 && !isLoading && (
                     <div className={styles.empty}>No orders found.</div>
                 )}
             </div>
 
-
+            {total > 0 && (
+                <div className={styles.pagination}>
+                    <span className={styles.paginationSummary}>
+                        {totalPages > 1
+                            ? `Showing ${rowStartIndex + 1}–${Math.min(rowStartIndex + filteredOrders.length, total)} of ${total.toLocaleString()} orders`
+                            : `${total.toLocaleString()} order${total !== 1 ? 's' : ''}`}
+                    </span>
+                    <div className={styles.paginationControls}>
+                        <label className={styles.perPageLabel}>
+                            Per page
+                            <select
+                                className="input"
+                                value={pageSize}
+                                onChange={(e) => setPageSize(Number(e.target.value))}
+                            >
+                                {PAGE_SIZE_OPTIONS.map((n) => (
+                                    <option key={n} value={n}>{n}</option>
+                                ))}
+                            </select>
+                        </label>
+                        {totalPages > 1 && (
+                            <>
+                                <button
+                                    className={`button ${styles.pageBtn}`}
+                                    disabled={page <= 1 || isLoading}
+                                    onClick={() => setPage(p => Math.max(1, p - 1))}
+                                >
+                                    <ChevronLeft size={18} /> Prev
+                                </button>
+                                <span className={styles.pageInfo}>
+                                    Page {page} of {totalPages}
+                                </span>
+                                <button
+                                    className={`button ${styles.pageBtn}`}
+                                    disabled={page >= totalPages || isLoading}
+                                    onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+                                >
+                                    Next <ChevronRight size={18} />
+                                </button>
+                            </>
+                        )}
+                    </div>
+                </div>
+            )}
         </div>
     );
 }

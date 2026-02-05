@@ -19,6 +19,14 @@
     color: var(--text-secondary);
 }
 
+.toolsLink {
+    color: var(--color-primary);
+    text-decoration: none;
+}
+.toolsLink:hover {
+    text-decoration: underline;
+}
+
 .tabs {
     display: flex;
     gap: var(--spacing-sm);

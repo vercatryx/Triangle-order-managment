@@ -28,7 +28,7 @@ function formatDependents(dependents: { fullName?: string | null; dob?: string |
 export async function GET(request: NextRequest) {
     try {
         // Get all billing requests (no date filter)
-        const allBillingRequests = await getBillingRequestsByWeek();
+        const { requests: allBillingRequests } = await getBillingRequestsByWeek();
 
         // --- Standard (food/meal/boxes) requests: combined per client+week ---
         // Only include requests that have standard orders, are ready for billing, and not yet completed

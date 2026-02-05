@@ -251,6 +251,24 @@
     color: var(--text-secondary);
 }
 
+.loadFooter {
+    margin-top: var(--spacing-lg);
+    padding: var(--spacing-md) var(--spacing-lg);
+    background: var(--bg-surface);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+}
+
+.loadFooterText {
+    font-size: 0.875rem;
+    color: var(--text-secondary);
+}
+
+.loadFooterText strong {
+    color: var(--text-primary);
+    font-weight: 600;
+}
+
 .statusDropdown {
     position: absolute;
     top: 100%;

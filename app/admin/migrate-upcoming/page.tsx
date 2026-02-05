@@ -51,8 +51,15 @@ export default function MigrateUpcomingPage() {
         loadData();
     }, []);
 
+    /** Ready to migrate: valid (no fix) or invalid_day (has day fix + available days) */
     const validCandidates = useMemo(
-        () => candidates.filter(c => c.validationStatus === 'valid' && c.orderDetails?.previewJson),
+        () =>
+            candidates.filter(
+                c =>
+                    c.orderDetails?.previewJson &&
+                    (c.validationStatus === 'valid' ||
+                        (c.validationStatus === 'invalid_day' && c.invalidDayFix?.availableDays?.length))
+            ),
         [candidates]
     );
 
@@ -125,10 +132,31 @@ export default function MigrateUpcomingPage() {
             setMigratingId(candidate.clientId);
             setRunningAllProgress({ current: i + 1, total: toRun.length, clientName: candidate.clientName });
             try {
-                const result = await migrateClientToUpcoming(candidate.clientId);
+                let result;
+                if (candidate.validationStatus === 'invalid_day' && candidate.invalidDayFix) {
+                    const fix = candidate.invalidDayFix;
+                    const newDay = fixDayChoice[candidate.clientId] ?? fix.availableDays[0];
+                    if (!newDay) {
+                        failed++;
+                        toast.error(`${candidate.clientName}: no delivery day selected`);
+                        continue;
+                    }
+                    result = await migrateClientToUpcoming(candidate.clientId, {
+                        replaceDay: { badDay: fix.badDay, newDay }
+                    });
+                } else {
+                    result = await migrateClientToUpcoming(candidate.clientId);
+                }
                 if (result.success) {
                     done++;
                     setCandidates(prev => prev.filter(c => c.clientId !== candidate.clientId));
+                    if (candidate.validationStatus === 'invalid_day') {
+                        setFixDayChoice(prev => {
+                            const next = { ...prev };
+                            delete next[candidate.clientId];
+                            return next;
+                        });
+                    }
                 } else {
                     failed++;
                     toast.error(`${candidate.clientName}: ${result.error}`);
@@ -231,7 +259,7 @@ export default function MigrateUpcomingPage() {
                         onClick={handleRunAllValid}
                         className={`${styles.button} ${styles.buttonPrimary}`}
                         disabled={loading || validCandidates.length === 0 || !!migratingId || !!runningAllProgress}
-                        title={validCandidates.length === 0 ? 'No clients with status "Ready" (no day/vendor fix needed)' : `Migrate all ${validCandidates.length} ready client(s) automatically`}
+                        title={validCandidates.length === 0 ? 'No migratable clients (valid or invalid day with day selected)' : `Migrate all ${validCandidates.length} client(s); invalid-day rows use currently selected day`}
                     >
                         {runningAllProgress ? (
                             <>
@@ -364,7 +392,7 @@ export default function MigrateUpcomingPage() {
                                                     )}
                                                     {candidate.validationStatus === 'invalid_day' && candidate.invalidDayFix && (
                                                         <div className={styles.fixDayRow} onClick={e => e.stopPropagation()}>
-                                                            <span className={styles.fixDayLabel}>Fix: choose day</span>
+                                                            <span className={styles.fixDayLabel}>Day to use:</span>
                                                             <select
                                                                 className={styles.fixDaySelect}
                                                                 value={fixDayChoice[candidate.clientId] ?? candidate.invalidDayFix.availableDays[0] ?? ''}
@@ -374,23 +402,27 @@ export default function MigrateUpcomingPage() {
                                                                     <option key={d} value={d}>{d}</option>
                                                                 ))}
                                                             </select>
-                                                            <button
-                                                                type="button"
-                                                                className={`${styles.button} ${styles.buttonPrimary} ${styles.buttonSmall}`}
-                                                                disabled={migratingId !== null}
-                                                                onClick={() => handleMigrateWithDayFix(candidate)}
-                                                            >
-                                                                {migratingId === candidate.clientId ? <Loader2 size={12} className={styles.spin} /> : 'Migrate with this day'}
-                                                            </button>
                                                         </div>
                                                     )}
                                                 </td>
                                                 <td className={styles.colAction} onClick={e => e.stopPropagation()}>
                                                     <button
-                                                        onClick={() => handleMigrate(candidate)}
-                                                        disabled={migratingId !== null || candidate.validationStatus === 'no_order_data' || !preview}
-                                                        className={`${styles.button} ${candidate.validationStatus === 'valid' ? styles.buttonPrimary : styles.buttonSecondary}`}
+                                                        onClick={() => {
+                                                            if (candidate.validationStatus === 'invalid_day' && candidate.invalidDayFix) {
+                                                                handleMigrateWithDayFix(candidate);
+                                                            } else {
+                                                                handleMigrate(candidate);
+                                                            }
+                                                        }}
+                                                        disabled={
+                                                            migratingId !== null ||
+                                                            candidate.validationStatus === 'no_order_data' ||
+                                                            !preview ||
+                                                            (candidate.validationStatus === 'invalid_day' && !candidate.invalidDayFix?.availableDays?.length)
+                                                        }
+                                                        className={`${styles.button} ${(candidate.validationStatus === 'valid' || candidate.validationStatus === 'invalid_day') ? styles.buttonPrimary : styles.buttonSecondary}`}
                                                         style={{ width: '100%', justifyContent: 'center' }}
+                                                        title={candidate.validationStatus === 'invalid_day' ? 'Migrate using the day currently selected above' : undefined}
                                                     >
                                                         {migratingId === candidate.clientId ? (
                                                             <><Loader2 size={14} className={styles.spin} style={{ marginRight: 6 }} /> Migrating…</>

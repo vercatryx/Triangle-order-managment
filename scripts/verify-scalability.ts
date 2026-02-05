@@ -39,9 +39,9 @@ async function verify() {
     // 2. Test getBillingRequestsByWeek
     console.log('Fetching billing requests (all weeks)...');
     const startBilling = Date.now();
-    const billing = await actionModule.getBillingRequestsByWeek(undefined);
+    const billingResult = await actionModule.getBillingRequestsByWeek(undefined);
     const billingTime = Date.now() - startBilling;
-    console.log(`Fetched ${billing.length} billing requests in ${billingTime}ms.`);
+    console.log(`Fetched ${billingResult.requests.length} billing requests in ${billingTime}ms (${billingResult.totalOrdersFetched} orders from DB).`);
 
     if (orders.length > 0) { // Billing might be 0 if no requests exist
         console.log('SUCCESS: Data fetching works with pagination logic.');
