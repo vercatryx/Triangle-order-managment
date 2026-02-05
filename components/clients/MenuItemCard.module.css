@@ -30,15 +30,11 @@
     transition: all 0.2s ease;
 }
 
+/* Fixed height only when there is a real image (or fallback) */
 .hasImage {
-    height: 140px;
+    height: 160px;
     flex: 0 0 auto;
-}
-
-.noImage {
-    height: 0;
-    flex: 1 1 0;
-    min-height: 0;
+    min-height: 160px;
 }
 
 .image {
@@ -47,19 +43,25 @@
     object-fit: cover;
 }
 
+/* Placeholder: only shown when real image failed to load */
 .placeholder {
     color: var(--text-tertiary);
     display: flex;
-    flex-direction: column;
     align-items: center;
-    gap: 8px;
-    font-size: 0.9rem;
+    justify-content: center;
     position: absolute;
+    inset: 0;
+    font-size: 0.9rem;
     opacity: 0;
     transition: opacity 0.2s;
 }
 
-.noImage .placeholder,
+.placeholder svg {
+    width: 64px;
+    height: 64px;
+    flex-shrink: 0;
+}
+
 .fallbackActive .placeholder {
     opacity: 1;
 }
@@ -364,7 +366,8 @@
 
 @media (max-width: 640px) {
     .hasImage {
-        height: 120px;
+        height: 140px;
+        min-height: 140px;
     }
 
     .name {

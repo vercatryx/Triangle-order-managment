@@ -38,35 +38,37 @@ export default function MenuItemCard({
 
     const stopPropagation = (e: React.MouseEvent) => e.stopPropagation();
 
+    // Display points: use value when set and > 0, else quotaValue (admin uses quota_value for box items; client portal must match)
+    const v = Number(item.value);
+    const q = Number((item as { quotaValue?: number }).quotaValue);
+    const displayPoints = v > 0 ? v : (q || 0);
+
     return (
         <div className={`${styles.card} ${quantity > 0 ? styles.selected : ''}`} onClick={toggleModal}>
-            {/* Image Section */}
-            <div className={`${styles.imageContainer} ${item.imageUrl ? styles.hasImage : styles.noImage}`}>
-                {item.imageUrl ? (
+            {/* Image Section: only when item has a real image; icon only as fallback if image fails */}
+            {item.imageUrl && (
+                <div className={`${styles.imageContainer} ${styles.hasImage}`}>
                     <img
                         src={item.imageUrl}
                         alt={item.name}
                         className={styles.image}
                         onError={(e) => {
-                            // Fallback to placeholder if image fails
                             e.currentTarget.style.display = 'none';
                             e.currentTarget.parentElement?.classList.add(styles.fallbackActive);
-                            e.currentTarget.parentElement?.classList.replace(styles.hasImage, styles.noImage);
                         }}
                     />
-                ) : (
-                    <div className={styles.placeholder}>
-                        <Utensils size={32} strokeWidth={1.5} />
+                    <div className={styles.placeholder} aria-hidden>
+                        <Utensils size={64} strokeWidth={1.5} />
                     </div>
-                )}
-            </div>
+                </div>
+            )}
 
             {/* Content Section */}
             <div className={styles.content}>
                 <div className={styles.header}>
                     <div className={styles.name}>{item.name}</div>
                     <div className={styles.value}>
-                        {(item.value || 0)} pts
+                        {displayPoints} pts
                     </div>
                 </div>
 
@@ -117,20 +119,16 @@ export default function MenuItemCard({
                             <X size={24} />
                         </button>
 
-                        <div className={styles.modalImageContainer}>
-                            {item.imageUrl ? (
+                        {item.imageUrl && (
+                            <div className={styles.modalImageContainer}>
                                 <img src={item.imageUrl} alt={item.name} className={styles.modalImage} />
-                            ) : (
-                                <div className={styles.modalPlaceholder}>
-                                    <Utensils size={64} strokeWidth={1} />
-                                </div>
-                            )}
-                        </div>
+                            </div>
+                        )}
 
                         <div className={styles.modalContent}>
                             <div className={styles.modalHeader}>
                                 <h2 className={styles.modalName}>{item.name}</h2>
-                                <div className={styles.modalValue}>{(item.value || 0)} pts</div>
+                                <div className={styles.modalValue}>{displayPoints} pts</div>
                             </div>
 
                             {contextLabel && <div className={styles.modalContext}>{contextLabel}</div>}
