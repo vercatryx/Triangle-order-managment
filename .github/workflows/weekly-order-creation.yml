@@ -1,0 +1,31 @@
+name: Weekly Order Creation (Next Week)
+
+on:
+  schedule:
+    # Wednesday 12:02 AM EST (05:02 UTC)
+    - cron: '2 5 * * 3'
+  workflow_dispatch: # Allows manual triggering from GitHub UI
+
+jobs:
+  create-weekly-orders:
+    runs-on: ubuntu-latest
+    environment: Production
+    steps:
+      - name: Create Orders for Next Week
+        run: |
+          TARGET_URL="https://trianglesquareservices.com"
+
+          echo "🚀 Triggering Weekly Order Creation at: $TARGET_URL (process-weekly-orders)"
+
+          response=$(curl -s -S -L -w "\nHTTP_STATUS:%{http_code}" -X GET "$TARGET_URL/api/process-weekly-orders" \
+            -H "Content-Type: application/json")
+
+          echo "--- API RESPONSE ---"
+          echo "$response"
+          echo "--------------------"
+
+          if [[ "$response" != *"HTTP_STATUS:200"* ]]; then
+            echo "❌ API Request Failed. See response above."
+            exit 1
+          fi
+          echo "✅ Success!"

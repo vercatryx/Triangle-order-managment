@@ -5512,7 +5512,6 @@ export function ClientProfileDetail({
                                     <section className={styles.card} style={{ marginTop: 'var(--spacing-lg)' }}>
                                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
                                             <h3 className={styles.sectionTitle}>Upcoming orders configuration</h3>
-                                            <span className={styles.badge} style={{ backgroundColor: 'var(--bg-surface-active)', color: 'var(--text-secondary)' }}>Saves to clients.upcoming_order only</span>
                                         </div>
                                         <div className={styles.formGroup}>
                                             <label className="label">Client type</label>
