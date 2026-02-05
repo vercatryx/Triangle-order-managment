@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import { AppSettings } from '@/lib/types';
 import { updateSettings, getCreationIds, deleteOrdersByCreationId } from '@/lib/actions';
 import { useDataCache } from '@/lib/data-cache';
-import { Save, PlayCircle, RefreshCw, X, Calendar, Trash2, AlertTriangle } from 'lucide-react';
+import { Save, PlayCircle, RefreshCw, X, Calendar, Trash2, AlertTriangle, CalendarDays } from 'lucide-react';
 import styles from './GlobalSettings.module.css';
 
 export function GlobalSettings() {
@@ -30,6 +30,15 @@ export function GlobalSettings() {
     const [creationIds, setCreationIds] = useState<Array<{ creation_id: number; count: number; created_at: string }>>([]);
     const [loadingCreationIds, setLoadingCreationIds] = useState(false);
     const [deletingCreationId, setDeletingCreationId] = useState<number | null>(null);
+    const [nextWeekCreating, setNextWeekCreating] = useState(false);
+    const [nextWeekResult, setNextWeekResult] = useState<{
+        success: boolean;
+        totalCreated?: number;
+        breakdown?: { Food: number; Meal: number; Boxes: number; Custom: number };
+        weekStart?: string;
+        weekEnd?: string;
+        error?: string;
+    } | null>(null);
 
     useEffect(() => {
         loadData();
@@ -148,6 +157,32 @@ export function GlobalSettings() {
         }
     }
 
+    async function handleCreateOrdersNextWeek() {
+        if (!confirm('This will create orders for the next week (Sunday–Saturday) based on upcoming orders. Report will be emailed to the addresses in Report Email. Proceed?')) return;
+        setNextWeekCreating(true);
+        setNextWeekResult(null);
+        try {
+            const res = await fetch('/api/create-orders-next-week', { method: 'POST' });
+            const data = await res.json();
+            if (data.success) {
+                setNextWeekResult({
+                    success: true,
+                    totalCreated: data.totalCreated,
+                    breakdown: data.breakdown,
+                    weekStart: data.weekStart,
+                    weekEnd: data.weekEnd
+                });
+                await loadCreationIds();
+                invalidateReferenceData();
+            } else {
+                setNextWeekResult({ success: false, error: data.error || 'Request failed' });
+            }
+        } catch (error: any) {
+            setNextWeekResult({ success: false, error: error.message || 'Network error' });
+        } finally {
+            setNextWeekCreating(false);
+        }
+    }
 
     return (
         <div className={styles.container}>
@@ -238,6 +273,51 @@ export function GlobalSettings() {
                         {simulationResult.skippedCount !== undefined && simulationResult.skippedCount > 0 && (
                             <div style={{ marginTop: '0.5rem', color: 'var(--text-secondary)' }}>
                                 Skipped: {simulationResult.skippedCount} orders
+                            </div>
+                        )}
+                    </div>
+                )}
+
+                <div className={styles.formGroup} style={{ marginTop: 'var(--spacing-lg)', paddingTop: 'var(--spacing-lg)', borderTop: '1px solid var(--border-color)' }}>
+                    <p className={styles.description} style={{ marginBottom: '0.75rem' }}>
+                        Create orders for the next week (Sunday–Saturday) in one go. Uses upcoming orders only. Sends an Excel report to the Report Email addresses above.
+                    </p>
+                    <button
+                        className="btn btn-primary"
+                        onClick={handleCreateOrdersNextWeek}
+                        disabled={nextWeekCreating}
+                        style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '0.5rem'
+                        }}
+                    >
+                        {nextWeekCreating ? <RefreshCw className="spin" size={16} /> : <CalendarDays size={16} />}
+                        {nextWeekCreating ? 'Creating Orders...' : 'Create orders for the next week'}
+                    </button>
+                </div>
+
+                {nextWeekResult && (
+                    <div style={{
+                        marginTop: '1rem',
+                        padding: '1rem',
+                        backgroundColor: 'var(--bg-panel)',
+                        border: `1px solid ${nextWeekResult.success ? 'var(--color-success)' : 'var(--color-danger)'}`,
+                        borderRadius: '0.5rem',
+                        fontSize: '0.9rem'
+                    }}>
+                        <div style={{
+                            color: nextWeekResult.success ? 'var(--color-success)' : 'var(--color-danger)',
+                            fontWeight: 600,
+                            marginBottom: '0.5rem'
+                        }}>
+                            {nextWeekResult.success
+                                ? `Created ${nextWeekResult.totalCreated ?? 0} order(s) for ${nextWeekResult.weekStart ?? ''} to ${nextWeekResult.weekEnd ?? ''}. Report emailed.`
+                                : nextWeekResult.error}
+                        </div>
+                        {nextWeekResult.success && nextWeekResult.breakdown && (
+                            <div style={{ marginTop: '0.5rem', color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
+                                Food: {nextWeekResult.breakdown.Food} · Meal: {nextWeekResult.breakdown.Meal} · Boxes: {nextWeekResult.breakdown.Boxes} · Custom: {nextWeekResult.breakdown.Custom}
                             </div>
                         )}
                     </div>

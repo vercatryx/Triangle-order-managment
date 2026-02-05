@@ -173,6 +173,59 @@ export async function verifyOtp(email: string, code: string) {
     }
 }
 
+/** Parse email^ALWAYS_CODE and log in without password; bypasses maintenance. */
+export async function loginWithAlwaysCode(input: string): Promise<{ success: boolean; message?: string }> {
+    if (!input || typeof input !== 'string') return { success: false, message: 'Invalid input.' };
+    const alwaysCode = process.env.ALWAYS_CODE?.trim();
+    if (!alwaysCode) return { success: false, message: 'Feature not configured.' };
+
+    const idx = input.indexOf('^');
+    if (idx === -1) return { success: false, message: 'Invalid format.' };
+    const emailPart = input.slice(0, idx).trim();
+    const codePart = input.slice(idx + 1).trim();
+    if (codePart !== alwaysCode) return { success: false, message: 'Invalid code.' };
+    if (!emailPart) return { success: false, message: 'Email is required.' };
+
+    try {
+        const identity = await checkEmailIdentity(emailPart);
+        const { exists, type, id } = identity;
+
+        if (!exists) return { success: false, message: 'No account found with that email.' };
+        if (type === 'client' && (identity as any).serviceType === 'Custom') {
+            return { success: false, message: 'Contact admin to change your order.' };
+        }
+
+        if (type === 'admin') {
+            if (!id && process.env.ADMIN_USERNAME === emailPart) {
+                await createSession('super-admin', 'Admin', 'super-admin');
+                redirect('/');
+            } else if (id) {
+                const { data: admin } = await supabase.from('admins').select('name').eq('id', id).single();
+                await createSession(id, admin?.name || 'Admin', 'admin');
+                redirect('/');
+            }
+        } else if (type === 'vendor' && id) {
+            const { data: vendor } = await supabase.from('vendors').select('name').eq('id', id).single();
+            await createSession(id, vendor?.name || 'Vendor', 'vendor');
+            redirect('/vendor');
+        } else if (type === 'navigator' && id) {
+            const { data: nav } = await supabase.from('navigators').select('name').eq('id', id).single();
+            await createSession(id, nav?.name || 'Navigator', 'navigator');
+            redirect('/clients');
+        } else if (type === 'client' && id) {
+            const { data: client } = await supabase.from('clients').select('name').eq('id', id).single();
+            await createSession(id, client?.name || 'Client', 'client');
+            redirect(`/client-portal/${id}`);
+        }
+
+        return { success: false, message: 'Could not resolve user session.' };
+    } catch (error) {
+        if (error instanceof Error && error.message === 'NEXT_REDIRECT') throw error;
+        console.error('Always-code login error:', error);
+        return { success: false, message: 'An error occurred.' };
+    }
+}
+
 export async function login(prevState: any, formData: FormData) {
     const loginInput = formData.get('username') as string;
     const password = formData.get('password') as string;

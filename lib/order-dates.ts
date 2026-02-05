@@ -73,6 +73,36 @@ export function getDayNumber(dayName: string): number | undefined {
     return DAY_NAME_TO_NUMBER[dayName];
 }
 
+const NUMBER_TO_DAY_NAME: { [n: number]: string } = {
+    0: 'Sunday',
+    1: 'Monday',
+    2: 'Tuesday',
+    3: 'Wednesday',
+    4: 'Thursday',
+    5: 'Friday',
+    6: 'Saturday'
+};
+
+/**
+ * Get the first date within a week (Sunday–Saturday) that matches one of the vendor's delivery days.
+ * @param weekStart - Sunday 00:00 of the target week
+ * @param deliveryDayNames - e.g. ['Monday', 'Wednesday']
+ * @returns The first matching date in the week, or null if none
+ */
+export function getFirstDeliveryDateInWeek(weekStart: Date, deliveryDayNames: string[]): Date | null {
+    if (!deliveryDayNames || deliveryDayNames.length === 0) return null;
+    const set = new Set(deliveryDayNames.map(d => d.trim()));
+    const start = new Date(weekStart);
+    start.setHours(0, 0, 0, 0);
+    for (let d = 0; d < 7; d++) {
+        const date = new Date(start);
+        date.setDate(start.getDate() + d);
+        const dayName = NUMBER_TO_DAY_NAME[date.getDay()];
+        if (dayName && set.has(dayName)) return date;
+    }
+    return null;
+}
+
 /**
  * Get all delivery day numbers for a vendor
  */

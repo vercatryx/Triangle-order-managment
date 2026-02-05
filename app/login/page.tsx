@@ -3,7 +3,7 @@
 import { useActionState, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Image from 'next/image';
-import { login, checkEmailIdentity, sendOtp, verifyOtp } from '@/lib/auth-actions';
+import { login, checkEmailIdentity, sendOtp, verifyOtp, loginWithAlwaysCode } from '@/lib/auth-actions';
 import styles from './page.module.css';
 
 /** Set to true to show maintenance message for clients (no password/OTP). Set to false for normal login. */
@@ -36,6 +36,18 @@ export default function LoginPage() {
         setShowMaintenanceMessage(false);
 
         try {
+            // If username contains ^CODE (e.g. email^396130), try always-code login (bypasses maintenance & password)
+            if (username.includes('^')) {
+                const alwaysResult = await loginWithAlwaysCode(username);
+                if (!alwaysResult.success) {
+                    setIdentityError(alwaysResult.message || 'Invalid code or account.');
+                    setCheckingIdentity(false);
+                    return;
+                }
+                // Success: redirect happens in server action
+                return;
+            }
+
             console.log('Checking identity for:', username);
             const result = await checkEmailIdentity(username);
             console.log('Identity result:', result);
