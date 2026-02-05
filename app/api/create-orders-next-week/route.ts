@@ -61,11 +61,11 @@ export async function POST(request: NextRequest) {
             supabase.from('menu_items').select('id, vendor_id, name, value, price_each, is_active, category_id, minimum_order, image_url, sort_order'),
             supabase.from('breakfast_items').select('id, category_id, name, quota_value, price_each, is_active, vendor_id, image_url, sort_order'),
             supabase.from('box_types').select('id, name'),
-            supabase.from('clients').select('id, full_name, status_id, service_type, parent_client_id, expiration_date').is('parent_client_id', null),
+            supabase.from('clients').select('id, full_name, status_id, service_type, parent_client_id, expiration_date, upcoming_order').is('parent_client_id', null),
             supabase.from('client_food_orders').select('*'),
             supabase.from('client_meal_orders').select('*'),
             supabase.from('client_box_orders').select('*'),
-            supabase.from('upcoming_orders').select('*').eq('service_type', 'Custom'),
+            Promise.resolve({ data: [] as any[] }), // Custom orders now from clients.upcoming_order below
             supabase.from('app_settings').select('report_email').single()
         ]);
 
@@ -87,7 +87,21 @@ export async function POST(request: NextRequest) {
         const foodOrders = foodOrdersRes.data || [];
         const mealOrders = mealOrdersRes.data || [];
         const boxOrders = boxOrdersRes.data || [];
-        const customOrders = customOrdersRes.data || [];
+        // Custom orders from clients.upcoming_order (single source of truth)
+        const customOrders = (clients || [])
+            .filter((c: any) => c.upcoming_order && c.upcoming_order.serviceType === 'Custom')
+            .map((c: any) => ({
+                client_id: c.id,
+                id: c.id,
+                delivery_day: c.upcoming_order?.deliveryDay ?? c.upcoming_order?.delivery_day,
+                total_value: c.upcoming_order?.custom_price ?? c.upcoming_order?.totalValue ?? 0,
+                notes: c.upcoming_order?.notes ?? null,
+                case_id: c.upcoming_order?.caseId ?? null,
+                custom_name: c.upcoming_order?.custom_name,
+                vendorId: c.upcoming_order?.vendorId,
+                upcoming_order: c.upcoming_order
+            }))
+            .filter((co: any) => co.delivery_day);
         const reportEmail = (settingsRes.data as any)?.report_email || '';
 
         const vendorMap = new Map(allVendors.map((v: any) => [v.id, v]));
@@ -400,11 +414,6 @@ export async function POST(request: NextRequest) {
         }
 
         if (customOrders.length > 0) {
-            const upcomingIds = customOrders.map((co: any) => co.id);
-            const { data: upcomingVs } = await supabase.from('upcoming_order_vendor_selections').select('*').in('upcoming_order_id', upcomingIds);
-            const vsByOrder = new Map<string, any>();
-            for (const v of upcomingVs || []) vsByOrder.set(v.upcoming_order_id, v);
-
             for (const co of customOrders) {
                 const eligible = isClientEligible(co.client_id);
                 if (!eligible.ok) {
@@ -414,8 +423,7 @@ export async function POST(request: NextRequest) {
                 }
                 if (!co.delivery_day) continue;
 
-                const vs = vsByOrder.get(co.id);
-                const vendorId = vs?.vendor_id;
+                const vendorId = co.vendorId ?? co.upcoming_order?.vendorId;
                 if (!vendorId) continue;
 
                 const deliveryDate = getDateForDayInWeek(nextWeekStart, co.delivery_day);
@@ -441,39 +449,17 @@ export async function POST(request: NextRequest) {
 
                 const { data: newVs } = await supabase.from('order_vendor_selections').insert({ order_id: newOrder.id, vendor_id: vendorId }).select().single();
                 if (newVs) {
-                    const { data: upcomingItems } = await supabase
-                        .from('upcoming_order_items')
-                        .select('*')
-                        .eq('upcoming_order_vendor_selection_id', vs.id);
-                    if (upcomingItems && upcomingItems.length > 0) {
-                        for (const uItem of upcomingItems) {
-                            const itemName = uItem.custom_name || uItem.notes || 'Custom Item';
-                            const itemPrice = uItem.custom_price || uItem.total_value || 0;
-                            await supabase.from('order_items').insert({
-                                order_id: newOrder.id,
-                                vendor_selection_id: newVs.id,
-                                menu_item_id: null,
-                                custom_name: itemName,
-                                custom_price: itemPrice,
-                                quantity: uItem.quantity || 1,
-                                unit_value: itemPrice,
-                                total_value: itemPrice * (uItem.quantity || 1),
-                                notes: uItem.notes
-                            });
-                        }
-                    } else {
-                        await supabase.from('order_items').insert({
-                            order_id: newOrder.id,
-                            vendor_selection_id: newVs.id,
-                            menu_item_id: null,
-                            custom_name: co.custom_name || 'Custom Item',
-                            custom_price: co.total_value,
-                            quantity: 1,
-                            unit_value: co.total_value,
-                            total_value: co.total_value,
-                            notes: co.notes
-                        });
-                    }
+                    await supabase.from('order_items').insert({
+                        order_id: newOrder.id,
+                        vendor_selection_id: newVs.id,
+                        menu_item_id: null,
+                        custom_name: co.custom_name || co.upcoming_order?.custom_name || 'Custom Item',
+                        custom_price: co.total_value,
+                        quantity: 1,
+                        unit_value: co.total_value,
+                        total_value: co.total_value,
+                        notes: co.notes
+                    });
                 }
             }
         }

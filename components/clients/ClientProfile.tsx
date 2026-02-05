@@ -441,8 +441,6 @@ export function ClientProfileDetail({
 
     const [activeOrder, setActiveOrder] = useState<any>(null); // Recent Orders (from orders table)
 
-    // Track if we're using the fallback order source (not clients.active_order)
-    const [usingFallbackOrder, setUsingFallbackOrder] = useState<boolean>(false);
 
     const [saving, setSaving] = useState(false);
     const [message, setMessage] = useState<string | null>(null);
@@ -888,8 +886,6 @@ export function ClientProfileDetail({
                 setOrderConfig(conf);
                 setOriginalOrderConfig(JSON.parse(JSON.stringify(conf)));
             } else if (data.client.upcomingOrder && data.client.upcomingOrder.serviceType === 'Custom') {
-                // Fallback to activeOrder from client profile if upcoming not found
-
                 const conf = { ...data.client.upcomingOrder };
                 setOrderConfig(conf);
                 setOriginalOrderConfig(JSON.parse(JSON.stringify(conf)));
@@ -967,7 +963,6 @@ export function ClientProfileDetail({
 
         // Use clients.upcoming_order as single source
         if (hasValidUpcomingOrder) {
-            setUsingFallbackOrder(false);
 
             // Check if it's the multi-day format
             const isMultiDayFormat = upcomingOrderData && typeof upcomingOrderData === 'object' &&
@@ -1020,7 +1015,6 @@ export function ClientProfileDetail({
                 defaultOrder.vendorSelections = [{ vendorId: '', items: {} }];
             }
             setOrderConfig(defaultOrder);
-            setUsingFallbackOrder(false);
         }
 
         // Fix for Boxes: If vendorId is missing but boxTypeId exists, try to find vendor from boxType
@@ -1413,7 +1407,6 @@ export function ClientProfileDetail({
 
             setOrderConfig(configToSet);
             setOriginalOrderConfig(JSON.parse(JSON.stringify(configToSet))); // Deep copy for comparison
-            setUsingFallbackOrder(isUsingFallback);
 
             // DEBUG LOG: Final decision for Sidebar
             console.log(`[SIDEBAR_DEBUG] Final Order Config for ${c.id}:`, {
@@ -3542,7 +3535,7 @@ export function ClientProfileDetail({
     );
 
     // --- ORDER HISTORY SECTION ---
-    /** Build OrderConfiguration from a history entry so we can restore activeOrder + upcoming order */
+    /** Build OrderConfiguration from a history entry so we can restore into clients.upcoming_order */
     function historyEntryToOrderConfiguration(entry: any): OrderConfiguration {
         const d = entry.orderDetails || entry.orderConfig || {};
         console.log('[Restore] Mapping entry to config. entry.orderDetails keys:', entry.orderDetails ? Object.keys(entry.orderDetails) : 'none', 'd keys:', Object.keys(d));
@@ -3641,16 +3634,19 @@ export function ClientProfileDetail({
             console.log('[Restore] Built config:', { serviceType: restored.serviceType, caseId: restored.caseId, vendorSelectionsCount: restored.vendorSelections?.length, boxOrdersCount: restored.boxOrders?.length, mealSelectionsKeys: restored.mealSelections ? Object.keys(restored.mealSelections) : [] });
             // Form is driven by orderConfig – must set this so the order form shows the restored data
             setOrderConfig(restored);
-            setActiveOrder(restored);
             // Switch service type tab to match restored order
             if (restored.serviceType && formData.serviceType !== restored.serviceType) {
                 setFormData((prev: any) => ({ ...prev, serviceType: restored.serviceType }));
             }
             console.log('[Restore] Calling updateClientUpcomingOrder...');
             await updateClientUpcomingOrder(clientId, restored);
+            invalidateClientData(clientId);
             const updated = await getClient(clientId);
             console.log('[Restore] Result:', updated ? 'ok' : 'null', updated?.upcomingOrder ? 'has upcomingOrder' : '');
-            if (updated) setClient(updated);
+            if (updated) {
+                setClient(updated);
+                setOrderConfig((updated as any).upcomingOrder ?? restored);
+            }
             console.log('[Restore] Done – form should show restored order.');
             setOrderHistoryRestoreMessage({ type: 'success', text: 'Order restored. Form updated and saved to server.' });
             setTimeout(() => setOrderHistoryRestoreMessage(null), 5000);
@@ -6839,7 +6835,7 @@ export function ClientProfileDetail({
                 const initialStatusId = (initialStatuses || statuses)[0]?.id || '';
                 const defaultNavigatorId = (initialNavigators || navigators).find(n => n.isActive)?.id || '';
 
-                // Create client WITHOUT activeOrder first
+                // Create client without upcoming order first
                 const clientDataWithoutOrder: Omit<ClientProfile, 'id' | 'createdAt' | 'updatedAt'> = {
                     fullName: formData.fullName ?? '',
                     email: formData.email ?? '',
@@ -6856,7 +6852,7 @@ export function ClientProfileDetail({
                     approvedMealsPerWeek: formData.approvedMealsPerWeek ?? 21,
                     authorizedAmount: formData.authorizedAmount ?? null,
                     expirationDate: formData.expirationDate ?? null,
-                    activeOrder: undefined // Create without order first
+                    upcomingOrder: undefined
                 };
 
                 // Check if a client with this name already exists
@@ -6911,7 +6907,7 @@ export function ClientProfileDetail({
                     approvedMealsPerWeek: formData.approvedMealsPerWeek ?? 21,
                     authorizedAmount: formData.authorizedAmount ?? null,
                     expirationDate: formData.expirationDate ?? null,
-                    activeOrder: hasOrderData ? prepareActiveOrder() : undefined
+                    upcomingOrder: hasOrderData ? prepareActiveOrder() : undefined
                 };
 
 
@@ -7048,12 +7044,9 @@ export function ClientProfileDetail({
             console.log(`[ClientProfile] [history] executeSave changes array:`, JSON.stringify(changes));
 
             // Update client profile
-            // We defer this call until after we've prepared the activeOrder above if needed
-            // But wait, the order config block is BELOW this. We need to move the updateClient call down or move the prep up.
-            // Actually, let's keep it simple: 
             // 1. Calculate changes
             // 2. Prepare updateData
-            // 3. IF order changes, add activeOrder to updateData
+            // 3. IF order changes, add upcomingOrder to updateData (handled in updateClientUpcomingOrder below)
             // 4. Call updateClient once
 
             // Checking order changes again...
@@ -7118,9 +7111,7 @@ export function ClientProfileDetail({
             // Order saved via updateClientUpcomingOrder above
 
             // Reload upcoming order if we had order changes
-            // COMMENTED OUT: We rely on updatedClient.activeOrder which we just loaded above (line 3475).
-            // Fetching upcomingOrder here caused Draft orders (which don't exist in upcoming_orders table)
-            // to be overwritten with null/empty, clearing the form.
+            // Reload from fresh client; upcoming order is in clients.upcoming_order.
             /*
             if (hasOrderConfigChanges || hasOrderChanges) {
                 const updatedUpcomingOrder = await getUpcomingOrderForClient(clientId);

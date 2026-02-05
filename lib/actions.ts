@@ -1518,7 +1518,7 @@ function mapClientFromDB(c: any): ClientProfile {
         cin: c.cin ?? null,
         authorizedAmount: c.authorized_amount ?? null,
         expirationDate: c.expiration_date || null,
-        upcomingOrder: c.upcoming_order ?? c.active_order ?? undefined, // Prefer upcoming_order; fallback to active_order during migration
+        upcomingOrder: c.upcoming_order ?? undefined,
         locationId: c.location_id || null,
         createdAt: c.created_at,
         updatedAt: c.updated_at,
@@ -1652,7 +1652,7 @@ export async function addClient(data: Omit<ClientProfile, 'id' | 'createdAt' | '
             id: await generateNextClientId(lastAttemptedId ?? undefined)
         };
 
-        payload.upcoming_order = data.upcomingOrder ?? (data as any).activeOrder ?? null;
+        payload.upcoming_order = data.upcomingOrder ?? null;
 
         const { data: res, error } = await supabase.from('clients').insert([payload]).select().single();
 
@@ -2150,13 +2150,6 @@ export async function deleteClient(id: string) {
     if (dependents && dependents.length > 0) {
         const dependentIds = dependents.map(d => d.id);
 
-        // Delete upcoming orders for all dependents
-        const { error: dependentUpcomingOrdersError } = await supabase
-            .from('upcoming_orders')
-            .delete()
-            .in('client_id', dependentIds);
-        handleError(dependentUpcomingOrdersError);
-
         // Delete active orders for all dependents
         const { error: dependentActiveOrdersError } = await supabase
             .from('orders')
@@ -2179,13 +2172,6 @@ export async function deleteClient(id: string) {
             .in('id', dependentIds);
         handleError(dependentsDeleteError);
     }
-
-    // Delete all upcoming orders for this client
-    const { error: upcomingOrdersError } = await supabase
-        .from('upcoming_orders')
-        .delete()
-        .eq('client_id', id);
-    handleError(upcomingOrdersError);
 
     // Delete active orders (pending, confirmed, processing) but preserve order history
     // Order history includes: completed, waiting_for_proof, billing_pending, cancelled
@@ -4292,480 +4278,18 @@ export async function syncSingleOrderForDeliveryDay(
 }
 
 /**
- * Sync Current Order Request (activeOrder) to upcoming_orders table
- * This ensures upcoming_orders always reflects the latest order configuration
- * Now supports multiple orders per client (one per delivery day)
+ * Persist current order to clients.upcoming_order only (single source of truth).
+ * No writes to upcoming_orders table or clients.active_order.
+ * For Order sync / Vendor day mismatches / Cleanup tools, use their dedicated flows.
  */
-export async function syncCurrentOrderToUpcoming(clientId: string, client: ClientProfile, skipClientUpdate: boolean = false, skipHistory: boolean = false) {
-    // console.log('[syncCurrentOrderToUpcoming] START', { clientId, serviceType: client.activeOrder?.serviceType });
-
-    // 1. DRAFT PERSISTENCE: Save the raw activeOrder metadata to the clients table.
-    // This ensures Case ID, Vendor, and other selections are persisted even if the 
-    // full sync to upcoming_orders fails (e.g. if the vendor/delivery day isn't fully set yet).
-    const orderConfig = client.activeOrder;
-    // console.log('[syncCurrentOrderToUpcoming] orderConfig received:', {
-    //     serviceType: orderConfig?.serviceType,
-    //     vendorId: orderConfig?.vendorId,
-    //     boxTypeId: orderConfig?.boxTypeId,
-    //     boxQuantity: orderConfig?.boxQuantity,
-    //     hasItems: !!(orderConfig as any)?.items && Object.keys((orderConfig as any).items || {}).length > 0
-    // });
-
-    // PERFORMANCE: Fetch all data once in parallel
-    // All these functions are now cached with reactCache, so repeated calls in the same request are instant
-    const [vendors, menuItems, boxTypes, settings, currentTime] = await Promise.all([
-        getVendors(),
-        getMenuItems(),
-        getBoxTypes(),
-        getSettings(),
-        getCurrentTime()
-    ]);
-
-    // Use Service Role if available to bypass RLS for this public-facing update
-    let supabaseClient = supabase;
-    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-    if (serviceRoleKey) {
-        supabaseClient = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, serviceRoleKey, {
-            auth: { persistSession: false }
-        });
-    } else {
-        console.warn('[syncCurrentOrderToUpcoming] Service role key not found - using regular client (may be blocked by RLS)');
-    }
-
-
-
-    // 1. DRAFT PERSISTENCE: Save the raw activeOrder metadata to the clients table.
-    // This ensures Case ID, Vendor, and other selections are persisted even if the 
-    // full sync to upcoming_orders fails (e.g. if the vendor/delivery day isn't fully set yet).
-    if (!skipClientUpdate && client.activeOrder) {
-        const { error: updateError } = await supabaseClient.from('clients').update({
-            active_order: client.activeOrder,
-            upcoming_order: client.activeOrder, // Save to new column as well
-            updated_at: currentTime.toISOString()
-        }).eq('id', clientId);
-
-        if (updateError) {
-            console.error('[syncCurrentOrderToUpcoming] Error updating clients.active_order:', updateError);
-            throw new Error(`Failed to save order: ${updateError.message}`);
-        }
-        try {
-            revalidatePath('/clients');
-        } catch (e) { }
-    }
-
-    // 2. NUCLEAR OPTION: Delete ALL existing upcoming orders for this client
-    // This ensures that any removed items/meals/days are correctly removed from the DB
-    // by starting with a clean slate.
-
-
-    // First find all upcoming orders to delete related records
-    const { data: ordersToDelete } = await supabaseClient
-        .from('upcoming_orders')
-        .select('id')
-        .eq('client_id', clientId);
-
-    if (ordersToDelete && ordersToDelete.length > 0) {
-        const ids = ordersToDelete.map(o => o.id);
-
-        // PERFORMANCE: Delete related records in parallel instead of sequentially
-        const [vsResult, itemsResult, boxResult] = await Promise.all([
-            supabaseClient.from('upcoming_order_vendor_selections').delete().in('upcoming_order_id', ids),
-            supabaseClient.from('upcoming_order_items').delete().in('upcoming_order_id', ids),
-            supabaseClient.from('upcoming_order_box_selections').delete().in('upcoming_order_id', ids)
-        ]);
-
-        if (vsResult.error) console.error('Error deleting vendor selections:', vsResult.error);
-        if (itemsResult.error) console.error('Error deleting items:', itemsResult.error);
-        if (boxResult.error) console.error('Error deleting box selections:', boxResult.error);
-
-        // Finally delete the orders
-        const { error: deleteError } = await supabaseClient.from('upcoming_orders').delete().in('id', ids);
-        if (deleteError) {
-            console.error('Error deleting upcoming orders:', deleteError);
-            throw new Error(`Failed to clear existing orders: ${deleteError.message}`);
-        }
-    }
-
-    if (!orderConfig) {
-        // If no active order, we are done (config cleared)
-        return;
-    }
-
-    // Check if orderConfig uses the new deliveryDayOrders format
-    // Boxes orders should NOT use deliveryDayOrders format - they use the old format
-    const hasDeliveryDayOrders = orderConfig &&
-        orderConfig.serviceType !== 'Boxes' &&
-        (orderConfig as any).deliveryDayOrders &&
-        typeof (orderConfig as any).deliveryDayOrders === 'object';
-
-    if (hasDeliveryDayOrders) {
-        // New format: create/update orders for each delivery day
-        const deliveryDayOrders = (orderConfig as any).deliveryDayOrders;
-        // Only sync days that are in deliveryDayOrders (user's selected days)
-        // Filter to only include days that have at least one vendor with items
-        const deliveryDays = Object.keys(deliveryDayOrders).filter(day => {
-            const dayOrder = deliveryDayOrders[day];
-            if (!dayOrder || !dayOrder.vendorSelections || dayOrder.vendorSelections.length === 0) {
-                return false;
-            }
-            // Check if at least one vendor has items
-            return dayOrder.vendorSelections.some((sel: any) => {
-                if (!sel.vendorId) return false;
-                const items = sel.items || {};
-                return Object.keys(items).length > 0 && Object.values(items).some((qty: any) => (Number(qty) || 0) > 0);
-            });
-        });
-
-        // PERFORMANCE: Sync each delivery day order in parallel since they're independent
-        const deliveryDayPromises = deliveryDays.map(async (deliveryDay) => {
-            const dayOrder = deliveryDayOrders[deliveryDay];
-            if (dayOrder && dayOrder.vendorSelections) {
-                // Create a full order config for this day
-                const dayOrderConfig = {
-                    serviceType: orderConfig.serviceType,
-                    caseId: orderConfig.caseId,
-                    vendorSelections: dayOrder.vendorSelections.filter((s: any) => {
-                        // Only include vendors with items
-                        if (!s.vendorId) return false;
-                        const items = s.items || {};
-                        const hasItems = Object.keys(items).length > 0 && Object.values(items).some((qty: any) => (Number(qty) || 0) > 0);
-                        return hasItems;
-                    }),
-                    lastUpdated: orderConfig.lastUpdated,
-                    updatedBy: orderConfig.updatedBy
-                };
-
-                // Only sync if there are vendors with items
-                if (dayOrderConfig.vendorSelections.length > 0) {
-                    // console.log(`[syncCurrentOrderToUpcoming] Syncing order for ${deliveryDay}`);
-                    await syncSingleOrderForDeliveryDay(
-                        clientId,
-                        dayOrderConfig,
-                        deliveryDay,
-                        vendors,
-                        menuItems,
-                        boxTypes,
-                        supabaseClient,
-                        'Lunch', // Default meal type for main selections
-                        settings,
-                        currentTime,
-                        true // Skip history here, handled at the end of syncCurrentOrderToUpcoming
-                    );
-                }
-            }
-        });
-        await Promise.all(deliveryDayPromises);
-
-
-    } else {
-        // Old format: single order config
-        // Check if any selected vendors have multiple delivery days
-        let deliveryDays: string[] = [];
-
-        if (orderConfig.serviceType === 'Food' && orderConfig.vendorSelections && orderConfig.vendorSelections.length > 0) {
-            // Get all unique delivery days from selected vendors
-            const allDeliveryDays = new Set<string>();
-            for (const selection of orderConfig.vendorSelections) {
-                if (selection.vendorId) {
-                    const vendor = vendors.find(v => v.id === selection.vendorId);
-                    if (vendor && vendor.deliveryDays) {
-                        vendor.deliveryDays.forEach((day: string) => allDeliveryDays.add(day));
-                    }
-                }
-            }
-            deliveryDays = Array.from(allDeliveryDays);
-        } else if (orderConfig.serviceType === 'Boxes') {
-            const boxOrders = orderConfig.boxOrders || [];
-            const allDeliveryDays = new Set<string>();
-
-            if (boxOrders.length > 0) {
-                boxOrders.forEach((box: any) => {
-                    const vId = box.vendorId || boxTypes.find(bt => bt.id === box.boxTypeId)?.vendorId;
-                    if (vId) {
-                        const vendor = vendors.find(v => v.id === vId);
-                        if (vendor && vendor.deliveryDays) {
-                            vendor.deliveryDays.forEach((day: string) => allDeliveryDays.add(day));
-                        }
-                    }
-                });
-            } else {
-                // Fallback for legacy format
-                const boxType = orderConfig.boxTypeId ? boxTypes.find(bt => bt.id === orderConfig.boxTypeId) : null;
-                const boxVendorId = (orderConfig.vendorId && orderConfig.vendorId.trim() !== '') ? orderConfig.vendorId : (boxType?.vendorId || null);
-                if (boxVendorId) {
-                    const vendor = vendors.find(v => v.id === boxVendorId);
-                    if (vendor && vendor.deliveryDays) {
-                        vendor.deliveryDays.forEach((day: string) => allDeliveryDays.add(day));
-                    }
-                }
-            }
-
-            if (allDeliveryDays.size > 0) {
-                // For Boxes, we strictly want recurrence. If multi-day, we might need a better policy, 
-                // but for now we follow the existing pattern: if multi-vendor multi-day, take them all.
-                // However, the existing logic (line 2975) was defaulting to the first day for Boxes.
-                // Let's stick to the FIRST day of the set to maintain "one recurring order per week" for boxes.
-                deliveryDays = [Array.from(allDeliveryDays)[0]];
-            } else {
-                deliveryDays = [];
-            }
-        } else if (orderConfig.serviceType === 'Custom') {
-            // [CUSTOM ORDER LOG]
-            console.log('[syncCurrentOrderToUpcoming] Custom Order Delivery Day extraction:', {
-                deliveryDay: orderConfig.deliveryDay,
-                hasDeliveryDay: !!orderConfig.deliveryDay
-            });
-
-            if (orderConfig.deliveryDay) {
-                deliveryDays = [orderConfig.deliveryDay];
-            }
-        }
-
-        // If vendor(s) have multiple delivery days, create orders for each
-        if (deliveryDays.length > 1) {
-            // PERFORMANCE: Create orders for each delivery day in parallel since they're independent
-            await Promise.all(
-                deliveryDays.map(deliveryDay =>
-                    syncSingleOrderForDeliveryDay(
-                        clientId,
-                        orderConfig,
-                        deliveryDay,
-                        vendors,
-                        menuItems,
-                        boxTypes,
-                        supabaseClient,
-                        'Lunch',
-                        settings,
-                        currentTime,
-                        true // Skip history here, handled at the end of syncCurrentOrderToUpcoming
-                    )
-                )
-            );
-        } else {
-            // [CUSTOM ORDER LOG]
-            if (orderConfig.serviceType === 'Custom') {
-                console.log('[syncCurrentOrderToUpcoming] calling syncSingleOrderForDeliveryDay for Custom Order', {
-                    deliveryDay: deliveryDays.length === 1 ? deliveryDays[0] : null
-                });
-            }
-
-            await syncSingleOrderForDeliveryDay(
-                clientId,
-                orderConfig,
-                deliveryDays.length === 1 ? deliveryDays[0] : null,
-                vendors,
-                menuItems,
-                boxTypes,
-                supabaseClient,
-                'Lunch',
-                settings,
-                currentTime,
-                true // Skip history here, handled at the end of syncCurrentOrderToUpcoming
-            );
-        }
-    }
-
-    // 3. MEAL SELECTIONS SYNC (Breakfast, Dinner, etc.)
-    // MOVED OUTSIDE of hasDeliveryDayOrders check to ensure it runs for all formats
-
-    // LOGGING: Check what we received
-    console.log('[syncCurrentOrderToUpcoming] Syncing meal selections...');
-
-    // PERFORMANCE: Fetch meal items once outside the loop instead of inside
-    if (orderConfig && orderConfig.mealSelections) {
-        const mealItems = await getMealItems();
-        const mappedMealItems = mealItems.map(mi => ({
-            id: mi.id,
-            vendorId: '',
-            name: mi.name,
-            value: 0,
-            priceEach: mi.priceEach,
-            isActive: mi.isActive,
-            categoryId: mi.categoryId,
-            quotaValue: mi.quotaValue
-        }));
-
-        // console.log('[syncCurrentOrderToUpcoming] Syncing meal selections', Object.keys(orderConfig.mealSelections));
-        for (const [mealType, selection] of Object.entries(orderConfig.mealSelections)) {
-
-            // Create a temporary config for this meal
-            // It needs to look like a standard orderConfig with vendorSelections
-            // FIX: Ensure vendorId is null if missing, NOT empty string, to avoid UUID errors
-            const mealOrderConfig = {
-                ...orderConfig,
-                serviceType: 'Food' as ServiceType,
-                vendorSelections: [{
-                    vendorId: selection.vendorId || null,
-                    items: selection.items,
-                    itemNotes: selection.itemNotes
-                }]
-            };
-
-            if (orderConfig.deliveryDayOrders) {
-                // PERFORMANCE: Sync for each day in parallel since they're independent
-                const mealDayPromises = Object.keys(orderConfig.deliveryDayOrders).map(async (day) => {
-                    // Create a new config object for each day to avoid shared state issues
-                    const dayMealOrderConfig = {
-                        ...mealOrderConfig,
-                        serviceType: 'Meal' as ServiceType
-                    };
-                    // Always skip history here as we'll handle it at the end of syncCurrentOrderToUpcoming if needed
-                    await syncSingleOrderForDeliveryDay(clientId, dayMealOrderConfig, day, vendors, mappedMealItems, boxTypes, supabaseClient, mealType, settings, currentTime, true);
-                });
-                await Promise.all(mealDayPromises);
-            } else {
-                // Single delivery day or null (Legacy/Simple format)
-                const singleMealOrderConfig = {
-                    ...mealOrderConfig,
-                    serviceType: 'Meal' as ServiceType
-                };
-                // Pass null as delivery day to rely on default or allow draft
-                // Always skip history here as we'll handle it at the end of syncCurrentOrderToUpcoming if needed
-                await syncSingleOrderForDeliveryDay(clientId, singleMealOrderConfig, null, vendors, mappedMealItems, boxTypes, supabaseClient, mealType, settings, currentTime, true);
-            }
-        }
-    }
-
-    // 4. SUMMARY HISTORY UPDATE
-    // Instead of each delivery day adding its own history entry (causing race conditions and bloat),
-    // we add a single entry for the entire "Save" action if history isn't skipped.
-    // Build full orderDetails so UI shows snapshot (not "No details captured").
-    if (!skipHistory) {
-        try {
-            const orderDetails: any = {
-                serviceType: orderConfig.serviceType,
-                caseId: orderConfig.caseId || null,
-                deliveryDay: (orderConfig as any).deliveryDay || null,
-                mealType: (orderConfig as any).mealType || null
-            };
-            if (orderConfig.serviceType === 'Boxes' && orderConfig.boxOrders?.length) {
-                orderDetails.boxOrders = orderConfig.boxOrders.map((box: any) => {
-                    const boxType = boxTypes.find(bt => bt.id === box.boxTypeId);
-                    const vendor = vendors.find(v => v.id === box.vendorId);
-                    const itemsDetails = Object.entries(box.items || {}).map(([itemId, qty]: [string, any]) => {
-                        const menuItem = menuItems.find(mi => mi.id === itemId);
-                        return {
-                            itemId,
-                            itemName: menuItem?.name || 'Unknown Item',
-                            quantity: qty,
-                            unitValue: box.itemPrices?.[itemId] ?? menuItem?.priceEach ?? menuItem?.value ?? 0,
-                            totalValue: (box.itemPrices?.[itemId] ?? menuItem?.priceEach ?? menuItem?.value ?? 0) * (qty as number),
-                            note: box.itemNotes?.[itemId] || null
-                        };
-                    });
-                    return {
-                        boxTypeId: box.boxTypeId,
-                        boxTypeName: boxType?.name || 'Unknown Box',
-                        vendorId: box.vendorId,
-                        vendorName: vendor?.name || 'Unknown Vendor',
-                        vendorEmail: vendor?.email || null,
-                        quantity: box.quantity,
-                        items: box.items || {},
-                        itemPrices: box.itemPrices || {},
-                        itemNotes: box.itemNotes || {},
-                        itemsDetails
-                    };
-                });
-            }
-            if (orderConfig.serviceType === 'Food' && orderConfig.vendorSelections?.length) {
-                orderDetails.vendorSelections = orderConfig.vendorSelections.map((vs: any) => {
-                    const vendor = vendors.find(v => v.id === vs.vendorId);
-                    const itemsDetails = Object.entries(vs.items || {}).map(([itemId, qty]: [string, any]) => {
-                        const menuItem = menuItems.find(mi => mi.id === itemId);
-                        return {
-                            itemId,
-                            itemName: menuItem?.name || 'Unknown Item',
-                            quantity: qty,
-                            unitValue: menuItem?.priceEach ?? menuItem?.value ?? 0,
-                            totalValue: (menuItem?.priceEach ?? menuItem?.value ?? 0) * (qty as number),
-                            note: vs.itemNotes?.[itemId] || null
-                        };
-                    });
-                    return {
-                        vendorId: vs.vendorId,
-                        vendorName: vendor?.name || 'Unknown Vendor',
-                        vendorEmail: vendor?.email || null,
-                        items: vs.items || {},
-                        itemNotes: vs.itemNotes || {},
-                        itemsDetails
-                    };
-                });
-            }
-            if (orderConfig.serviceType === 'Meal' && orderConfig.mealSelections) {
-                const mealItemsList = await getMealItems();
-                const mealSelectionsObj: Record<string, any> = {};
-                for (const [key, selection] of Object.entries(orderConfig.mealSelections)) {
-                    const sel = selection as any;
-                    const vendor = vendors.find(v => v.id === sel.vendorId);
-                    const itemsDetails = Object.entries(sel.items || {}).map(([itemId, qty]: [string, any]) => {
-                        const mealItem = mealItemsList.find(mi => mi.id === itemId);
-                        return {
-                            itemId,
-                            itemName: mealItem?.name || 'Unknown Item',
-                            quantity: qty,
-                            unitValue: mealItem?.priceEach ?? mealItem?.value ?? 0,
-                            totalValue: (mealItem?.priceEach ?? mealItem?.value ?? 0) * (qty as number),
-                            note: sel.itemNotes?.[itemId] || null
-                        };
-                    });
-                    mealSelectionsObj[key] = {
-                        mealType: sel.mealType || key,
-                        vendorId: sel.vendorId,
-                        vendorName: vendor?.name || 'Unknown Vendor',
-                        vendorEmail: vendor?.email || null,
-                        items: sel.items || {},
-                        itemNotes: sel.itemNotes || {},
-                        itemsDetails
-                    };
-                }
-                orderDetails.mealSelections = mealSelectionsObj;
-            }
-            if (orderConfig.serviceType === 'Custom') {
-                const vendor = vendors.find(v => v.id === orderConfig.vendorId);
-                orderDetails.customOrder = {
-                    vendorId: orderConfig.vendorId,
-                    vendorName: vendor?.name || 'Unknown Vendor',
-                    vendorEmail: vendor?.email || null,
-                    description: orderConfig.custom_name || (orderConfig as any).description || 'Custom Order',
-                    price: orderConfig.custom_price ?? (orderConfig as any).totalValue ?? 0,
-                    deliveryDay: (orderConfig as any).deliveryDay || null
-                };
-            }
-            const historyEntry: any = {
-                type: 'upcoming',
-                orderId: 'sync-' + Date.now(),
-                serviceType: orderConfig.serviceType,
-                caseId: orderConfig.caseId || null,
-                timestamp: currentTime.toISOString(),
-                updatedBy: (orderConfig as any).updatedBy || 'Admin',
-                summary: `Order Sync: Updated ${orderConfig.serviceType} order details`,
-                orderDetails,
-                orderConfig: {
-                    ...orderConfig,
-                    snapshot: undefined,
-                    items: undefined
-                },
-                snapshot: (orderConfig as any).snapshot || null
-            };
-
-            await appendOrderHistory(clientId, historyEntry, supabaseClient);
-        } catch (hError) {
-            console.warn('[syncCurrentOrderToUpcoming] Error saving summary history:', hError);
-        }
-    }
-
-    // Targeted local DB sync for this client to avoid full blocking sync
-    // PERFORMANCE: Run in background to avoid blocking the response
-    const { updateClientInLocalDB } = await import('./local-db');
-    updateClientInLocalDB(clientId).catch(err => {
-        console.error('[syncCurrentOrderToUpcoming] Error in background local DB sync:', err);
-    });
-
+export async function syncCurrentOrderToUpcoming(clientId: string, client: ClientProfile, skipClientUpdate: boolean = false, _skipHistory: boolean = false) {
+    const orderConfig = (client as any).upcomingOrder ?? client.activeOrder ?? null;
+    if (skipClientUpdate || !orderConfig) return;
+    await updateClientUpcomingOrder(clientId, orderConfig);
     try {
         revalidatePath('/clients');
         revalidatePath(`/client-portal/${clientId}`);
-    } catch (e) { }
-
+    } catch (_e) { }
 }
 
 /**
@@ -5531,12 +5055,12 @@ export async function getUpcomingOrderForClient(clientId: string) {
     try {
         const { data, error } = await supabase
             .from('clients')
-            .select('upcoming_order, active_order')
+            .select('upcoming_order')
             .eq('id', clientId)
             .single();
 
         if (error || !data) return null;
-        return data.upcoming_order ?? data.active_order ?? null;
+        return data.upcoming_order ?? null;
     } catch (err) {
         console.error('Error in getUpcomingOrderForClient:', err);
         return null;

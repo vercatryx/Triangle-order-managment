@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import Link from 'next/link';
 import { AppSettings } from '@/lib/types';
 import { updateSettings, getCreationIds, deleteOrdersByCreationId } from '@/lib/actions';
 import { useDataCache } from '@/lib/data-cache';
@@ -188,6 +189,13 @@ export function GlobalSettings() {
         <div className={styles.container}>
             <h2 className={styles.title}>Global Application Settings</h2>
             <p className={styles.subtitle}>Configure system-wide rules and settings.</p>
+            <p className={styles.toolsBar}>
+                Tools: <Link href="/admin/order-sync" className={styles.toolsLink}>Order sync</Link>
+                {' · '}
+                <Link href="/admin/vendor-day-mismatches" className={styles.toolsLink}>Vendor day mismatches</Link>
+                {' · '}
+                <Link href="/admin/cleanup" className={styles.toolsLink}>Cleanup (invalid meal types)</Link>
+            </p>
 
             <div className={styles.card}>
                 <div className={styles.formGroup} style={{ marginBottom: 'var(--spacing-lg)' }}>

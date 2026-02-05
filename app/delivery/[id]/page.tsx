@@ -36,35 +36,7 @@ export default async function OrderDeliveryPage({ params }: { params: Promise<{ 
 
     const { data: existingOrder, error: orderError } = await query.maybeSingle();
 
-    let order = existingOrder;
-    let isUpcoming = false;
-
-    if (!order) {
-        // Try upcoming_orders
-        let upcomingQuery = supabaseAdmin
-            .from('upcoming_orders')
-            .select('id, order_number, client_id, delivery_day, delivery_proof_url');
-
-        if (isUuid) {
-            upcomingQuery = upcomingQuery.eq('id', id);
-        } else {
-            const idInt = parseInt(id, 10);
-            if (!isNaN(idInt)) {
-                upcomingQuery = upcomingQuery.eq('order_number', idInt);
-            } else {
-                upcomingQuery = upcomingQuery.eq('order_number', id);
-            }
-        }
-
-        const { data: upcomingOrder } = await upcomingQuery.maybeSingle();
-        if (upcomingOrder) {
-            order = {
-                ...upcomingOrder,
-                scheduled_delivery_date: upcomingOrder.delivery_day,
-            };
-            isUpcoming = true;
-        }
-    }
+    const order = existingOrder;
 
     if (orderError || !order) {
         return (

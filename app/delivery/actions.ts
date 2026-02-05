@@ -50,34 +50,8 @@ export async function processDeliveryProof(formData: FormData) {
             }
         }
 
-        // If still not found, try UPCOMING orders
         if (!foundOrder) {
-            table = 'upcoming_orders';
-
-            const { data: upcomingOrder } = await supabaseAdmin
-                .from('upcoming_orders')
-                .select('id')
-                .eq('order_number', orderNumber)
-                .maybeSingle();
-
-            foundOrder = upcomingOrder;
-
-            // Try ID for upcoming if number failed
-            if (!foundOrder) {
-                const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-                if (uuidRegex.test(orderNumber)) {
-                    const { data: upcomingById } = await supabaseAdmin
-                        .from('upcoming_orders')
-                        .select('id')
-                        .eq('id', orderNumber)
-                        .maybeSingle();
-                    foundOrder = upcomingById;
-                }
-            }
-        }
-
-        if (!foundOrder) {
-            console.error(`[Delivery Debug] Order not found for OrderNumber: "${orderNumber}" in orders or upcoming_orders`);
+            console.error(`[Delivery Debug] Order not found for OrderNumber: "${orderNumber}" in orders table`);
             return { success: false, error: 'Order not found' };
         }
 

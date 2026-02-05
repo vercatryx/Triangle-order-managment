@@ -1633,17 +1633,19 @@ export async function getActiveOrderForClient(clientId: string) {
  * This is used for "Current Order Request" form
  */
 /**
- * Get upcoming order from upcoming_orders table for a client
- * This is used for "Current Order Request" form
- * Now uses local database for fast access
+ * Get upcoming order from clients.upcoming_order column only (single source of truth).
  */
 export async function getUpcomingOrderForClient(clientId: string) {
     if (!clientId) return null;
-
     try {
-        // Use local database for fast access
-        const { getUpcomingOrderForClientLocal } = await import('./local-db');
-        return await getUpcomingOrderForClientLocal(clientId);
+        const { supabase } = await import('./supabase');
+        const { data, error } = await supabase
+            .from('clients')
+            .select('upcoming_order')
+            .eq('id', clientId)
+            .single();
+        if (error || !data) return null;
+        return data.upcoming_order ?? null;
     } catch (err) {
         console.error('Error in getUpcomingOrderForClient:', err);
         return null;

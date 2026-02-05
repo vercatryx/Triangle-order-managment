@@ -11,7 +11,22 @@
 
 .subtitle {
     color: var(--text-secondary);
+    margin-bottom: var(--spacing-sm);
+}
+
+.toolsBar {
+    color: var(--text-secondary);
     margin-bottom: var(--spacing-xl);
+    font-size: 0.9rem;
+}
+
+.toolsLink {
+    color: var(--color-primary);
+    text-decoration: none;
+}
+
+.toolsLink:hover {
+    text-decoration: underline;
 }
 
 .card {

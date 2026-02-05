@@ -403,11 +403,9 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
 
                 // 6. Check if any box order (regardless of service type) has no vendor attached
                 let boxOrderNeedsVendor = false;
-                // Check both activeOrder and detailsCache for box orders
                 const activeBoxOrders = c.upcomingOrder?.boxOrders || [];
                 const clientDetails = detailsCache[c.id];
                 const cachedBoxOrders = clientDetails?.boxOrders || [];
-                // Combine both sources, prioritizing activeOrder
                 const allBoxOrders = activeBoxOrders.length > 0 ? activeBoxOrders : cachedBoxOrders;
 
                 if (allBoxOrders.length > 0) {
@@ -854,7 +852,6 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
     }
 
     function getMealOrderSummaryJSX(client: ClientProfile) {
-        // Fallback to activeOrder if mealOrder not present (legacy support / hybrid state)
         const selections = client.mealOrder?.mealSelections || client.upcomingOrder?.mealSelections;
 
         if (!selections) {
@@ -1287,11 +1284,9 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
         }
 
         // 6. Check if any box order (regardless of service type) has no vendor attached
-        // Check both activeOrder and detailsCache for box orders
         const activeBoxOrders = client.upcomingOrder?.boxOrders || [];
         const clientDetails = detailsCache[client.id];
         const cachedBoxOrders = clientDetails?.boxOrders || [];
-        // Combine both sources, prioritizing activeOrder
         const allBoxOrders = activeBoxOrders.length > 0 ? activeBoxOrders : cachedBoxOrders;
 
         if (allBoxOrders.length > 0) {

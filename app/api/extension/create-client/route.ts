@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { addClient } from '@/lib/actions';
+import { addClient, checkClientNameExists } from '@/lib/actions';
 import { ServiceType } from '@/lib/types';
 
 /**
@@ -103,6 +103,16 @@ export async function POST(request: NextRequest) {
             return NextResponse.json({
                 success: false,
                 error: 'Please make sure you are on the clients open case page or enter the real case url'
+            }, { status: 400 });
+        }
+
+        // Reject if a client with the exact same name already exists
+        const trimmedName = fullName.trim();
+        const nameExists = await checkClientNameExists(trimmedName);
+        if (nameExists) {
+            return NextResponse.json({
+                success: false,
+                error: `A client with the name "${trimmedName}" already exists.`
             }, { status: 400 });
         }
 
