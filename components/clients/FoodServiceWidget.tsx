@@ -19,6 +19,8 @@ interface Props {
     mealItems: MealItem[];
     settings?: any; // AppSettings for take effect date
     isClientPortal?: boolean;
+    /** When provided (e.g. from client portal), use this instead of client.serviceType for UI. Order's type is source of truth. */
+    serviceType?: string;
     validationStatus?: {
         isValid: boolean;
         totalValue: number;
@@ -36,8 +38,10 @@ export default function FoodServiceWidget({
     mealItems,
     settings,
     isClientPortal,
+    serviceType: effectiveServiceType,
     validationStatus
 }: Props) {
+    const serviceType = effectiveServiceType ?? client.serviceType;
 
 
     // --- EFFECTIVE DATE BANNER LOGIC ---
@@ -1320,7 +1324,7 @@ export default function FoodServiceWidget({
                 }}>
                     <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
                         {/* Add Vendor Button - for Food order (delivery/vendor) and Meals both */}
-                        {(client.serviceType === 'Food' || client.serviceType === 'Meal') && (
+                        {(serviceType === 'Food' || serviceType === 'Meal') && (
                             <button
                                 type="button"
                                 onClick={handleAddVendorBlock}
@@ -1376,7 +1380,7 @@ export default function FoodServiceWidget({
 
 
                     {/* Effective Date For Admin Header */}
-                    {(client.serviceType === 'Food' || client.serviceType === 'Meal') && (
+                    {(serviceType === 'Food' || serviceType === 'Meal') && (
                         <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
 
                             {/* Meal Counter */}

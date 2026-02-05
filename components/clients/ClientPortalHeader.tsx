@@ -8,6 +8,8 @@ import styles from './ClientPortal.module.css';
 interface Props {
     // Basic Data
     client: ClientProfile;
+    /** Effective service type for current order (orderConfig.serviceType ?? client.serviceType). Use this for UI, not client.serviceType. */
+    serviceType?: string;
 
     // Status / Validation
     totalMealCount: number;
@@ -27,6 +29,7 @@ interface Props {
 
 export default function ClientPortalHeader({
     client,
+    serviceType: effectiveServiceType,
     totalMealCount,
     approvedLimit,
     validationError,
@@ -36,6 +39,7 @@ export default function ClientPortalHeader({
     mealCategories = [],
     orderConfig = {}
 }: Props) {
+    const serviceType = effectiveServiceType ?? client.serviceType;
     const isOverLimit = approvedLimit && totalMealCount > approvedLimit;
     const isUnderLimit = approvedLimit && totalMealCount < (approvedLimit * 0.5); // Just a heuristic
 
@@ -47,7 +51,7 @@ export default function ClientPortalHeader({
             <div className={styles.headerTopRow}>
                 <div className={styles.headerMeta}>
                     {/* Meal Count - Only show for Food Service */}
-                    {client.serviceType === 'Food' && (
+                    {serviceType === 'Food' && (
                         <div className={styles.headerCount}>
                             <span style={{ fontSize: '0.75rem', textTransform: 'uppercase', color: 'var(--text-tertiary)', fontWeight: 600 }}>
                                 Current Order
@@ -85,7 +89,7 @@ export default function ClientPortalHeader({
             {/* Bottom Row: Actions */}
             <div className={styles.headerBottomRow}>
                 {/* Add Vendor Button - Food Only */}
-                {client.serviceType === 'Food' && onAddVendor && (
+                {serviceType === 'Food' && onAddVendor && (
                     <button
                         onClick={onAddVendor}
                         className="btn btn-warning"
@@ -107,7 +111,7 @@ export default function ClientPortalHeader({
                 )}
 
                 {/* Add Meal Buttons - Food OR Meal */}
-                {(client.serviceType === 'Food' || client.serviceType === 'Meal') && onAddMeal && (
+                {(serviceType === 'Food' || serviceType === 'Meal') && onAddMeal && (
                     <div style={{ display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
                         {mealCategories
                             .map(c => c.mealType)

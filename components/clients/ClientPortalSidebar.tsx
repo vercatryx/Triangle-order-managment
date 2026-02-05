@@ -8,9 +8,12 @@ import styles from './ClientPortal.module.css';
 
 interface Props {
     client: ClientProfile;
+    /** Effective service type for current order (orderConfig.serviceType ?? client.serviceType). Use this for UI, not client.serviceType. */
+    serviceType?: string;
 }
 
-export default function ClientPortalSidebar({ client }: Props) {
+export default function ClientPortalSidebar({ client, serviceType: effectiveServiceType }: Props) {
+    const serviceType = effectiveServiceType ?? client.serviceType;
     return (
         <div className={styles.sidebarColumn} style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
             <div style={{ padding: '24px', flex: 1, overflowY: 'auto' }}>
@@ -94,11 +97,11 @@ export default function ClientPortalSidebar({ client }: Props) {
                             border: '1px solid var(--border-color)'
                         }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px', fontWeight: 600, color: 'var(--text-primary)' }}>
-                                {client.serviceType === 'Food' ? <UtensilsIcon /> : <Package size={18} />}
-                                <span>{client.serviceType} Service</span>
+                                {serviceType === 'Food' ? <UtensilsIcon /> : <Package size={18} />}
+                                <span>{serviceType} Service</span>
                             </div>
 
-                            {client.serviceType === 'Food' ? (
+                            {serviceType === 'Food' ? (
                                 <div style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', display: 'flex', gap: '8px', alignItems: 'center' }}>
                                     <CreditCard size={14} />
                                     <span>Approved: <strong>{client.approvedMealsPerWeek || 0}</strong> meals/week</span>

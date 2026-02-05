@@ -162,7 +162,8 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
     // Box Logic - Load quotas for all active box types to support multiple boxes with different types
     useEffect(() => {
         async function loadQuotas() {
-            if (client.serviceType !== 'Boxes' || boxTypes.length === 0) {
+            const effectiveType = orderConfig?.serviceType ?? client.serviceType;
+            if (effectiveType !== 'Boxes' || boxTypes.length === 0) {
                 // Optimization: only load if needed (though existing cached data makes it cheap)
                 // But wait, if we switch tabs, we might want quotas ready? 
                 // ClientProfile loads them on mount if boxTypes exist.
@@ -188,7 +189,7 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
         }
 
         loadQuotas();
-    }, [boxTypes, client.serviceType]);
+    }, [boxTypes, client.serviceType, orderConfig?.serviceType]);
 
     // Extract dependencies for auto-save
     const caseId = useMemo(() => orderConfig?.caseId ?? null, [orderConfig?.caseId]);
@@ -198,7 +199,8 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
     const boxQuantity = useMemo(() => orderConfig?.boxQuantity ?? null, [orderConfig?.boxQuantity]);
     const items = useMemo(() => (orderConfig as any)?.items ?? {}, [JSON.stringify((orderConfig as any)?.items)]);
     const itemPrices = useMemo(() => (orderConfig as any)?.itemPrices ?? {}, [(orderConfig as any)?.itemPrices]);
-    const serviceType = client.serviceType;
+    // Use order's service type when we have upcoming order data, so portal shows Boxes/Food based on actual order not client row
+    const serviceType = orderConfig?.serviceType ?? client.serviceType;
 
     // --- Auto-Scroll Logic ---
     const prevVendorCountRef = useRef(0);
@@ -365,7 +367,7 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
     // Real-time Validation Effect
     useEffect(() => {
         validateOrder();
-    }, [orderConfig, client.approvedMealsPerWeek, client.serviceType, totalMealCount, menuItems, mealItems]);
+    }, [orderConfig, orderConfig?.serviceType, client.approvedMealsPerWeek, client.serviceType, totalMealCount, menuItems, mealItems]);
 
     function validateOrder() {
         try {
@@ -373,7 +375,7 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
 
                 return;
             }
-            const serviceType = client.serviceType;
+            const effectiveType = orderConfig?.serviceType ?? client.serviceType;
             let isValid = true;
             let error: string | null = null;
             let totalValue = totalMealCount;
@@ -383,7 +385,7 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
             // Detailed Trace to Console
 
 
-            if (serviceType === 'Food' && orderConfig.vendorSelections) {
+            if (effectiveType === 'Food' && orderConfig.vendorSelections) {
                 // Check Vendor Minimums
                 for (const selection of orderConfig.vendorSelections) {
                     if (!selection.vendorId) continue;
@@ -461,7 +463,7 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
             }
 
             // 3. Box Service Validation
-            if (isValid && serviceType === 'Boxes' && orderConfig.boxOrders) {
+            if (isValid && effectiveType === 'Boxes' && orderConfig.boxOrders) {
                 orderConfig.boxOrders.forEach((box: any, boxIdx: number) => {
                     if (!isValid) return;
 
@@ -511,15 +513,15 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
             return;
         }
 
-        const serviceType = client.serviceType;
+        const effectiveType = orderConfig?.serviceType ?? client.serviceType;
         const caseId = orderConfig?.caseId || (client as any).caseID || (client.upcomingOrder as any)?.caseId;
 
         console.error("!!! [handleSave] CALLED !!!", { validationStatus, totalMealCount });
         console.log("DEBUG: Full orderConfig:", JSON.stringify(orderConfig, null, 2));
-        console.log("DEBUG: serviceType:", serviceType);
+        console.log("DEBUG: serviceType:", effectiveType);
         console.log("DEBUG: caseId:", caseId);
 
-        if (serviceType === 'Meal') {
+        if (effectiveType === 'Meal') {
             console.log("DEBUG: Checking Meal Selections:", orderConfig?.mealSelections);
             if (orderConfig?.mealSelections) {
                 Object.entries(orderConfig.mealSelections).forEach(([key, val]) => {
@@ -531,7 +533,7 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
         }
 
         // For Food clients, caseId is required. For Boxes, it's optional
-        if (serviceType === 'Food' && !caseId) {
+        if (effectiveType === 'Food' && !caseId) {
             console.error("[handleSave] Missing caseId for Food client");
             setValidationError("Missing Case ID. Please contact support.");
             return;
@@ -554,7 +556,7 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
             // Generate the order snapshot for the history (BEFORE any mutations)
             const orderSnapshot = generateOrderSnapshot(cleanedOrderConfig as any);
 
-            if (serviceType === 'Food') {
+            if (effectiveType === 'Food') {
                 // Single shape only: persist vendorSelections (no deliveryDayOrders).
                 if (Array.isArray(cleanedOrderConfig.vendorSelections)) {
                     cleanedOrderConfig.vendorSelections = cleanedOrderConfig.vendorSelections
@@ -569,7 +571,7 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
                         }));
                 }
                 delete cleanedOrderConfig.deliveryDayOrders;
-            } else if (serviceType === 'Boxes') {
+            } else if (effectiveType === 'Boxes') {
                 // For Boxes: Explicitly preserve all critical fields
                 cleanedOrderConfig.boxOrders = orderConfig.boxOrders || [];
 
@@ -593,7 +595,7 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
 
             const payload = {
                 ...cleanedOrderConfig,
-                serviceType: serviceType,
+                serviceType: effectiveType,
                 notes: cleanedOrderConfig.notes
             };
 
@@ -927,7 +929,7 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
         // --- EFFECTIVE DATE CALCULATION FOR HEADER ---
         let headerEffectiveDate: React.ReactNode = null;
 
-        if (client.serviceType === 'Food') {
+        if (serviceType === 'Food') {
             const uniqueVendorIds = new Set<string>();
             // Collect vendors from either format
             if (orderConfig.deliveryDayOrders) {
@@ -958,7 +960,7 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
             if (dates.length > 0) {
                 headerEffectiveDate = <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '0.9rem' }}>{dates}</div>;
             }
-        } else if (settings && client.serviceType !== 'Boxes') {
+        } else if (settings && serviceType !== 'Boxes') {
             // const nextDate = getNextDeliveryDateUtil(client, settings); // Broken signature
             const takeEffect = getTakeEffectDate(settings, new Date());
             if (takeEffect) {
@@ -967,7 +969,7 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
         }
 
         return headerEffectiveDate;
-    }, [settings, client, orderConfig.deliveryDayOrders, orderConfig.vendorSelections, vendors]);
+    }, [settings, client, serviceType, orderConfig.deliveryDayOrders, orderConfig.vendorSelections, vendors]);
 
     // --- SEARCH STATE ---
     const [searchTerm, setSearchTerm] = useState('');
@@ -975,7 +977,7 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
     return (
         <div className={stylesClientPortal.portalContainer}>
             {/* Left Sidebar */}
-            <ClientPortalSidebar client={client} />
+            <ClientPortalSidebar client={client} serviceType={serviceType} />
 
             {/* Main Content Area */}
             <div className={stylesClientPortal.mainColumn}>
@@ -983,6 +985,7 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
                 {/* Sticky Header */}
                 <ClientPortalHeader
                     client={client}
+                    serviceType={serviceType}
                     totalMealCount={totalMealCount}
                     approvedLimit={client.approvedMealsPerWeek}
                     validationError={validationStatus.error}
@@ -1000,7 +1003,7 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
                         <Info size={16} />
                         <div>
                             {(() => {
-                                if (client.serviceType === 'Boxes') {
+                                if (serviceType === 'Boxes') {
                                     return (
                                         <div style={{ marginTop: '0.5rem', fontSize: '0.9rem', fontWeight: 500 }}>
                                             Your changes may not take effect until next week.
@@ -1008,7 +1011,7 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
                                     );
                                 }
 
-                                if (client.serviceType === 'Food') {
+                                if (serviceType === 'Food') {
                                     // Banner removed - moved to Header
                                 }
 
@@ -1017,7 +1020,7 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
                         </div>
                     </div>
 
-                    {(client.serviceType === 'Food' || client.serviceType === 'Meal') && (
+                    {(serviceType === 'Food' || serviceType === 'Meal') && (
                         <FoodServiceWidget
                             orderConfig={orderConfig}
                             setOrderConfig={setOrderConfig}
@@ -1027,11 +1030,12 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
                             mealCategories={mealCategories}
                             mealItems={mealItems}
                             isClientPortal={true}
+                            serviceType={serviceType}
                             validationStatus={validationStatus}
                         />
                     )}
 
-                    {client.serviceType === 'Boxes' && (
+                    {serviceType === 'Boxes' && (
                         <div>
                             {(() => {
                                 const currentBoxes = orderConfig.boxOrders || [];
