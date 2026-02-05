@@ -1001,22 +1001,9 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
 
                     <div className={styles.alert} style={{ marginBottom: '1rem' }}>
                         <Info size={16} />
-                        <div>
-                            {(() => {
-                                if (serviceType === 'Boxes') {
-                                    return (
-                                        <div style={{ marginTop: '0.5rem', fontSize: '0.9rem', fontWeight: 500 }}>
-                                            Your changes may not take effect until next week.
-                                        </div>
-                                    );
-                                }
+                        <div style={{ marginTop: '0.5rem', fontSize: '0.9rem', fontWeight: 500 }}>
+                            PLEASE NOTE: ANY CHANGES TO AN ORDER NEEDS TO BE SUBMITTED BY TUESDAY 11:59 PM TO TAKE EFFECT FOR THE FOLLOWING WEEK
 
-                                if (serviceType === 'Food') {
-                                    // Banner removed - moved to Header
-                                }
-
-                                return null;
-                            })()}
                         </div>
                     </div>
 
