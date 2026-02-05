@@ -1740,32 +1740,67 @@ export function ClientProfileDetail({
         return { isValid: true, messages: [] };
     }
 
-    async function validateOrder(): Promise<{ isValid: boolean, messages: string[] }> {
+    /** Validate order. Pass configToValidate when saving newColumnOrderConfig so we validate what we're actually saving. */
+    async function validateOrder(configToValidate?: any): Promise<{ isValid: boolean, messages: string[] }> {
+        const config = configToValidate ?? orderConfig;
+        if (!config) return { isValid: true, messages: [] };
+
         if (formData.serviceType === 'Food') {
             const messages: string[] = [];
 
-            // Check total meals (Value - aligned with UI) vs Approved Limit
-            const totalValue = getCurrentOrderTotalValueAllDays();
+            // Total value: use passed config when validating what we're about to save
+            const totalValue = configToValidate != null
+                ? (() => {
+                    let t = 0;
+                    if (Array.isArray(config.vendorSelections)) {
+                        for (const s of config.vendorSelections) {
+                            if (s.itemsByDay && s.selectedDeliveryDays) {
+                                for (const day of s.selectedDeliveryDays) {
+                                    const dayItems = s.itemsByDay[day] || {};
+                                    for (const [itemId, qty] of Object.entries(dayItems)) {
+                                        const item = menuItems.find(i => i.id === itemId);
+                                        t += (item?.value || 0) * (Number(qty) || 0);
+                                    }
+                                }
+                            } else if (s.items) {
+                                const daysCount = (s.selectedDeliveryDays?.length || 1);
+                                for (const [itemId, qty] of Object.entries(s.items)) {
+                                    const item = menuItems.find(i => i.id === itemId);
+                                    t += (item?.value || 0) * (Number(qty) || 0) * daysCount;
+                                }
+                            }
+                        }
+                    }
+                    if (config.mealSelections) {
+                        for (const c of Object.values(config.mealSelections) as any[]) {
+                            if (c?.items) {
+                                for (const [itemId, qty] of Object.entries(c.items)) {
+                                    const item = mealItems.find(i => i.id === itemId) || menuItems.find(i => i.id === itemId);
+                                    t += (item?.value || 0) * (Number(qty) || 0);
+                                }
+                            }
+                        }
+                    }
+                    return t;
+                })()
+                : getCurrentOrderTotalValueAllDays();
             const approvedMeals = formData.approvedMealsPerWeek || 0;
 
-
-
             if (approvedMeals > 0 && isExceedingMaximum(totalValue, approvedMeals)) {
-
                 setValidationError(`Total value selected (${totalValue.toFixed(2)}) exceeds approved value per week (${approvedMeals}).`);
                 return { isValid: false, messages: [`Total value selected (${totalValue.toFixed(2)}) exceeds approved value per week (${approvedMeals}).`] };
             }
 
-            // Check Vendor Minimums (Daily Logic)
-            if (orderConfig.vendorSelections) {
-                for (const selection of orderConfig.vendorSelections) {
+            // Check Vendor Minimums (Daily Logic) against the config we're validating
+            if (config.vendorSelections) {
+                for (const selection of config.vendorSelections) {
                     if (!selection.vendorId) continue;
                     const vendor = vendors.find(v => v.id === selection.vendorId);
                     if (!vendor) continue;
                     const minMeals = vendor.minimumMeals || 0;
                     if (minMeals === 0) continue;
 
-                    // Check each day independently
+                    // Check each day independently (only enforce minimum when they have items for that day)
                     if (selection.itemsByDay && Object.keys(selection.itemsByDay).length > 0) {
                         const activeDays = selection.selectedDeliveryDays || [];
                         for (const day of activeDays) {
@@ -1775,8 +1810,8 @@ export function ClientProfileDetail({
                                 const item = menuItems.find(i => i.id === itemId);
                                 dayValue += (item?.value || 0) * (Number(qty) || 0);
                             }
-
-                            if (!isMeetingMinimum(dayValue, minMeals)) {
+                            // Only require minimum for days that have items; skip days with 0 (don't order for that day)
+                            if (dayValue > 0 && !isMeetingMinimum(dayValue, minMeals)) {
                                 messages.push(`${vendor.name} requires a minimum value of ${minMeals} for ${day}. You have selected ${dayValue}.`);
                             }
                         }
@@ -1796,9 +1831,9 @@ export function ClientProfileDetail({
             }
 
             // Validate Meal Selections (Breakfast, Lunch, Dinner, etc.)
-            if (orderConfig.mealSelections) {
-                Object.entries(orderConfig.mealSelections).forEach(([key, config]: [string, any]) => {
-                    const mealType = config.mealType || key.split('_')[0];
+            if (config.mealSelections) {
+                Object.entries(config.mealSelections).forEach(([key, mealConfig]: [string, any]) => {
+                    const mealType = mealConfig.mealType || key.split('_')[0];
                     // Get all sub-categories for this meal type (e.g., Hot Breakfast, Cold Breakfast)
                     const subCategories = mealCategories.filter(c => c.mealType === mealType);
 
@@ -1806,11 +1841,11 @@ export function ClientProfileDetail({
                         if (subCat.setValue !== undefined && subCat.setValue !== null) {
                             // Calculate total value for this specific category
                             let catTotalValue = 0;
-                            if (config.items) {
+                            if (mealConfig.items) {
                                 // Get items belonging to this category
                                 const catItems = mealItems.filter(i => i.categoryId === subCat.id);
 
-                                for (const [itemId, qty] of Object.entries(config.items)) {
+                                for (const [itemId, qty] of Object.entries(mealConfig.items)) {
                                     // Only count items in this category
                                     const item = catItems.find(i => i.id === itemId);
                                     if (item) {
@@ -1836,14 +1871,14 @@ export function ClientProfileDetail({
             const messages: string[] = [];
 
             // Use the boxOrders array which supports multiple boxes
-            const boxOrders = orderConfig.boxOrders || [];
+            const boxOrders = config.boxOrders || [];
 
             // Fallback for legacy single-box config if array is empty but legacy fields exist
             const effectiveBoxOrders = boxOrders.length > 0 ? boxOrders : (
-                orderConfig.boxTypeId ? [{
-                    boxTypeId: orderConfig.boxTypeId,
-                    quantity: orderConfig.boxQuantity || 1,
-                    items: orderConfig.items || {}
+                config.boxTypeId ? [{
+                    boxTypeId: config.boxTypeId,
+                    quantity: config.boxQuantity || 1,
+                    items: config.items || {}
                 }] : []
             );
 
@@ -1912,10 +1947,10 @@ export function ClientProfileDetail({
 
         if (formData.serviceType === 'Custom') {
             const messages: string[] = [];
-            if (!orderConfig.custom_name || !orderConfig.custom_name.trim()) messages.push('Item Description is required.');
-            if (!orderConfig.custom_price || Number(orderConfig.custom_price) <= 0) messages.push('Price must be greater than 0.');
-            if (!orderConfig.vendorId) messages.push('Vendor is required.');
-            if (!orderConfig.deliveryDay) messages.push('Delivery Day is required.');
+            if (!config.custom_name || !config.custom_name.trim()) messages.push('Item Description is required.');
+            if (!config.custom_price || Number(config.custom_price) <= 0) messages.push('Price must be greater than 0.');
+            if (!config.vendorId) messages.push('Vendor is required.');
+            if (!config.deliveryDay) messages.push('Delivery Day is required.');
 
             if (messages.length > 0) return { isValid: false, messages };
         }
@@ -1969,12 +2004,11 @@ export function ClientProfileDetail({
             const hasVendorSelections = orderConfig?.vendorSelections &&
                 Array.isArray(orderConfig.vendorSelections) &&
                 orderConfig.vendorSelections.some((s: any) => s.vendorId && s.vendorId.trim() !== '');
-            const hasDeliveryDayOrders = orderConfig?.deliveryDayOrders &&
-                Object.keys(orderConfig.deliveryDayOrders).length > 0;
+            const hasMealSelections = orderConfig?.mealSelections && Object.keys(orderConfig.mealSelections).length > 0;
             const hasBoxConfig = (orderConfig?.vendorId && orderConfig.vendorId.trim() !== '') ||
                 (orderConfig?.boxTypeId && orderConfig.boxTypeId.trim() !== '');
 
-            if (hasCaseId && (hasVendorSelections || hasDeliveryDayOrders || hasBoxConfig)) {
+            if (hasCaseId && (hasVendorSelections || hasMealSelections || hasBoxConfig)) {
                 const cleanedOrderConfig = prepareNewColumnOrder();
                 if (cleanedOrderConfig) {
                     await updateClientUpcomingOrder(newClient.id, cleanedOrderConfig);
@@ -2270,9 +2304,8 @@ export function ClientProfileDetail({
         }
         // Food or Meal: allow Food + Meal together; strip Boxes and Custom.
         // Omit vendorSelections/mealSelections when they are empty or only placeholder rows (so caseId-only stays caseId-only).
-        const hasRealVendor = Array.isArray(raw.vendorSelections) && raw.vendorSelections.some((s: any) => s?.vendorId || (s?.items && Object.keys(s.items).length > 0));
+        const hasRealVendor = Array.isArray(raw.vendorSelections) && raw.vendorSelections.some((s: any) => s?.vendorId || (s?.items && Object.keys(s.items).length > 0) || (s?.itemsByDay && Object.keys(s.itemsByDay || {}).length > 0));
         const vendorSelections = hasRealVendor ? raw.vendorSelections : undefined;
-        const deliveryDayOrders = raw.deliveryDayOrders && Object.keys(raw.deliveryDayOrders).length > 0 ? raw.deliveryDayOrders : undefined;
         const mealSelectionsFiltered = raw.mealSelections && typeof raw.mealSelections === 'object'
             ? Object.fromEntries(
                 Object.entries(raw.mealSelections).filter(([, m]: [string, any]) => m && ((m.items && Object.keys(m.items || {}).length > 0) || !!m.vendorId))
@@ -2284,7 +2317,6 @@ export function ClientProfileDetail({
             serviceType: raw.serviceType || 'Food',
             caseId: raw.caseId ?? undefined,
             vendorSelections,
-            deliveryDayOrders,
             mealSelections,
             notes: raw.notes ?? undefined
         };
@@ -6298,13 +6330,10 @@ export function ClientProfileDetail({
         const st = (nc?.serviceType || formData.serviceType) as string;
         const config = nc ?? orderConfig;
         if (st === 'Food') {
-            const hasDeliveryDays = config?.deliveryDayOrders && Object.keys(config.deliveryDayOrders).length > 0;
-            const hasItemsInDeliveryDays = hasDeliveryDays && Object.values(config.deliveryDayOrders).some((dayData: any) => {
-                const selections = dayData?.vendorSelections || [];
-                return selections.some((s: any) => s.vendorId && ((s.items && Object.keys(s.items).length > 0) || (s.itemsByDay && Object.keys(s.itemsByDay).length > 0)));
-            });
             const hasVendorItems = config?.vendorSelections?.some((s: any) => s.vendorId && ((s.items && Object.keys(s.items).length > 0) || (s.itemsByDay && Object.keys(s.itemsByDay).length > 0)));
-            return !hasItemsInDeliveryDays && !hasVendorItems;
+            const hasMealItems = config?.mealSelections && Object.keys(config.mealSelections).length > 0 &&
+                Object.values(config.mealSelections).some((m: any) => m?.vendorId || (m?.items && Object.keys(m.items || {}).length > 0));
+            return !hasVendorItems && !hasMealItems;
         }
         if (st === 'Meal') {
             const hasMeals = config?.mealSelections && Object.keys(config.mealSelections).length > 0;
@@ -6362,9 +6391,10 @@ export function ClientProfileDetail({
             }
         }
 
-        // Validate order config before saving (validateOrder uses orderConfig; we save newColumnOrderConfig)
-        if (orderConfig?.caseId) {
-            const validation = await validateOrder();
+        // Validate the config we're about to save (newColumnOrderConfig) so deleted vendors aren't validated
+        const configToSave = newColumnOrderConfig ?? orderConfig;
+        if (configToSave?.caseId) {
+            const validation = await validateOrder(configToSave);
             if (!validation.isValid) {
                 setValidationError(validation.messages.join('\n'));
                 return false;
@@ -6521,89 +6551,20 @@ export function ClientProfileDetail({
                     */
 
         if (formData.serviceType === 'Food') {
-            // PRIORITY 1: Check if we have per-vendor delivery days (itemsByDay format) - this is the new format
-
-
-            // NEW LOGIC: If we have ANY vendorSelections array (even empty), we assume it's the source of truth
-            // and we should regenerate deliveryDayOrders from it. This handles the case where all vendors are deleted.
-            const hasVendorSelectionsArray = Array.isArray(cleanedOrderConfig.vendorSelections);
-
-            const hasPerVendorDeliveryDays = hasVendorSelectionsArray && (
-                cleanedOrderConfig.vendorSelections.length === 0 ||
-                cleanedOrderConfig.vendorSelections.some((s: any) =>
-                    s.selectedDeliveryDays && s.selectedDeliveryDays.length > 0 && s.itemsByDay
-                )
-            );
-
-
-
-            if (hasPerVendorDeliveryDays) {
-
-                // Convert per-vendor delivery days to deliveryDayOrders format
-                const deliveryDayOrders: any = {};
-                for (const selection of cleanedOrderConfig.vendorSelections) {
-                    if (!selection.vendorId || !selection.selectedDeliveryDays || !selection.itemsByDay) continue;
-
-
-
-                    for (const day of selection.selectedDeliveryDays) {
-                        if (!deliveryDayOrders[day]) deliveryDayOrders[day] = { vendorSelections: [] };
-                        const dayItems = selection.itemsByDay[day] || {};
-
-
-
-                        const hasItems = Object.keys(dayItems).length > 0 && Object.values(dayItems).some((qty: any) => (Number(qty) || 0) > 0);
-                        if (hasItems) {
-                            const vendorSelection = {
-                                vendorId: selection.vendorId,
-                                items: dayItems,
-                                itemNotes: selection.itemNotesByDay?.[day] || {}
-                            };
-
-                            deliveryDayOrders[day].vendorSelections.push(vendorSelection);
-                        } else {
-
-                        }
-                    }
-                }
-                // Clean up days with no vendors
-                const daysWithVendors = Object.keys(deliveryDayOrders).filter(day =>
-                    deliveryDayOrders[day].vendorSelections && deliveryDayOrders[day].vendorSelections.length > 0
-                );
-                if (daysWithVendors.length > 0) {
-                    const cleanedDeliveryDayOrders: any = {};
-                    for (const day of daysWithVendors) cleanedDeliveryDayOrders[day] = deliveryDayOrders[day];
-                    cleanedOrderConfig.deliveryDayOrders = cleanedDeliveryDayOrders;
-                } else {
-                    // CRITICAL FIX: If no days having vendors, we must explicitly set deliveryDayOrders to empty object
-                    // to overwrite any stale data from database.
-                    cleanedOrderConfig.deliveryDayOrders = {};
-                }
-
-                // Remove the transient vendorSelections used for UI state
-                cleanedOrderConfig.vendorSelections = undefined;
-            } else if (cleanedOrderConfig.deliveryDayOrders) {
-                // PRIORITY 2: Existing multi-day format (deliveryDayOrders) - clean and preserve
-
-                for (const day of Object.keys(cleanedOrderConfig.deliveryDayOrders)) {
-                    cleanedOrderConfig.deliveryDayOrders[day].vendorSelections = (cleanedOrderConfig.deliveryDayOrders[day].vendorSelections || [])
-                        .filter((s: any) => s.vendorId)
-                        .map((s: any) => ({
-                            vendorId: s.vendorId,
-                            items: s.items || {}
-                        }));
-                }
-            } else if (cleanedOrderConfig.vendorSelections) {
-                // PRIORITY 3: Single-day format - clean and preserve vendor selections
-
-                cleanedOrderConfig.vendorSelections = (cleanedOrderConfig.vendorSelections || [])
-                    .filter((s: any) => s.vendorId)
+            // Single shape only: persist vendorSelections (with itemsByDay / selectedDeliveryDays). Never write deliveryDayOrders.
+            if (Array.isArray(cleanedOrderConfig.vendorSelections)) {
+                cleanedOrderConfig.vendorSelections = cleanedOrderConfig.vendorSelections
+                    .filter((s: any) => s?.vendorId)
                     .map((s: any) => ({
                         vendorId: s.vendorId,
                         items: s.items || {},
-                        itemNotes: s.itemNotes || {}
+                        itemsByDay: s.itemsByDay && typeof s.itemsByDay === 'object' ? s.itemsByDay : {},
+                        selectedDeliveryDays: Array.isArray(s.selectedDeliveryDays) ? s.selectedDeliveryDays : [],
+                        itemNotes: s.itemNotes || {},
+                        itemNotesByDay: s.itemNotesByDay && typeof s.itemNotesByDay === 'object' ? s.itemNotesByDay : {}
                     }));
             }
+            delete cleanedOrderConfig.deliveryDayOrders;
 
             // CRITICAL: Preserve mealSelections (Breakfast, Lunch, Dinner, etc.)
             if (orderConfig.mealSelections) {
@@ -6884,11 +6845,10 @@ export function ClientProfileDetail({
                 const hasVendorSelections = orderConfig?.vendorSelections &&
                     Array.isArray(orderConfig.vendorSelections) &&
                     orderConfig.vendorSelections.some((s: any) => s.vendorId && s.vendorId.trim() !== '');
-                const hasDeliveryDayOrders = orderConfig?.deliveryDayOrders &&
-                    Object.keys(orderConfig.deliveryDayOrders).length > 0;
+                const hasMealSelections = orderConfig?.mealSelections && Object.keys(orderConfig.mealSelections).length > 0;
                 const hasBoxConfig = (orderConfig?.vendorId && orderConfig.vendorId.trim() !== '') ||
                     (orderConfig?.boxTypeId && orderConfig.boxTypeId.trim() !== '');
-                const hasOrderData = hasCaseId || hasVendorSelections || hasDeliveryDayOrders || hasBoxConfig;
+                const hasOrderData = hasCaseId || hasVendorSelections || hasMealSelections || hasBoxConfig;
 
                 // Prepare update data with order details
                 const updateData: Partial<ClientProfile> = {

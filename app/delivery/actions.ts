@@ -37,7 +37,7 @@ export async function processDeliveryProof(formData: FormData) {
 
         foundOrder = orderData;
 
-        // If not found by number, try ID
+        // If not found by number, try ID in orders
         if (!foundOrder) {
             const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
             if (uuidRegex.test(orderNumber)) {
@@ -50,8 +50,35 @@ export async function processDeliveryProof(formData: FormData) {
             }
         }
 
+        // If not in orders, try upcoming_orders (by order_number or by id)
         if (!foundOrder) {
-            console.error(`[Delivery Debug] Order not found for OrderNumber: "${orderNumber}" in orders table`);
+            const orderNum = parseInt(orderNumber, 10);
+            if (!Number.isNaN(orderNum)) {
+                const { data: upcomingByNumber } = await supabaseAdmin
+                    .from('upcoming_orders')
+                    .select('id')
+                    .eq('order_number', orderNum)
+                    .maybeSingle();
+                if (upcomingByNumber) {
+                    foundOrder = upcomingByNumber;
+                    table = 'upcoming_orders';
+                }
+            }
+            if (!foundOrder && orderNumber.length >= 32) {
+                const { data: upcomingById } = await supabaseAdmin
+                    .from('upcoming_orders')
+                    .select('id')
+                    .eq('id', orderNumber)
+                    .maybeSingle();
+                if (upcomingById) {
+                    foundOrder = upcomingById;
+                    table = 'upcoming_orders';
+                }
+            }
+        }
+
+        if (!foundOrder) {
+            console.error(`[Delivery Debug] Order not found for OrderNumber: "${orderNumber}" in orders or upcoming_orders`);
             return { success: false, error: 'Order not found' };
         }
 

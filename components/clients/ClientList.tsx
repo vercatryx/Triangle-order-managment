@@ -4,7 +4,7 @@ import { ClientProfileDetail } from './ClientProfile';
 import { ClientInfoShelf } from './ClientInfoShelf';
 
 import { useState, useEffect, useRef } from 'react';
-import { ClientProfile, ClientStatus, Navigator, Vendor, BoxType, ClientFullDetails, MenuItem, GlobalLocation } from '@/lib/types';
+import { ClientProfile, ClientStatus, Navigator, Vendor, BoxType, ClientFullDetails, MenuItem, GlobalLocation, ClientBoxOrder } from '@/lib/types';
 import {
     getClientsPaginated,
     getClientFullDetails,
@@ -344,6 +344,9 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
                 // 2. Clients whose expiration date is within the current month
                 // 3. Clients with boxes whose authorized amount is less than 584
                 // 4. Clients with food whose authorized amount is less than 1344
+                // 5. Meal orders with no vendor assigned
+                // 6. Any box order with no vendor attached
+                // 7. Box clients that have items selected but no vendor assigned
 
                 const now = new Date();
                 const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
@@ -409,7 +412,7 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
                 const allBoxOrders = activeBoxOrders.length > 0 ? activeBoxOrders : cachedBoxOrders;
 
                 if (allBoxOrders.length > 0) {
-                    boxOrderNeedsVendor = allBoxOrders.some(boxOrder => {
+                    boxOrderNeedsVendor = allBoxOrders.some((boxOrder: Partial<ClientBoxOrder>) => {
                         // Check vendorId on the box order itself, or fall back to box type's vendor
                         if (boxOrder.vendorId) {
                             return false; // Has vendor
@@ -420,7 +423,19 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
                     });
                 }
 
-                matchesView = boxesNeedsVendor || expirationInCurrentMonth || boxesLowOrNoAmount || foodLowOrNoAmount || mealNeedsVendor || boxOrderNeedsVendor;
+                // 7. Box clients that have items selected but no vendor assigned
+                let boxClientItemsSelectedNoVendor = false;
+                if (c.serviceType === 'Boxes' && allBoxOrders.length > 0) {
+                    boxClientItemsSelectedNoVendor = allBoxOrders.some((boxOrder: Partial<ClientBoxOrder>) => {
+                        const hasItemsSelected = Object.keys(boxOrder.items || {}).length > 0;
+                        if (!hasItemsSelected) return false;
+                        if (boxOrder.vendorId) return false;
+                        const box = boxTypes.find(b => b.id === boxOrder.boxTypeId);
+                        return !box?.vendorId;
+                    });
+                }
+
+                matchesView = boxesNeedsVendor || expirationInCurrentMonth || boxesLowOrNoAmount || foodLowOrNoAmount || mealNeedsVendor || boxOrderNeedsVendor || boxClientItemsSelectedNoVendor;
             }
         }
         // 'billing' might just show all clients but with different columns?
@@ -742,12 +757,22 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
             const uniqueVendors = new Set<string>();
             const isMultiDay = conf.deliveryDayOrders && typeof conf.deliveryDayOrders === 'object';
 
-            // Helper to process selections
+            // Helper: count items from flat items or itemsByDay (single-shape format)
+            const countItems = (v: any) => {
+                let n = Object.values(v.items || {}).reduce((a: number, b: any) => a + Number(b), 0);
+                if (v.itemsByDay && typeof v.itemsByDay === 'object') {
+                    Object.values(v.itemsByDay).forEach((dayItems: any) => {
+                        n += Object.values(dayItems || {}).reduce((a: number, b: any) => a + Number(b), 0);
+                    });
+                }
+                return n;
+            };
+
             const processSelections = (selections: any[]) => {
                 selections.forEach(v => {
                     const vendorName = vendors.find(ven => ven.id === v.vendorId)?.name;
                     if (vendorName) {
-                        const itemCount = Object.values(v.items || {}).reduce((a: number, b: any) => a + Number(b), 0);
+                        const itemCount = countItems(v);
                         if (itemCount > 0) uniqueVendors.add(`${vendorName} (${itemCount})`);
                     }
                 });
@@ -759,6 +784,17 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
                 });
             } else if (conf.vendorSelections) {
                 processSelections(conf.vendorSelections);
+            }
+
+            // Include meal vendors so meal-only or mixed orders show correctly
+            const mealSelections = client.mealOrder?.mealSelections || conf.mealSelections;
+            if (mealSelections && Object.keys(mealSelections).length > 0) {
+                Object.values(mealSelections).forEach((sel: any) => {
+                    if (sel?.vendorId) {
+                        const vName = vendors.find(v => v.id === sel.vendorId)?.name;
+                        if (vName) uniqueVendors.add(vName);
+                    }
+                });
             }
 
             const vendorsSummary = Array.from(uniqueVendors).join(', ');
@@ -943,9 +979,19 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
                         }
                     });
                 } else if (conf.vendorSelections) {
-                    conf.vendorSelections.forEach(v => {
+                    conf.vendorSelections.forEach((v: { vendorId?: string }) => {
                         const vName = vendors.find(ven => ven.id === v.vendorId)?.name;
                         if (vName) uniqueVendors.add(vName);
+                    });
+                }
+                // Single-shape: also show meal vendors so we don't show "No Vendor" for meal-only orders
+                const mealSelections = client.mealOrder?.mealSelections || conf.mealSelections;
+                if (mealSelections && typeof mealSelections === 'object') {
+                    Object.values(mealSelections).forEach((sel: any) => {
+                        if (sel?.vendorId) {
+                            const vName = vendors.find(ven => ven.id === sel.vendorId)?.name;
+                            if (vName) uniqueVendors.add(vName);
+                        }
                     });
                 }
                 if (uniqueVendors.size > 0) {
@@ -1005,7 +1051,7 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
             // Collect all items from all vendors/days
             const isMultiDay = conf.deliveryDayOrders && typeof conf.deliveryDayOrders === 'object';
 
-            // Helper to process selections
+            // Helper to process selections (single-shape: items and/or itemsByDay)
             const processSelections = (selections: any[]) => {
                 selections.forEach(sel => {
                     const vName = vendors.find(v => v.id === sel.vendorId)?.name;
@@ -1018,11 +1064,27 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
                             if (q > 0) {
                                 const item = menuItems.find(i => i.id === itemId);
                                 if (item) {
-                                    // Check if already in list (aggregate?) - Usually we want row per item per vendor, but here simple list
                                     const existing = itemsList.find(i => i.name === item.name);
                                     if (existing) existing.quantity += q;
                                     else itemsList.push({ name: item.name, quantity: q });
                                 }
+                            }
+                        });
+                    }
+                    if (sel.itemsByDay && typeof sel.itemsByDay === 'object') {
+                        Object.values(sel.itemsByDay).forEach((dayItems: any) => {
+                            if (dayItems && typeof dayItems === 'object') {
+                                Object.entries(dayItems).forEach(([itemId, qty]) => {
+                                    const q = Number(qty);
+                                    if (q > 0) {
+                                        const item = menuItems.find(i => i.id === itemId);
+                                        if (item) {
+                                            const existing = itemsList.find(i => i.name === item.name);
+                                            if (existing) existing.quantity += q;
+                                            else itemsList.push({ name: item.name, quantity: q });
+                                        }
+                                    }
+                                });
                             }
                         });
                     }
@@ -1042,18 +1104,20 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
             if (mealSelections) {
                 Object.keys(mealSelections).forEach(type => {
                     const sel = mealSelections[type];
+                    if (sel?.vendorId && !vendorName.includes(vendors.find(v => v.id === sel.vendorId)?.name || '')) {
+                        const mName = vendors.find(v => v.id === sel.vendorId)?.name;
+                        if (mName) vendorName = vendorName ? `${vendorName}, ${mName}` : mName;
+                    }
                     if (sel.items) {
                         Object.entries(sel.items).forEach(([itemId, qty]) => {
                             const q = Number(qty);
                             if (q > 0) {
-                                // Try to find in menu items or meal items (though meal items usually separate)
                                 const item = menuItems.find(i => i.id === itemId) || mealItems.find(i => i.id === itemId);
                                 if (item) {
                                     const existing = itemsList.find(i => i.name === item.name);
                                     if (existing) existing.quantity += q;
                                     else itemsList.push({ name: item.name, quantity: q });
                                 } else {
-                                    // Fallback for ID if not found
                                     itemsList.push({ name: `Item #${itemId.slice(0, 5)}`, quantity: q });
                                 }
                             }
@@ -1290,7 +1354,7 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
         const allBoxOrders = activeBoxOrders.length > 0 ? activeBoxOrders : cachedBoxOrders;
 
         if (allBoxOrders.length > 0) {
-            const boxOrdersWithoutVendor = allBoxOrders.filter(boxOrder => {
+            const boxOrdersWithoutVendor = allBoxOrders.filter((boxOrder: Partial<ClientBoxOrder>) => {
                 // Check vendorId on the box order itself, or fall back to box type's vendor
                 if (boxOrder.vendorId) {
                     return false; // Has vendor
@@ -1302,6 +1366,20 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
 
             if (boxOrdersWithoutVendor.length > 0) {
                 reasons.push('Box order: No vendor attached');
+            }
+        }
+
+        // 7. Box clients that have items selected but no vendor assigned
+        if (client.serviceType === 'Boxes' && allBoxOrders.length > 0) {
+            const hasItemsSelectedNoVendor = allBoxOrders.some((boxOrder: Partial<ClientBoxOrder>) => {
+                const hasItemsSelected = Object.keys(boxOrder.items || {}).length > 0;
+                if (!hasItemsSelected) return false;
+                if (boxOrder.vendorId) return false;
+                const box = boxTypes.find(b => b.id === boxOrder.boxTypeId);
+                return !box?.vendorId;
+            });
+            if (hasItemsSelectedNoVendor) {
+                reasons.push('Boxes: Items selected but no vendor assigned');
             }
         }
 

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { addClient, checkClientNameExists } from '@/lib/actions';
+import { addClient, checkClientNameExistsExact } from '@/lib/actions';
 import { ServiceType } from '@/lib/types';
 
 /**
@@ -106,9 +106,9 @@ export async function POST(request: NextRequest) {
             }, { status: 400 });
         }
 
-        // Reject if a client with the exact same name already exists
+        // Reject if a client with the exact same name already exists (exact string match, no pattern)
         const trimmedName = fullName.trim();
-        const nameExists = await checkClientNameExists(trimmedName);
+        const nameExists = await checkClientNameExistsExact(trimmedName);
         if (nameExists) {
             return NextResponse.json({
                 success: false,

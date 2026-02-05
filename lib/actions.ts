@@ -11,6 +11,7 @@ import { randomUUID } from 'crypto';
 import { getSession } from './session';
 import { createClient } from '@supabase/supabase-js';
 import { roundCurrency, getWeekStart, getWeekEnd, getWeekRangeString, isDateInWeek } from './utils';
+import { normalizeUpcomingOrder } from './upcoming-order-converter';
 
 // --- HELPERS ---
 function handleError(error: any) {
@@ -1518,7 +1519,7 @@ function mapClientFromDB(c: any): ClientProfile {
         cin: c.cin ?? null,
         authorizedAmount: c.authorized_amount ?? null,
         expirationDate: c.expiration_date || null,
-        upcomingOrder: c.upcoming_order ?? undefined,
+        upcomingOrder: normalizeUpcomingOrder(c.upcoming_order ?? null) ?? undefined,
         locationId: c.location_id || null,
         createdAt: c.created_at,
         updatedAt: c.updated_at,
@@ -1606,6 +1607,21 @@ export async function checkClientNameExists(fullName: string, excludeId?: string
         return false;
     }
 
+    return (data?.length || 0) > 0;
+}
+
+/** Exact full_name match only (no case folding, no pattern). Use for extension create-client. */
+export async function checkClientNameExistsExact(fullName: string): Promise<boolean> {
+    if (!fullName || !fullName.trim()) return false;
+    const { data, error } = await supabase
+        .from('clients')
+        .select('id')
+        .eq('full_name', fullName.trim())
+        .limit(1);
+    if (error) {
+        console.error('Error checking client name (exact):', error);
+        return false;
+    }
     return (data?.length || 0) > 0;
 }
 
@@ -2097,30 +2113,31 @@ async function buildOrderDetailsFromUpcomingOrder(upcomingOrder: any): Promise<a
 
 /** Update only the clients.upcoming_order column (new JSONB column). No sync to upcoming_orders table or active_order. */
 export async function updateClientUpcomingOrder(clientId: string, upcomingOrder: any) {
+    const normalized = normalizeUpcomingOrder(upcomingOrder ?? null);
     const payload: { upcoming_order: any; updated_at: string } = {
-        upcoming_order: upcomingOrder ?? null,
+        upcoming_order: normalized,
         updated_at: new Date().toISOString()
     };
     const { data, error } = await supabase.from('clients').update(payload).eq('id', clientId).select().single();
     handleError(error);
 
     // Append to client order history with full snapshot so UI shows details (not "No details captured")
-    if (upcomingOrder && typeof upcomingOrder === 'object') {
+    if (normalized && typeof normalized === 'object') {
         try {
             const session = await getSession();
             const updatedBy = session?.name || 'Admin';
-            const serviceType = (upcomingOrder.serviceType || 'Food') as ServiceType;
+            const serviceType = (normalized.serviceType || 'Food') as ServiceType;
             const summary = `Upcoming order saved (${serviceType})`;
-            const orderDetails = await buildOrderDetailsFromUpcomingOrder(upcomingOrder);
+            const orderDetails = await buildOrderDetailsFromUpcomingOrder(normalized);
             await appendOrderHistory(clientId, {
                 type: 'upcoming',
                 orderId: randomUUID(),
                 serviceType,
-                caseId: upcomingOrder.caseId ?? null,
-                notes: upcomingOrder.notes ?? null,
+                caseId: normalized.caseId ?? null,
+                notes: normalized.notes ?? null,
                 updatedBy,
                 timestamp: new Date().toISOString(),
-                orderData: upcomingOrder,
+                orderData: normalized,
                 orderDetails: orderDetails || undefined,
                 details: summary,
                 summary,
@@ -2165,6 +2182,13 @@ export async function deleteClient(id: string) {
             .in('client_id', dependentIds);
         handleError(dependentFormSubmissionsError);
 
+        // Delete client_box_orders for all dependents (FK constraint)
+        const { error: dependentBoxOrdersError } = await supabase
+            .from('client_box_orders')
+            .delete()
+            .in('client_id', dependentIds);
+        handleError(dependentBoxOrdersError);
+
         // Delete all dependents
         const { error: dependentsDeleteError } = await supabase
             .from('clients')
@@ -2188,6 +2212,13 @@ export async function deleteClient(id: string) {
         .delete()
         .eq('client_id', id);
     handleError(formSubmissionsError);
+
+    // Delete client_box_orders for this client (FK constraint)
+    const { error: boxOrdersError } = await supabase
+        .from('client_box_orders')
+        .delete()
+        .eq('client_id', id);
+    handleError(boxOrdersError);
 
     // Delete the client
     // Note: Client IDs are generated identifiers (e.g. CLIENT-XXX) which CAN be reused after deletion.
@@ -5060,7 +5091,8 @@ export async function getUpcomingOrderForClient(clientId: string) {
             .single();
 
         if (error || !data) return null;
-        return data.upcoming_order ?? null;
+        const raw = data.upcoming_order ?? null;
+        return normalizeUpcomingOrder(raw);
     } catch (err) {
         console.error('Error in getUpcomingOrderForClient:', err);
         return null;

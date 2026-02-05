@@ -58,6 +58,52 @@ export interface InvalidVendorIssue {
     serviceType: string;
 }
 
+export interface ItemDayIssue {
+    clientId: string;
+    clientName: string;
+    orderDeliveryDay: string;
+    vendorId: string;
+    vendorName: string;
+    itemId: string;
+    itemName: string;
+    itemAllowedDays: string[];
+    quantity: number;
+    serviceType: string;
+}
+
+export interface DeletedMenuItemIssue {
+    clientId: string;
+    clientName: string;
+    orderDeliveryDay: string | null; // null when from vendorSelections.items (flat)
+    vendorId: string;
+    vendorName: string;
+    itemId: string;
+    quantity: number;
+    serviceType: string;
+    where: 'deliveryDayOrders' | 'vendorSelections';
+}
+
+const VAL_TOLERANCE = 0.05;
+function isMeetingExactTarget(value: number, target: number): boolean {
+    return Math.abs(value - target) <= VAL_TOLERANCE;
+}
+
+export interface BoxQuotaMismatch {
+    boxIndex: number;
+    boxTypeId: string;
+    boxTypeName: string;
+    categoryId: string;
+    categoryName: string;
+    required: number;
+    actual: number;
+}
+
+export interface BoxQuotaIssue {
+    clientId: string;
+    clientName: string;
+    mismatches: BoxQuotaMismatch[];
+}
+
 /**
  * GET - All cleanup issues from clients.upcoming_order only (no upcoming_orders table).
  */
@@ -77,6 +123,55 @@ export async function GET() {
             });
         }
 
+        const { data: menuItems, error: miErr } = await supabase
+            .from('menu_items')
+            .select('id, name, delivery_days, vendor_id, category_id, quota_value');
+        if (miErr) throw miErr;
+        const menuItemMap = new Map<string, { name: string; delivery_days: string[] | null; vendor_id: string | null; category_id: string | null; quota_value: number }>();
+        for (const mi of menuItems || []) {
+            const days = mi.delivery_days;
+            const dayList = Array.isArray(days) && days.length > 0 ? days : null;
+            menuItemMap.set(mi.id, {
+                name: (mi.name as string) || mi.id,
+                delivery_days: dayList,
+                vendor_id: (mi.vendor_id as string) || null,
+                category_id: (mi.category_id as string) || null,
+                quota_value: typeof mi.quota_value === 'number' ? mi.quota_value : parseFloat(String(mi.quota_value || 1)) || 1
+            });
+        }
+
+        // Box quota definitions: table may not exist in all environments (clients.upcoming_order is source of truth for order data)
+        let quotasByBoxType = new Map<string, { categoryId: string; targetValue: number }[]>();
+        let categoryMap = new Map<string, string>();
+        let boxTypeNameMap = new Map<string, string>();
+        const { data: boxQuotas, error: bqErr } = await supabase.from('box_quotas').select('id, box_type_id, category_id, target_value');
+        if (bqErr) {
+            console.warn('cleanup-clients-upcoming: box_quotas not available:', bqErr.message, '- skipping box quota mismatch checks');
+        } else {
+            for (const q of boxQuotas || []) {
+                const list = quotasByBoxType.get(q.box_type_id) || [];
+                list.push({ categoryId: q.category_id, targetValue: Number(q.target_value) || 0 });
+                quotasByBoxType.set(q.box_type_id, list);
+            }
+        }
+
+        const { data: categories, error: catErr } = await supabase.from('item_categories').select('id, name, set_value');
+        if (catErr) throw catErr;
+        const categorySetValue = new Map<string, number>(); // categoryId -> required value (when no box_quotas)
+        for (const c of categories || []) {
+            categoryMap.set(c.id, (c.name as string) || c.id);
+            const sv = c.set_value;
+            if (sv != null && (typeof sv === 'number' ? sv >= 0 : Number(sv) >= 0)) {
+                categorySetValue.set(c.id, Number(sv));
+            }
+        }
+
+        const { data: boxTypes, error: btErr } = await supabase.from('box_types').select('id, name');
+        if (btErr) throw btErr;
+        for (const bt of boxTypes || []) {
+            boxTypeNameMap.set(bt.id, (bt.name as string) || bt.id);
+        }
+
         const { data: clients, error: cErr } = await supabase
             .from('clients')
             .select('id, full_name, upcoming_order')
@@ -86,12 +181,15 @@ export async function GET() {
         const mealIssues: MealIssue[] = [];
         const vendorDayIssues: VendorDayIssue[] = [];
         const invalidVendorIssues: InvalidVendorIssue[] = [];
+        const itemDayIssues: ItemDayIssue[] = [];
+        const deletedMenuItemIssues: DeletedMenuItemIssue[] = [];
+        const boxQuotaIssues: BoxQuotaIssue[] = [];
 
         for (const client of clients || []) {
             const uo = client.upcoming_order as Record<string, unknown> | null;
             if (!uo || typeof uo !== 'object') continue;
             const clientName = (client.full_name as string) || client.id;
-            const st = (uo.serviceType as string) || 'Food';
+            const st = ((uo.serviceType ?? (uo as any).service_type) as string) || 'Food';
 
             // 1) Invalid meal types: mealSelections keys + root mealType
             if (uo.mealSelections && typeof uo.mealSelections === 'object') {
@@ -164,6 +262,94 @@ export async function GET() {
                                 itemCount
                             });
                         }
+                        // Item-on-disallowed-day + Deleted menu item
+                        const items = vs.items && typeof vs.items === 'object' ? vs.items : {};
+                        for (const [itemId, qty] of Object.entries(items)) {
+                            const q = Number(qty);
+                            if (q <= 0) continue;
+                            const mi = menuItemMap.get(itemId);
+                            if (!mi) {
+                                deletedMenuItemIssues.push({
+                                    clientId: client.id,
+                                    clientName,
+                                    orderDeliveryDay: day,
+                                    vendorId: vid,
+                                    vendorName: vendor.name,
+                                    itemId,
+                                    quantity: q,
+                                    serviceType: st,
+                                    where: 'deliveryDayOrders'
+                                });
+                                continue;
+                            }
+                            if (mi.vendor_id !== vid) continue; // item must belong to this vendor
+                            const allowed = mi.delivery_days;
+                            if (!allowed || allowed.length === 0) continue; // no restriction = allowed every day
+                            if (allowed.includes(day)) continue; // this day is allowed
+                            itemDayIssues.push({
+                                clientId: client.id,
+                                clientName,
+                                orderDeliveryDay: day,
+                                vendorId: vid,
+                                vendorName: vendor.name,
+                                itemId,
+                                itemName: mi.name,
+                                itemAllowedDays: allowed,
+                                quantity: q,
+                                serviceType: st
+                            });
+                        }
+                    }
+                }
+            }
+
+            // 2b) Item-on-disallowed-day from vendorSelections + itemsByDay (when deliveryDayOrders not used)
+            const vsel = uo.vendorSelections as { vendorId?: string; itemsByDay?: Record<string, Record<string, number>> }[] | undefined;
+            if (Array.isArray(vsel) && (!ddo || typeof ddo !== 'object' || Object.keys(ddo).length === 0)) {
+                for (const vs of vsel) {
+                    const vid = vs.vendorId;
+                    if (!vid) continue;
+                    const vendor = vendorMap.get(vid);
+                    if (!vendor) continue;
+                    if (!vendor.is_active) continue;
+                    const itemsByDay = vs.itemsByDay && typeof vs.itemsByDay === 'object' ? vs.itemsByDay : {};
+                    for (const [day, dayItems] of Object.entries(itemsByDay)) {
+                        if (!dayItems || typeof dayItems !== 'object') continue;
+                        for (const [itemId, qty] of Object.entries(dayItems)) {
+                            const q = Number(qty);
+                            if (q <= 0) continue;
+                            const mi = menuItemMap.get(itemId);
+                            if (!mi) {
+                                deletedMenuItemIssues.push({
+                                    clientId: client.id,
+                                    clientName,
+                                    orderDeliveryDay: day,
+                                    vendorId: vid,
+                                    vendorName: vendor.name,
+                                    itemId,
+                                    quantity: q,
+                                    serviceType: st,
+                                    where: 'vendorSelections'
+                                });
+                                continue;
+                            }
+                            if (mi.vendor_id !== vid) continue;
+                            const allowed = mi.delivery_days;
+                            if (!allowed || allowed.length === 0) continue;
+                            if (allowed.includes(day)) continue;
+                            itemDayIssues.push({
+                                clientId: client.id,
+                                clientName,
+                                orderDeliveryDay: day,
+                                vendorId: vid,
+                                vendorName: vendor.name,
+                                itemId,
+                                itemName: mi.name,
+                                itemAllowedDays: allowed,
+                                quantity: q,
+                                serviceType: st
+                            });
+                        }
                     }
                 }
             }
@@ -200,6 +386,69 @@ export async function GET() {
                     }
                 }
             }
+
+            // 6) Box clients with category quota mismatch (required vs actual)
+            // Read from clients.upcoming_order only; support both camelCase and snake_case, and legacy single-box at root
+            let rawBoxOrders = (uo.boxOrders ?? uo.box_orders) as { boxTypeId?: string; box_type_id?: string; quantity?: number; items?: Record<string, number | { quantity?: number }> }[] | undefined;
+            if (st === 'Boxes' && !rawBoxOrders?.length && (uo.boxTypeId ?? (uo as any).box_type_id)) {
+                rawBoxOrders = [{
+                    boxTypeId: (uo.boxTypeId ?? (uo as any).box_type_id) as string,
+                    quantity: (uo.boxQuantity ?? (uo as any).box_quantity ?? 1) as number,
+                    items: ((uo as any).items || {}) as Record<string, number>
+                }];
+            }
+            if (st === 'Boxes' && rawBoxOrders && Array.isArray(rawBoxOrders) && rawBoxOrders.length > 0) {
+                const mismatches: BoxQuotaMismatch[] = [];
+                for (let boxIndex = 0; boxIndex < rawBoxOrders.length; boxIndex++) {
+                    const box = rawBoxOrders[boxIndex];
+                    const boxTypeId = (box.boxTypeId ?? box.box_type_id) || '';
+                    const boxQuantity = Math.max(1, Number(box.quantity) || 1);
+                    const boxTypeName = boxTypeNameMap.get(boxTypeId) || boxTypeId;
+                    const items = box.items && typeof box.items === 'object' ? box.items : {};
+
+                    // Required values: from box_quotas (per box type) or from item_categories.set_value when box_quotas missing/empty
+                    const quotas = quotasByBoxType.get(boxTypeId) || [];
+                    const categoriesToCheck: { categoryId: string; requiredPerUnit: number }[] = [];
+                    if (quotas.length > 0) {
+                        for (const q of quotas) {
+                            categoriesToCheck.push({ categoryId: q.categoryId, requiredPerUnit: q.targetValue });
+                        }
+                    } else {
+                        for (const [categoryId, setVal] of categorySetValue.entries()) {
+                            categoriesToCheck.push({ categoryId, requiredPerUnit: setVal });
+                        }
+                    }
+
+                    for (const { categoryId, requiredPerUnit } of categoriesToCheck) {
+                        const required = requiredPerUnit * boxQuantity; // match ClientProfile: targetValue * boxQty
+                        let categoryQuotaValue = 0;
+                        for (const [itemId, val] of Object.entries(items)) {
+                            const qty = typeof val === 'object' && val != null && 'quantity' in val ? Number((val as { quantity?: number }).quantity) || 0 : Number(val) || 0;
+                            if (qty <= 0) continue;
+                            const mi = menuItemMap.get(itemId);
+                            if (!mi || mi.category_id !== categoryId) continue;
+                            if (mi.vendor_id != null && mi.vendor_id !== '') continue; // only box items (universal)
+                            categoryQuotaValue += qty * (mi.quota_value ?? 1);
+                        }
+                        if (!isMeetingExactTarget(categoryQuotaValue, required)) {
+                            mismatches.push({
+                                boxIndex,
+                                boxTypeId,
+                                boxTypeName,
+                                categoryId,
+                                categoryName: categoryMap.get(categoryId) || categoryId,
+                                required,
+                                actual: categoryQuotaValue
+                            });
+                        }
+                    }
+                }
+                // Only show if at least one category has non-zero selection (don't list when all categories are zero)
+                const hasNonZeroSelection = mismatches.some((m) => m.actual > 0);
+                if (mismatches.length > 0 && hasNonZeroSelection) {
+                    boxQuotaIssues.push({ clientId: client.id, clientName, mismatches });
+                }
+            }
         }
 
         const activeVendors = (vendors || []).filter((v) => v.is_active).map((v) => ({ id: v.id, name: v.name || v.id }));
@@ -210,6 +459,9 @@ export async function GET() {
             mealIssues,
             vendorDayIssues,
             invalidVendorIssues,
+            itemDayIssues,
+            deletedMenuItemIssues,
+            boxQuotaIssues,
             activeVendors
         });
     } catch (e: unknown) {
@@ -269,14 +521,15 @@ export async function POST(request: Request) {
             if (!oldDay || !newDay) {
                 return NextResponse.json({ success: false, error: 'oldDay and newDay required' }, { status: 400 });
             }
-            const ddo = (updated.deliveryDayOrders as Record<string, { vendorSelections?: unknown[] }>) || {};
+            type VendorSel = { vendorId?: string };
+            const ddo = (updated.deliveryDayOrders as Record<string, { vendorSelections?: VendorSel[] }>) || {};
             const dayData = ddo[oldDay];
             if (!dayData?.vendorSelections) {
                 return NextResponse.json({ success: false, error: 'Order day not found' }, { status: 400 });
             }
-            const selections = [...(dayData.vendorSelections || [])];
-            const toMove = vendorId ? selections.filter((s: { vendorId?: string }) => s.vendorId === vendorId) : selections;
-            const toKeep = vendorId ? selections.filter((s: { vendorId?: string }) => s.vendorId !== vendorId) : [];
+            const selections: VendorSel[] = [...(dayData.vendorSelections || [])];
+            const toMove = vendorId ? selections.filter((s) => s.vendorId === vendorId) : selections;
+            const toKeep = vendorId ? selections.filter((s) => s.vendorId !== vendorId) : [];
 
             if (toMove.length === 0) {
                 return NextResponse.json({ success: false, error: 'No selection to move' }, { status: 400 });
@@ -290,7 +543,7 @@ export async function POST(request: Request) {
             if (toKeep.length > 0) nextDdo[oldDay] = { vendorSelections: toKeep };
             else delete nextDdo[oldDay];
             if (!nextDdo[newDay]) nextDdo[newDay] = { vendorSelections: [] };
-            (nextDdo[newDay].vendorSelections as unknown[]).push(...toMove);
+            nextDdo[newDay].vendorSelections!.push(...toMove);
             updated.deliveryDayOrders = nextDdo;
             const { error: updErr } = await supabase
                 .from('clients')
@@ -298,6 +551,138 @@ export async function POST(request: Request) {
                 .eq('id', clientId);
             if (updErr) throw updErr;
             return NextResponse.json({ success: true, message: `Moved to ${newDay}.` });
+        }
+
+        if (fix === 'itemDay') {
+            const oldDay = body.oldDay;
+            const newDay = body.newDay;
+            const vendorId = body.vendorId;
+            const itemId = body.itemId;
+            if (!oldDay || !newDay || !vendorId || !itemId) {
+                return NextResponse.json({ success: false, error: 'oldDay, newDay, vendorId and itemId required' }, { status: 400 });
+            }
+            const ddo = (updated.deliveryDayOrders as Record<string, { vendorSelections?: { vendorId?: string; items?: Record<string, number>; itemNotes?: Record<string, string> }[] }>) || {};
+            const oldDayData = ddo[oldDay];
+            if (!oldDayData?.vendorSelections) {
+                return NextResponse.json({ success: false, error: 'Order day not found' }, { status: 400 });
+            }
+            const oldSelections = oldDayData.vendorSelections;
+            const vsIndex = oldSelections.findIndex((s: { vendorId?: string }) => s.vendorId === vendorId);
+            if (vsIndex === -1) {
+                return NextResponse.json({ success: false, error: 'Vendor selection not found on that day' }, { status: 400 });
+            }
+            const vs = oldSelections[vsIndex];
+            const items = { ...(vs.items || {}) };
+            const itemNotes = { ...(vs.itemNotes || {}) };
+            const quantity = Number(items[itemId]) || 0;
+            const note = itemNotes[itemId];
+            if (quantity <= 0) {
+                return NextResponse.json({ success: false, error: 'Item not found or zero quantity' }, { status: 400 });
+            }
+            delete items[itemId];
+            delete itemNotes[itemId];
+            const nextDdo = { ...ddo };
+            const newOldSelections = [...oldSelections];
+            if (Object.keys(items).length > 0 || Object.keys(itemNotes).length > 0) {
+                newOldSelections[vsIndex] = { ...vs, items, itemNotes };
+            } else {
+                newOldSelections.splice(vsIndex, 1);
+            }
+            if (newOldSelections.length > 0) nextDdo[oldDay] = { vendorSelections: newOldSelections };
+            else delete nextDdo[oldDay];
+
+            if (!nextDdo[newDay]) nextDdo[newDay] = { vendorSelections: [] };
+            const newDaySelections = [...(nextDdo[newDay].vendorSelections || [])];
+            const existingNewVs = newDaySelections.findIndex((s: { vendorId?: string }) => s.vendorId === vendorId);
+            if (existingNewVs >= 0) {
+                const ex = newDaySelections[existingNewVs];
+                const exItems = { ...(ex.items || {}), [itemId]: (ex.items?.[itemId] || 0) + quantity };
+                const exNotes = { ...(ex.itemNotes || {}) };
+                if (note) exNotes[itemId] = note;
+                newDaySelections[existingNewVs] = { ...ex, items: exItems, itemNotes: exNotes };
+            } else {
+                newDaySelections.push({
+                    vendorId,
+                    items: { [itemId]: quantity },
+                    itemNotes: note ? { [itemId]: note } : {}
+                });
+            }
+            nextDdo[newDay] = { vendorSelections: newDaySelections };
+            updated.deliveryDayOrders = nextDdo;
+            const { error: updErr } = await supabase
+                .from('clients')
+                .update({ upcoming_order: updated, updated_at: new Date().toISOString() })
+                .eq('id', clientId);
+            if (updErr) throw updErr;
+            return NextResponse.json({ success: true, message: `Item moved to ${newDay}.` });
+        }
+
+        if (fix === 'deletedItem') {
+            const vendorId = body.vendorId;
+            const itemId = body.itemId;
+            const orderDeliveryDay = body.orderDeliveryDay as string | null;
+            const where = body.where as 'deliveryDayOrders' | 'vendorSelections';
+            if (!vendorId || !itemId || !where) {
+                return NextResponse.json({ success: false, error: 'vendorId, itemId and where required' }, { status: 400 });
+            }
+            if (where === 'deliveryDayOrders') {
+                if (!orderDeliveryDay) {
+                    return NextResponse.json({ success: false, error: 'orderDeliveryDay required for deliveryDayOrders' }, { status: 400 });
+                }
+                const ddo = (updated.deliveryDayOrders as Record<string, { vendorSelections?: { vendorId?: string; items?: Record<string, number>; itemNotes?: Record<string, string> }[] }>) || {};
+                const dayData = ddo[orderDeliveryDay];
+                if (!dayData?.vendorSelections) {
+                    return NextResponse.json({ success: false, error: 'Order day not found' }, { status: 400 });
+                }
+                let changed = false;
+                for (const vs of dayData.vendorSelections) {
+                    if (vs.vendorId !== vendorId) continue;
+                    const items = { ...(vs.items || {}) };
+                    const itemNotes = { ...(vs.itemNotes || {}) };
+                    if (itemId in items || itemId in itemNotes) {
+                        delete items[itemId];
+                        delete itemNotes[itemId];
+                        (vs as any).items = Object.keys(items).length > 0 ? items : undefined;
+                        (vs as any).itemNotes = Object.keys(itemNotes).length > 0 ? itemNotes : undefined;
+                        changed = true;
+                        break;
+                    }
+                }
+                if (changed) updated.deliveryDayOrders = ddo;
+            } else {
+                // vendorSelections with itemsByDay
+                const vsel = (updated.vendorSelections as { vendorId?: string; itemsByDay?: Record<string, Record<string, number>>; itemNotesByDay?: Record<string, Record<string, string>> }[]) || [];
+                const day = orderDeliveryDay ?? null;
+                for (const vs of vsel) {
+                    if (vs.vendorId !== vendorId) continue;
+                    const itemsByDay = vs.itemsByDay && typeof vs.itemsByDay === 'object' ? { ...vs.itemsByDay } : {};
+                    const itemNotesByDay = vs.itemNotesByDay && typeof vs.itemNotesByDay === 'object' ? { ...vs.itemNotesByDay } : {};
+                    if (day && itemsByDay[day]) {
+                        const dayItems = { ...itemsByDay[day] };
+                        if (itemId in dayItems) {
+                            delete dayItems[itemId];
+                            if (Object.keys(dayItems).length > 0) itemsByDay[day] = dayItems;
+                            else delete itemsByDay[day];
+                            (vs as any).itemsByDay = Object.keys(itemsByDay).length > 0 ? itemsByDay : undefined;
+                            if (itemNotesByDay[day]) {
+                                const dayNotes = { ...itemNotesByDay[day] };
+                                delete dayNotes[itemId];
+                                if (Object.keys(dayNotes).length > 0) itemNotesByDay[day] = dayNotes;
+                                else delete itemNotesByDay[day];
+                                (vs as any).itemNotesByDay = Object.keys(itemNotesByDay).length > 0 ? itemNotesByDay : undefined;
+                            }
+                            break;
+                        }
+                    }
+                }
+                updated.vendorSelections = vsel;
+            }
+            const { error: updErr } = await supabase
+                .from('clients')
+                .update({ upcoming_order: updated, updated_at: new Date().toISOString() })
+                .eq('id', clientId);
+            if (updErr) throw updErr;
+            return NextResponse.json({ success: true, message: 'Deleted item removed from order.' });
         }
 
         if (fix === 'invalidVendor') {

@@ -86,6 +86,28 @@ export default function FoodServiceWidget({
 
     // -- LOGIC HELPERS --
 
+    /** Normalize item delivery days and check if item is allowed on the given day. Hide item when restricted to other days. */
+    function isItemAllowedOnDay(item: MenuItem, day: string): boolean {
+        const raw = item.deliveryDays;
+        const days = Array.isArray(raw) ? raw : (raw ? [raw] : []);
+        if (days.length === 0) return true;
+        return days.includes(day);
+    }
+
+    /** Filter vendor items to only those allowed on the given day (or all if no day). */
+    function getVendorMenuItemsForDay(vendorId: string, day: string | null): MenuItem[] {
+        const list = menuItems
+            .filter(i => i.vendorId === vendorId && i.isActive)
+            .sort((a, b) => {
+                const sortOrderA = a.sortOrder ?? 0;
+                const sortOrderB = b.sortOrder ?? 0;
+                if (sortOrderA !== sortOrderB) return sortOrderA - sortOrderB;
+                return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' });
+            });
+        if (!day) return list;
+        return list.filter(i => isItemAllowedOnDay(i, day));
+    }
+
     function getVendorMenuItems(vendorId: string) {
         return menuItems
             .filter(i => i.vendorId === vendorId && i.isActive)
@@ -576,18 +598,30 @@ export default function FoodServiceWidget({
                     // Check if multi-day mode is active for this vendor
                     const selectedDays = selection.selectedDeliveryDays || [];
                     
-                    // Calculate summary info and get selected items
+                    // Calculate summary info and get selected items (hide items not allowed on any selected/implied day)
                     const selectedItemsForSummary = (() => {
+                        const allowedDaysForSummary = selectedDays.length > 0
+                            ? selectedDays
+                            : (vendorDeliveryDays.length === 1
+                                ? vendorDeliveryDays
+                                : ((client as any).delivery_days && (client as any).delivery_days.length > 0)
+                                    ? (client as any).delivery_days
+                                    : []);
+                        const isItemAllowedForSummary = (item: MenuItem) => {
+                            const raw = item.deliveryDays;
+                            const allowed = Array.isArray(raw) ? raw : (raw ? [raw] : []);
+                            if (allowed.length === 0) return true;
+                            if (allowedDaysForSummary.length === 0) return false;
+                            return allowedDaysForSummary.some((d: string) => allowed.includes(d));
+                        };
                         const items: Array<{ item: MenuItem; qty: number }> = [];
-                        
                         if (selection.itemsByDay && selectedDays.length > 0) {
-                            // Multi-day format - collect items from all selected days
                             const itemMap = new Map<string, { item: MenuItem; qty: number }>();
                             selectedDays.forEach((day: string) => {
                                 const dayItems = selection.itemsByDay[day] || {};
                                 Object.entries(dayItems).forEach(([itemId, qty]) => {
                                     const item = menuItems.find(i => i.id === itemId);
-                                    if (item) {
+                                    if (item && isItemAllowedOnDay(item, day)) {
                                         const existing = itemMap.get(itemId);
                                         if (existing) {
                                             existing.qty += Number(qty);
@@ -599,10 +633,9 @@ export default function FoodServiceWidget({
                             });
                             return Array.from(itemMap.values());
                         } else if (selection.items) {
-                            // Single-day format
                             Object.entries(selection.items).forEach(([itemId, qty]) => {
                                 const item = menuItems.find(i => i.id === itemId);
-                                if (item && Number(qty) > 0) {
+                                if (item && Number(qty) > 0 && isItemAllowedForSummary(item)) {
                                     items.push({ item, qty: Number(qty) });
                                 }
                             });
@@ -820,12 +853,9 @@ export default function FoodServiceWidget({
                                                 Please select at least one delivery day to view the menu.
                                             </div>
                                         ) : selectedDays.length > 0 ? (
-                                            // Multi-day view - show STACKED menu blocks for each selected day
+                                            // Multi-day view - show STACKED menu blocks for each selected day (hide items not allowed on that day)
                                             selectedDays.map((day: string) => {
-                                                const visibleItems = vendorItems.filter(item => {
-                                                    if (!item.deliveryDays || item.deliveryDays.length === 0) return true;
-                                                    return item.deliveryDays.includes(day);
-                                                });
+                                                const visibleItems = getVendorMenuItemsForDay(vendorId, day);
 
                                                 return (
                                                     <div key={day} className="animate-in fade-in slide-in-from-top-1 duration-200" style={{
@@ -913,8 +943,7 @@ export default function FoodServiceWidget({
                                                 )}
                                                 <div className={styles.menuItemsGrid} style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '16px' }}>
                                                     {(() => {
-                                                        // Filter for Flat View
-                                                        // Determine implied days (Vendor's single day OR Client's default days)
+                                                        // Filter for Flat View: hide items not allowed on the implied day(s)
                                                         let impliedDays: string[] = [];
                                                         if (vendorDeliveryDays.length === 1) {
                                                             impliedDays = vendorDeliveryDays;
@@ -923,13 +952,11 @@ export default function FoodServiceWidget({
                                                         }
 
                                                         const visibleItems = vendorItems.filter(item => {
-                                                            if (!item.deliveryDays || item.deliveryDays.length === 0) return true;
-                                                            // If we have implied days, item must be valid for ALL of them
-                                                            if (impliedDays.length > 0) {
-                                                                return impliedDays.every(day => item.deliveryDays!.includes(day));
-                                                            }
-                                                            // If we don't know the days, hide restricted items to be safe
-                                                            return false;
+                                                            const raw = item.deliveryDays;
+                                                            const allowedDays = Array.isArray(raw) ? raw : (raw ? [raw] : []);
+                                                            if (allowedDays.length === 0) return true;
+                                                            if (impliedDays.length === 0) return false; // hide restricted when day unknown
+                                                            return impliedDays.every(day => allowedDays.includes(day));
                                                         });
 
                                                         if (visibleItems.length === 0) return <span className={styles.hint}>No items available.</span>;

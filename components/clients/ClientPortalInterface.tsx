@@ -401,8 +401,8 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
                                 const item = menuItems.find(i => i.id === itemId);
                                 dayValue += (item?.value || 0) * (Number(qty) || 0);
                             }
-
-                            if (!isMeetingMinimum(dayValue, minMeals)) {
+                            // Only require minimum for days that have items; skip days with 0
+                            if (dayValue > 0 && !isMeetingMinimum(dayValue, minMeals)) {
                                 error = `${vendor.name} requires a minimum value of ${minMeals} for ${day}. You have selected ${dayValue}.`;
                                 isValid = false;
                                 break;
@@ -555,87 +555,20 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
             const orderSnapshot = generateOrderSnapshot(cleanedOrderConfig as any);
 
             if (serviceType === 'Food') {
-                if (cleanedOrderConfig.vendorSelections) {
-                    // UNIFIED LOGIC: Always convert vendorSelections to deliveryDayOrders
-                    // This handles New Vendors, Single-Day, and Multi-Day uniformly.
-
-                    // DEBUG LOGGING START
-                    console.log('DEBUG: Processing vendorSelections (Unified):', cleanedOrderConfig.vendorSelections);
-
-                    const deliveryDayOrders: any = {};
-                    const selections = Array.isArray(cleanedOrderConfig.vendorSelections) ? cleanedOrderConfig.vendorSelections : [];
-
-                    for (const selection of selections) {
-                        console.log('DEBUG: Processing selection:', selection);
-
-                        if (!selection.vendorId) {
-                            console.log('DEBUG: Skipping (no vendorId)');
-                            continue;
-                        }
-
-                        // Fallback logic: If no specific days selected (e.g. single day vendor or new), use client defaults
-                        const daysToApply = (selection.selectedDeliveryDays && selection.selectedDeliveryDays.length > 0)
-                            ? selection.selectedDeliveryDays
-                            : (client as any).delivery_days || ['Monday']; // Default to Monday if client has no days
-
-                        console.log('DEBUG: daysToApply for vendor ' + selection.vendorId + ':', daysToApply);
-
-                        for (const day of daysToApply) {
-                            if (!deliveryDayOrders[day]) deliveryDayOrders[day] = { vendorSelections: [] };
-
-                            // Items can be in itemsByDay[day] OR flat items (fallback)
-                            const dayItems = (selection.itemsByDay && selection.itemsByDay[day])
-                                ? selection.itemsByDay[day]
-                                : (selection.items || {}); /* Fallback to flat items for single-day/new vendors */
-
-                            console.log('DEBUG: Day ' + day + ' items:', dayItems);
-
-                            const hasItems = Object.keys(dayItems).length > 0 && Object.values(dayItems).some((qty: any) => (Number(qty) || 0) > 0);
-                            if (hasItems) {
-                                console.log('DEBUG: Adding items to deliveryDayOrders');
-                                deliveryDayOrders[day].vendorSelections.push({
-                                    vendorId: selection.vendorId,
-                                    items: dayItems,
-                                    itemNotes: (selection.itemNotesByDay && selection.itemNotesByDay[day])
-                                        ? selection.itemNotesByDay[day]
-                                        : (selection.itemNotes || {})
-                                });
-                            } else {
-                                console.log('DEBUG: Skipping day (no items)');
-                            }
-                        }
-                    }
-                    console.log('DEBUG: Final deliveryDayOrders:', deliveryDayOrders);
-                    // DEBUG LOGGING END
-
-                    // Clean up days with no vendors
-                    const daysWithVendors = Object.keys(deliveryDayOrders).filter(day =>
-                        deliveryDayOrders[day].vendorSelections && deliveryDayOrders[day].vendorSelections.length > 0
-                    );
-
-                    if (daysWithVendors.length > 0) {
-                        const cleanedDeliveryDayOrders: any = {};
-                        for (const day of daysWithVendors) cleanedDeliveryDayOrders[day] = deliveryDayOrders[day];
-                        cleanedOrderConfig.deliveryDayOrders = cleanedDeliveryDayOrders;
-                    } else {
-                        // CRITICAL FIX: If no days having vendors, we must explicitly set empty object
-                        cleanedOrderConfig.deliveryDayOrders = {};
-                    }
-
-                    // Remove the transient vendorSelections used for UI state
-                    cleanedOrderConfig.vendorSelections = undefined;
-                } else if (cleanedOrderConfig.deliveryDayOrders) {
-                    // Legacy/Fallback Path: Only use existing deliveryDayOrders if NO vendorSelections exists
-                    // Clean multi-day format (already in deliveryDayOrders)
-                    for (const day of Object.keys(cleanedOrderConfig.deliveryDayOrders)) {
-                        cleanedOrderConfig.deliveryDayOrders[day].vendorSelections = (cleanedOrderConfig.deliveryDayOrders[day].vendorSelections || [])
-                            .filter((s: any) => s.vendorId)
-                            .map((s: any) => ({
-                                vendorId: s.vendorId,
-                                items: s.items || {}
-                            }));
-                    }
+                // Single shape only: persist vendorSelections (no deliveryDayOrders).
+                if (Array.isArray(cleanedOrderConfig.vendorSelections)) {
+                    cleanedOrderConfig.vendorSelections = cleanedOrderConfig.vendorSelections
+                        .filter((s: any) => s?.vendorId)
+                        .map((s: any) => ({
+                            vendorId: s.vendorId,
+                            items: s.items || {},
+                            itemsByDay: s.itemsByDay && typeof s.itemsByDay === 'object' ? s.itemsByDay : {},
+                            selectedDeliveryDays: Array.isArray(s.selectedDeliveryDays) ? s.selectedDeliveryDays : [],
+                            itemNotes: s.itemNotes || {},
+                            itemNotesByDay: s.itemNotesByDay && typeof s.itemNotesByDay === 'object' ? s.itemNotesByDay : {}
+                        }));
                 }
+                delete cleanedOrderConfig.deliveryDayOrders;
             } else if (serviceType === 'Boxes') {
                 // For Boxes: Explicitly preserve all critical fields
                 cleanedOrderConfig.boxOrders = orderConfig.boxOrders || [];

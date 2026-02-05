@@ -50,6 +50,47 @@ interface InvalidVendorIssue {
     serviceType: string;
 }
 
+interface ItemDayIssue {
+    clientId: string;
+    clientName: string;
+    orderDeliveryDay: string;
+    vendorId: string;
+    vendorName: string;
+    itemId: string;
+    itemName: string;
+    itemAllowedDays: string[];
+    quantity: number;
+    serviceType: string;
+}
+
+interface DeletedMenuItemIssue {
+    clientId: string;
+    clientName: string;
+    orderDeliveryDay: string | null;
+    vendorId: string;
+    vendorName: string;
+    itemId: string;
+    quantity: number;
+    serviceType: string;
+    where: 'deliveryDayOrders' | 'vendorSelections';
+}
+
+interface BoxQuotaMismatch {
+    boxIndex: number;
+    boxTypeId: string;
+    boxTypeName: string;
+    categoryId: string;
+    categoryName: string;
+    required: number;
+    actual: number;
+}
+
+interface BoxQuotaIssue {
+    clientId: string;
+    clientName: string;
+    mismatches: BoxQuotaMismatch[];
+}
+
 function issueKeyVendor(issue: InvalidVendorIssue): string {
     return `${issue.clientId}-${issue.vendorId}-${issue.where}-${issue.day ?? ''}-${issue.mealKey ?? ''}`;
 }
@@ -62,6 +103,9 @@ export default function CleanupPage() {
     const [mealIssues, setMealIssues] = useState<MealIssue[]>([]);
     const [vendorDayIssues, setVendorDayIssues] = useState<VendorDayIssue[]>([]);
     const [invalidVendorIssues, setInvalidVendorIssues] = useState<InvalidVendorIssue[]>([]);
+    const [itemDayIssues, setItemDayIssues] = useState<ItemDayIssue[]>([]);
+    const [deletedMenuItemIssues, setDeletedMenuItemIssues] = useState<DeletedMenuItemIssue[]>([]);
+    const [boxQuotaIssues, setBoxQuotaIssues] = useState<BoxQuotaIssue[]>([]);
     const [activeVendors, setActiveVendors] = useState<{ id: string; name: string }[]>([]);
 
     const [cleaningMealClientId, setCleaningMealClientId] = useState<string | null>(null);
@@ -70,6 +114,9 @@ export default function CleanupPage() {
 
     const [reassignDay, setReassignDay] = useState<Record<string, string>>({});
     const [reassigningDay, setReassigningDay] = useState<string | null>(null);
+    const [reassignItemDay, setReassignItemDay] = useState<Record<string, string>>({});
+    const [reassigningItemDay, setReassigningItemDay] = useState<string | null>(null);
+    const [removingDeletedItem, setRemovingDeletedItem] = useState<string | null>(null);
 
     const [profileClientId, setProfileClientId] = useState<string | null>(null);
     const [profileLookupsReady, setProfileLookupsReady] = useState(false);
@@ -99,6 +146,9 @@ export default function CleanupPage() {
                 setMealIssues(data.mealIssues || []);
                 setVendorDayIssues(data.vendorDayIssues || []);
                 setInvalidVendorIssues(data.invalidVendorIssues || []);
+                setItemDayIssues(data.itemDayIssues || []);
+                setDeletedMenuItemIssues(data.deletedMenuItemIssues || []);
+                setBoxQuotaIssues(data.boxQuotaIssues || []);
                 setActiveVendors(data.activeVendors || []);
                 setSelectedMealClients(new Set());
                 const dayInitial: Record<string, string> = {};
@@ -107,6 +157,12 @@ export default function CleanupPage() {
                     dayInitial[key] = m.vendorSupportedDays[0] || '';
                 });
                 setReassignDay(dayInitial);
+                const itemDayInitial: Record<string, string> = {};
+                (data.itemDayIssues || []).forEach((m: ItemDayIssue) => {
+                    const key = `${m.clientId}-${m.orderDeliveryDay}-${m.vendorId}-${m.itemId}`;
+                    itemDayInitial[key] = m.itemAllowedDays[0] || '';
+                });
+                setReassignItemDay(itemDayInitial);
             } else {
                 setMessage({ type: 'error', text: data.error || 'Failed to load' });
             }
@@ -260,13 +316,47 @@ export default function CleanupPage() {
         setReassigningDay(null);
     };
 
+    const itemDayKey = (m: ItemDayIssue) => `${m.clientId}-${m.orderDeliveryDay}-${m.vendorId}-${m.itemId}`;
+
+    const handleMoveItemDay = async (m: ItemDayIssue) => {
+        const key = itemDayKey(m);
+        const newDay = reassignItemDay[key] || m.itemAllowedDays[0];
+        if (!newDay || newDay === m.orderDeliveryDay) return;
+        setReassigningItemDay(key);
+        await runFix({
+            fix: 'itemDay',
+            clientId: m.clientId,
+            oldDay: m.orderDeliveryDay,
+            newDay,
+            vendorId: m.vendorId,
+            itemId: m.itemId
+        });
+        setReassigningItemDay(null);
+    };
+
+    const deletedItemKey = (m: DeletedMenuItemIssue) => `${m.clientId}-${m.orderDeliveryDay ?? 'flat'}-${m.vendorId}-${m.itemId}`;
+
+    const handleRemoveDeletedItem = async (m: DeletedMenuItemIssue) => {
+        const key = deletedItemKey(m);
+        setRemovingDeletedItem(key);
+        await runFix({
+            fix: 'deletedItem',
+            clientId: m.clientId,
+            vendorId: m.vendorId,
+            itemId: m.itemId,
+            orderDeliveryDay: m.orderDeliveryDay ?? undefined,
+            where: m.where
+        });
+        setRemovingDeletedItem(null);
+    };
+
     const handleCloseProfile = () => {
         setProfileClientId(null);
         fetchAll();
     };
 
     const mealTotal = mealIssues.length;
-    const totalIssues = mealTotal + vendorDayIssues.length + invalidVendorIssues.length;
+    const totalIssues = mealTotal + vendorDayIssues.length + invalidVendorIssues.length + itemDayIssues.length + deletedMenuItemIssues.length + boxQuotaIssues.length;
 
     return (
         <div className={styles.container}>
@@ -276,7 +366,7 @@ export default function CleanupPage() {
             <div className={styles.header}>
                 <h1 className={styles.title}>Cleanup — clients.upcoming_order only</h1>
                 <p className={styles.subtitle}>
-                    Issues are read only from the <strong>clients.upcoming_order</strong> column (no upcoming_orders table). Fix invalid meal types, vendor delivery day mismatches, and missing/inactive vendors.
+                    Issues are read only from the <strong>clients.upcoming_order</strong> column (no upcoming_orders table). Fix invalid meal types, vendor delivery day mismatches, items on disallowed days, deleted menu items, and missing/inactive vendors.
                 </p>
             </div>
 
@@ -308,6 +398,24 @@ export default function CleanupPage() {
                             <div className={styles.statLabel}>Vendor missing/inactive</div>
                             <div className={`${styles.statValue} ${invalidVendorIssues.length > 0 ? styles.statValueWarning : ''}`}>
                                 {invalidVendorIssues.length}
+                            </div>
+                        </div>
+                        <div className={styles.statCard}>
+                            <div className={styles.statLabel}>Item on disallowed day</div>
+                            <div className={`${styles.statValue} ${itemDayIssues.length > 0 ? styles.statValueWarning : ''}`}>
+                                {itemDayIssues.length}
+                            </div>
+                        </div>
+                        <div className={styles.statCard}>
+                            <div className={styles.statLabel}>Deleted menu item</div>
+                            <div className={`${styles.statValue} ${deletedMenuItemIssues.length > 0 ? styles.statValueWarning : ''}`}>
+                                {deletedMenuItemIssues.length}
+                            </div>
+                        </div>
+                        <div className={styles.statCard}>
+                            <div className={styles.statLabel}>Box quota mismatch</div>
+                            <div className={`${styles.statValue} ${boxQuotaIssues.length > 0 ? styles.statValueWarning : ''}`}>
+                                {boxQuotaIssues.length}
                             </div>
                         </div>
                         <button className={styles.refreshButton} onClick={fetchAll} disabled={loading}>
@@ -514,6 +622,188 @@ export default function CleanupPage() {
                                         </div>
                                     );
                                 })}
+                            </div>
+                        )}
+                    </section>
+
+                    {/* Section 4: Item on disallowed day */}
+                    <section className={styles.section}>
+                        <h2 className={styles.sectionTitle}>4. Item on disallowed day</h2>
+                        <p className={styles.sectionDesc}>
+                            A menu item is restricted to certain delivery days (in Menu Management) but appears on another day in this client&apos;s order. Choose an allowed day and move the item there.
+                        </p>
+                        {itemDayIssues.length === 0 && (
+                            <div className={styles.emptyState}>No item-on-disallowed-day issues.</div>
+                        )}
+                        {itemDayIssues.length > 0 && (
+                            <div className={styles.table}>
+                                <div className={styles.tableHeader}>
+                                    <div className={`${styles.tableRow} ${styles.rowItemDay}`}>
+                                        <div className={styles.tableHeaderCell}>Client</div>
+                                        <div className={styles.tableHeaderCell}>Current day</div>
+                                        <div className={styles.tableHeaderCell}>Vendor</div>
+                                        <div className={styles.tableHeaderCell}>Item</div>
+                                        <div className={styles.tableHeaderCell}>Qty</div>
+                                        <div className={styles.tableHeaderCell}>Allowed days</div>
+                                        <div className={styles.tableHeaderCell}>Move to</div>
+                                        <div className={styles.tableHeaderCell}>Fix</div>
+                                    </div>
+                                </div>
+                                {itemDayIssues.map((m) => {
+                                    const key = itemDayKey(m);
+                                    const isReassigning = reassigningItemDay === key;
+                                    return (
+                                        <div key={key} className={styles.tableRowWrapper}>
+                                            <div className={`${styles.tableRow} ${styles.rowItemDay}`}>
+                                                <div className={styles.tableCell}>
+                                                    <Link href={`/clients?id=${m.clientId}`} className={styles.clientLink}>
+                                                        {m.clientName}
+                                                    </Link>
+                                                    <div className={styles.cellMeta}>{m.serviceType}</div>
+                                                </div>
+                                                <div className={styles.tableCell}>
+                                                    <span className={styles.invalidDay}>{m.orderDeliveryDay}</span>
+                                                </div>
+                                                <div className={styles.tableCell}>{m.vendorName}</div>
+                                                <div className={styles.tableCell}>{m.itemName}</div>
+                                                <div className={styles.tableCell}>{m.quantity}</div>
+                                                <div className={styles.tableCell}>
+                                                    <span className={styles.cellMeta}>{m.itemAllowedDays.join(', ') || 'None'}</span>
+                                                </div>
+                                                <div className={styles.tableCell}>
+                                                    <select
+                                                        className={styles.daySelect}
+                                                        value={reassignItemDay[key] || ''}
+                                                        onChange={(e) => setReassignItemDay((prev) => ({ ...prev, [key]: e.target.value }))}
+                                                        disabled={isReassigning}
+                                                    >
+                                                        {(m.itemAllowedDays.length ? m.itemAllowedDays : ['—']).map((d) => (
+                                                            <option key={d} value={d}>{d}</option>
+                                                        ))}
+                                                    </select>
+                                                </div>
+                                                <div className={styles.tableCell}>
+                                                    <button
+                                                        className={`${styles.actionButton} ${styles.btnClean}`}
+                                                        onClick={() => handleMoveItemDay(m)}
+                                                        disabled={isReassigning || !reassignItemDay[key] || reassignItemDay[key] === m.orderDeliveryDay}
+                                                    >
+                                                        {isReassigning ? '…' : 'Move'}
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        )}
+                    </section>
+
+                    {/* Section 5: Deleted menu item */}
+                    <section className={styles.section}>
+                        <h2 className={styles.sectionTitle}>5. Deleted menu item</h2>
+                        <p className={styles.sectionDesc}>
+                            The client&apos;s order references a menu item that no longer exists (was deleted). Remove it from the order.
+                        </p>
+                        {deletedMenuItemIssues.length === 0 && (
+                            <div className={styles.emptyState}>No deleted menu item issues.</div>
+                        )}
+                        {deletedMenuItemIssues.length > 0 && (
+                            <div className={styles.table}>
+                                <div className={styles.tableHeader}>
+                                    <div className={`${styles.tableRow} ${styles.rowDeletedItem}`}>
+                                        <div className={styles.tableHeaderCell}>Client</div>
+                                        <div className={styles.tableHeaderCell}>Day</div>
+                                        <div className={styles.tableHeaderCell}>Vendor</div>
+                                        <div className={styles.tableHeaderCell}>Item ID</div>
+                                        <div className={styles.tableHeaderCell}>Qty</div>
+                                        <div className={styles.tableHeaderCell}>Action</div>
+                                    </div>
+                                </div>
+                                {deletedMenuItemIssues.map((m) => {
+                                    const key = deletedItemKey(m);
+                                    const isRemoving = removingDeletedItem === key;
+                                    return (
+                                        <div key={key} className={styles.tableRowWrapper}>
+                                            <div className={`${styles.tableRow} ${styles.rowDeletedItem}`}>
+                                                <div className={styles.tableCell}>
+                                                    <Link href={`/clients?id=${m.clientId}`} className={styles.clientLink}>
+                                                        {m.clientName}
+                                                    </Link>
+                                                    <div className={styles.cellMeta}>{m.serviceType}</div>
+                                                </div>
+                                                <div className={styles.tableCell}>
+                                                    {m.orderDeliveryDay ?? '—'}
+                                                </div>
+                                                <div className={styles.tableCell}>{m.vendorName}</div>
+                                                <div className={styles.tableCell}>
+                                                    <span className={styles.invalidVendor}>{m.itemId}</span>
+                                                </div>
+                                                <div className={styles.tableCell}>{m.quantity}</div>
+                                                <div className={styles.tableCell}>
+                                                    <button
+                                                        className={`${styles.actionButton} ${styles.btnClean}`}
+                                                        onClick={() => handleRemoveDeletedItem(m)}
+                                                        disabled={isRemoving}
+                                                    >
+                                                        {isRemoving ? '…' : 'Remove'}
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        )}
+                    </section>
+
+                    {/* Section 6: Box clients with category quota mismatch */}
+                    <section className={styles.section}>
+                        <h2 className={styles.sectionTitle}>6. Box clients — category quota off</h2>
+                        <p className={styles.sectionDesc}>
+                            Box clients whose upcoming order has one or more categories where the selected quota value does not match the required amount for that box type. Open the client profile to adjust items (same as on the clients dashboard).
+                        </p>
+                        {boxQuotaIssues.length === 0 && (
+                            <div className={styles.emptyState}>No box quota mismatch issues.</div>
+                        )}
+                        {boxQuotaIssues.length > 0 && (
+                            <div className={styles.table}>
+                                <div className={styles.tableHeader}>
+                                    <div className={`${styles.tableRow} ${styles.rowVendor}`}>
+                                        <div className={styles.tableHeaderCell}>Client</div>
+                                        <div className={styles.tableHeaderCell}>Mismatches</div>
+                                        <div className={styles.tableHeaderCell}>Action</div>
+                                    </div>
+                                </div>
+                                {boxQuotaIssues.map((issue) => (
+                                    <div key={issue.clientId} className={styles.tableRowWrapper}>
+                                        <div className={`${styles.tableRow} ${styles.rowVendor}`}>
+                                            <div className={styles.tableCell}>
+                                                <Link href={`/clients?id=${issue.clientId}`} className={styles.clientLink}>
+                                                    {issue.clientName}
+                                                </Link>
+                                                <div className={styles.cellMeta}>Boxes · {issue.mismatches.length} category mismatch{issue.mismatches.length !== 1 ? 'es' : ''}</div>
+                                            </div>
+                                            <div className={styles.tableCell}>
+                                                <ul className={styles.mismatchList}>
+                                                    {issue.mismatches.map((m, i) => (
+                                                        <li key={i}>
+                                                            Box {m.boxIndex + 1} ({m.boxTypeName}): <strong>{m.categoryName}</strong> — {m.actual} / {m.required}
+                                                        </li>
+                                                    ))}
+                                                </ul>
+                                            </div>
+                                            <div className={styles.tableCell}>
+                                                <button
+                                                    className={`${styles.actionButton} ${styles.btnOpenProfile}`}
+                                                    onClick={() => setProfileClientId(issue.clientId)}
+                                                >
+                                                    Open profile
+                                                </button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                ))}
                             </div>
                         )}
                     </section>

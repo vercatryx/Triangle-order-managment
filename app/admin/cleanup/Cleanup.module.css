@@ -118,6 +118,14 @@
     grid-template-columns: 1.5fr 1.5fr 1fr 120px;
 }
 
+.rowItemDay {
+    grid-template-columns: 1.5fr 1fr 1.5fr 1.5fr 0.5fr 1.5fr 1fr 80px;
+}
+
+.rowDeletedItem {
+    grid-template-columns: 1.5fr 1fr 1.5fr 1.5fr 0.5fr 80px;
+}
+
 .detailRow {
     padding: 0.25rem var(--spacing-md) 0.5rem;
     font-size: 0.75rem;
@@ -308,6 +316,22 @@
     color: #ef4444;
     border-radius: var(--radius-sm);
     font-size: 0.8rem;
+}
+
+.mismatchList {
+    margin: 0;
+    padding-left: 1.25rem;
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+    list-style-type: disc;
+}
+
+.mismatchList li {
+    margin-bottom: 0.25rem;
+}
+
+.mismatchList li:last-child {
+    margin-bottom: 0;
 }
 
 .actionButton {
