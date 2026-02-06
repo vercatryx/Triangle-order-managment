@@ -33,6 +33,19 @@ export async function POST(request: NextRequest) {
     type ClientReportRow = { clientId: string; clientName: string; ordersCreated: number; reason: string; vendors: Set<string>; types: Set<string> };
     const clientReportMap = new Map<string, ClientReportRow>();
 
+    let batchMode: { batchIndex: number; batchSize: number; creationId?: number } | null = null;
+    let totalClientsCount: number | null = null;
+    try {
+        const body = await request.json().catch(() => ({}));
+        const batchIndex = typeof body.batchIndex === 'number' ? body.batchIndex : -1;
+        const batchSize = typeof body.batchSize === 'number' && body.batchSize > 0 ? Math.min(body.batchSize, 500) : 0;
+        if (batchIndex >= 0 && batchSize > 0) {
+            batchMode = { batchIndex, batchSize, creationId: typeof body.creationId === 'number' ? body.creationId : undefined };
+        }
+    } catch {
+        // ignore
+    }
+
     try {
         const now = new Date();
         const today = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
@@ -63,28 +76,46 @@ export async function POST(request: NextRequest) {
             supabase.from('app_settings').select('report_email, send_vendor_next_week_emails').single()
         ]);
 
-        // Fetch ALL clients with pagination to avoid Supabase row limit (e.g. 450 or 1000 per request)
-        const clients: any[] = [];
-        const clientPageSize = 1000;
-        let clientPage = 0;
-        while (true) {
+        let clients: any[] = [];
+        if (batchMode) {
+            const { batchIndex, batchSize: size } = batchMode;
+            const from = batchIndex * size;
+            const to = from + size - 1;
+            const { count } = await supabase.from('clients').select('*', { count: 'exact', head: true }).is('parent_client_id', null);
+            totalClientsCount = count ?? 0;
             const { data: pageData, error: clientsError } = await supabase
                 .from('clients')
                 .select('id, full_name, status_id, service_type, parent_client_id, expiration_date, upcoming_order')
                 .is('parent_client_id', null)
                 .order('id', { ascending: true })
-                .range(clientPage * clientPageSize, (clientPage + 1) * clientPageSize - 1);
+                .range(from, to);
             if (clientsError) {
-                console.error('[Create Orders Next Week] Error fetching clients:', clientsError);
+                console.error('[Create Orders Next Week] Error fetching client batch:', clientsError);
                 throw clientsError;
             }
-            if (!pageData || pageData.length === 0) break;
-            clients.push(...pageData);
-            if (pageData.length < clientPageSize) break;
-            clientPage++;
+            clients = pageData ?? [];
+            console.log(`[Create Orders Next Week] Batch ${batchIndex}: loaded ${clients.length} clients (range ${from}-${to})`);
+        } else {
+            const clientPageSize = 1000;
+            let clientPage = 0;
+            while (true) {
+                const { data: pageData, error: clientsError } = await supabase
+                    .from('clients')
+                    .select('id, full_name, status_id, service_type, parent_client_id, expiration_date, upcoming_order')
+                    .is('parent_client_id', null)
+                    .order('id', { ascending: true })
+                    .range(clientPage * clientPageSize, (clientPage + 1) * clientPageSize - 1);
+                if (clientsError) {
+                    console.error('[Create Orders Next Week] Error fetching clients:', clientsError);
+                    throw clientsError;
+                }
+                if (!pageData || pageData.length === 0) break;
+                clients.push(...pageData);
+                if (pageData.length < clientPageSize) break;
+                clientPage++;
+            }
+            console.log(`[Create Orders Next Week] Loaded ${clients.length} clients (week ${weekStartStr} to ${weekEndStr})`);
         }
-
-        console.log(`[Create Orders Next Week] Loaded ${clients.length} clients (week ${weekStartStr} to ${weekEndStr})`);
 
         const allVendors = (vendorsRes.data || []).map((v: any) => ({
             id: v.id,
@@ -224,7 +255,9 @@ export async function POST(request: NextRequest) {
 
         const { data: maxOrderData } = await supabase.from('orders').select('order_number').order('order_number', { ascending: false }).limit(1).maybeSingle();
         let nextOrderNumber = Math.max(100000, (maxOrderData?.order_number || 0) + 1);
-        const creationId = await getNextCreationId();
+        const creationId = batchMode && batchMode.batchIndex > 0 && batchMode.creationId != null
+            ? batchMode.creationId
+            : await getNextCreationId();
 
         // Track orders by vendor and day for vendor emails and admin report
         const vendorOrdersByDay: Record<string, Record<string, number>> = {};
@@ -651,18 +684,6 @@ export async function POST(request: NextRequest) {
             'Reason (if no orders)': row.reason || '-'
         }));
 
-        const wb = XLSX.utils.book_new();
-        const ws = XLSX.utils.json_to_sheet(excelData);
-        ws['!cols'] = [{ wch: 15 }, { wch: 30 }, { wch: 15 }, { wch: 35 }, { wch: 25 }, { wch: 45 }];
-        XLSX.utils.book_append_sheet(wb, ws, 'Next Week Report');
-
-        const excelBuffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
-        const excelAttachment = {
-            filename: `Create_Orders_Next_Week_${weekStartStr}_to_${weekEndStr}.xlsx`,
-            content: excelBuffer,
-            contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-        };
-
         // Build vendor breakdown for admin report and vendor emails
         const vendorBreakdown: VendorBreakdownItem[] = [];
         for (const vendorId of Object.keys(vendorOrdersByDay)) {
@@ -678,6 +699,41 @@ export async function POST(request: NextRequest) {
             });
         }
         vendorBreakdown.sort((a, b) => (a.vendorName || '').localeCompare(b.vendorName || ''));
+
+        if (batchMode) {
+            const totalClients = totalClientsCount ?? 0;
+            const hasMore = totalClients > (batchMode.batchIndex + 1) * batchMode.batchSize;
+            console.log(`[Create Orders Next Week] Batch ${batchMode.batchIndex} done. totalCreated=${report.totalCreated} hasMore=${hasMore}`);
+            return NextResponse.json({
+                success: true,
+                totalCreated: report.totalCreated,
+                breakdown: report.breakdown,
+                weekStart: weekStartStr,
+                weekEnd: weekEndStr,
+                errors: report.unexpectedFailures.length ? report.unexpectedFailures : undefined,
+                batch: {
+                    batchIndex: batchMode.batchIndex,
+                    batchSize: batchMode.batchSize,
+                    totalClients,
+                    creationId,
+                    hasMore,
+                    excelRows: excelData,
+                    vendorBreakdown
+                }
+            });
+        }
+
+        const wb = XLSX.utils.book_new();
+        const ws = XLSX.utils.json_to_sheet(excelData);
+        ws['!cols'] = [{ wch: 15 }, { wch: 30 }, { wch: 15 }, { wch: 35 }, { wch: 25 }, { wch: 45 }];
+        XLSX.utils.book_append_sheet(wb, ws, 'Next Week Report');
+
+        const excelBuffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+        const excelAttachment = {
+            filename: `Create_Orders_Next_Week_${weekStartStr}_to_${weekEndStr}.xlsx`,
+            content: excelBuffer,
+            contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        };
 
         // Email each vendor their own breakdown (by day) when setting is enabled
         if (sendVendorNextWeekEmails) {

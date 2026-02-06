@@ -5652,6 +5652,200 @@ export async function getVendorDeliveryDateSummary(vendorId: string): Promise<Ar
     }
 }
 
+const VENDOR_ORDERS_BATCH_CHUNK = 200;
+
+/** Batch-load vendor selections, items, box selections (and client upcoming_order for Box) in few Supabase round-trips. */
+async function batchLoadVendorOrderDetails(
+    supabaseClient: any,
+    orderRows: any[],
+    vendorId: string
+): Promise<{
+    vsByOrderId: Map<string, { id: string }>;
+    itemsByVsId: Map<string, any[]>;
+    boxSelectionsByOrderId: Map<string, any[]>;
+    upcomingOrderByClientId: Map<string, any>;
+}> {
+    const orderIds = orderRows.map((o: any) => o.id ?? o.order_id).filter(Boolean);
+    const vsByOrderId = new Map<string, { id: string }>();
+    const itemsByVsId = new Map<string, any[]>();
+    const boxSelectionsByOrderId = new Map<string, any[]>();
+    const upcomingOrderByClientId = new Map<string, any>();
+
+    const chunk = <T>(arr: T[], size: number): T[][] => {
+        const out: T[][] = [];
+        for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+        return out;
+    };
+
+    for (const ids of chunk(orderIds, VENDOR_ORDERS_BATCH_CHUNK)) {
+        const { data: vsList } = await supabaseClient
+            .from('order_vendor_selections')
+            .select('id, order_id')
+            .in('order_id', ids)
+            .eq('vendor_id', vendorId);
+        if (vsList?.length) {
+            for (const vs of vsList) {
+                vsByOrderId.set(vs.order_id, { id: vs.id });
+            }
+        }
+    }
+
+    const vsIds = Array.from(vsByOrderId.values()).map((v) => v.id);
+    for (const ids of chunk(vsIds, VENDOR_ORDERS_BATCH_CHUNK)) {
+        const { data: itemsList } = await supabaseClient
+            .from('order_items')
+            .select('*')
+            .in('vendor_selection_id', ids);
+        if (itemsList?.length) {
+            for (const item of itemsList) {
+                const vsId = item.vendor_selection_id;
+                if (!itemsByVsId.has(vsId)) itemsByVsId.set(vsId, []);
+                itemsByVsId.get(vsId)!.push(item);
+            }
+        }
+    }
+
+    for (const ids of chunk(orderIds, VENDOR_ORDERS_BATCH_CHUNK)) {
+        const { data: boxList } = await supabaseClient
+            .from('order_box_selections')
+            .select('*')
+            .in('order_id', ids)
+            .eq('vendor_id', vendorId);
+        if (boxList?.length) {
+            for (const bs of boxList) {
+                const oid = bs.order_id;
+                if (!boxSelectionsByOrderId.has(oid)) boxSelectionsByOrderId.set(oid, []);
+                boxSelectionsByOrderId.get(oid)!.push(bs);
+            }
+        }
+    }
+
+    const boxOrderClientIds = [...new Set(
+        orderRows.filter((o: any) => o.service_type === 'Boxes').map((o: any) => o.client_id ?? o.clientId).filter(Boolean)
+    )];
+    for (const cids of chunk(boxOrderClientIds, VENDOR_ORDERS_BATCH_CHUNK)) {
+        const { data: clientRows } = await supabaseClient
+            .from('clients')
+            .select('id, upcoming_order')
+            .in('id', cids);
+        if (clientRows?.length) {
+            for (const r of clientRows) {
+                if (r.upcoming_order != null) upcomingOrderByClientId.set(r.id, r.upcoming_order);
+            }
+        }
+    }
+
+    return { vsByOrderId, itemsByVsId, boxSelectionsByOrderId, upcomingOrderByClientId };
+}
+
+/** Build one order result from row + pre-fetched maps (no DB calls). */
+function assembleVendorOrderFromBatch(
+    order: any,
+    vendorId: string,
+    maps: { vsByOrderId: Map<string, { id: string }>; itemsByVsId: Map<string, any[]>; boxSelectionsByOrderId: Map<string, any[]>; upcomingOrderByClientId: Map<string, any> }
+): any {
+    const orderId = order?.id ?? order?.order_id;
+    const clientId = order?.client_id ?? order?.clientId;
+    const result: any = {
+        ...order,
+        id: orderId ?? order?.id,
+        client_id: clientId ?? order?.client_id,
+        orderNumber: order?.order_number ?? order?.orderNumber,
+        items: [],
+        boxSelection: null
+    };
+
+    if (order.service_type === 'Food' || order.service_type === 'Meal' || order.service_type === 'Custom') {
+        const vs = orderId ? maps.vsByOrderId.get(orderId) : null;
+        if (vs) {
+            result.items = maps.itemsByVsId.get(vs.id) ?? [];
+        }
+    } else if (order.service_type === 'Equipment') {
+        try {
+            const notes = order.notes ? JSON.parse(order.notes) : null;
+            if (notes?.equipmentName) {
+                result.equipmentSelection = {
+                    vendorId: notes.vendorId,
+                    equipmentId: notes.equipmentId,
+                    equipmentName: notes.equipmentName,
+                    price: notes.price
+                };
+            }
+        } catch (_) {}
+    } else if (order.service_type === 'Boxes' && orderId) {
+        const bsList = maps.boxSelectionsByOrderId.get(orderId) ?? [];
+        if (bsList.length > 0) {
+            const uo = clientId ? maps.upcomingOrderByClientId.get(clientId) : null;
+            const boxOrders = uo?.boxOrders && Array.isArray(uo.boxOrders) ? uo.boxOrders.filter((b: any) => b.vendorId === vendorId) : [];
+            const parsedBoxes = bsList.map((bs: any, idx: number) => {
+                let items: Record<string, number> = {};
+                const rawItems = bs.items;
+                if (rawItems != null) {
+                    if (typeof rawItems === 'string') {
+                        try {
+                            const parsed = JSON.parse(rawItems) as Record<string, unknown> || {};
+                            Object.entries(parsed).forEach(([itemId, qty]: [string, any]) => {
+                                items[itemId] = typeof qty === 'object' && qty != null && 'quantity' in qty ? Number((qty as any).quantity) : Number(qty) || 0;
+                            });
+                        } catch { /* noop */ }
+                    } else if (typeof rawItems === 'object') {
+                        Object.entries(rawItems as Record<string, unknown>).forEach(([itemId, qty]: [string, any]) => {
+                            items[itemId] = typeof qty === 'object' && qty != null && 'quantity' in (qty as object) ? Number((qty as { quantity: number }).quantity) : Number(qty) || 0;
+                        });
+                    }
+                }
+                let itemNotes: Record<string, string> = {};
+                const rawNotes = bs.item_notes ?? bs.itemNotes;
+                if (rawNotes != null) {
+                    if (typeof rawNotes === 'string') {
+                        try { itemNotes = (JSON.parse(rawNotes) as Record<string, string>) || {}; } catch { /* noop */ }
+                    } else if (typeof rawNotes === 'object') itemNotes = (rawNotes as Record<string, string>) || {};
+                }
+                const parsed: any = { ...bs, items, item_notes: itemNotes, itemNotes };
+                const box = boxOrders[idx];
+                if (box) {
+                    if (Object.keys(parsed.item_notes).length === 0 && box.itemNotes && typeof box.itemNotes === 'object') {
+                        parsed.item_notes = { ...box.itemNotes };
+                        parsed.itemNotes = parsed.item_notes;
+                    }
+                    if (Object.keys(parsed.items).length === 0 && box.items && typeof box.items === 'object') {
+                        const fallback: Record<string, number> = {};
+                        Object.entries(box.items).forEach(([itemId, qty]: [string, any]) => {
+                            const n = typeof qty === 'object' && qty != null && 'quantity' in qty ? Number((qty as any).quantity) : Number(qty) || 0;
+                            if (n > 0) fallback[itemId] = n;
+                        });
+                        parsed.items = fallback;
+                    }
+                }
+                return parsed;
+            });
+            result.boxSelections = parsedBoxes;
+            result.boxSelection = parsedBoxes[0];
+            let totalBoxItems = 0;
+            for (const box of parsedBoxes) {
+                for (const qty of Object.values(box.items)) totalBoxItems += Number(qty) || 0;
+            }
+            result.total_items = totalBoxItems;
+            const first = bsList[0];
+            if (parsedBoxes.length === 1 && Object.keys(parsedBoxes[0].items).length === 0 && first?.vendor_id) {
+                const vs = maps.vsByOrderId.get(orderId);
+                if (vs) {
+                    const boxItems = maps.itemsByVsId.get(vs.id) ?? [];
+                    if (boxItems.length > 0) {
+                        const itemsObj: Record<string, number> = {};
+                        for (const item of boxItems) {
+                            if (item.menu_item_id && item.quantity) itemsObj[item.menu_item_id] = item.quantity;
+                        }
+                        result.boxSelections[0].items = itemsObj;
+                        result.boxSelection = result.boxSelections[0];
+                    }
+                }
+            }
+        }
+    }
+    return result;
+}
+
 /** Orders for a single delivery date (DB-level filter). Use for vendor delivery page and exports. */
 export async function getOrdersByVendorForDate(vendorId: string, deliveryDate: string | null): Promise<any[]> {
     if (!vendorId) return [];
@@ -5670,19 +5864,39 @@ export async function getOrdersByVendorForDate(vendorId: string, deliveryDate: s
 
     try {
         const dateArg = deliveryDate && deliveryDate !== 'no-date' ? deliveryDate : null;
-        const { data: ordersData, error } = await supabaseClient.rpc('get_orders_by_vendor_and_date', {
-            p_vendor_id: vendorId,
-            p_delivery_date: dateArg
-        });
-        if (error) {
-            console.error('get_orders_by_vendor_and_date RPC error:', error);
-            return [];
+        // Use a small page size so we never hit PostgREST/Supabase row limit (some projects use 200–250).
+        const pageSize = 100;
+        let rows: any[] = [];
+        let from = 0;
+        let pageNum = 0;
+        while (true) {
+            const { data: pageData, error } = await supabaseClient
+                .rpc('get_orders_by_vendor_and_date', {
+                    p_vendor_id: vendorId,
+                    p_delivery_date: dateArg
+                })
+                .range(from, from + pageSize - 1);
+            if (error) {
+                console.error('[getOrdersByVendorForDate] RPC error:', error);
+                return [];
+            }
+            const page = Array.isArray(pageData) ? pageData : [];
+            pageNum++;
+            console.log(`[getOrdersByVendorForDate] RPC page ${pageNum}: fetched ${page.length} orders (range ${from}-${from + page.length - 1})`);
+            rows = rows.concat(page);
+            if (page.length < pageSize) break;
+            from += pageSize;
         }
-        const rows = Array.isArray(ordersData) ? ordersData : [];
-        const orders = await Promise.all(rows.map(async (order: any) => {
-            const processed = await processVendorOrderDetails(supabaseClient, order, vendorId, false);
-            return { ...processed, orderType: 'completed' as const };
-        }));
+        console.log(`[getOrdersByVendorForDate] RPC total: ${rows.length} orders for vendor ${vendorId} date ${dateArg ?? 'null'}`);
+
+        if (rows.length === 0) return [];
+
+        const maps = await batchLoadVendorOrderDetails(supabaseClient, rows, vendorId);
+        const orders = rows.map((order: any) => {
+            const assembled = assembleVendorOrderFromBatch(order, vendorId, maps);
+            return { ...assembled, orderType: 'completed' as const };
+        });
+        console.log(`[getOrdersByVendorForDate] Assembled ${orders.length} orders (served to UI)`);
         return orders;
     } catch (err) {
         console.error('Error in getOrdersByVendorForDate:', err);

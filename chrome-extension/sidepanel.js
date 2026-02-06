@@ -162,6 +162,7 @@ function setupEventListeners() {
     serviceTypeRadios.forEach(radio => {
         radio.addEventListener('change', function() {
             const authUnitsGroup = document.getElementById('auth-units-group');
+            // Auth units only apply to Food (and Meal); hide for Boxes and Custom
             if (this.value === 'Food') {
                 authUnitsGroup.style.display = 'block';
             } else {
@@ -449,7 +450,7 @@ async function handleSubmit(e) {
             notes: document.getElementById('notes').value.trim() || null,
             serviceType: serviceType,
             caseId: document.getElementById('case-url').value.trim(),
-            approvedMealsPerWeek: serviceType === 'Food' && authUnits ? parseInt(authUnits, 10) : 0,
+            approvedMealsPerWeek: (serviceType === 'Food' && authUnits) ? parseInt(authUnits, 10) : 0,
             authorizedAmount: authorizedAmountValue ? parseFloat(authorizedAmountValue) : null,
             expirationDate: expirationDateValue || null
         };

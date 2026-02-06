@@ -5,7 +5,8 @@ import Link from 'next/link';
 import { AppSettings } from '@/lib/types';
 import { updateSettings, getCreationIds, deleteOrdersByCreationId } from '@/lib/actions';
 import { useDataCache } from '@/lib/data-cache';
-import { Save, PlayCircle, RefreshCw, X, Calendar, Trash2, AlertTriangle, CalendarDays } from 'lucide-react';
+import { Save, PlayCircle, RefreshCw, X, Calendar, Trash2, AlertTriangle, CalendarDays, Layers } from 'lucide-react';
+import * as XLSX from 'xlsx';
 import styles from './GlobalSettings.module.css';
 
 export function GlobalSettings() {
@@ -41,6 +42,8 @@ export function GlobalSettings() {
         weekEnd?: string;
         error?: string;
     } | null>(null);
+    const [nextWeekBatchedCreating, setNextWeekBatchedCreating] = useState(false);
+    const [nextWeekBatchedProgress, setNextWeekBatchedProgress] = useState<string | null>(null);
 
     useEffect(() => {
         loadData();
@@ -159,12 +162,14 @@ export function GlobalSettings() {
         }
     }
 
+    const BATCH_SIZE = 100;
+
     async function handleCreateOrdersNextWeek() {
         if (!confirm('This will create orders for the next week (Sunday–Saturday) based on upcoming orders. Report will be emailed to the addresses in Report Email. Proceed?')) return;
         setNextWeekCreating(true);
         setNextWeekResult(null);
         try {
-            const res = await fetch('/api/create-orders-next-week', { method: 'POST' });
+            const res = await fetch('/api/create-orders-next-week', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
             const data = await res.json();
             if (data.success) {
                 setNextWeekResult({
@@ -183,6 +188,103 @@ export function GlobalSettings() {
             setNextWeekResult({ success: false, error: error.message || 'Network error' });
         } finally {
             setNextWeekCreating(false);
+        }
+    }
+
+    async function handleCreateOrdersNextWeekBatched() {
+        if (!confirm(`Create orders for the next week in batches of ${BATCH_SIZE} clients to avoid timeouts? No email will be sent; you will get one combined Excel download at the end. Proceed?`)) return;
+        setNextWeekBatchedCreating(true);
+        setNextWeekBatchedProgress('Starting…');
+        setNextWeekResult(null);
+        let creationId: number | undefined;
+        const allExcelRows: Record<string, string | number>[] = [];
+        const vendorBreakdownMap = new Map<string, { vendorId: string; vendorName: string; byDay: Record<string, number>; total: number }>();
+        let totalCreated = 0;
+        const breakdown = { Food: 0, Meal: 0, Boxes: 0, Custom: 0 };
+        let weekStart = '';
+        let weekEnd = '';
+        const allFailures: { clientName: string; orderType: string; date: string; reason: string }[] = [];
+        try {
+            let batchIndex = 0;
+            while (true) {
+                setNextWeekBatchedProgress(`Batch ${batchIndex + 1} (clients ${batchIndex * BATCH_SIZE + 1}–${(batchIndex + 1) * BATCH_SIZE})…`);
+                const body: { batchIndex: number; batchSize: number; creationId?: number } = { batchIndex, batchSize: BATCH_SIZE };
+                if (creationId != null) body.creationId = creationId;
+                const res = await fetch('/api/create-orders-next-week', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body)
+                });
+                const data = await res.json();
+                if (!data.success) {
+                    setNextWeekResult({ success: false, error: data.error || 'Request failed' });
+                    break;
+                }
+                if (data.batch?.creationId != null) creationId = data.batch.creationId;
+                totalCreated += data.totalCreated ?? 0;
+                if (data.breakdown) {
+                    breakdown.Food += data.breakdown.Food ?? 0;
+                    breakdown.Meal += data.breakdown.Meal ?? 0;
+                    breakdown.Boxes += data.breakdown.Boxes ?? 0;
+                    breakdown.Custom += data.breakdown.Custom ?? 0;
+                }
+                if (data.weekStart) weekStart = data.weekStart;
+                if (data.weekEnd) weekEnd = data.weekEnd;
+                if (data.errors?.length) {
+                    for (const e of data.errors) {
+                        if (e && typeof e === 'object' && 'reason' in e) {
+                            allFailures.push({
+                                clientName: (e as any).clientName ?? 'Unknown',
+                                orderType: (e as any).orderType ?? '-',
+                                date: (e as any).date ?? '-',
+                                reason: (e as any).reason ?? String(e)
+                            });
+                        }
+                    }
+                }
+                const rows = data.batch?.excelRows ?? [];
+                allExcelRows.push(...rows);
+                for (const v of data.batch?.vendorBreakdown ?? []) {
+                    const existing = vendorBreakdownMap.get(v.vendorId);
+                    if (!existing) {
+                        vendorBreakdownMap.set(v.vendorId, { vendorId: v.vendorId, vendorName: v.vendorName ?? v.vendorId, byDay: { ...v.byDay }, total: v.total ?? 0 });
+                    } else {
+                        existing.total += v.total ?? 0;
+                        for (const [day, n] of Object.entries(v.byDay ?? {})) {
+                            existing.byDay[day] = (existing.byDay[day] ?? 0) + n;
+                        }
+                    }
+                }
+                if (!data.batch?.hasMore) break;
+                batchIndex++;
+            }
+            setNextWeekBatchedProgress('Building export…');
+            const wb = XLSX.utils.book_new();
+            const ws = XLSX.utils.json_to_sheet(allExcelRows.length ? allExcelRows : [{ 'Client ID': '-', 'Client Name': '-', 'Orders Created': 0, 'Vendor(s)': '-', 'Type(s)': '-', 'Reason (if no orders)': 'No clients in batch' }]);
+            ws['!cols'] = [{ wch: 15 }, { wch: 30 }, { wch: 15 }, { wch: 35 }, { wch: 25 }, { wch: 45 }];
+            XLSX.utils.book_append_sheet(wb, ws, 'Next Week Report');
+            const excelBuffer = XLSX.write(wb, { type: 'array', bookType: 'xlsx' });
+            const blob = new Blob([excelBuffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `Create_Orders_Next_Week_${weekStart || 'week'}_to_${weekEnd || 'week'}.xlsx`;
+            a.click();
+            URL.revokeObjectURL(url);
+            setNextWeekResult({
+                success: true,
+                totalCreated,
+                breakdown,
+                weekStart,
+                weekEnd
+            });
+            await loadCreationIds();
+            invalidateReferenceData();
+        } catch (error: any) {
+            setNextWeekResult({ success: false, error: error.message || 'Network error' });
+        } finally {
+            setNextWeekBatchedCreating(false);
+            setNextWeekBatchedProgress(null);
         }
     }
 
@@ -308,19 +410,35 @@ export function GlobalSettings() {
                     <p className={styles.description} style={{ marginBottom: '0.75rem' }}>
                         Create orders for the next week (Sunday–Saturday) in one go. Uses upcoming orders only. Sends an Excel report to the Report Email addresses above.
                     </p>
-                    <button
-                        className="btn btn-primary"
-                        onClick={handleCreateOrdersNextWeek}
-                        disabled={nextWeekCreating}
-                        style={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: '0.5rem'
-                        }}
-                    >
-                        {nextWeekCreating ? <RefreshCw className="spin" size={16} /> : <CalendarDays size={16} />}
-                        {nextWeekCreating ? 'Creating Orders...' : 'Create orders for the next week'}
-                    </button>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.75rem', alignItems: 'center' }}>
+                        <button
+                            className="btn btn-primary"
+                            onClick={handleCreateOrdersNextWeek}
+                            disabled={nextWeekCreating || nextWeekBatchedCreating}
+                            style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '0.5rem'
+                            }}
+                        >
+                            {nextWeekCreating ? <RefreshCw className="spin" size={16} /> : <CalendarDays size={16} />}
+                            {nextWeekCreating ? 'Creating Orders...' : 'Create orders for the next week'}
+                        </button>
+                        <button
+                            className="btn btn-secondary"
+                            onClick={handleCreateOrdersNextWeekBatched}
+                            disabled={nextWeekCreating || nextWeekBatchedCreating}
+                            style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '0.5rem'
+                            }}
+                            title={`Runs in batches of ${BATCH_SIZE} clients to avoid timeouts. One combined Excel download at the end (no email).`}
+                        >
+                            {nextWeekBatchedCreating ? <RefreshCw className="spin" size={16} /> : <Layers size={16} />}
+                            {nextWeekBatchedCreating ? (nextWeekBatchedProgress ?? 'Creating…') : `Create orders (batched, ${BATCH_SIZE} per batch)`}
+                        </button>
+                    </div>
                 </div>
 
                 {nextWeekResult && (

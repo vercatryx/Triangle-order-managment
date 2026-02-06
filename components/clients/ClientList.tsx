@@ -29,7 +29,7 @@ import {
     getEquipment,
     getMealCategories
 } from '@/lib/actions';
-import { invalidateClientData } from '@/lib/cached-data';
+import { invalidateClientData, getClient as getClientCached } from '@/lib/cached-data';
 import { Plus, Search, ChevronRight, CheckSquare, Square, StickyNote, Package, ArrowUpDown, ArrowUp, ArrowDown, Filter, Eye, EyeOff, Loader2, AlertCircle, X, RefreshCcw } from 'lucide-react';
 import styles from './ClientList.module.css';
 import { useRouter } from 'next/navigation';
@@ -105,6 +105,20 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
 
     // Info Shelf State
     const [infoShelfClientId, setInfoShelfClientId] = useState<string | null>(null);
+    const [shelfClient, setShelfClient] = useState<ClientProfile | null>(null);
+
+    // When shelf opens, refetch that client so sidebar always has fresh data (e.g. after saving upcoming order)
+    useEffect(() => {
+        if (!infoShelfClientId) {
+            setShelfClient(null);
+            return;
+        }
+        let cancelled = false;
+        getClientCached(infoShelfClientId).then((c) => {
+            if (!cancelled && c) setShelfClient(c);
+        });
+        return () => { cancelled = true; };
+    }, [infoShelfClientId]);
 
     useEffect(() => {
         loadInitialData();
@@ -953,6 +967,8 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
 
         const conf = client.upcomingOrder;
         const st = conf.serviceType || client.serviceType;
+        // Food clients can have meal; show both as "Food" in the UI
+        const displayLabel = (st === 'Food' || st === 'Meal') ? 'Food' : st;
 
         // If we are just showing the simple list table cell (forceDetails=false)
         if (!showOrderDetails && !forceDetails) {
@@ -963,10 +979,9 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
             // Let's check usage. The table usage likely doesn't pass true.
             // If !forceDetails, return the string summary we had before or a simple ReactNode.
 
-            let label: string = st;
             const vendorSummaries: React.ReactNode[] = [];
 
-            if (st === 'Food') {
+            if (st === 'Food' || st === 'Meal') {
                 const uniqueVendors = new Set<string>();
                 const isMultiDay = conf.deliveryDayOrders && typeof conf.deliveryDayOrders === 'object';
                 if (isMultiDay) {
@@ -1035,7 +1050,7 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
             }
             return (
                 <div style={{ fontSize: '0.85rem' }}>
-                    <span className={`badge ${st === 'Boxes' ? 'badge-blue' : st === 'Custom' ? 'badge-purple' : 'badge-green'}`} style={{ marginRight: '6px' }}>{st}</span>
+                    <span className={`badge ${displayLabel === 'Boxes' ? 'badge-blue' : displayLabel === 'Custom' ? 'badge-purple' : 'badge-green'}`} style={{ marginRight: '6px' }}>{displayLabel}</span>
                     <span style={{ color: 'var(--text-secondary)' }}>
                         {vendorSummaries.length > 0 ? vendorSummaries.join(', ') : 'No Vendor'}
                     </span>
@@ -1047,7 +1062,7 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
         const itemsList: { name: string; quantity: number }[] = [];
         let vendorName = '';
 
-        if (st === 'Food') {
+        if (st === 'Food' || st === 'Meal') {
             // Collect all items from all vendors/days
             const isMultiDay = conf.deliveryDayOrders && typeof conf.deliveryDayOrders === 'object';
 
@@ -1193,7 +1208,7 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
         return (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                 <div style={{ fontWeight: 600, fontSize: '0.9rem' }}>
-                    {st} - <span style={{ fontWeight: 500 }}>{vendorName || 'Vendor Not Set'}</span>
+                    {displayLabel} - <span style={{ fontWeight: 500 }}>{vendorName || 'Vendor Not Set'}</span>
                 </div>
                 {itemsList.length > 0 ? (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
@@ -2167,13 +2182,13 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
             }
 
             {
-                infoShelfClientId && clients.find(c => c.id === infoShelfClientId) && (
+                infoShelfClientId && (shelfClient || clients.find(c => c.id === infoShelfClientId)) && (
                     <ClientInfoShelf
-                        client={detailsCache[infoShelfClientId]?.client || clients.find(c => c.id === infoShelfClientId)!}
+                        client={shelfClient || clients.find(c => c.id === infoShelfClientId) || detailsCache[infoShelfClientId]?.client!}
                         statuses={statuses}
                         navigators={navigators}
                         globalLocations={globalLocations}
-                        orderSummary={getOrderSummary(detailsCache[infoShelfClientId]?.client || clients.find(c => c.id === infoShelfClientId)!, true)}
+                        orderSummary={getOrderSummary(shelfClient || clients.find(c => c.id === infoShelfClientId) || detailsCache[infoShelfClientId]?.client!, true)}
                         submissions={detailsCache[infoShelfClientId]?.submissions || []}
                         allClients={allClientsForLookup}
                         onClose={() => setInfoShelfClientId(null)}

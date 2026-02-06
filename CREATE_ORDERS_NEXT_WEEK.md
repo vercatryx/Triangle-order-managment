@@ -128,9 +128,31 @@ The report is **not** built by re-running logic or re-querying the DB after the 
 
 So the Excel reflects **exactly** what happened during this run: same map that was updated step-by-step, no second pass of creation logic. The data is 100% accurate to what was processed.
 
+### 6.1 Why report count can be higher than DB count (e.g. 243 vs 220)
+
+The **vendor-by-day counts in the email** come from `recordVendorOrder()`, which is only called **after** we successfully insert both the order and its `order_vendor_selections` row. So the report count should match the DB.
+
+If you see a **higher number in the report than in the DB** (e.g. email said 243 for a vendor/date but the vendor delivery page shows 220), possible causes:
+
+1. **Different run:** The email was from a run that created 243; later some orders were deleted or you're counting with a different filter.
+2. **Failures:** If `createOrder()` or the `order_vendor_selections` insert fails, we do **not** call `recordVendorOrder` — so that order is neither in the report nor in the DB. So 243 in report with 220 in DB would mean 23 orders were **reported** but never persisted (e.g. a bug or a second run that overwrote data). More commonly, the **reverse** happens: the report shows fewer than the DB if the run was interrupted. To see which orders failed, check **unexpectedFailures** in the API response (and the "Unexpected Failures" section in the email).
+3. **Same vendor and date:** Confirm you're comparing the same vendor and delivery date in both the email and the DB/SQL count.
+
+**Bottom line:** The report only counts orders that were successfully created (order + vendor selection). Any shortfall in the DB is from orders that failed to be created; check `errors` / unexpectedFailures for that run.
+
 ---
 
-## 7. Excel and email
+## 7. Batch mode (avoid timeouts)
+
+For large client lists, a single "Create orders for the next week" request can hit server or Vercel time limits. **Batch mode** processes clients in chunks (e.g. 100 per request) so each request finishes in time; you then get **one combined export** at the end.
+
+- **How to use:** In Global Settings, use the button **"Create orders (batched, 100 per batch)"**. No email is sent; when all batches finish, one Excel file is downloaded with all client rows merged.
+- **API:** Send `POST /api/create-orders-next-week` with body `{ "batchIndex": 0, "batchSize": 100 }`. Response includes `batch: { creationId, hasMore, excelRows, vendorBreakdown, totalClients }`. For the next batch send `{ "batchIndex": 1, "batchSize": 100, "creationId": <from first response> }`. Repeat until `batch.hasMore` is false.
+- **Merging:** Concatenate all `batch.excelRows` for the combined client report. Merge `batch.vendorBreakdown` by `vendorId`: sum `byDay` and `total` so you have one vendor breakdown for the whole run.
+
+---
+
+## 8. Excel and email
 
 - **Sheet name:** “Next Week Report”.
 - **Columns:** Client ID, Client Name, Orders Created, Vendor(s), Type(s), Reason (if no orders).
@@ -139,7 +161,7 @@ So the Excel reflects **exactly** what happened during this run: same map that w
 
 ---
 
-## 8. Response and UI
+## 9. Response and UI
 
 - **Success:** `{ success: true, totalCreated, breakdown: { Food, Meal, Boxes, Custom }, weekStart, weekEnd }`. UI shows the green message and refreshes creation IDs.
 - **Failure:** `{ success: false, error }` with HTTP 500. UI shows the error in red.
@@ -147,7 +169,7 @@ So the Excel reflects **exactly** what happened during this run: same map that w
 
 ---
 
-## 9. Quick reference
+## 10. Quick reference
 
 
 | Topic                           | Answer                                                                                                                              |

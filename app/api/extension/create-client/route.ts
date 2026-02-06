@@ -18,7 +18,7 @@ import { ServiceType } from '@/lib/types';
  *   phone: string
  *   email?: string
  *   notes?: string
- *   serviceType: 'Food' | 'Boxes'
+ *   serviceType: 'Food' | 'Boxes' | 'Custom' (or 'Meal')
  *   caseId: string (required, must be valid case URL)
  *   approvedMealsPerWeek?: number
  *   authorizedAmount?: number | null
@@ -89,11 +89,12 @@ export async function POST(request: NextRequest) {
             }, { status: 400 });
         }
 
-        // Validate serviceType
-        if (serviceType !== 'Food' && serviceType !== 'Boxes') {
+        // Validate serviceType (Food, Boxes, Custom, Meal - matches app client types)
+        const validServiceTypes = ['Food', 'Boxes', 'Custom', 'Meal'];
+        if (!validServiceTypes.includes(serviceType)) {
             return NextResponse.json({
                 success: false,
-                error: 'serviceType must be either "Food" or "Boxes"'
+                error: `serviceType must be one of: ${validServiceTypes.join(', ')}`
             }, { status: 400 });
         }
 
@@ -116,7 +117,13 @@ export async function POST(request: NextRequest) {
             }, { status: 400 });
         }
 
-        // Create client data
+        // Build initial upcoming_order so client stores order type + case the same way as the app (clients.upcoming_order)
+        const upcomingOrder = {
+            serviceType: serviceType as ServiceType,
+            caseId: caseId.trim()
+        };
+
+        // Create client data (service_type on client row + upcoming_order JSONB)
         const clientData = {
             fullName: fullName.trim(),
             email: email?.trim() || null,
@@ -130,13 +137,10 @@ export async function POST(request: NextRequest) {
             notes: notes?.trim() || '',
             statusId: statusId,
             serviceType: serviceType as ServiceType,
-            approvedMealsPerWeek: approvedMealsPerWeek ? parseInt(approvedMealsPerWeek.toString(), 10) : 0,
+            approvedMealsPerWeek: (serviceType === 'Food' || serviceType === 'Meal') && approvedMealsPerWeek ? parseInt(approvedMealsPerWeek.toString(), 10) : 0,
             authorizedAmount: authorizedAmount !== undefined && authorizedAmount !== null ? parseFloat(authorizedAmount.toString()) : null,
             expirationDate: expirationDate?.trim() || null,
-            activeOrder: {
-                serviceType: serviceType as ServiceType,
-                caseId: caseId.trim()
-            }
+            upcomingOrder
         };
 
         const newClient = await addClient(clientData);

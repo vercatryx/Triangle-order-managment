@@ -185,6 +185,11 @@ export function invalidateReferenceData(key?: string) {
     }
 }
 
+/** Clear only the full client list cache so next getClients() refetches. Use after updating a client's upcoming_order so the list shows the order. */
+export function invalidateClientsList() {
+    clientsCache = undefined;
+}
+
 export function invalidateClientData(clientId?: string) {
     if (clientId) {
         clientCache.delete(clientId);

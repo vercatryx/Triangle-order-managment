@@ -6,7 +6,7 @@ import Link from 'next/link';
 import { ClientProfile, ClientStatus, Navigator, Vendor, MenuItem, BoxType, ServiceType, AppSettings, DeliveryRecord, ItemCategory, ClientFullDetails, BoxQuota, MealCategory, MealItem, ClientFoodOrder, ClientMealOrder, ClientBoxOrder, Equipment, OrderConfiguration } from '@/lib/types';
 import { updateClient, addClient, deleteClient, updateDeliveryProof, recordClientChange, logNavigatorAction, getBoxQuotas, saveEquipmentOrder, getRegularClients, getDependentsByParentId, addDependent, checkClientNameExists, getClientFullDetails, saveClientCustomOrder, getEquipment, getClientProfileData, appendOrderHistory, updateClientUpcomingOrder } from '@/lib/actions';
 import { getSingleForm, getClientSubmissions } from '@/lib/form-actions';
-import { getClient, getStatuses, getNavigators, getVendors, getMenuItems, getBoxTypes, getSettings, getCategories, getClients, invalidateClientData, invalidateReferenceData, getActiveOrderForClient, getUpcomingOrderForClient, getOrderHistory, getClientHistory, getBillingHistory, invalidateOrderData, getMealCategories, getMealItems, getRecentOrdersForClient, getClientsLight } from '@/lib/cached-data';
+import { getClient, getStatuses, getNavigators, getVendors, getMenuItems, getBoxTypes, getSettings, getCategories, getClients, invalidateClientData, invalidateClientsList, invalidateReferenceData, getActiveOrderForClient, getUpcomingOrderForClient, getOrderHistory, getClientHistory, getBillingHistory, invalidateOrderData, getMealCategories, getMealItems, getRecentOrdersForClient, getClientsLight } from '@/lib/cached-data';
 import { areAnyDeliveriesLocked, getEarliestEffectiveDate, getLockedWeekDescription } from '@/lib/weekly-lock';
 import {
     getNextDeliveryDate as getNextDeliveryDateUtil,
@@ -2006,6 +2006,7 @@ export function ClientProfileDetail({
                 const cleanedOrderConfig = prepareNewColumnOrder();
                 if (cleanedOrderConfig) {
                     await updateClientUpcomingOrder(newClient.id, cleanedOrderConfig);
+                    invalidateClientsList();
 
                     if (newClient.serviceType === 'Custom' && cleanedOrderConfig.custom_name && cleanedOrderConfig.custom_price && cleanedOrderConfig.vendorId && cleanedOrderConfig.deliveryDay) {
                         await saveClientCustomOrder(
@@ -2322,6 +2323,7 @@ export function ClientProfileDetail({
             const payload = prepareNewColumnOrder();
             await updateClientUpcomingOrder(client.id, payload ?? null);
             invalidateClientData(client.id);
+            invalidateClientsList();
             const fresh = await getClient(client.id);
             if (fresh) {
                 lastUpcomingOrderClientIdRef.current = null; // Allow useEffect to re-sync with fresh DB state
@@ -3667,6 +3669,7 @@ export function ClientProfileDetail({
             console.log('[Restore] Calling updateClientUpcomingOrder...');
             await updateClientUpcomingOrder(clientId, restored);
             invalidateClientData(clientId);
+            invalidateClientsList();
             const updated = await getClient(clientId);
             console.log('[Restore] Result:', updated ? 'ok' : 'null', updated?.upcomingOrder ? 'has upcomingOrder' : '');
             if (updated) {
@@ -6911,6 +6914,7 @@ export function ClientProfileDetail({
                 const newOrderPayload = prepareNewColumnOrder();
                 if (newOrderPayload && newOrderPayload.caseId) {
                     await updateClientUpcomingOrder(updatedClient.id, newOrderPayload);
+                    invalidateClientsList();
                     if (updatedClient.serviceType === 'Custom' && newOrderPayload.custom_name && newOrderPayload.custom_price !== undefined && newOrderPayload.vendorId && newOrderPayload.deliveryDay) {
                         await saveClientCustomOrder(
                             updatedClient.id,
@@ -7046,6 +7050,7 @@ export function ClientProfileDetail({
             // Save upcoming order (same as former "Save to new column" button)
             await updateClientUpcomingOrder(clientId, prepareNewColumnOrder());
             invalidateClientData(clientId);
+            invalidateClientsList(); // so client list / sidebar show the order when returning to dashboard
             lastUpcomingOrderClientIdRef.current = null;
             const fresh = await getClient(clientId);
             if (fresh) {

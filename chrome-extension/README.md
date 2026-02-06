@@ -46,7 +46,7 @@ Replace `your-secret-api-key-here` with a strong, random API key. This key will 
    - **Phone** (required)
    - **Email** (optional)
    - **General Notes** (optional)
-   - **Service Type** (required) - Choose "Food" or "Boxes"
+   - **Service Type** (required) - Choose "Food", "Boxes", or "Custom"
    - **Case ID** (optional) - Enter case ID for food or boxes
 5. Click "Submit" to create the client
 6. You'll see a success message if the client was created successfully
