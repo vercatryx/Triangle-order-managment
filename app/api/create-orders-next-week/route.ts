@@ -6,6 +6,9 @@ import { sendSchedulingReport, sendVendorNextWeekSummary, type VendorBreakdownIt
 import { getNextCreationId } from '@/lib/actions';
 import * as XLSX from 'xlsx';
 
+// Allow up to 15 minutes so 800+ orders can complete (many sequential DB round-trips per order)
+export const maxDuration = 900;
+
 const supabase = createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.SUPABASE_SERVICE_ROLE_KEY!
@@ -50,7 +53,6 @@ export async function POST(request: NextRequest) {
             menuItemsRes,
             mealItemsRes,
             boxTypesRes,
-            clientsRes,
             settingsRes
         ] = await Promise.all([
             supabase.from('vendors').select('id, name, email, service_type, delivery_days, delivery_frequency, is_active, minimum_meals, cutoff_hours'),
@@ -58,9 +60,31 @@ export async function POST(request: NextRequest) {
             supabase.from('menu_items').select('id, vendor_id, name, value, price_each, is_active, category_id, minimum_order, image_url, sort_order'),
             supabase.from('breakfast_items').select('id, category_id, name, quota_value, price_each, is_active, vendor_id, image_url, sort_order'),
             supabase.from('box_types').select('id, name'),
-            supabase.from('clients').select('id, full_name, status_id, service_type, parent_client_id, expiration_date, upcoming_order').is('parent_client_id', null),
             supabase.from('app_settings').select('report_email, send_vendor_next_week_emails').single()
         ]);
+
+        // Fetch ALL clients with pagination to avoid Supabase row limit (e.g. 450 or 1000 per request)
+        const clients: any[] = [];
+        const clientPageSize = 1000;
+        let clientPage = 0;
+        while (true) {
+            const { data: pageData, error: clientsError } = await supabase
+                .from('clients')
+                .select('id, full_name, status_id, service_type, parent_client_id, expiration_date, upcoming_order')
+                .is('parent_client_id', null)
+                .order('id', { ascending: true })
+                .range(clientPage * clientPageSize, (clientPage + 1) * clientPageSize - 1);
+            if (clientsError) {
+                console.error('[Create Orders Next Week] Error fetching clients:', clientsError);
+                throw clientsError;
+            }
+            if (!pageData || pageData.length === 0) break;
+            clients.push(...pageData);
+            if (pageData.length < clientPageSize) break;
+            clientPage++;
+        }
+
+        console.log(`[Create Orders Next Week] Loaded ${clients.length} clients (week ${weekStartStr} to ${weekEndStr})`);
 
         const allVendors = (vendorsRes.data || []).map((v: any) => ({
             id: v.id,
@@ -77,7 +101,6 @@ export async function POST(request: NextRequest) {
         const allMenuItems = menuItemsRes.data || [];
         const allMealItems = (mealItemsRes.data || []).map((i: any) => ({ ...i, itemType: 'meal' as const }));
         const allBoxTypes = boxTypesRes.data || [];
-        const clients = clientsRes.data || [];
 
         // Derive food/meal/box/custom from clients.upcoming_order only (single source of truth per UPCOMING_ORDER_SCHEMA)
         // Type is determined by upcoming_order.serviceType, not clients.service_type.
@@ -154,6 +177,9 @@ export async function POST(request: NextRequest) {
                 upcoming_order: c.upcoming_order
             }))
             .filter((co: any) => co.delivery_day);
+
+        console.log(`[Create Orders Next Week] Work to do: foodOrders=${foodOrders.length} mealOrders=${mealOrders.length} boxOrders=${boxOrders.length} customOrders=${customOrders.length}`);
+
         const reportEmail = (settingsRes.data as any)?.report_email || '';
         const sendVendorNextWeekEmails = (settingsRes.data as any)?.send_vendor_next_week_emails !== false;
 
@@ -207,6 +233,7 @@ export async function POST(request: NextRequest) {
             vendorOrdersByDay[vendorId][deliveryDateStr] = (vendorOrdersByDay[vendorId][deliveryDateStr] || 0) + 1;
         }
 
+        const logInterval = 100;
         async function createOrder(
             clientId: string,
             serviceType: 'Food' | 'Meal' | 'Boxes' | 'Custom',
@@ -215,35 +242,50 @@ export async function POST(request: NextRequest) {
             totalItems: number,
             notes: string | null,
             caseId: string | undefined,
-            assignedOrderNumber: number
-        ) {
+            assignedOrderNumber: number,
+            clientName?: string
+        ): Promise<any> {
             const deliveryDateStr = deliveryDate.toISOString().split('T')[0];
-            const { data: newOrder, error: orderErr } = await supabase
-                .from('orders')
-                .insert({
-                    client_id: clientId,
-                    service_type: serviceType,
-                    status: 'scheduled',
-                    scheduled_delivery_date: deliveryDateStr,
-                    total_value: totalValue,
-                    total_items: totalItems,
-                    order_number: assignedOrderNumber,
-                    last_updated: now.toISOString(),
-                    notes,
-                    case_id: caseId || `CASE-${Date.now()}`,
-                    creation_id: creationId
-                })
-                .select()
-                .single();
-            if (orderErr) throw orderErr;
-            report.totalCreated++;
-            if (serviceType === 'Food') report.breakdown.Food++;
-            else if (serviceType === 'Meal') report.breakdown.Meal++;
-            else if (serviceType === 'Boxes') report.breakdown.Boxes++;
-            else report.breakdown.Custom++;
-            const row = clientReportMap.get(clientId);
-            if (row) row.ordersCreated++;
-            return newOrder;
+            try {
+                const { data: newOrder, error: orderErr } = await supabase
+                    .from('orders')
+                    .insert({
+                        client_id: clientId,
+                        service_type: serviceType,
+                        status: 'scheduled',
+                        scheduled_delivery_date: deliveryDateStr,
+                        total_value: totalValue,
+                        total_items: totalItems,
+                        order_number: assignedOrderNumber,
+                        last_updated: now.toISOString(),
+                        notes,
+                        case_id: caseId || `CASE-${Date.now()}`,
+                        creation_id: creationId
+                    })
+                    .select()
+                    .single();
+                if (orderErr) throw orderErr;
+                report.totalCreated++;
+                if (serviceType === 'Food') report.breakdown.Food++;
+                else if (serviceType === 'Meal') report.breakdown.Meal++;
+                else if (serviceType === 'Boxes') report.breakdown.Boxes++;
+                else report.breakdown.Custom++;
+                const row = clientReportMap.get(clientId);
+                if (row) row.ordersCreated++;
+                if (report.totalCreated % logInterval === 0) {
+                    console.log(`[Create Orders Next Week] Progress: totalCreated=${report.totalCreated}`);
+                }
+                return newOrder;
+            } catch (err: any) {
+                report.unexpectedFailures.push({
+                    clientName: clientName ?? clientId,
+                    orderType: serviceType,
+                    date: deliveryDateStr,
+                    reason: err?.message || String(err)
+                });
+                console.error(`[Create Orders Next Week] Failed to create order for client ${clientId} (${serviceType} ${deliveryDateStr}):`, err?.message || err);
+                return null;
+            }
         }
 
         async function orderExists(clientId: string, deliveryDateStr: string, serviceType: string, vendorId?: string): Promise<boolean> {
@@ -322,7 +364,8 @@ export async function POST(request: NextRequest) {
                         itemsList.reduce((s, i) => s + i.quantity, 0),
                         (fo as any).notes || null,
                         fo.case_id ?? undefined,
-                        assignedId
+                        assignedId,
+                        clientMap.get(fo.client_id)?.full_name
                     );
                     if (!newOrder) continue;
 
@@ -335,6 +378,7 @@ export async function POST(request: NextRequest) {
                 }
             }
         }
+        console.log(`[Create Orders Next Week] Food phase done. totalCreated=${report.totalCreated}`);
 
         for (const mo of mealOrders) {
             const eligible = isClientEligible(mo.client_id);
@@ -390,7 +434,8 @@ export async function POST(request: NextRequest) {
                     orderTotalItems,
                     (mo as any).notes || null,
                     mo.case_id,
-                    assignedId
+                    assignedId,
+                    clientMap.get(mo.client_id)?.full_name
                 );
                 if (!newOrder) continue;
 
@@ -402,6 +447,7 @@ export async function POST(request: NextRequest) {
                 }
             }
         }
+        console.log(`[Create Orders Next Week] Meal phase done. totalCreated=${report.totalCreated}`);
 
         // Group box orders by client so we create one combined Boxes order per client per week
         const boxOrdersByClient = new Map<string, typeof boxOrders>();
@@ -416,8 +462,8 @@ export async function POST(request: NextRequest) {
             const boxItems = typeof bo.items === 'string' ? JSON.parse(bo.items) : bo.items;
             if (boxItems) {
                 for (const [id, qty] of Object.entries(boxItems)) {
-                    const m = allMenuItems.find((x: any) => x.id === id);
-                    if (m) boxValue += (m.price_each || m.value || 0) * Number(qty);
+                    const m = allMenuItems.find((x: any) => x.id === id) || allMealItems.find((x: any) => x.id === id);
+                    if (m) boxValue += (m.price_each ?? m.value ?? 0) * Number(qty);
                 }
             }
             return boxValue;
@@ -494,7 +540,8 @@ export async function POST(request: NextRequest) {
                 totalBoxCount,
                 (firstBo as any).notes || null,
                 firstBo.case_id,
-                assignedId
+                assignedId,
+                clientMap.get(clientId)?.full_name
             );
             if (!newOrder) continue;
 
@@ -513,6 +560,7 @@ export async function POST(request: NextRequest) {
                 });
             }
         }
+        console.log(`[Create Orders Next Week] Boxes phase done. totalCreated=${report.totalCreated}`);
 
         if (customOrders.length > 0) {
             for (const co of customOrders) {
@@ -550,7 +598,8 @@ export async function POST(request: NextRequest) {
                     itemCount,
                     co.notes || null,
                     co.case_id,
-                    assignedId
+                    assignedId,
+                    clientMap.get(co.client_id)?.full_name
                 );
                 if (!newOrder) continue;
 
@@ -578,6 +627,7 @@ export async function POST(request: NextRequest) {
                 }
             }
         }
+        console.log(`[Create Orders Next Week] Custom phase done. totalCreated=${report.totalCreated}`);
 
         for (const row of clientReportMap.values()) {
             if (row.ordersCreated === 0 && !row.reason) {
@@ -647,6 +697,7 @@ export async function POST(request: NextRequest) {
             orderCreationDay: '',
             vendorBreakdown
         };
+        console.log(`[Create Orders Next Week] Finished creating orders. totalCreated=${report.totalCreated} unexpectedFailures=${report.unexpectedFailures.length}. Sending report email.`);
         if (reportEmail) {
             await sendSchedulingReport(reportPayload, reportEmail, [excelAttachment]);
         } else {
@@ -664,8 +715,14 @@ export async function POST(request: NextRequest) {
         });
     } catch (error: any) {
         console.error('[Create Orders Next Week] Error:', error);
+        console.error('[Create Orders Next Week] totalCreated at time of error:', report.totalCreated, 'breakdown:', report.breakdown);
         return NextResponse.json(
-            { success: false, error: error.message || 'Failed to create orders for next week' },
+            {
+                success: false,
+                error: error.message || 'Failed to create orders for next week',
+                partialTotalCreated: report.totalCreated,
+                partialBreakdown: report.breakdown
+            },
             { status: 500 }
         );
     }

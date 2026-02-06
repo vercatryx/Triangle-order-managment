@@ -104,6 +104,12 @@ export interface BoxQuotaIssue {
     mismatches: BoxQuotaMismatch[];
 }
 
+export interface DeletedBoxItemIssue {
+    clientId: string;
+    clientName: string;
+    missingItems: { itemId: string; quantity: number; boxIndex: number }[];
+}
+
 /**
  * GET - All cleanup issues from clients.upcoming_order only (no upcoming_orders table).
  */
@@ -139,6 +145,10 @@ export async function GET() {
                 quota_value: typeof mi.quota_value === 'number' ? mi.quota_value : parseFloat(String(mi.quota_value || 1)) || 1
             });
         }
+
+        const { data: breakfastItems, error: biErr } = await supabase.from('breakfast_items').select('id');
+        if (biErr) console.warn('cleanup-clients-upcoming: breakfast_items not available:', biErr.message);
+        const validBoxItemIds = new Set<string>([...menuItemMap.keys(), ...((breakfastItems || []).map((r: { id: string }) => r.id))]);
 
         // Box quota definitions: table may not exist in all environments (clients.upcoming_order is source of truth for order data)
         let quotasByBoxType = new Map<string, { categoryId: string; targetValue: number }[]>();
@@ -184,6 +194,7 @@ export async function GET() {
         const itemDayIssues: ItemDayIssue[] = [];
         const deletedMenuItemIssues: DeletedMenuItemIssue[] = [];
         const boxQuotaIssues: BoxQuotaIssue[] = [];
+        const deletedBoxItemIssues: DeletedBoxItemIssue[] = [];
 
         for (const client of clients || []) {
             const uo = client.upcoming_order as Record<string, unknown> | null;
@@ -413,12 +424,21 @@ export async function GET() {
             }
             if (st === 'Boxes' && rawBoxOrders && Array.isArray(rawBoxOrders) && rawBoxOrders.length > 0) {
                 const mismatches: BoxQuotaMismatch[] = [];
+                const missingItems: { itemId: string; quantity: number; boxIndex: number }[] = [];
                 for (let boxIndex = 0; boxIndex < rawBoxOrders.length; boxIndex++) {
                     const box = rawBoxOrders[boxIndex];
                     const boxTypeId = (box.boxTypeId ?? box.box_type_id) || '';
                     const boxQuantity = Math.max(1, Number(box.quantity) || 1);
                     const boxTypeName = boxTypeNameMap.get(boxTypeId) || boxTypeId;
                     const items = box.items && typeof box.items === 'object' ? box.items : {};
+
+                    for (const [itemId, val] of Object.entries(items)) {
+                        const qty = typeof val === 'object' && val != null && 'quantity' in val ? Number((val as { quantity?: number }).quantity) || 0 : Number(val) || 0;
+                        if (qty <= 0) continue;
+                        if (!validBoxItemIds.has(itemId)) {
+                            missingItems.push({ itemId, quantity: qty, boxIndex });
+                        }
+                    }
 
                     // Required values: from box_quotas (per box type) or from item_categories.set_value when box_quotas missing/empty
                     const quotas = quotasByBoxType.get(boxTypeId) || [];
@@ -462,6 +482,9 @@ export async function GET() {
                 if (mismatches.length > 0 && hasNonZeroSelection) {
                     boxQuotaIssues.push({ clientId: client.id, clientName, mismatches });
                 }
+                if (missingItems.length > 0) {
+                    deletedBoxItemIssues.push({ clientId: client.id, clientName, missingItems });
+                }
             }
         }
 
@@ -476,6 +499,7 @@ export async function GET() {
             itemDayIssues,
             deletedMenuItemIssues,
             boxQuotaIssues,
+            deletedBoxItemIssues,
             activeVendors
         });
     } catch (e: unknown) {
@@ -738,6 +762,34 @@ export async function POST(request: Request) {
                 .eq('id', clientId);
             if (updErr) throw updErr;
             return NextResponse.json({ success: true, message: 'Deleted item removed from order.' });
+        }
+
+        if (fix === 'deletedBoxItems') {
+            const itemIds = Array.isArray(body.itemIds) ? (body.itemIds as string[]).filter(Boolean) : [];
+            if (itemIds.length === 0) {
+                return NextResponse.json({ success: false, error: 'itemIds required (array of item IDs to remove)' }, { status: 400 });
+            }
+            const rawBoxOrders = (updated.boxOrders ?? (updated as any).box_orders) as { items?: Record<string, unknown>; itemNotes?: Record<string, unknown>; item_notes?: Record<string, unknown> }[] | undefined;
+            if (!rawBoxOrders || !Array.isArray(rawBoxOrders)) {
+                return NextResponse.json({ success: false, error: 'No box orders to update' }, { status: 400 });
+            }
+            const itemIdSet = new Set(itemIds);
+            const nextBoxOrders = rawBoxOrders.map((box) => {
+                const items = box.items && typeof box.items === 'object' ? { ...box.items } : {};
+                const itemNotes = (box.itemNotes ?? box.item_notes) && typeof (box.itemNotes ?? box.item_notes) === 'object' ? { ...(box.itemNotes ?? box.item_notes) as Record<string, unknown> } : {};
+                itemIdSet.forEach((id) => {
+                    delete items[id];
+                    delete itemNotes[id];
+                });
+                return { ...box, items, itemNotes };
+            });
+            updated.boxOrders = nextBoxOrders;
+            const { error: updErr } = await supabase
+                .from('clients')
+                .update({ upcoming_order: updated, updated_at: new Date().toISOString() })
+                .eq('id', clientId);
+            if (updErr) throw updErr;
+            return NextResponse.json({ success: true, message: 'Deleted items removed from box orders.' });
         }
 
         if (fix === 'invalidVendor') {

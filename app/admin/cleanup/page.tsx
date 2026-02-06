@@ -91,6 +91,12 @@ interface BoxQuotaIssue {
     mismatches: BoxQuotaMismatch[];
 }
 
+interface DeletedBoxItemIssue {
+    clientId: string;
+    clientName: string;
+    missingItems: { itemId: string; quantity: number; boxIndex: number }[];
+}
+
 function issueKeyVendor(issue: InvalidVendorIssue): string {
     return `${issue.clientId}-${issue.vendorId}-${issue.where}-${issue.day ?? ''}-${issue.mealKey ?? ''}`;
 }
@@ -106,6 +112,7 @@ export default function CleanupPage() {
     const [itemDayIssues, setItemDayIssues] = useState<ItemDayIssue[]>([]);
     const [deletedMenuItemIssues, setDeletedMenuItemIssues] = useState<DeletedMenuItemIssue[]>([]);
     const [boxQuotaIssues, setBoxQuotaIssues] = useState<BoxQuotaIssue[]>([]);
+    const [deletedBoxItemIssues, setDeletedBoxItemIssues] = useState<DeletedBoxItemIssue[]>([]);
     const [activeVendors, setActiveVendors] = useState<{ id: string; name: string }[]>([]);
 
     const [cleaningMealClientId, setCleaningMealClientId] = useState<string | null>(null);
@@ -117,6 +124,7 @@ export default function CleanupPage() {
     const [reassignItemDay, setReassignItemDay] = useState<Record<string, string>>({});
     const [reassigningItemDay, setReassigningItemDay] = useState<string | null>(null);
     const [removingDeletedItem, setRemovingDeletedItem] = useState<string | null>(null);
+    const [removingDeletedBoxItemsClientId, setRemovingDeletedBoxItemsClientId] = useState<string | null>(null);
 
     const [profileClientId, setProfileClientId] = useState<string | null>(null);
     const [profileLookupsReady, setProfileLookupsReady] = useState(false);
@@ -149,6 +157,7 @@ export default function CleanupPage() {
                 setItemDayIssues(data.itemDayIssues || []);
                 setDeletedMenuItemIssues(data.deletedMenuItemIssues || []);
                 setBoxQuotaIssues(data.boxQuotaIssues || []);
+                setDeletedBoxItemIssues(data.deletedBoxItemIssues || []);
                 setActiveVendors(data.activeVendors || []);
                 setSelectedMealClients(new Set());
                 const dayInitial: Record<string, string> = {};
@@ -355,8 +364,15 @@ export default function CleanupPage() {
         fetchAll();
     };
 
+    const handleRemoveDeletedBoxItems = async (issue: DeletedBoxItemIssue) => {
+        const itemIds = [...new Set(issue.missingItems.map((m) => m.itemId))];
+        setRemovingDeletedBoxItemsClientId(issue.clientId);
+        await runFix({ fix: 'deletedBoxItems', clientId: issue.clientId, itemIds });
+        setRemovingDeletedBoxItemsClientId(null);
+    };
+
     const mealTotal = mealIssues.length;
-    const totalIssues = mealTotal + vendorDayIssues.length + invalidVendorIssues.length + itemDayIssues.length + deletedMenuItemIssues.length + boxQuotaIssues.length;
+    const totalIssues = mealTotal + vendorDayIssues.length + invalidVendorIssues.length + itemDayIssues.length + deletedMenuItemIssues.length + boxQuotaIssues.length + deletedBoxItemIssues.length;
 
     return (
         <div className={styles.container}>
@@ -416,6 +432,12 @@ export default function CleanupPage() {
                             <div className={styles.statLabel}>Box quota mismatch</div>
                             <div className={`${styles.statValue} ${boxQuotaIssues.length > 0 ? styles.statValueWarning : ''}`}>
                                 {boxQuotaIssues.length}
+                            </div>
+                        </div>
+                        <div className={styles.statCard}>
+                            <div className={styles.statLabel}>Deleted items in box orders</div>
+                            <div className={`${styles.statValue} ${deletedBoxItemIssues.length > 0 ? styles.statValueWarning : ''}`}>
+                                {deletedBoxItemIssues.length}
                             </div>
                         </div>
                         <button className={styles.refreshButton} onClick={fetchAll} disabled={loading}>
@@ -794,6 +816,65 @@ export default function CleanupPage() {
                                                 </ul>
                                             </div>
                                             <div className={styles.tableCell}>
+                                                <button
+                                                    className={`${styles.actionButton} ${styles.btnOpenProfile}`}
+                                                    onClick={() => setProfileClientId(issue.clientId)}
+                                                >
+                                                    Open profile
+                                                </button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </section>
+
+                    {/* Section 7: Clients with deleted items in box orders */}
+                    <section className={styles.section}>
+                        <h2 className={styles.sectionTitle}>7. Clients with deleted items in box orders</h2>
+                        <p className={styles.sectionDesc}>
+                            These clients have item IDs in their <strong>boxOrders</strong> that no longer exist in <strong>menu_items</strong> or <strong>breakfast_items</strong>. Open the client profile to remove or replace the missing items.
+                        </p>
+                        {deletedBoxItemIssues.length === 0 && (
+                            <div className={styles.emptyState}>No clients with deleted box items.</div>
+                        )}
+                        {deletedBoxItemIssues.length > 0 && (
+                            <div className={styles.table}>
+                                <div className={styles.tableHeader}>
+                                    <div className={`${styles.tableRow} ${styles.rowVendor}`}>
+                                        <div className={styles.tableHeaderCell}>Client</div>
+                                        <div className={styles.tableHeaderCell}>Missing items (item ID · qty · box #)</div>
+                                        <div className={styles.tableHeaderCell}>Action</div>
+                                    </div>
+                                </div>
+                                {deletedBoxItemIssues.map((issue) => (
+                                    <div key={issue.clientId} className={styles.tableRowWrapper}>
+                                        <div className={`${styles.tableRow} ${styles.rowVendor}`}>
+                                            <div className={styles.tableCell}>
+                                                <Link href={`/clients?id=${issue.clientId}`} className={styles.clientLink}>
+                                                    {issue.clientName}
+                                                </Link>
+                                                <div className={styles.cellMeta}>Boxes · {issue.missingItems.length} missing item{issue.missingItems.length !== 1 ? 's' : ''}</div>
+                                            </div>
+                                            <div className={styles.tableCell}>
+                                                <ul className={styles.mismatchList}>
+                                                    {issue.missingItems.map((m, i) => (
+                                                        <li key={i}>
+                                                            <span className={styles.invalidVendor}>{m.itemId}</span> · qty {m.quantity} · Box {m.boxIndex + 1}
+                                                        </li>
+                                                    ))}
+                                                </ul>
+                                            </div>
+                                            <div className={styles.tableCell}>
+                                                <button
+                                                    className={`${styles.actionButton} ${styles.btnClean}`}
+                                                    onClick={() => handleRemoveDeletedBoxItems(issue)}
+                                                    disabled={removingDeletedBoxItemsClientId === issue.clientId}
+                                                    style={{ marginRight: '8px' }}
+                                                >
+                                                    {removingDeletedBoxItemsClientId === issue.clientId ? '…' : 'Remove deleted items'}
+                                                </button>
                                                 <button
                                                     className={`${styles.actionButton} ${styles.btnOpenProfile}`}
                                                     onClick={() => setProfileClientId(issue.clientId)}

@@ -926,7 +926,11 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate, isVendorView }: P
                         qty = typeof (quantityOrObj as any).quantity === 'number' ? (quantityOrObj as any).quantity : parseInt(String((quantityOrObj as any).quantity)) || 0;
                     } else if (quantityOrObj != null) qty = parseInt(String(quantityOrObj)) || 0;
                     if (qty > 0) {
-                        const menuItem = menuItems.find(mi => mi.id === itemId);
+                        const fromMenu = menuItems.find(mi => mi.id === itemId);
+                        const fromMeal = mealItems.find((mi: any) => mi.id === itemId);
+                        const menuItem: MenuItem | undefined = fromMenu || (fromMeal
+                            ? { id: fromMeal.id, name: fromMeal.name, vendorId: fromMeal.vendor_id ?? '', value: 0, isActive: true, categoryId: fromMeal.category_id ?? undefined }
+                            : undefined);
                         const categoryId = menuItem?.categoryId || undefined;
                         const itemData = { itemId, menuItem, qty };
                         if (categoryId) {
@@ -1001,7 +1005,7 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate, isVendorView }: P
                                                 <tbody>
                                                     {categoryItems.map(({ itemId, menuItem, qty }) => (
                                                         <tr key={itemId}>
-                                                            <td>{menuItem?.name || 'Unknown Item'}</td>
+                                                            <td>{menuItem?.name || noteFor(itemId) || 'Unknown Item'}</td>
                                                             <td>{qty}</td>
                                                             <td style={{ fontStyle: 'italic', color: 'var(--text-secondary)' }}>{noteFor(itemId) || '—'}</td>
                                                         </tr>
@@ -1025,7 +1029,7 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate, isVendorView }: P
                                             <tbody>
                                                 {uncategorizedItems.map(({ itemId, menuItem, qty }) => (
                                                     <tr key={itemId}>
-                                                        <td>{menuItem?.name || 'Unknown Item'}</td>
+                                                        <td>{menuItem?.name || noteFor(itemId) || 'Unknown Item'}</td>
                                                         <td>{qty}</td>
                                                         <td style={{ fontStyle: 'italic', color: 'var(--text-secondary)' }}>{noteFor(itemId) || '—'}</td>
                                                     </tr>
