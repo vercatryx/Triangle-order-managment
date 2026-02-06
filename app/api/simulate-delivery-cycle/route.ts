@@ -177,10 +177,10 @@ export async function POST(request: NextRequest) {
         const mealItemMap = new Map(allMealItems.map(i => [i.id, i]));
         const boxTypeMap = new Map(allBoxTypes.map(bt => [bt.id, bt.name]));
 
-        // Fetch Clients (Optimized Select) - Exclude dependents
+        // Fetch Clients (Optimized Select) - Exclude dependents; include upcoming_order (single source of truth)
         const { data: clients, error: clientsError } = await supabase
             .from('clients')
-            .select('id, full_name, status_id, service_type, parent_client_id')
+            .select('id, full_name, status_id, service_type, parent_client_id, upcoming_order')
             .is('parent_client_id', null); // Exclude dependents
 
         if (clientsError) throw new Error(`Failed to fetch clients: ${clientsError.message}`);
@@ -237,15 +237,43 @@ export async function POST(request: NextRequest) {
             });
         }
 
-        // Build summary from the same data sources that order creation uses
-        // 1. Fetch client_food_orders, client_meal_orders, client_box_orders
-        const { data: foodOrdersForSummary } = await supabase.from('client_food_orders').select('*');
-        const { data: mealOrdersForSummary } = await supabase.from('client_meal_orders').select('*');
-        const { data: boxOrdersForSummary } = await supabase.from('client_box_orders').select('*');
-        const { data: allUpcomingOrders } = await supabase
-            .from('upcoming_orders')
-            .select('*')
-            .eq('service_type', 'Custom');
+        // Build summary from clients.upcoming_order (single source of truth)
+        const foodOrdersForSummary = (clients || [])
+            .filter((c: any) => c.service_type === 'Food' && c.upcoming_order?.deliveryDayOrders)
+            .map((c: any) => ({
+                client_id: c.id,
+                delivery_day_orders: c.upcoming_order.deliveryDayOrders
+            }));
+        const mealOrdersForSummary = (clients || [])
+            .filter((c: any) => (c.service_type === 'Food' || c.service_type === 'Meal') && c.upcoming_order?.mealSelections)
+            .map((c: any) => ({
+                client_id: c.id,
+                meal_selections: c.upcoming_order.mealSelections
+            }));
+        const boxOrdersForSummary: { client_id: string; vendor_id?: string; box_type_id?: string; quantity: number; items: any }[] = [];
+        for (const c of clients || []) {
+            if (c.service_type !== 'Boxes' || !c.upcoming_order?.boxOrders?.length) continue;
+            for (const b of c.upcoming_order.boxOrders) {
+                boxOrdersForSummary.push({
+                    client_id: c.id,
+                    vendor_id: b.vendorId,
+                    box_type_id: b.boxTypeId,
+                    quantity: b.quantity ?? 1,
+                    items: b.items ?? {}
+                });
+            }
+        }
+        const customOrdersFromClients = (clients || [])
+            .filter((c: any) => c.upcoming_order?.serviceType === 'Custom')
+            .map((c: any) => ({
+                client_id: c.id,
+                delivery_day: c.upcoming_order.deliveryDay,
+                total_value: c.upcoming_order.custom_price ?? c.upcoming_order.totalValue,
+                notes: c.upcoming_order.notes,
+                case_id: c.upcoming_order.caseId,
+                custom_name: c.upcoming_order.custom_name,
+                vendorId: c.upcoming_order.vendorId
+            }));
 
         // Process Food Orders for summary
         if (foodOrdersForSummary && foodOrdersForSummary.length > 0) {
@@ -253,11 +281,9 @@ export async function POST(request: NextRequest) {
                 const entry = clientStatusMap.get(fo.client_id);
                 if (!entry) continue;
 
-                const dayOrders = typeof fo.delivery_day_orders === 'string'
-                    ? JSON.parse(fo.delivery_day_orders)
-                    : fo.delivery_day_orders;
+                const dayOrders = fo.delivery_day_orders;
 
-                if (!dayOrders) continue;
+                if (!dayOrders || typeof dayOrders !== 'object') continue;
 
                 const summaries: string[] = [];
                 for (const dayName of Object.keys(dayOrders)) {
@@ -388,151 +414,21 @@ export async function POST(request: NextRequest) {
             }
         }
 
-        // Process Custom Orders (from upcoming_orders)
-        // Fetch vendor selections for upcoming orders (needed for both summary and expected orders calculation)
-        let upcomingVendorSelections: any[] = [];
-        if (allUpcomingOrders && allUpcomingOrders.length > 0) {
-            const upcomingOrderIds = allUpcomingOrders.map((uo: any) => uo.id);
-            const { data: upcomingVsData } = await supabase
-                .from('upcoming_order_vendor_selections')
-                .select('*')
-                .in('upcoming_order_id', upcomingOrderIds);
-            upcomingVendorSelections = upcomingVsData || [];
-
-            // Fetch items for upcoming orders
-            const vendorSelectionIds = upcomingVendorSelections.map((vs: any) => vs.id);
-            const { data: upcomingItems } = vendorSelectionIds.length > 0
-                ? await supabase
-                    .from('upcoming_order_items')
-                    .select('*')
-                    .in('upcoming_order_vendor_selection_id', vendorSelectionIds)
-                : { data: [] };
-
-            // Fetch box selections for upcoming orders
-            const { data: upcomingBoxSelections } = await supabase
-                .from('upcoming_order_box_selections')
-                .select('*')
-                .in('upcoming_order_id', upcomingOrderIds);
-
-            // Fetch menu items and meal items for item names
-            const menuItemIds = (upcomingItems || [])
-                .filter((item: any) => item.menu_item_id)
-                .map((item: any) => item.menu_item_id);
-            const mealItemIds = (upcomingItems || [])
-                .filter((item: any) => item.meal_item_id)
-                .map((item: any) => item.meal_item_id);
-
-            const { data: menuItemsForSummary } = menuItemIds.length > 0
-                ? await supabase.from('menu_items').select('id, name').in('id', menuItemIds)
-                : { data: [] };
-            const { data: mealItemsForSummary } = mealItemIds.length > 0
-                ? await supabase.from('breakfast_items').select('id, name').in('id', mealItemIds)
-                : { data: [] };
-
-            const menuItemMap = new Map((menuItemsForSummary || []).map((mi: any) => [mi.id, mi.name]));
-            const mealItemMap = new Map((mealItemsForSummary || []).map((mi: any) => [mi.id, mi.name]));
-
-            // Note: boxTypeMap is already defined earlier in the code
-
-            // Build summary for each client
-            for (const upcomingOrder of allUpcomingOrders) {
-                const clientId = upcomingOrder.client_id;
-                const entry = clientStatusMap.get(clientId);
+        // Process Custom Orders (from clients.upcoming_order)
+        if (customOrdersFromClients && customOrdersFromClients.length > 0) {
+            for (const co of customOrdersFromClients) {
+                const entry = clientStatusMap.get(co.client_id);
                 if (!entry) continue;
 
-                const summaries: string[] = [];
+                const vendor = vendorMap.get(co.vendorId);
+                const vendorName = vendor?.name || 'Unknown Vendor';
+                if (entry.vendor === 'no vendor set') entry.vendor = vendorName;
 
-                // Get vendor selections for this order
-                const orderVendorSelections = upcomingVendorSelections.filter(
-                    (vs: any) => vs.upcoming_order_id === upcomingOrder.id
-                );
-
-                // Get box selections for this order
-                const orderBoxSelections = (upcomingBoxSelections || []).filter(
-                    (bs: any) => bs.upcoming_order_id === upcomingOrder.id
-                );
-
-                // Process vendor-based orders (Food/Meal)
-                if (orderVendorSelections.length > 0) {
-                    for (const vs of orderVendorSelections) {
-                        const vendor = vendorMap.get(vs.vendor_id);
-                        const vendorName = vendor?.name || 'Unknown Vendor';
-                        const orderItems = (upcomingItems || []).filter(
-                            (item: any) => item.upcoming_order_vendor_selection_id === vs.id
-                        );
-
-                        const itemDetails: string[] = [];
-                        for (const item of orderItems) {
-                            let itemName = item.custom_name || 'Custom Item';
-                            if (item.menu_item_id) {
-                                itemName = menuItemMap.get(item.menu_item_id) || itemName;
-                            } else if (item.meal_item_id) {
-                                itemName = mealItemMap.get(item.meal_item_id) || itemName;
-                            }
-                            const qty = item.quantity || 1;
-                            const price = item.total_value || item.unit_value || 0;
-                            itemDetails.push(`${qty}x ${itemName} ($${price.toFixed(2)})`);
-                        }
-
-                        if (itemDetails.length > 0) {
-                            summaries.push(`${upcomingOrder.service_type} - ${vendorName}: ${itemDetails.join(', ')}`);
-                        } else {
-                            summaries.push(`${upcomingOrder.service_type} - ${vendorName}: No items specified`);
-                        }
-                    }
-                }
-
-                // Process box orders
-                if (orderBoxSelections.length > 0) {
-                    for (const bs of orderBoxSelections) {
-                        const vendor = vendorMap.get(bs.vendor_id);
-                        const vendorName = vendor?.name || 'Unknown Vendor';
-                        const boxTypeName = boxTypeMap.get(bs.box_type_id) || 'Standard Box';
-                        const qty = bs.quantity || 1;
-                        const totalValue = bs.total_value || 0;
-                        // Track vendor
-                        if (entry && entry.vendor === 'no vendor set') {
-                            entry.vendor = vendorName;
-                        }
-
-                        summaries.push(`Boxes: ${qty}x ${boxTypeName} ($${totalValue.toFixed(2)})`);
-                    }
-                }
-
-                // Process custom orders
-                if (upcomingOrder.service_type === 'Custom' && orderVendorSelections.length > 0) {
-                    const vs = orderVendorSelections[0];
-                    const vendor = vendorMap.get(vs.vendor_id);
-                    const vendorName = vendor?.name || 'Unknown Vendor';
-                    const customItems = (upcomingItems || []).filter(
-                        (item: any) => item.upcoming_order_vendor_selection_id === vs.id
-                    );
-
-                    const customDetails: string[] = [];
-                    for (const item of customItems) {
-                        const itemName = item.custom_name || item.notes || 'Custom Item';
-                        const qty = item.quantity || 1;
-                        const price = item.total_value || item.unit_value || 0;
-                        customDetails.push(`${qty}x ${itemName} ($${price.toFixed(2)})`);
-                    }
-
-                    // Track vendor
-                    if (entry && entry.vendor === 'no vendor set') {
-                        entry.vendor = vendorName;
-                    }
-
-                    const deliveryDayText = upcomingOrder.delivery_day ? ` (${upcomingOrder.delivery_day})` : '';
-                    if (customDetails.length > 0) {
-                        summaries.push(`Custom: ${customDetails.join(', ')}${deliveryDayText}`);
-                    } else if (upcomingOrder.notes) {
-                        summaries.push(`Custom: ${upcomingOrder.notes}${deliveryDayText}`);
-                    }
-                }
-
-                // Update summary - combine all order details
-                if (summaries.length > 0) {
-                    entry.summary = entry.summary ? `${entry.summary} | ${summaries.join(' | ')}` : summaries.join(' | ');
-                }
+                const name = co.custom_name || co.notes || 'Custom Item';
+                const price = Number(co.total_value) || 0;
+                const dayText = co.delivery_day ? ` (${co.delivery_day})` : '';
+                const customSummary = `Custom: ${name} ($${price.toFixed(2)})${dayText}`;
+                entry.summary = entry.summary ? `${entry.summary} | ${customSummary}` : customSummary;
             }
         }
 
@@ -685,32 +581,29 @@ export async function POST(request: NextRequest) {
                 }
             }
 
-            // Check Custom orders
+            // Check Custom orders (from clients.upcoming_order)
             if (client.service_type === 'Custom') {
-                const customOrder = allUpcomingOrders?.find((co: any) => co.client_id === clientId);
-                if (customOrder && customOrder.delivery_day) {
-                    const vs = upcomingVendorSelections.find((v: any) => v.upcoming_order_id === customOrder.id);
-                    if (vs && vs.vendor_id) {
-                        const vendor = vendorMap.get(vs.vendor_id);
-                        if (vendor) {
-                            const cutoff = vendor.cutoffDays || 0;
-                            const dayNumber = DAY_NAME_TO_NUMBER[customOrder.delivery_day];
-                            if (dayNumber !== undefined) {
-                                const weekDay = new Date(weekStart);
-                                weekDay.setDate(weekStart.getDate() + dayNumber);
+                const customOrder = customOrdersFromClients?.find((co: any) => co.client_id === clientId);
+                if (customOrder && customOrder.delivery_day && customOrder.vendorId) {
+                    const vendor = vendorMap.get(customOrder.vendorId);
+                    if (vendor) {
+                        const cutoff = vendor.cutoffDays || 0;
+                        const dayNumber = DAY_NAME_TO_NUMBER[customOrder.delivery_day];
+                        if (dayNumber !== undefined) {
+                            const weekDay = new Date(weekStart);
+                            weekDay.setDate(weekStart.getDate() + dayNumber);
 
-                                if (weekDay >= weekStart && weekDay <= weekEnd) {
-                                    const cutoffDate = new Date(weekDay);
-                                    cutoffDate.setDate(weekDay.getDate() - cutoff);
-                                    const cutoffDayName = cutoffDate.toLocaleDateString('en-US', { weekday: 'long' });
+                            if (weekDay >= weekStart && weekDay <= weekEnd) {
+                                const cutoffDate = new Date(weekDay);
+                                cutoffDate.setDate(weekDay.getDate() - cutoff);
+                                const cutoffDayName = cutoffDate.toLocaleDateString('en-US', { weekday: 'long' });
 
-                                    expectedOrders.push({
-                                        type: 'Custom',
-                                        day: customOrder.delivery_day,
-                                        vendor: vendor.name,
-                                        cutoffDay: cutoffDayName
-                                    });
-                                }
+                                expectedOrders.push({
+                                    type: 'Custom',
+                                    day: customOrder.delivery_day,
+                                    vendor: vendor.name,
+                                    cutoffDay: cutoffDayName
+                                });
                             }
                         }
                     }
@@ -792,10 +685,16 @@ export async function POST(request: NextRequest) {
             }
         }
 
-        // --- 3. Process FOOD Orders ---
-        // --- 3. Process FOOD Orders (Parallelized) ---
-        const { data: foodOrders } = await supabase.from('client_food_orders').select('*');
-        if (foodOrders) {
+        // --- 3. Process FOOD Orders (from clients.upcoming_order) ---
+        const foodOrders = (clients || [])
+            .filter((c: any) => c.service_type === 'Food' && c.upcoming_order?.deliveryDayOrders)
+            .map((c: any) => ({
+                client_id: c.id,
+                delivery_day_orders: c.upcoming_order.deliveryDayOrders,
+                notes: c.upcoming_order.notes ?? null,
+                case_id: c.upcoming_order.caseId ?? null
+            }));
+        if (foodOrders.length > 0) {
             await processBatch(foodOrders, async (fo) => {
                 if (!isClientEligible(fo.client_id)) return;
                 const client = clientMap.get(fo.client_id);
@@ -1152,7 +1051,8 @@ export async function POST(request: NextRequest) {
                         quantity: template.quantity,
                         unit_value: boxValue,
                         total_value: totalBoxValue,
-                        items: template.items
+                        items: template.items,
+                        item_notes: template.itemNotes ?? {}
                     });
 
                     if (boxSelError) {
@@ -1286,15 +1186,33 @@ export async function POST(request: NextRequest) {
             }
         }
 
-        // Execute Meal/Box Processing (Batched)
-        const { data: mealOrders } = await supabase.from('client_meal_orders').select('*');
-        if (mealOrders) {
+        // Execute Meal/Box Processing (from clients.upcoming_order, batched)
+        const mealOrders = (clients || [])
+            .filter((c: any) => (c.service_type === 'Food' || c.service_type === 'Meal') && c.upcoming_order?.mealSelections)
+            .map((c: any) => ({
+                client_id: c.id,
+                meal_selections: c.upcoming_order.mealSelections,
+                notes: c.upcoming_order.notes ?? null,
+                case_id: c.upcoming_order.caseId ?? null
+            }));
+        if (mealOrders.length > 0) {
             await processBatch(mealOrders, (mo) => processPeriodicOrder(mo, 'Meal', (t) => null));
         }
 
-        const { data: boxOrders } = await supabase.from('client_box_orders').select('*');
-        if (boxOrders) {
-            // Count how many box templates each client has to set the correct duplicate limit
+        const boxOrders: { client_id: string; vendor_id?: string; box_type_id?: string; quantity: number; items: any }[] = [];
+        for (const c of clients || []) {
+            if (c.service_type !== 'Boxes' || !c.upcoming_order?.boxOrders?.length) continue;
+            for (const b of c.upcoming_order.boxOrders) {
+                boxOrders.push({
+                    client_id: c.id,
+                    vendor_id: b.vendorId,
+                    box_type_id: b.boxTypeId,
+                    quantity: b.quantity ?? 1,
+                    items: b.items ?? {}
+                });
+            }
+        }
+        if (boxOrders.length > 0) {
             const boxCountByClient = new Map<string, number>();
             for (const bo of boxOrders) {
                 const current = boxCountByClient.get(bo.client_id) || 0;
@@ -1307,23 +1225,14 @@ export async function POST(request: NextRequest) {
             });
         }
 
-        // --- 5. Process CUSTOM Orders (Parallelized) ---
-        // console.log('[Unified Scheduling] Starting Custom Order Processing...'); 
-        const { data: customOrders } = await supabase.from('upcoming_orders').select('*').eq('service_type', 'Custom');
-
-        if (customOrders) {
-            await processBatch(customOrders, async (co) => {
+        // --- 5. Process CUSTOM Orders (from clients.upcoming_order) ---
+        if (customOrdersFromClients && customOrdersFromClients.length > 0) {
+            await processBatch(customOrdersFromClients, async (co) => {
                 if (!isClientEligible(co.client_id)) return;
 
                 if (!co.delivery_day) return;
 
-                const { data: vs } = await supabase
-                    .from('upcoming_order_vendor_selections')
-                    .select('id, vendor_id')
-                    .eq('upcoming_order_id', co.id)
-                    .single();
-
-                const vendorId = vs?.vendor_id;
+                const vendorId = co.vendorId;
                 if (!vendorId) return;
 
                 const vendor = vendorMap.get(vendorId);
@@ -1358,6 +1267,7 @@ export async function POST(request: NextRequest) {
                     return;
                 }
 
+                const totalValue = Number(co.total_value) || 0;
                 const assignedId = nextOrderNumber++;
                 const newOrder = await createOrder(
                     co.client_id,
@@ -1365,10 +1275,10 @@ export async function POST(request: NextRequest) {
                     deliveryDate,
                     null,
                     vendorId,
-                    co.total_value,
+                    totalValue,
                     1,
-                    co.notes,
-                    co.case_id,
+                    co.notes ?? null,
+                    co.case_id ?? undefined,
                     assignedId
                 );
 
@@ -1399,71 +1309,22 @@ export async function POST(request: NextRequest) {
                     }).select().single();
 
                     if (newVs) {
-                        const upcomingVsId = vs?.id;
-                        if (upcomingVsId) {
-                            const { data: upcomingItems } = await supabase
-                                .from('upcoming_order_items')
-                                .select('*')
-                                .eq('upcoming_order_vendor_selection_id', upcomingVsId);
-
-                            if (upcomingItems && upcomingItems.length > 0) {
-                                for (const uItem of upcomingItems) {
-                                    const itemName = uItem.custom_name || uItem.notes || 'Custom Item';
-                                    const itemPrice = uItem.custom_price || uItem.total_value || 0;
-
-                                    await supabase.from('order_items').insert({
-                                        order_id: newOrder.id,
-                                        vendor_selection_id: newVs.id,
-                                        menu_item_id: null,
-                                        custom_name: itemName,
-                                        custom_price: itemPrice,
-                                        quantity: uItem.quantity || 1,
-                                        unit_value: itemPrice,
-                                        total_value: (itemPrice * (uItem.quantity || 1)),
-                                        notes: uItem.notes
-                                    });
-                                }
-                            } else {
-                                const rawItemName = co.custom_name || co.notes || 'Custom Item';
-                                const itemNames = rawItemName.split(',').map((s: string) => s.trim()).filter((s: string) => s.length > 0);
-
-                                if (itemNames.length > 0) {
-                                    const totalOrderValue = co.total_value || 0;
-                                    const pricePerItem = totalOrderValue / itemNames.length;
-
-                                    for (const name of itemNames) {
-                                        await supabase.from('order_items').insert({
-                                            order_id: newOrder.id,
-                                            vendor_selection_id: newVs.id,
-                                            menu_item_id: null,
-                                            custom_name: name,
-                                            custom_price: pricePerItem,
-                                            quantity: 1,
-                                            unit_value: pricePerItem,
-                                            total_value: pricePerItem,
-                                            notes: null
-                                        });
-                                    }
-                                } else {
-                                    await supabase.from('order_items').insert({
-                                        order_id: newOrder.id,
-                                        vendor_selection_id: newVs.id,
-                                        menu_item_id: null,
-                                        custom_name: 'Custom Item',
-                                        custom_price: co.total_value,
-                                        quantity: 1,
-                                        unit_value: co.total_value,
-                                        total_value: co.total_value,
-                                        notes: co.notes
-                                    });
-                                }
-                            }
-                        }
+                        // Single custom item from clients.upcoming_order
+                        const itemName = co.custom_name || co.notes || 'Custom Item';
+                        await supabase.from('order_items').insert({
+                            order_id: newOrder.id,
+                            vendor_selection_id: newVs.id,
+                            menu_item_id: null,
+                            custom_name: itemName,
+                            custom_price: totalValue,
+                            quantity: 1,
+                            unit_value: totalValue,
+                            total_value: totalValue,
+                            notes: co.notes ?? null
+                        });
                     }
                 }
             });
-        } else {
-            // console.log('[Custom Debug] No custom orders passed filter.');
         }
 
         // Calculate expected orders for all clients (after all data is loaded and orders processed)

@@ -96,6 +96,58 @@
 .filterGroup.filterGroupStatus { width: 160px; }
 .filterGroup.filterGroupCreationId { width: 110px; }
 
+.filterGroupDateRange {
+    position: relative;
+    min-width: 0;
+}
+
+.dateRangeTrigger {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    min-width: 200px;
+    cursor: pointer;
+    text-align: left;
+}
+
+.dateRangeIcon {
+    flex-shrink: 0;
+    color: var(--text-secondary);
+}
+
+.dateRangePopover {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    z-index: 50;
+    margin-top: 4px;
+    background-color: var(--bg-surface);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-lg, 0 10px 25px rgba(0, 0, 0, 0.15));
+    padding: var(--spacing-md);
+}
+
+.dateRangePopover.rdp-root {
+    --rdp-accent-color: var(--color-primary);
+    --rdp-accent-background-color: rgba(255, 193, 7, 0.25);
+    --rdp-day-height: 36px;
+    --rdp-day-width: 36px;
+    --rdp-day_button-height: 34px;
+    --rdp-day_button-width: 34px;
+    --rdp-range_start-color: #000;
+    --rdp-range_end-color: #000;
+}
+
+.dateRangePopoverActions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.5rem;
+    margin-top: var(--spacing-md);
+    padding-top: var(--spacing-md);
+    border-top: 1px solid var(--border-color);
+}
+
 .filterGroup .label {
     margin-bottom: 0;
     white-space: nowrap;

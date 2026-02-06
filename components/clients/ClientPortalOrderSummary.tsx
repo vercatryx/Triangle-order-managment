@@ -2,6 +2,7 @@
 
 import React from 'react';
 import { Vendor, MenuItem, MealCategory, MealItem } from '@/lib/types';
+import { getItemPoints } from '@/lib/utils';
 import { ShoppingCart, Package } from 'lucide-react';
 import styles from './ClientPortal.module.css';
 
@@ -47,7 +48,7 @@ export default function ClientPortalOrderSummary({
                         name: item.name,
                         qty: qty,
                         note: note,
-                        value: (item.value || 0) * qty,
+                        value: getItemPoints(item) * qty,
                         sortOrder: item.sortOrder ?? 0
                     });
                 }
@@ -75,7 +76,7 @@ export default function ClientPortalOrderSummary({
                                 name: `${item.name} (${day})`, // Distinguish day
                                 qty: Number(qty),
                                 note: note as string,
-                                value: (item.value || 0) * Number(qty),
+                                value: getItemPoints(item) * Number(qty),
                                 sortOrder: item.sortOrder ?? 0
                             });
                         }
@@ -111,7 +112,7 @@ export default function ClientPortalOrderSummary({
                             name: item.name,
                             qty: Number(qty),
                             note: notes[itemId],
-                            value: (item.value || 0) * Number(qty),
+                            value: getItemPoints(item) * Number(qty),
                             sortOrder: item.sortOrder ?? 0
                         });
                     }
@@ -141,7 +142,7 @@ export default function ClientPortalOrderSummary({
                             name: item.name,
                             qty: Number(qty),
                             note: notes[itemId],
-                            value: (item.value || 0) * Number(qty),
+                            value: getItemPoints(item) * Number(qty),
                             sortOrder: item.sortOrder ?? 0
                         });
                     }

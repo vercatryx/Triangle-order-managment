@@ -6,7 +6,7 @@ import { ClientProfile, ClientStatus, Navigator, Vendor, MenuItem, BoxType, Item
 import { getBoxQuotas, invalidateOrderData, updateClient, updateClientUpcomingOrder } from '@/lib/actions';
 import { getSettings } from '@/lib/cached-data';
 import { getNextDeliveryDate as getNextDeliveryDateUtil, getTakeEffectDate, formatDeliveryDate, calculateVendorEffectiveDate } from '@/lib/order-dates';
-import { isMeetingMinimum, isExceedingMaximum, isMeetingExactTarget } from '@/lib/utils';
+import { isMeetingMinimum, isExceedingMaximum, isMeetingExactTarget, getItemPoints } from '@/lib/utils';
 import { Package, Truck, User, Loader2, Info, Plus, Calendar, AlertTriangle, Check, Trash2, Construction, History, ChevronDown, ChevronUp, ClipboardList } from 'lucide-react';
 import styles from './ClientProfile.module.css';
 import FoodServiceWidget from './FoodServiceWidget';
@@ -319,7 +319,7 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
                                 Object.entries(items).forEach(([id, qty]) => {
                                     countedItemIdsGlobally.add(id);
                                     const item = menuItems.find(i => i.id === id);
-                                    total += (Number(qty) || 0) * (item?.value || 0);
+                                    total += (Number(qty) || 0) * getItemPoints(item);
                                 });
                             });
                         } else if (sel.items) {
@@ -327,7 +327,7 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
                             Object.entries(sel.items).forEach(([id, qty]) => {
                                 countedItemIdsGlobally.add(id);
                                 const item = menuItems.find(i => i.id === id);
-                                total += (Number(qty) || 0) * (item?.value || 0) * multiplier;
+                                total += (Number(qty) || 0) * getItemPoints(item) * multiplier;
                             });
                         }
                     });
@@ -341,7 +341,7 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
                                 if (countedItemIdsGlobally.has(id)) return;
 
                                 const item = mealItems.find(i => i.id === id);
-                                total += (Number(qty) || 0) * (item?.value || 0);
+                                total += (Number(qty) || 0) * getItemPoints(item);
                             });
                         }
                     });
@@ -352,7 +352,7 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
                         if (conf.items) {
                             Object.entries(conf.items).forEach(([id, qty]) => {
                                 const item = mealItems.find(i => i.id === id);
-                                total += (Number(qty) || 0) * (item?.value || 0);
+                                total += (Number(qty) || 0) * getItemPoints(item);
                             });
                         }
                     });
@@ -401,7 +401,7 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
                             let dayValue = 0;
                             for (const [itemId, qty] of Object.entries(dayItems)) {
                                 const item = menuItems.find(i => i.id === itemId);
-                                dayValue += (item?.value || 0) * (Number(qty) || 0);
+                                dayValue += getItemPoints(item) * (Number(qty) || 0);
                             }
                             // Only require minimum for days that have items; skip days with 0
                             if (dayValue > 0 && !isMeetingMinimum(dayValue, minMeals)) {
@@ -414,7 +414,7 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
                         let countValue = 0;
                         for (const [itemId, qty] of Object.entries(selection.items)) {
                             const item = menuItems.find(i => i.id === itemId);
-                            countValue += (item?.value || 0) * (Number(qty) || 0);
+                            countValue += getItemPoints(item) * (Number(qty) || 0);
                         }
 
                         if (!isMeetingMinimum(countValue, minMeals)) {
@@ -446,7 +446,7 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
                                 Object.entries(config.items).forEach(([itemId, qty]) => {
                                     const item = mealItems.find(i => i.id === itemId);
                                     if (item && item.categoryId === cat.id) {
-                                        selectedValue += (item.value || 0) * (Number(qty) || 0);
+                                        selectedValue += getItemPoints(item) * (Number(qty) || 0);
                                     }
                                 });
                             }

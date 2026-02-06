@@ -82,7 +82,8 @@ async function run() {
         quantity: 2,
         unit_value: 25,
         total_value: 50,
-        items: { "category_1": { "itemName": "Test Box Item", "quantity": 1, "quotaValue": 1 } }
+        items: { "category_1": { "itemName": "Test Box Item", "quantity": 1, "quotaValue": 1 } },
+        item_notes: {}
     });
     console.log('Created Box Upcoming Order setup.');
     */

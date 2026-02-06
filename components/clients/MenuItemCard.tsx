@@ -2,6 +2,7 @@
 
 import React from 'react';
 import { MenuItem, MealItem } from '@/lib/types';
+import { getItemPoints } from '@/lib/utils';
 import { Minus, Plus, Utensils, X } from 'lucide-react';
 import TextareaAutosize from 'react-textarea-autosize';
 import { createPortal } from 'react-dom';
@@ -38,10 +39,7 @@ export default function MenuItemCard({
 
     const stopPropagation = (e: React.MouseEvent) => e.stopPropagation();
 
-    // Display points: use value when set and > 0, else quotaValue (admin uses quota_value for box items; client portal must match)
-    const v = Number(item.value);
-    const q = Number((item as { quotaValue?: number }).quotaValue);
-    const displayPoints = v > 0 ? v : (q || 0);
+    const displayPoints = getItemPoints(item);
 
     return (
         <div className={`${styles.card} ${quantity > 0 ? styles.selected : ''}`} onClick={toggleModal}>

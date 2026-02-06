@@ -13,6 +13,7 @@ import { createClient } from '@supabase/supabase-js';
 import { roundCurrency } from './utils';
 import { mapClientFromDB, handleError } from './client-mappers';
 import { processVendorOrderDetails } from './actions';
+import { getNextDeliveryDateForDay } from './order-dates';
 
 function mapVendorRow(v: { id: string; name: string; email: string | null; service_type: string; delivery_days: string[]; delivery_frequency: string; is_active: boolean; minimum_meals: number | null; cutoff_hours: number | null }) {
     return {
@@ -257,7 +258,8 @@ export async function getSettings() {
         weeklyCutoffDay: data.weekly_cutoff_day,
         weeklyCutoffTime: data.weekly_cutoff_time,
         reportEmail: data.report_email || '',
-        enablePasswordlessLogin: data.enable_passwordless_login
+        enablePasswordlessLogin: data.enable_passwordless_login,
+        sendVendorNextWeekEmails: data.send_vendor_next_week_emails !== false
     };
 }
 
@@ -1827,10 +1829,10 @@ export async function getClientsPaginated(page: number, pageSize: number, query:
             return { clients: [], total: 0 };
         }
 
-        // Fetch clients
+        // Fetch clients (upcoming_order is single source of truth; no client_meal_orders)
         let queryBuilder = supabase
             .from('clients')
-            .select('*, client_meal_orders(*)', { count: 'exact' })
+            .select('*, upcoming_order', { count: 'exact' })
             .in('id', clientIdsNeedingVendor);
 
         if (query) {
@@ -1852,10 +1854,10 @@ export async function getClientsPaginated(page: number, pageSize: number, query:
         };
     }
 
-    // Default behavior - get all clients
+    // Default behavior - get all clients (upcoming_order is single source of truth)
     let queryBuilder = supabase
         .from('clients')
-        .select('*, client_meal_orders(*)', { count: 'exact' });
+        .select('*, upcoming_order', { count: 'exact' });
 
     if (query) {
         queryBuilder = queryBuilder.ilike('full_name', `% ${query}% `);
@@ -1987,19 +1989,19 @@ export async function getOrdersByVendor(vendorId: string) {
 
     try {
         // 1. Fetch completed orders (from orders table)
-        // Include Food, Boxes, and Equipment orders
+        // Supabase defaults to 1000 rows; use a higher limit so we get all order IDs for this vendor
         const { data: foodOrderIds } = await supabaseClient
             .from('order_vendor_selections')
             .select('order_id')
-            .eq('vendor_id', vendorId);
+            .eq('vendor_id', vendorId)
+            .limit(10000);
 
         const { data: boxOrderIds } = await supabaseClient
             .from('order_box_selections')
             .select('order_id')
-            .eq('vendor_id', vendorId);
+            .eq('vendor_id', vendorId)
+            .limit(10000);
 
-        // Also get Equipment orders - they use order_vendor_selections too
-        // But we need to filter by service_type='Equipment' in the orders table
         const orderIds = Array.from(new Set([
             ...(foodOrderIds?.map(o => o.order_id) || []),
             ...(boxOrderIds?.map(o => o.order_id) || [])
@@ -2007,15 +2009,20 @@ export async function getOrdersByVendor(vendorId: string) {
 
         let orders: any[] = [];
         if (orderIds.length > 0) {
-            const { data: ordersData } = await supabaseClient
-                .from('orders')
-                .select('*')
-                .in('id', orderIds)
-                .order('created_at', { ascending: false });
+            const batchSize = 1000;
+            let ordersData: any[] = [];
+            for (let i = 0; i < orderIds.length; i += batchSize) {
+                const batch = orderIds.slice(i, i + batchSize);
+                const { data: batchData } = await supabaseClient
+                    .from('orders')
+                    .select('*')
+                    .in('id', batch)
+                    .order('created_at', { ascending: false })
+                    .limit(batchSize);
+                if (batchData?.length) ordersData = ordersData.concat(batchData);
+            }
 
-            if (ordersData) {
-                // Filter to only include orders for this vendor
-                // For Equipment orders, check if vendor_id matches in notes
+            if (ordersData.length > 0) {
                 const filteredOrders = ordersData.filter(order => {
                     if (order.service_type === 'Equipment') {
                         try {
@@ -2025,7 +2032,6 @@ export async function getOrdersByVendor(vendorId: string) {
                             return false;
                         }
                     }
-                    // For Food and Boxes, they're already filtered by vendor_selections/box_selections
                     return true;
                 });
 
@@ -2035,6 +2041,99 @@ export async function getOrdersByVendor(vendorId: string) {
                 }));
             }
         }
+
+        /** Normalize delivery date from multiple possible sources so UI can group by date. */
+        function normalizeDeliveryDate(o: any): string | null {
+            const s = o.scheduled_delivery_date;
+            if (s) return typeof s === 'string' ? s.split('T')[0] : (s as Date)?.toISOString?.()?.split('T')[0] ?? null;
+            const a = o.actual_delivery_date;
+            if (a) return typeof a === 'string' ? a.split('T')[0] : (a as Date)?.toISOString?.()?.split('T')[0] ?? null;
+            const c = o.created_at;
+            if (c) return typeof c === 'string' ? c.split('T')[0] : new Date(c).toISOString().split('T')[0];
+            return null;
+        }
+
+        // 2. Fetch upcoming orders for this vendor (scheduled but not yet placed)
+        const { data: upcomingFoodIds } = await supabaseClient
+            .from('upcoming_order_vendor_selections')
+            .select('upcoming_order_id')
+            .eq('vendor_id', vendorId)
+            .limit(10000);
+
+        const { data: upcomingBoxIds } = await supabaseClient
+            .from('upcoming_order_box_selections')
+            .select('upcoming_order_id')
+            .eq('vendor_id', vendorId)
+            .limit(10000);
+
+        const upcomingOrderIds = Array.from(new Set([
+            ...(upcomingFoodIds?.map(o => o.upcoming_order_id) || []),
+            ...(upcomingBoxIds?.map(o => o.upcoming_order_id) || [])
+        ]));
+
+        if (upcomingOrderIds.length > 0) {
+            const batchSize = 1000;
+            let upcomingRows: any[] = [];
+            for (let i = 0; i < upcomingOrderIds.length; i += batchSize) {
+                const batch = upcomingOrderIds.slice(i, i + batchSize);
+                const { data: batchData } = await supabaseClient
+                    .from('upcoming_orders')
+                    .select('*')
+                    .in('id', batch)
+                    .eq('status', 'scheduled')
+                    .limit(batchSize);
+                if (batchData?.length) upcomingRows = upcomingRows.concat(batchData);
+            }
+
+            const vendors = await getVendors();
+            const now = await getCurrentTime();
+            for (const uo of upcomingRows) {
+                let scheduledDeliveryDateStr: string | null = null;
+                if (uo.delivery_day) {
+                    const calculatedDate = getNextDeliveryDateForDay(
+                        uo.delivery_day,
+                        vendors,
+                        vendorId,
+                        now,
+                        now
+                    );
+                    if (calculatedDate) scheduledDeliveryDateStr = calculatedDate.toISOString().split('T')[0];
+                }
+                if (!scheduledDeliveryDateStr && uo.take_effect_date) {
+                    scheduledDeliveryDateStr = typeof uo.take_effect_date === 'string'
+                        ? uo.take_effect_date.split('T')[0]
+                        : null;
+                }
+                const orderLike = {
+                    id: uo.id,
+                    order_number: uo.order_number,
+                    client_id: uo.client_id,
+                    service_type: uo.service_type,
+                    notes: uo.notes,
+                    scheduled_delivery_date: scheduledDeliveryDateStr,
+                    total_items: uo.total_items ?? 0,
+                    total_value: uo.total_value ?? 0,
+                    created_at: uo.created_at
+                };
+                const processed = await processVendorOrderDetails(supabaseClient, orderLike, vendorId, true);
+                orders.push({ ...processed, orderType: 'upcoming' });
+            }
+        }
+
+        // Ensure every order has a display delivery date (scheduled > actual > created_at) so grouping works
+        orders = orders.map(o => {
+            const normalized = normalizeDeliveryDate(o);
+            return normalized ? { ...o, scheduled_delivery_date: normalized } : o;
+        });
+
+        orders.sort((a, b) => {
+            const dateA = a.scheduled_delivery_date ? new Date(a.scheduled_delivery_date).getTime() : 0;
+            const dateB = b.scheduled_delivery_date ? new Date(b.scheduled_delivery_date).getTime() : 0;
+            if (dateB !== dateA) return dateB - dateA;
+            const createdA = a.created_at ? new Date(a.created_at).getTime() : 0;
+            const createdB = b.created_at ? new Date(b.created_at).getTime() : 0;
+            return createdB - createdA;
+        });
 
         return orders;
 
@@ -2617,86 +2716,83 @@ export async function getBatchClientDetails(clientIds: string[]) {
 }
 
 export async function getClientFoodOrder(clientId: string): Promise<ClientFoodOrder | null> {
-    const { data, error } = await supabase
-        .from('client_food_orders')
-        .select('*')
-        .eq('client_id', clientId)
+    const { data: client, error } = await supabase
+        .from('clients')
+        .select('id, service_type, upcoming_order')
+        .eq('id', clientId)
         .maybeSingle();
 
     if (error) {
-        // Suppress table missing error during migration phase? 
-        // Or confirm tables exist. For now log error.
-        console.error('Error fetching food order:', error);
+        console.error('Error fetching client for food order:', error);
         return null;
     }
-    if (!data) return null;
+    if (!client || client.service_type !== 'Food' || !client.upcoming_order?.deliveryDayOrders) return null;
 
+    const uo = client.upcoming_order;
     return {
-        id: data.id,
-        clientId: data.client_id,
-        caseId: data.case_id,
-        deliveryDayOrders: data.delivery_day_orders,
-        notes: data.notes,
-        created_at: data.created_at,
-        updated_at: data.updated_at,
-        updated_by: data.updated_by
+        id: client.id,
+        clientId: client.id,
+        caseId: uo.caseId ?? null,
+        deliveryDayOrders: uo.deliveryDayOrders,
+        notes: uo.notes ?? null,
+        created_at: undefined,
+        updated_at: undefined,
+        updated_by: undefined
     };
 }
 
 export async function getClientMealOrder(clientId: string): Promise<ClientMealOrder | null> {
-    const { data, error } = await supabase
-        .from('client_meal_orders')
-        .select('*')
-        .eq('client_id', clientId)
+    const { data: client, error } = await supabase
+        .from('clients')
+        .select('id, service_type, upcoming_order')
+        .eq('id', clientId)
         .maybeSingle();
 
     if (error) {
-        console.error('Error fetching meal order:', error);
+        console.error('Error fetching client for meal order:', error);
         return null;
     }
-    if (!data) return null;
+    if (!client || (client.service_type !== 'Food' && client.service_type !== 'Meal') || !client.upcoming_order?.mealSelections) return null;
 
+    const uo = client.upcoming_order;
     return {
-        id: data.id,
-        clientId: data.client_id,
-        caseId: data.case_id,
-        mealSelections: data.meal_selections,
-        notes: data.notes,
-        created_at: data.created_at,
-        updated_at: data.updated_at,
-        updated_by: data.updated_by
+        id: client.id,
+        clientId: client.id,
+        caseId: uo.caseId ?? null,
+        mealSelections: uo.mealSelections,
+        notes: uo.notes ?? null,
+        created_at: undefined,
+        updated_at: undefined,
+        updated_by: undefined
     };
 }
 
 export async function getClientBoxOrder(clientId: string): Promise<ClientBoxOrder[]> {
-    const { data, error } = await supabase
-        .from('client_box_orders')
-        .select('*')
-        .eq('client_id', clientId);
+    const { data: client, error } = await supabase
+        .from('clients')
+        .select('id, service_type, upcoming_order')
+        .eq('id', clientId)
+        .maybeSingle();
 
     if (error) {
-        console.error('Error fetching box order:', error);
+        console.error('Error fetching client for box orders:', error);
         return [];
     }
-    if (!data) return [];
+    if (!client || client.service_type !== 'Boxes' || !client.upcoming_order?.boxOrders?.length) return [];
 
-    console.log('[getClientBoxOrder] Fetched data count:', data.length);
-    if (data.length > 0) {
-        console.log('[getClientBoxOrder] Sample item notes:', JSON.stringify(data[0].item_notes, null, 2));
-    }
-
-    return data.map(d => ({
-        id: d.id,
-        clientId: d.client_id,
-        caseId: d.case_id,
-        boxTypeId: d.box_type_id,
-        vendorId: d.vendor_id,
-        quantity: d.quantity,
-        items: d.items,
-        itemNotes: d.item_notes, // Map item_notes from DB
-        notes: d.notes,
-        created_at: d.created_at,
-        updated_at: d.updated_at,
-        updated_by: d.updated_by
+    const uo = client.upcoming_order;
+    return uo.boxOrders.map((b: any, idx: number) => ({
+        id: `${client.id}-box-${idx}`,
+        clientId: client.id,
+        caseId: uo.caseId ?? null,
+        boxTypeId: b.boxTypeId ?? null,
+        vendorId: b.vendorId ?? null,
+        quantity: b.quantity ?? 1,
+        items: b.items ?? {},
+        itemNotes: b.itemNotes ?? null,
+        notes: uo.notes ?? null,
+        created_at: undefined,
+        updated_at: undefined,
+        updated_by: undefined
     }));
 }

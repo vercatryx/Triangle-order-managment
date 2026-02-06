@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { MenuItem, Vendor } from '@/lib/types';
+import { getItemPoints } from '@/lib/utils';
 import { addMenuItem, updateMenuItem, deleteMenuItem, uploadMenuItemImage } from '@/lib/actions';
 import { useDataCache } from '@/lib/data-cache';
 import { Plus, Edit2, Trash2, X, Check, Upload, Loader2, Image as ImageIcon, Utensils } from 'lucide-react';
@@ -651,7 +652,7 @@ function SortableMenuItem({ item, onEdit, onDelete }: { item: MenuItem, onEdit: 
                 )}
             </div>
             <span style={{ flex: 3, fontWeight: 500, fontSize: '1.25rem' }}>{item.name}</span>
-            <span style={{ flex: 1, fontSize: '1.1rem' }}>{item.value}</span>
+            <span style={{ flex: 1, fontSize: '1.1rem' }}>{getItemPoints(item)}</span>
             <span style={{ flex: 1, fontSize: '1.1rem' }}>{item.priceEach ?? '-'}</span>
             <span style={{ flex: 1 }}>
                 {item.isActive ? <span className="badge" style={{ color: 'var(--color-success)', background: 'rgba(34, 197, 94, 0.1)', fontSize: '0.9rem', padding: '4px 12px' }}>Active</span> : <span className="badge" style={{ fontSize: '0.9rem', padding: '4px 12px' }}>Inactive</span>}

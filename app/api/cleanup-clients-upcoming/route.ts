@@ -303,7 +303,7 @@ export async function GET() {
                 }
             }
 
-            // 2b) Item-on-disallowed-day from vendorSelections + itemsByDay (when deliveryDayOrders not used)
+            // 2b) Vendor day mismatch + Item-on-disallowed-day from vendorSelections + itemsByDay (when deliveryDayOrders not used)
             const vsel = uo.vendorSelections as { vendorId?: string; itemsByDay?: Record<string, Record<string, number>> }[] | undefined;
             if (Array.isArray(vsel) && (!ddo || typeof ddo !== 'object' || Object.keys(ddo).length === 0)) {
                 for (const vs of vsel) {
@@ -315,6 +315,20 @@ export async function GET() {
                     const itemsByDay = vs.itemsByDay && typeof vs.itemsByDay === 'object' ? vs.itemsByDay : {};
                     for (const [day, dayItems] of Object.entries(itemsByDay)) {
                         if (!dayItems || typeof dayItems !== 'object') continue;
+                        // Vendor delivery day mismatch: order is on a day this vendor does not deliver
+                        if (vendor.days.length > 0 && !vendor.days.includes(day)) {
+                            const itemCount = Object.values(dayItems).filter((q) => Number(q) > 0).length;
+                            vendorDayIssues.push({
+                                clientId: client.id,
+                                clientName,
+                                orderDeliveryDay: day,
+                                vendorId: vid,
+                                vendorName: vendor.name,
+                                vendorSupportedDays: vendor.days,
+                                serviceType: st,
+                                itemCount
+                            });
+                        }
                         for (const [itemId, qty] of Object.entries(dayItems)) {
                             const q = Number(qty);
                             if (q <= 0) continue;
@@ -521,30 +535,71 @@ export async function POST(request: Request) {
             if (!oldDay || !newDay) {
                 return NextResponse.json({ success: false, error: 'oldDay and newDay required' }, { status: 400 });
             }
-            type VendorSel = { vendorId?: string };
-            const ddo = (updated.deliveryDayOrders as Record<string, { vendorSelections?: VendorSel[] }>) || {};
-            const dayData = ddo[oldDay];
-            if (!dayData?.vendorSelections) {
-                return NextResponse.json({ success: false, error: 'Order day not found' }, { status: 400 });
-            }
-            const selections: VendorSel[] = [...(dayData.vendorSelections || [])];
-            const toMove = vendorId ? selections.filter((s) => s.vendorId === vendorId) : selections;
-            const toKeep = vendorId ? selections.filter((s) => s.vendorId !== vendorId) : [];
-
-            if (toMove.length === 0) {
-                return NextResponse.json({ success: false, error: 'No selection to move' }, { status: 400 });
-            }
-
             if (oldDay === newDay) {
                 return NextResponse.json({ success: true, message: 'No change.' });
             }
 
-            const nextDdo = { ...ddo };
-            if (toKeep.length > 0) nextDdo[oldDay] = { vendorSelections: toKeep };
-            else delete nextDdo[oldDay];
-            if (!nextDdo[newDay]) nextDdo[newDay] = { vendorSelections: [] };
-            nextDdo[newDay].vendorSelections!.push(...toMove);
-            updated.deliveryDayOrders = nextDdo;
+            const ddo = (updated.deliveryDayOrders as Record<string, { vendorSelections?: { vendorId?: string }[] }>) || {};
+            const hasDdo = ddo && typeof ddo === 'object' && Object.keys(ddo).length > 0;
+            const vsel = (updated.vendorSelections as { vendorId?: string; itemsByDay?: Record<string, Record<string, number>>; itemNotesByDay?: Record<string, Record<string, string>>; selectedDeliveryDays?: string[] }[]) || [];
+
+            if (hasDdo && ddo[oldDay]?.vendorSelections) {
+                type VendorSel = { vendorId?: string };
+                const dayData = ddo[oldDay];
+                const selections: VendorSel[] = [...(dayData.vendorSelections || [])];
+                const toMove = vendorId ? selections.filter((s) => s.vendorId === vendorId) : selections;
+                const toKeep = vendorId ? selections.filter((s) => s.vendorId !== vendorId) : [];
+                if (toMove.length === 0) {
+                    return NextResponse.json({ success: false, error: 'No selection to move' }, { status: 400 });
+                }
+                const nextDdo = { ...ddo };
+                if (toKeep.length > 0) nextDdo[oldDay] = { vendorSelections: toKeep };
+                else delete nextDdo[oldDay];
+                if (!nextDdo[newDay]) nextDdo[newDay] = { vendorSelections: [] };
+                nextDdo[newDay].vendorSelections!.push(...toMove);
+                updated.deliveryDayOrders = nextDdo;
+            } else if (Array.isArray(vsel) && vsel.length > 0 && vendorId) {
+                // vendorSelections + itemsByDay: move oldDay -> newDay for this vendor
+                let changed = false;
+                for (const vs of vsel) {
+                    if (vs.vendorId !== vendorId) continue;
+                    const itemsByDay = vs.itemsByDay && typeof vs.itemsByDay === 'object' ? { ...vs.itemsByDay } : {};
+                    const itemNotesByDay = vs.itemNotesByDay && typeof vs.itemNotesByDay === 'object' ? { ...vs.itemNotesByDay } : {};
+                    const selectedDeliveryDays = Array.isArray(vs.selectedDeliveryDays) ? [...vs.selectedDeliveryDays] : [];
+
+                    if (!itemsByDay[oldDay] || Object.keys(itemsByDay[oldDay]).length === 0) continue;
+
+                    const dayItems = { ...itemsByDay[oldDay] };
+                    const dayNotes = itemNotesByDay[oldDay] ? { ...itemNotesByDay[oldDay] } : {};
+                    delete itemsByDay[oldDay];
+                    if (itemNotesByDay[oldDay]) delete itemNotesByDay[oldDay];
+                    const oldIdx = selectedDeliveryDays.indexOf(oldDay);
+                    if (oldIdx >= 0) selectedDeliveryDays.splice(oldIdx, 1);
+
+                    if (!itemsByDay[newDay]) itemsByDay[newDay] = {};
+                    for (const [itemId, qty] of Object.entries(dayItems)) {
+                        itemsByDay[newDay][itemId] = (itemsByDay[newDay][itemId] || 0) + qty;
+                    }
+                    if (Object.keys(dayNotes).length > 0) {
+                        itemNotesByDay[newDay] = { ...(itemNotesByDay[newDay] || {}), ...dayNotes };
+                    }
+                    if (!selectedDeliveryDays.includes(newDay)) selectedDeliveryDays.push(newDay);
+                    selectedDeliveryDays.sort();
+
+                    (vs as any).itemsByDay = itemsByDay;
+                    (vs as any).itemNotesByDay = Object.keys(itemNotesByDay).length > 0 ? itemNotesByDay : undefined;
+                    (vs as any).selectedDeliveryDays = selectedDeliveryDays;
+                    changed = true;
+                    break;
+                }
+                if (!changed) {
+                    return NextResponse.json({ success: false, error: 'Order day not found in vendorSelections' }, { status: 400 });
+                }
+                updated.vendorSelections = vsel;
+            } else {
+                return NextResponse.json({ success: false, error: 'Order day not found' }, { status: 400 });
+            }
+
             const { error: updErr } = await supabase
                 .from('clients')
                 .update({ upcoming_order: updated, updated_at: new Date().toISOString() })

@@ -848,7 +848,8 @@ export async function updateSettings(settings: AppSettings) {
             weekly_cutoff_day: settings.weeklyCutoffDay,
             weekly_cutoff_time: settings.weeklyCutoffTime,
             report_email: settings.reportEmail || null,
-            enable_passwordless_login: settings.enablePasswordlessLogin
+            enable_passwordless_login: settings.enablePasswordlessLogin,
+            send_vendor_next_week_emails: settings.sendVendorNextWeekEmails
         })
         .neq('id', '00000000-0000-0000-0000-000000000000'); // Hack to update all rows
 
@@ -1441,10 +1442,9 @@ export async function processUpcomingOrders() {
                         quantity: bs.quantity,
                         unit_value: bs.unit_value || 0,
                         total_value: bs.total_value || 0,
-                        items: bs.items || {}
+                        items: bs.items || {},
+                        item_notes: bs.item_notes ?? {}
                     };
-
-
 
                     const { error: boxInsertError } = await supabaseClient.from('order_box_selections').insert(insertData);
 
@@ -1811,22 +1811,10 @@ export async function invalidateOrderData(path?: string) {
 }
 
 export async function saveClientFoodOrder(clientId: string, data: Partial<ClientFoodOrder>) {
-    const session = await getSession();
-    const updatedBy = session?.userId || null;
-
     const supabaseAdmin = createClient(
         process.env.NEXT_PUBLIC_SUPABASE_URL!,
         process.env.SUPABASE_SERVICE_ROLE_KEY!
     );
-
-    const payload: any = {
-        client_id: clientId,
-        case_id: data.caseId,
-        delivery_day_orders: data.deliveryDayOrders,
-        notes: data.notes,
-        updated_at: new Date().toISOString(),
-        updated_by: updatedBy
-    };
 
     // VALIDATION: Ensure vendor is selected for all delivery days
     if (data.deliveryDayOrders) {
@@ -1841,46 +1829,22 @@ export async function saveClientFoodOrder(clientId: string, data: Partial<Client
         });
     }
 
-    // Check if order exists first
-    const { data: existing } = await supabaseAdmin
-        .from('client_food_orders')
-        .select('id')
-        .eq('client_id', clientId)
-        .single();
+    const upcomingOrder = {
+        serviceType: 'Food',
+        caseId: data.caseId ?? null,
+        deliveryDayOrders: data.deliveryDayOrders ?? {},
+        notes: data.notes ?? null
+    };
 
-    let query;
-    if (existing) {
-        query = supabaseAdmin
-            .from('client_food_orders')
-            .update(payload)
-            .eq('id', existing.id);
-    } else {
-        query = supabaseAdmin
-            .from('client_food_orders')
-            .insert(payload);
-    }
-
-    const { data: saved, error } = await query.select().single();
-
+    const { error } = await supabaseAdmin.from('clients').update({ upcoming_order: upcomingOrder }).eq('id', clientId);
     handleError(error);
     revalidatePath(`/client-portal/${clientId}`);
     revalidatePath(`/clients/${clientId}`);
-    return saved;
+    return { id: clientId, client_id: clientId, case_id: data.caseId, delivery_day_orders: data.deliveryDayOrders, notes: data.notes };
 }
 
 export async function saveClientMealOrder(clientId: string, data: Partial<ClientMealOrder>) {
-    const session = await getSession();
-    const updatedBy = session?.userId || null;
     const supabaseAdmin = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
-
-    const payload: any = {
-        client_id: clientId,
-        case_id: data.caseId,
-        meal_selections: data.mealSelections,
-        notes: data.notes,
-        updated_at: new Date().toISOString(),
-        updated_by: updatedBy
-    };
 
     // VALIDATION: Ensure vendor is selected for all meal selections
     if (data.mealSelections) {
@@ -1891,101 +1855,64 @@ export async function saveClientMealOrder(clientId: string, data: Partial<Client
         });
     }
 
-    // Check for existing order
-    const { data: existing } = await supabaseAdmin
-        .from('client_meal_orders')
-        .select('id')
-        .eq('client_id', clientId)
-        .single();
+    const upcomingOrder = {
+        serviceType: 'Meal',
+        caseId: data.caseId ?? null,
+        mealSelections: data.mealSelections ?? {},
+        notes: data.notes ?? null
+    };
 
-    let query;
-    if (existing) {
-        query = supabaseAdmin
-            .from('client_meal_orders')
-            .update(payload)
-            .eq('id', existing.id);
-    } else {
-        query = supabaseAdmin
-            .from('client_meal_orders')
-            .insert(payload);
-    }
-
-    const { data: saved, error } = await query.select().single();
-
+    const { error } = await supabaseAdmin.from('clients').update({ upcoming_order: upcomingOrder }).eq('id', clientId);
     handleError(error);
     revalidatePath(`/client-portal/${clientId}`);
     revalidatePath(`/clients/${clientId}`);
-    return saved;
+    return { id: clientId, client_id: clientId, case_id: data.caseId, meal_selections: data.mealSelections, notes: data.notes };
 }
 
 export async function saveClientBoxOrder(clientId: string, data: Partial<ClientBoxOrder>[]) {
-    const session = await getSession();
-    const updatedBy = session?.userId || null;
-    // if (!session || !session.userId) throw new Error('Unauthorized');
     const supabaseAdmin = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
 
-    // Full replacement strategy: Delete all existing box orders for this client first
-    const { error: deleteError } = await supabaseAdmin
-        .from('client_box_orders')
-        .delete()
-        .eq('client_id', clientId);
-
-    if (deleteError) {
-        handleError(deleteError);
-        throw deleteError;
-    }
-
     if (!data || data.length === 0) {
+        const { error } = await supabaseAdmin.from('clients').update({ upcoming_order: null }).eq('id', clientId);
+        handleError(error);
         revalidatePath(`/client-portal/${clientId}`);
         revalidatePath(`/clients/${clientId}`);
         return [];
     }
 
-    console.log('[saveClientBoxOrder] Received data:', JSON.stringify(data, null, 2));
-
-    const insertPayload = data.map(order => {
-        const payload: any = {
-            client_id: clientId,
-            case_id: order.caseId,
-            box_type_id: order.boxTypeId,
-            vendor_id: order.vendorId,
-            quantity: order.quantity,
-            items: order.items,
-            item_notes: (order as any).itemNotes, // Save item notes to DB
-
-            // notes: order.notes // Removed per user request
-        };
-
-        // VALIDATION: Ensure vendor is selected
-        if (!payload.vendor_id) {
-            throw new Error('Vendor is required for Box orders');
-        }
-
-        if (updatedBy) payload.updated_by = updatedBy;
-        return payload;
+    data.forEach(order => {
+        if (!order.vendorId) throw new Error('Vendor is required for Box orders');
     });
 
-    let { data: created, error } = await supabaseAdmin
-        .from('client_box_orders')
-        .insert(insertPayload)
-        .select();
+    const boxOrders = data.map(order => ({
+        boxTypeId: order.boxTypeId ?? null,
+        vendorId: order.vendorId ?? null,
+        quantity: order.quantity ?? 1,
+        items: order.items ?? {},
+        itemNotes: (order as any).itemNotes ?? {}
+    }));
+    const first = data[0];
+    const upcomingOrder = {
+        serviceType: 'Boxes',
+        caseId: first?.caseId ?? null,
+        boxOrders,
+        notes: first?.notes ?? null
+    };
 
-    if (error && error.code === '23503') {
-        const payloadWithoutUser = insertPayload.map(p => {
-            const { updated_by, ...rest } = p;
-            return rest;
-        });
-        const retry = await supabaseAdmin
-            .from('client_box_orders')
-            .insert(payloadWithoutUser)
-            .select();
-        created = retry.data;
-        error = retry.error;
-    }
+    const { error } = await supabaseAdmin.from('clients').update({ upcoming_order: upcomingOrder }).eq('id', clientId);
     handleError(error);
     revalidatePath(`/client-portal/${clientId}`);
     revalidatePath(`/clients/${clientId}`);
-    return created;
+    return data.map((order, idx) => ({
+        id: `${clientId}-box-${idx}`,
+        client_id: clientId,
+        case_id: first?.caseId,
+        box_type_id: order.boxTypeId,
+        vendor_id: order.vendorId,
+        quantity: order.quantity,
+        items: order.items,
+        item_notes: (order as any).itemNotes
+    }));
 }
 
 export async function updateMenuItemOrder(updates: { id: string; sortOrder: number }[]) {

@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { Vendor, ClientProfile, MenuItem, BoxType, ItemCategory } from '@/lib/types';
 import { getVendors, getClients, getMenuItems, getBoxTypes, getCategories, getMealItems } from '@/lib/cached-data';
-import { getOrdersByVendor, isOrderUnderVendor, updateOrderDeliveryProof, orderHasDeliveryProof, resolveOrderId } from '@/lib/actions';
+import { getVendorDeliveryDateSummary, getOrdersByVendorForDate, isOrderUnderVendor, updateOrderDeliveryProof, orderHasDeliveryProof, resolveOrderId } from '@/lib/actions';
 import { ArrowLeft, Truck, Calendar, Package, CheckCircle, XCircle, Clock, User, DollarSign, ShoppingCart, Download, ChevronDown, ChevronUp, FileText, Upload, X, AlertCircle, LogOut } from 'lucide-react';
 import { generateLabelsPDF } from '@/lib/label-utils';
 import { logout } from '@/lib/auth-actions';
@@ -17,10 +17,12 @@ interface Props {
     vendor?: Vendor;
 }
 
+export type VendorDateSummaryRow = { scheduled_delivery_date: string | null; order_count: number; total_items: number };
+
 export function VendorDetail({ vendorId, isVendorView, vendor: initialVendor }: Props) {
     const router = useRouter();
     const [vendor, setVendor] = useState<Vendor | null>(initialVendor || null);
-    const [orders, setOrders] = useState<any[]>([]);
+    const [dateSummary, setDateSummary] = useState<VendorDateSummaryRow[]>([]);
     const [clients, setClients] = useState<ClientProfile[]>([]);
     const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
     const [mealItems, setMealItems] = useState<any[]>([]);
@@ -59,8 +61,8 @@ export function VendorDetail({ vendorId, isVendorView, vendor: initialVendor }: 
     async function loadData() {
         setIsLoading(true);
         try {
-            const [ordersData, clientsData, menuItemsData, boxTypesData, categoriesData, mealItemsData] = await Promise.all([
-                getOrdersByVendor(vendorId),
+            const [summaryData, clientsData, menuItemsData, boxTypesData, categoriesData, mealItemsData] = await Promise.all([
+                getVendorDeliveryDateSummary(vendorId),
                 getClients(),
                 getMenuItems(),
                 getBoxTypes(),
@@ -75,7 +77,7 @@ export function VendorDetail({ vendorId, isVendorView, vendor: initialVendor }: 
             }
 
             setVendor(foundVendor);
-            setOrders(ordersData);
+            setDateSummary(summaryData);
             setClients(clientsData);
             setMenuItems(menuItemsData);
             setBoxTypes(boxTypesData);
@@ -143,15 +145,25 @@ export function VendorDetail({ vendorId, isVendorView, vendor: initialVendor }: 
     }
 
 
+    /** Pick best available delivery date from multiple possible fields (API may send different shapes). */
+    function getOrderDeliveryDate(order: any): string | null {
+        const s = order.scheduled_delivery_date ?? order.scheduledDeliveryDate;
+        if (s) return typeof s === 'string' ? s.split('T')[0] : (s as Date)?.toISOString?.()?.split('T')[0] ?? null;
+        const a = order.actual_delivery_date ?? order.actualDeliveryDate;
+        if (a) return typeof a === 'string' ? a.split('T')[0] : (a as Date)?.toISOString?.()?.split('T')[0] ?? null;
+        const c = order.created_at ?? order.createdAt;
+        if (c) return typeof c === 'string' ? c.split('T')[0] : new Date(c).toISOString().split('T')[0];
+        return null;
+    }
+
     function groupOrdersByDeliveryDate(ordersList: any[]) {
         const grouped: { [key: string]: any[] } = {};
         const noDate: any[] = [];
 
         ordersList.forEach(order => {
-            const deliveryDate = order.scheduled_delivery_date;
+            const deliveryDate = getOrderDeliveryDate(order);
             if (deliveryDate) {
-                // Use date as key (YYYY-MM-DD format for consistent sorting)
-                const dateKey = new Date(deliveryDate).toISOString().split('T')[0];
+                const dateKey = deliveryDate;
                 if (!grouped[dateKey]) {
                     grouped[dateKey] = [];
                 }
@@ -473,118 +485,7 @@ export function VendorDetail({ vendorId, isVendorView, vendor: initialVendor }: 
     }
 
     function exportOrdersToExcel() {
-        if (orders.length === 0) {
-            alert('No orders to export');
-            return;
-        }
-
-        /* --- Sheet 1: Orders Summary --- */
-        const headers = [
-            'Order Number',
-            'Order ID',
-            'Client ID',
-            'Client Name',
-            'Address',
-            'Phone',
-            'Scheduled Delivery Date',
-            'Total Items',
-            'Ordered Items',
-            'Delivery Proof URL'
-        ];
-
-        const summaryData = orders.map(order => [
-            order.orderNumber || '',
-            order.id || '',
-            order.client_id || '',
-            getClientName(order.client_id),
-            getClientAddress(order.client_id),
-            getClientPhone(order.client_id),
-            order.scheduled_delivery_date || '',
-            order.total_items || 0,
-            formatOrderedItemsForCSV(order),
-            order.delivery_proof_url || ''
-        ]);
-
-        const wsSummary = XLSX.utils.aoa_to_sheet([headers, ...summaryData]);
-        wsSummary['!cols'] = [{ wch: 15 }, { wch: 30 }, { wch: 30 }, { wch: 20 }, { wch: 30 }, { wch: 15 }, { wch: 15 }, { wch: 10 }, { wch: 50 }, { wch: 30 }];
-
-        /* --- Sheet 2: Detailed Items per Client --- */
-        const detailsData: any[][] = [];
-
-        orders.forEach(order => {
-            const clientName = getClientName(order.client_id);
-            const items = getParsedOrderItems(order);
-
-            // Header for this order block
-            detailsData.push([`Client: ${clientName}`, `Order ID: ${order.orderNumber || order.id}`]);
-            detailsData.push(['Item Name', 'Quantity', 'Notes/Category']);
-
-            // Items
-            if (items.length > 0) {
-                items.forEach(item => {
-                    const extraInfo = [];
-                    if (item.category) extraInfo.push(getCategoryName(item.category));
-                    if (item.notes) extraInfo.push(`Note: ${item.notes}`);
-
-                    detailsData.push([item.name, item.quantity, extraInfo.join(' | ')]);
-                });
-            } else {
-                detailsData.push(['No items found', '', '']);
-            }
-
-            // Empty row for separation
-            detailsData.push([]);
-        });
-
-        const wsDetails = XLSX.utils.aoa_to_sheet(detailsData);
-        wsDetails['!cols'] = [{ wch: 30 }, { wch: 10 }, { wch: 40 }];
-
-        /* --- Sheet 3: Cooking List (Aggregated) --- */
-        const aggregation: Record<string, { name: string; quantity: number; notes: string }> = {};
-
-        orders.forEach(order => {
-            const items = getParsedOrderItems(order);
-            items.forEach(item => {
-                const noteKey = item.notes ? item.notes.trim().toLowerCase() : '';
-                const key = `${item.name}||${noteKey}`;
-
-                if (!aggregation[key]) {
-                    aggregation[key] = {
-                        name: item.name,
-                        quantity: 0,
-                        notes: item.notes || ''
-                    };
-                }
-
-                aggregation[key].quantity += item.quantity;
-            });
-        });
-
-        const cookingListData = Object.values(aggregation)
-            .sort((a, b) => {
-                const nameCompare = a.name.localeCompare(b.name);
-                if (nameCompare !== 0) return nameCompare;
-                return (a.notes || '').localeCompare(b.notes || '');
-            })
-            .map(item => [
-                item.name,
-                item.quantity,
-                item.notes
-            ]);
-
-        const wsCookingList = XLSX.utils.aoa_to_sheet([
-            ['Item Name', 'Total Quantity', 'Notes'],
-            ...cookingListData
-        ]);
-        wsCookingList['!cols'] = [{ wch: 30 }, { wch: 15 }, { wch: 40 }];
-
-        /* --- Workbook Creation --- */
-        const wb = XLSX.utils.book_new();
-        XLSX.utils.book_append_sheet(wb, wsSummary, "Orders Summary");
-        XLSX.utils.book_append_sheet(wb, wsDetails, "Client Breakdown");
-        XLSX.utils.book_append_sheet(wb, wsCookingList, "Cooking List");
-
-        XLSX.writeFile(wb, `${vendor?.name || 'vendor'}_orders_${new Date().toISOString().split('T')[0]}.xlsx`);
+        alert('Use "Download Excel" on each delivery date row to export orders for that date.');
     }
 
     function exportOrdersByDateToExcel(dateKey: string, dateOrders: any[]) {
@@ -736,6 +637,8 @@ export function VendorDetail({ vendorId, isVendorView, vendor: initialVendor }: 
         }
 
         try {
+            const dateOrders = await getOrdersByVendorForDate(vendorId, dateKey);
+
             const arrayBuffer = await file.arrayBuffer();
             const workbook = XLSX.read(arrayBuffer);
             const sheetName = workbook.SheetNames[0];
@@ -847,7 +750,7 @@ export function VendorDetail({ vendorId, isVendorView, vendor: initialVendor }: 
 
 
                 // Check if order matches the delivery date
-                const order = orders.find(o => o.id === orderId);
+                const order = dateOrders.find((o: any) => o.id === orderId);
                 if (order) {
                     if (dateKey === 'no-date') {
                         // For 'no-date', check that order has no scheduled_delivery_date
@@ -1045,7 +948,7 @@ export function VendorDetail({ vendorId, isVendorView, vendor: initialVendor }: 
                 </div>
 
                 {(() => {
-                    if (orders.length === 0) {
+                    if (dateSummary.length === 0) {
                         return (
                             <div className={styles.emptyState}>
                                 <Package size={48} style={{ color: 'var(--text-tertiary)', marginBottom: '1rem' }} />
@@ -1054,7 +957,7 @@ export function VendorDetail({ vendorId, isVendorView, vendor: initialVendor }: 
                         );
                     }
 
-                    const { grouped, sortedDates, noDate } = groupOrdersByDeliveryDate(orders);
+                    const dateKey = (row: VendorDateSummaryRow) => row.scheduled_delivery_date ?? 'no-date';
 
                     return (
                         <div className={styles.ordersList}>
@@ -1066,30 +969,27 @@ export function VendorDetail({ vendorId, isVendorView, vendor: initialVendor }: 
                                 <span style={{ flex: '1.5 1 150px', minWidth: 0 }}>Actions</span>
                             </div>
 
-                            {/* Orders grouped by delivery date */}
-                            {sortedDates.map((dateKey) => {
-                                const dateOrders = grouped[dateKey];
-                                const dateTotalItems = dateOrders.reduce((sum, o) => sum + (o.total_items || 0), 0);
-
+                            {dateSummary.map((row) => {
+                                const dk = dateKey(row);
                                 return (
-                                    <div key={dateKey}>
+                                    <div key={dk}>
                                         <div
                                             className={styles.orderRow}
-                                            onClick={() => router.push(isVendorView ? `/vendor/delivery/${dateKey}` : `/vendors/${vendorId}/delivery/${dateKey}`)}
+                                            onClick={() => router.push(isVendorView ? `/vendor/delivery/${dk}` : `/vendors/${vendorId}/delivery/${dk}`)}
                                             style={{ cursor: 'pointer' }}
                                         >
                                             <span style={{ width: '40px', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                                                 <ChevronDown size={16} />
                                             </span>
                                             <span style={{ flex: '2 1 150px', minWidth: 0, fontWeight: 600, display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                                <Calendar size={16} style={{ color: 'var(--color-primary)' }} />
-                                                {formatDate(dateKey)}
+                                                <Calendar size={16} style={{ color: dk === 'no-date' ? 'var(--text-tertiary)' : 'var(--color-primary)' }} />
+                                                {dk === 'no-date' ? 'No Delivery Date' : formatDate(dk)}
                                             </span>
                                             <span style={{ flex: '1 1 100px', minWidth: 0 }}>
-                                                <span className="badge badge-info">{dateOrders.length} order{dateOrders.length !== 1 ? 's' : ''}</span>
+                                                <span className="badge badge-info">{row.order_count} order{row.order_count !== 1 ? 's' : ''}</span>
                                             </span>
                                             <span style={{ flex: '1.2 1 120px', minWidth: 0, fontSize: '0.9rem' }}>
-                                                {dateTotalItems}
+                                                {row.total_items}
                                             </span>
                                             <span
                                                 style={{ flex: '1.5 1 150px', minWidth: 0, display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}
@@ -1098,9 +998,11 @@ export function VendorDetail({ vendorId, isVendorView, vendor: initialVendor }: 
                                                 <button
                                                     className="btn btn-secondary"
                                                     style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem' }}
-                                                    onClick={(e) => {
+                                                    onClick={async (e) => {
                                                         e.stopPropagation();
-                                                        exportLabelsPDFForDate(dateKey, dateOrders);
+                                                        const dateOrders = await getOrdersByVendorForDate(vendorId, dk);
+                                                        if (dateOrders.length === 0) { alert('No orders to export'); return; }
+                                                        exportLabelsPDFForDate(dk, dateOrders);
                                                     }}
                                                 >
                                                     <FileText size={14} /> Download Labels
@@ -1108,9 +1010,11 @@ export function VendorDetail({ vendorId, isVendorView, vendor: initialVendor }: 
                                                 <button
                                                     className="btn btn-secondary"
                                                     style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem' }}
-                                                    onClick={(e) => {
+                                                    onClick={async (e) => {
                                                         e.stopPropagation();
-                                                        exportOrdersByDateToExcel(dateKey, dateOrders);
+                                                        const dateOrders = await getOrdersByVendorForDate(vendorId, dk);
+                                                        if (dateOrders.length === 0) { alert('No orders to export'); return; }
+                                                        exportOrdersByDateToExcel(dk, dateOrders);
                                                     }}
                                                 >
                                                     <Download size={14} /> Download Excel
@@ -1123,7 +1027,7 @@ export function VendorDetail({ vendorId, isVendorView, vendor: initialVendor }: 
                                                     <input
                                                         type="file"
                                                         accept=".xlsx, .xls"
-                                                        onChange={(e) => handleImportForDate(e, dateKey)}
+                                                        onChange={(e) => handleImportForDate(e, dk)}
                                                         style={{ display: 'none' }}
                                                     />
                                                 </label>
@@ -1132,68 +1036,6 @@ export function VendorDetail({ vendorId, isVendorView, vendor: initialVendor }: 
                                     </div>
                                 );
                             })}
-
-                            {/* Orders without delivery dates - keep as expandable for now */}
-                            {noDate.length > 0 && (
-                                <div>
-                                    <div
-                                        className={styles.orderRow}
-                                        onClick={() => router.push(isVendorView ? `/vendor/delivery/no-date` : `/vendors/${vendorId}/delivery/no-date`)}
-                                        style={{ cursor: 'pointer' }}
-                                    >
-                                        <span style={{ width: '40px', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                                            <ChevronDown size={16} />
-                                        </span>
-                                        <span style={{ flex: '2 1 150px', minWidth: 0, fontWeight: 600, display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                            <Calendar size={16} style={{ color: 'var(--text-tertiary)' }} />
-                                            No Delivery Date
-                                        </span>
-                                        <span style={{ flex: '1 1 100px', minWidth: 0 }}>
-                                            <span className="badge">{noDate.length} order{noDate.length !== 1 ? 's' : ''}</span>
-                                        </span>
-                                        <span style={{ flex: '1.2 1 120px', minWidth: 0, fontSize: '0.9rem' }}>
-                                            {noDate.reduce((sum, o) => sum + (o.total_items || 0), 0)}
-                                        </span>
-                                        <span
-                                            style={{ flex: '1.5 1 150px', minWidth: 0, display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}
-                                            onClick={(e) => e.stopPropagation()}
-                                        >
-                                            <button
-                                                className="btn btn-secondary"
-                                                style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem' }}
-                                                onClick={(e) => {
-                                                    e.stopPropagation();
-                                                    exportLabelsPDFForDate('no-date', noDate);
-                                                }}
-                                            >
-                                                <FileText size={14} /> Download Labels
-                                            </button>
-                                            <button
-                                                className="btn btn-secondary"
-                                                style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem' }}
-                                                onClick={(e) => {
-                                                    e.stopPropagation();
-                                                    exportOrdersByDateToExcel('no-date', noDate);
-                                                }}
-                                            >
-                                                <Download size={14} /> Download Excel
-                                            </button>
-                                            <label
-                                                className="btn btn-secondary"
-                                                style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem', cursor: 'pointer', margin: 0 }}
-                                            >
-                                                <Upload size={14} /> Import Excel
-                                                <input
-                                                    type="file"
-                                                    accept=".xlsx, .xls"
-                                                    onChange={(e) => handleImportForDate(e, 'no-date')}
-                                                    style={{ display: 'none' }}
-                                                />
-                                            </label>
-                                        </span>
-                                    </div>
-                                </div>
-                            )}
                         </div>
                     );
                 })()}

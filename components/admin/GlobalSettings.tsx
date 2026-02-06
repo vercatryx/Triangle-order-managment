@@ -13,7 +13,8 @@ export function GlobalSettings() {
     const [settings, setSettings] = useState<AppSettings>({
         weeklyCutoffDay: 'Friday',
         weeklyCutoffTime: '17:00',
-        reportEmail: ''
+        reportEmail: '',
+        sendVendorNextWeekEmails: true
     });
     const [saving, setSaving] = useState(false);
     const [message, setMessage] = useState<string | null>(null);
@@ -207,6 +208,26 @@ export function GlobalSettings() {
                     <p style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)', marginTop: '0.5rem' }}>
                         Email address(es) to receive delivery simulation reports for skipped orders. Separate multiple addresses with commas.
                     </p>
+                </div>
+
+                <div className={styles.formGroup} style={{ marginBottom: 'var(--spacing-lg)' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                        <div>
+                            <label className="label" style={{ marginBottom: 0 }}>Send vendor emails (next week orders)</label>
+                            <p style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)', marginTop: '0.25rem' }}>
+                                When enabled, &quot;Create orders for the next week&quot; will email each vendor their order count for that week, broken down by day.
+                            </p>
+                        </div>
+                        <label className="relative inline-flex items-center cursor-pointer">
+                            <input
+                                type="checkbox"
+                                className="sr-only peer"
+                                checked={settings.sendVendorNextWeekEmails !== false}
+                                onChange={e => setSettings({ ...settings, sendVendorNextWeekEmails: e.target.checked })}
+                            />
+                            <div className="w-11 h-6 bg-gray-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+                        </label>
+                    </div>
                 </div>
 
                 <div className={styles.formGroup} style={{ marginBottom: 'var(--spacing-lg)' }}>

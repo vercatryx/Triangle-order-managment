@@ -28,6 +28,8 @@ export async function GET(request: NextRequest) {
         const statusFilter = searchParams.get('status') || 'all';
         const creationIdParam = searchParams.get('creationId') || '';
         const creationId = creationIdParam.trim() ? parseInt(creationIdParam, 10) : null;
+        const deliveryDateFrom = (searchParams.get('deliveryDateFrom') || '').trim(); // YYYY-MM-DD
+        const deliveryDateTo = (searchParams.get('deliveryDateTo') || '').trim(); // YYYY-MM-DD
         const sortBy = searchParams.get('sortBy') || 'created_at';
         const sortDirection = (searchParams.get('sortDirection') || 'desc') as 'asc' | 'desc';
 
@@ -73,6 +75,12 @@ export async function GET(request: NextRequest) {
         if (creationId !== null && !Number.isNaN(creationId)) {
             query = query.eq('creation_id', creationId);
         }
+        if (deliveryDateFrom) {
+            query = query.gte('scheduled_delivery_date', deliveryDateFrom);
+        }
+        if (deliveryDateTo) {
+            query = query.lte('scheduled_delivery_date', deliveryDateTo);
+        }
 
         const orderColumn = SORT_COLUMN[sortBy] || 'created_at';
         query = query.order(orderColumn, { ascending: sortDirection === 'asc' });
@@ -96,6 +104,8 @@ export async function GET(request: NextRequest) {
         }
         if (statusFilter !== 'all') countQuery = countQuery.eq('status', statusFilter);
         if (creationId !== null && !Number.isNaN(creationId)) countQuery = countQuery.eq('creation_id', creationId);
+        if (deliveryDateFrom) countQuery = countQuery.gte('scheduled_delivery_date', deliveryDateFrom);
+        if (deliveryDateTo) countQuery = countQuery.lte('scheduled_delivery_date', deliveryDateTo);
         const { count: totalCount } = await countQuery;
 
         const { data: orders, error } = await query.range(from, to);

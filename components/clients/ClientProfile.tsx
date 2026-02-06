@@ -15,7 +15,7 @@ import {
     getAllDeliveryDatesForOrder,
     formatDeliveryDate
 } from '@/lib/order-dates';
-import { isMeetingMinimum, isExceedingMaximum, isMeetingExactTarget } from '@/lib/utils';
+import { isMeetingMinimum, isExceedingMaximum, isMeetingExactTarget, getItemPoints } from '@/lib/utils';
 import { Save, ArrowLeft, Truck, Package, AlertTriangle, Upload, Trash2, Plus, Check, ClipboardList, History, CreditCard, Calendar, ChevronDown, ChevronUp, ShoppingCart, Loader2, FileText, Square, CheckSquare, Wrench, Info, Construction, ChevronRight, X, RotateCcw } from 'lucide-react';
 import FormFiller from '@/components/forms/FormFiller';
 import { FormSchema } from '@/lib/form-types';
@@ -1439,16 +1439,14 @@ export function ClientProfileDetail({
                     const dayItems = selection.itemsByDay[deliveryDay] || {};
                     for (const [itemId, qty] of Object.entries(dayItems)) {
                         const item = menuItems.find(i => i.id === itemId);
-                        const itemPrice = item ? item.value : 0;
-                        total += itemPrice * (qty as number);
+                        total += getItemPoints(item) * (qty as number);
                     }
                 }
             } else if (selection.items) {
                 // Normal items structure
                 for (const [itemId, qty] of Object.entries(selection.items)) {
                     const item = menuItems.find(i => i.id === itemId);
-                    const itemPrice = item ? item.value : 0;
-                    total += itemPrice * (qty as number);
+                    total += getItemPoints(item) * (qty as number);
                 }
             }
         }
@@ -1553,9 +1551,7 @@ export function ClientProfileDetail({
                     const dayItems = selection.itemsByDay[day] || {};
                     for (const [itemId, qty] of Object.entries(dayItems)) {
                         const item = menuItems.find(i => i.id === itemId);
-                        const itemPrice = item ? (item.value || 0) : 0;
-                        const subtotal = itemPrice * (Number(qty) || 0);
-                        total += subtotal;
+                        total += getItemPoints(item) * (Number(qty) || 0);
                         countedItemIdsGlobally.add(itemId);
 
                     }
@@ -1569,9 +1565,7 @@ export function ClientProfileDetail({
 
                 for (const [itemId, qty] of Object.entries(selection.items)) {
                     const item = menuItems.find(i => i.id === itemId);
-                    const itemPrice = item ? (item.value || 0) : 0;
-                    const subtotal = itemPrice * (Number(qty) || 0) * daysCount;
-                    total += subtotal;
+                    total += getItemPoints(item) * (Number(qty) || 0) * daysCount;
                     countedItemIdsGlobally.add(itemId);
                 }
             }
@@ -1759,14 +1753,14 @@ export function ClientProfileDetail({
                                     const dayItems = s.itemsByDay[day] || {};
                                     for (const [itemId, qty] of Object.entries(dayItems)) {
                                         const item = menuItems.find(i => i.id === itemId);
-                                        t += (item?.value || 0) * (Number(qty) || 0);
+                                        t += getItemPoints(item) * (Number(qty) || 0);
                                     }
                                 }
                             } else if (s.items) {
                                 const daysCount = (s.selectedDeliveryDays?.length || 1);
                                 for (const [itemId, qty] of Object.entries(s.items)) {
                                     const item = menuItems.find(i => i.id === itemId);
-                                    t += (item?.value || 0) * (Number(qty) || 0) * daysCount;
+                                    t += getItemPoints(item) * (Number(qty) || 0) * daysCount;
                                 }
                             }
                         }
@@ -1776,7 +1770,7 @@ export function ClientProfileDetail({
                             if (c?.items) {
                                 for (const [itemId, qty] of Object.entries(c.items)) {
                                     const item = mealItems.find(i => i.id === itemId) || menuItems.find(i => i.id === itemId);
-                                    t += (item?.value || 0) * (Number(qty) || 0);
+                                    t += getItemPoints(item) * (Number(qty) || 0);
                                 }
                             }
                         }
@@ -1808,7 +1802,7 @@ export function ClientProfileDetail({
                             let dayValue = 0;
                             for (const [itemId, qty] of Object.entries(dayItems)) {
                                 const item = menuItems.find(i => i.id === itemId);
-                                dayValue += (item?.value || 0) * (Number(qty) || 0);
+                                dayValue += getItemPoints(item) * (Number(qty) || 0);
                             }
                             // Only require minimum for days that have items; skip days with 0 (don't order for that day)
                             if (dayValue > 0 && !isMeetingMinimum(dayValue, minMeals)) {
@@ -1820,7 +1814,7 @@ export function ClientProfileDetail({
                         let countValue = 0;
                         for (const [itemId, qty] of Object.entries(selection.items)) {
                             const item = menuItems.find(i => i.id === itemId);
-                            countValue += (item?.value || 0) * (Number(qty) || 0);
+                            countValue += getItemPoints(item) * (Number(qty) || 0);
                         }
 
                         if (!isMeetingMinimum(countValue, minMeals)) {
@@ -1849,7 +1843,7 @@ export function ClientProfileDetail({
                                     // Only count items in this category
                                     const item = catItems.find(i => i.id === itemId);
                                     if (item) {
-                                        catTotalValue += ((item.value || 0) * (qty as number));
+                                        catTotalValue += (getItemPoints(item) * (qty as number));
                                     }
                                 }
                             }

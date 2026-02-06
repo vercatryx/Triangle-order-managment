@@ -2,7 +2,7 @@
 
 import React from 'react';
 import { ClientProfile, Vendor, MenuItem, MealCategory, MealItem } from '@/lib/types';
-import { isMeetingMinimum, isMeetingExactTarget } from '@/lib/utils';
+import { isMeetingMinimum, isMeetingExactTarget, getItemPoints } from '@/lib/utils';
 import { Plus, Trash2, Calendar, Check, AlertTriangle, MessageSquare, Info, ChevronRight } from 'lucide-react';
 import { calculateVendorEffectiveDate } from '@/lib/order-dates';
 import TextareaAutosize from 'react-textarea-autosize';
@@ -151,8 +151,7 @@ export default function FoodServiceWidget({
                 const dayItems = selection.itemsByDay[deliveryDay] || {};
                 total += Object.entries(dayItems).reduce((sum: number, [itemId, qty]) => {
                     const item = menuItems.find(i => i.id === itemId);
-                    // Use item.value for meal count
-                    const multiplier = item ? (item.value || 0) : 0;
+                    const multiplier = getItemPoints(item);
                     const val = ((Number(qty) || 0) * multiplier);
                     return sum + val;
                 }, 0);
@@ -171,8 +170,7 @@ export default function FoodServiceWidget({
 
         for (const [itemId, qty] of Object.entries(selection.items)) {
             const item = menuItems.find(i => i.id === itemId);
-            // Use item.value for meal count
-            const multiplier = item ? (item.value || 0) : 0;
+            const multiplier = getItemPoints(item);
             const val = ((qty as number) || 0) * multiplier * daysCount;
             total += val;
         }
@@ -185,7 +183,7 @@ export default function FoodServiceWidget({
         const dayItems = selection.itemsByDay[day] || {};
         return Object.entries(dayItems).reduce((sum: number, [itemId, qty]) => {
             const item = menuItems.find(i => i.id === itemId);
-            const multiplier = item ? (item.value || 0) : 0;
+            const multiplier = getItemPoints(item);
             return sum + ((Number(qty) || 0) * multiplier);
         }, 0);
     }
@@ -224,8 +222,7 @@ export default function FoodServiceWidget({
                     total += Object.entries(items).reduce((sum: number, [itemId, qty]) => {
                         countedItemIdsGlobally.add(itemId);
                         const item = menuItems.find(i => i.id === itemId);
-                        // Use item.value for meal count
-                        const multiplier = item ? (item.value || 0) : 0;
+                        const multiplier = getItemPoints(item);
                         return sum + ((Number(qty) || 0) * multiplier);
                     }, 0);
                 }
@@ -241,7 +238,7 @@ export default function FoodServiceWidget({
                         if (countedItemIdsGlobally.has(itemId)) continue;
 
                         const item = mealItems.find(i => i.id === itemId);
-                        const multiplier = item ? (item.value || 0) : 0;
+                        const multiplier = getItemPoints(item);
                         total += (Number(qty) || 0) * multiplier;
                     }
                 }
@@ -1027,7 +1024,7 @@ export default function FoodServiceWidget({
                 for (const [itemId, qty] of Object.entries(config.items)) {
                     const item = mealItems.find(i => i.id === itemId);
                     if (item) {
-                        totalSelectedValue += ((item.value || 0) * (qty as number));
+                        totalSelectedValue += (getItemPoints(item) * (qty as number));
                     }
                 }
             }
@@ -1194,7 +1191,7 @@ export default function FoodServiceWidget({
                                 for (const [itemId, qty] of Object.entries(config.items)) {
                                     const item = catItems.find(i => i.id === itemId); // only check items in this cat
                                     if (item) {
-                                        categorySelectedValue += ((item.value || 0) * (qty as number));
+                                        categorySelectedValue += (getItemPoints(item) * (qty as number));
                                     }
                                 }
                             }

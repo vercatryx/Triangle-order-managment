@@ -300,18 +300,34 @@ export async function syncLocalDBFromSupabase(): Promise<void> {
             upcomingOrderBoxSelections = uboxData || [];
         }
 
-        // Fetch independent order tables
-        const { data: foodOrders } = await supabaseClient
-            .from('client_food_orders')
-            .select('*');
-
-        const { data: mealOrders } = await supabaseClient
-            .from('client_meal_orders')
-            .select('*');
-
-        const { data: boxOrders } = await supabaseClient
-            .from('client_box_orders')
-            .select('*');
+        // Derive from clients.upcoming_order (single source of truth)
+        const { data: clientsWithOrders } = await supabaseClient.from('clients').select('id, service_type, upcoming_order');
+        const foodOrders: any[] = [];
+        const mealOrders: any[] = [];
+        const boxOrders: any[] = [];
+        for (const c of clientsWithOrders || []) {
+            const uo = c.upcoming_order;
+            if (!uo) continue;
+            if (c.service_type === 'Food' && uo.deliveryDayOrders) {
+                foodOrders.push({ client_id: c.id, delivery_day_orders: uo.deliveryDayOrders, notes: uo.notes, case_id: uo.caseId });
+            }
+            if ((c.service_type === 'Food' || c.service_type === 'Meal') && uo.mealSelections) {
+                mealOrders.push({ client_id: c.id, meal_selections: uo.mealSelections, notes: uo.notes, case_id: uo.caseId });
+            }
+            if (c.service_type === 'Boxes' && uo.boxOrders?.length) {
+                for (const b of uo.boxOrders) {
+                    boxOrders.push({
+                        client_id: c.id,
+                        box_type_id: b.boxTypeId,
+                        vendor_id: b.vendorId,
+                        quantity: b.quantity ?? 1,
+                        items: b.items ?? {},
+                        item_notes: b.itemNotes,
+                        case_id: uo.caseId
+                    });
+                }
+            }
+        }
 
         // Update local database
         const localDB: LocalOrdersDB = {
@@ -404,20 +420,39 @@ export async function updateClientInLocalDB(clientId: string, isDeletion: boolea
             });
         }
 
-        // Fetch this client's orders and upcoming orders
         const [
             { data: orders },
             { data: upcomingOrders },
-            { data: foodOrders },
-            { data: mealOrders },
-            { data: boxOrders }
+            { data: clientRow }
         ] = await Promise.all([
             supabaseClient.from('orders').select('*').eq('client_id', clientId).in('status', ['pending', 'confirmed', 'processing']),
             supabaseClient.from('upcoming_orders').select('*').eq('client_id', clientId).eq('status', 'scheduled'),
-            supabaseClient.from('client_food_orders').select('*').eq('client_id', clientId),
-            supabaseClient.from('client_meal_orders').select('*').eq('client_id', clientId),
-            supabaseClient.from('client_box_orders').select('*').eq('client_id', clientId)
+            supabaseClient.from('clients').select('id, service_type, upcoming_order').eq('id', clientId).maybeSingle()
         ]);
+
+        const uo = clientRow?.upcoming_order;
+        let foodOrders: any[] = [];
+        let mealOrders: any[] = [];
+        let boxOrders: any[] = [];
+        if (clientRow && uo) {
+            if (clientRow.service_type === 'Food' && uo.deliveryDayOrders) {
+                foodOrders = [{ client_id: clientId, delivery_day_orders: uo.deliveryDayOrders, notes: uo.notes, case_id: uo.caseId }];
+            }
+            if ((clientRow.service_type === 'Food' || clientRow.service_type === 'Meal') && uo.mealSelections) {
+                mealOrders = [{ client_id: clientId, meal_selections: uo.mealSelections, notes: uo.notes, case_id: uo.caseId }];
+            }
+            if (clientRow.service_type === 'Boxes' && uo.boxOrders?.length) {
+                boxOrders = uo.boxOrders.map((b: any) => ({
+                    client_id: clientId,
+                    box_type_id: b.boxTypeId,
+                    vendor_id: b.vendorId,
+                    quantity: b.quantity ?? 1,
+                    items: b.items ?? {},
+                    item_notes: b.itemNotes,
+                    case_id: uo.caseId
+                }));
+            }
+        }
 
         const newOrderIds = (orders || []).map(o => o.id);
         const newUpcomingOrderIds = (upcomingOrders || []).map(o => o.id);

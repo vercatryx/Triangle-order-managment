@@ -554,13 +554,15 @@ export async function GET(request: NextRequest) {
                                                 if (Number(qty) <= 0) continue;
                                                 const mi = menuItems.find((m: any) => m.id === menuItemId);
                                                 const uv = mi ? parseFloat(mi.value?.toString() || '0') : 0;
+                                                const itemNotes = (vs as { itemNotes?: Record<string, string> }).itemNotes;
                                                 await supabase.from('order_items').insert({
                                                     order_id: newOrder.id,
                                                     vendor_selection_id: newVs.id,
                                                     menu_item_id: menuItemId,
                                                     quantity: qty,
                                                     unit_value: uv,
-                                                    total_value: uv * Number(qty)
+                                                    total_value: uv * Number(qty),
+                                                    notes: itemNotes?.[menuItemId] ?? null
                                                 });
                                             }
                                         }
@@ -675,7 +677,8 @@ export async function GET(request: NextRequest) {
                                                         menu_item_id: item.menu_item_id,
                                                         quantity: item.quantity,
                                                         unit_value: item.unit_value,
-                                                        total_value: item.total_value
+                                                        total_value: item.total_value,
+                                                        notes: item.notes ?? null
                                                     });
 
                                                     if (itemError) {
@@ -752,7 +755,8 @@ export async function GET(request: NextRequest) {
                                             quantity: bs.quantity,
                                             unit_value: bs.unit_value || 0,
                                             total_value: bs.total_value || 0,
-                                            items: bs.items || {}
+                                            items: bs.items || {},
+                                            item_notes: bs.item_notes ?? {}
                                         });
 
                                         if (bsError) {

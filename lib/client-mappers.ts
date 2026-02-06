@@ -38,9 +38,9 @@ export function mapClientFromDB(c: any): ClientProfile {
         authorizedAmount: c.authorized_amount ?? null,
         expirationDate: c.expiration_date || null,
         activeOrder: c.active_order, // Metadata matches structure
-        mealOrder: c.client_meal_orders && Array.isArray(c.client_meal_orders) && c.client_meal_orders.length > 0
-            ? c.client_meal_orders[0] // Take the first one if array (should be one-to-one effectively)
-            : (c.client_meal_orders && !Array.isArray(c.client_meal_orders) ? c.client_meal_orders : undefined),
+        mealOrder: (c.service_type === 'Food' || c.service_type === 'Meal') && c.upcoming_order?.mealSelections
+            ? { id: c.id, clientId: c.id, caseId: c.upcoming_order.caseId ?? null, mealSelections: c.upcoming_order.mealSelections, notes: c.upcoming_order.notes ?? null, created_at: undefined, updated_at: undefined, updated_by: undefined }
+            : undefined,
         locationId: c.location_id || null,
         createdAt: c.created_at,
         updatedAt: c.updated_at

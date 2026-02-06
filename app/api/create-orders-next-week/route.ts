@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { DAY_NAME_TO_NUMBER, getFirstDeliveryDateInWeek } from '@/lib/order-dates';
-import { sendSchedulingReport } from '@/lib/email-report';
+import { vendorSelectionsToDeliveryDayOrders } from '@/lib/upcoming-order-converter';
+import { sendSchedulingReport, sendVendorNextWeekSummary, type VendorBreakdownItem } from '@/lib/email-report';
 import { getNextCreationId } from '@/lib/actions';
 import * as XLSX from 'xlsx';
 
@@ -26,7 +27,7 @@ export async function POST(request: NextRequest) {
         unexpectedFailures: [] as { clientName: string; orderType: string; date: string; reason: string }[]
     };
 
-    type ClientReportRow = { clientId: string; clientName: string; ordersCreated: number; reason: string };
+    type ClientReportRow = { clientId: string; clientName: string; ordersCreated: number; reason: string; vendors: Set<string>; types: Set<string> };
     const clientReportMap = new Map<string, ClientReportRow>();
 
     try {
@@ -50,10 +51,6 @@ export async function POST(request: NextRequest) {
             mealItemsRes,
             boxTypesRes,
             clientsRes,
-            foodOrdersRes,
-            mealOrdersRes,
-            boxOrdersRes,
-            customOrdersRes,
             settingsRes
         ] = await Promise.all([
             supabase.from('vendors').select('id, name, email, service_type, delivery_days, delivery_frequency, is_active, minimum_meals, cutoff_hours'),
@@ -62,16 +59,13 @@ export async function POST(request: NextRequest) {
             supabase.from('breakfast_items').select('id, category_id, name, quota_value, price_each, is_active, vendor_id, image_url, sort_order'),
             supabase.from('box_types').select('id, name'),
             supabase.from('clients').select('id, full_name, status_id, service_type, parent_client_id, expiration_date, upcoming_order').is('parent_client_id', null),
-            supabase.from('client_food_orders').select('*'),
-            supabase.from('client_meal_orders').select('*'),
-            supabase.from('client_box_orders').select('*'),
-            Promise.resolve({ data: [] as any[] }), // Custom orders now from clients.upcoming_order below
-            supabase.from('app_settings').select('report_email').single()
+            supabase.from('app_settings').select('report_email, send_vendor_next_week_emails').single()
         ]);
 
         const allVendors = (vendorsRes.data || []).map((v: any) => ({
             id: v.id,
             name: v.name,
+            email: v.email || '',
             deliveryDays: v.delivery_days || [],
             cutoffDays: v.cutoff_hours ?? 0
         }));
@@ -84,9 +78,67 @@ export async function POST(request: NextRequest) {
         const allMealItems = (mealItemsRes.data || []).map((i: any) => ({ ...i, itemType: 'meal' as const }));
         const allBoxTypes = boxTypesRes.data || [];
         const clients = clientsRes.data || [];
-        const foodOrders = foodOrdersRes.data || [];
-        const mealOrders = mealOrdersRes.data || [];
-        const boxOrders = boxOrdersRes.data || [];
+
+        // Derive food/meal/box/custom from clients.upcoming_order only (single source of truth per UPCOMING_ORDER_SCHEMA)
+        // Type is determined by upcoming_order.serviceType, not clients.service_type.
+        // Food: serviceType 'Food' (or legacy missing), with deliveryDayOrders or vendorSelections
+        const foodOrders: { client_id: string; delivery_day_orders: Record<string, { vendorSelections?: any[] }>; notes: string | null; case_id: string | null }[] = [];
+        for (const c of clients || []) {
+            const uo = c.upcoming_order;
+            if (!uo || typeof uo !== 'object') continue;
+            // Only Food payloads (or legacy without serviceType) have delivery-day food data
+            const isFoodType = uo.serviceType === 'Food' || uo.serviceType === undefined;
+            if (!isFoodType) continue;
+
+            let delivery_day_orders: Record<string, { vendorSelections?: any[] }> | null = null;
+
+            if (uo.deliveryDayOrders && typeof uo.deliveryDayOrders === 'object' && Object.keys(uo.deliveryDayOrders).length > 0) {
+                delivery_day_orders = uo.deliveryDayOrders;
+            } else if (Array.isArray(uo.vendorSelections) && uo.vendorSelections.length > 0) {
+                const converted = vendorSelectionsToDeliveryDayOrders(uo.vendorSelections);
+                if (Object.keys(converted).length > 0) delivery_day_orders = converted;
+            }
+
+            if (delivery_day_orders && Object.keys(delivery_day_orders).length > 0) {
+                foodOrders.push({
+                    client_id: c.id,
+                    delivery_day_orders,
+                    notes: uo.notes ?? null,
+                    case_id: uo.caseId ?? null
+                });
+            }
+        }
+        // Meal: serviceType 'Food' or 'Meal' with mealSelections (schema allows both in same payload)
+        const mealOrders = (clients || [])
+            .filter((c: any) => {
+                const uo = c.upcoming_order;
+                if (!uo || typeof uo !== 'object' || !uo.mealSelections) return false;
+                return uo.serviceType === 'Food' || uo.serviceType === 'Meal';
+            })
+            .map((c: any) => ({
+                client_id: c.id,
+                meal_selections: c.upcoming_order.mealSelections,
+                notes: c.upcoming_order.notes ?? null,
+                case_id: c.upcoming_order.caseId ?? null
+            }));
+        // Boxes: serviceType 'Boxes' with boxOrders
+        const boxOrders: { client_id: string; box_type_id?: string; vendor_id?: string; quantity: number; items: any; item_notes?: any; case_id?: string; notes?: string }[] = [];
+        for (const c of clients || []) {
+            const uo = c.upcoming_order;
+            if (!uo || typeof uo !== 'object' || uo.serviceType !== 'Boxes' || !uo.boxOrders?.length) continue;
+            for (const b of uo.boxOrders) {
+                boxOrders.push({
+                    client_id: c.id,
+                    box_type_id: b.boxTypeId ?? undefined,
+                    vendor_id: b.vendorId ?? undefined,
+                    quantity: b.quantity ?? 1,
+                    items: b.items ?? {},
+                    item_notes: b.itemNotes,
+                    case_id: uo.caseId ?? undefined,
+                    notes: uo.notes
+                });
+            }
+        }
         // Custom orders from clients.upcoming_order (single source of truth)
         const customOrders = (clients || [])
             .filter((c: any) => c.upcoming_order && c.upcoming_order.serviceType === 'Custom')
@@ -103,6 +155,7 @@ export async function POST(request: NextRequest) {
             }))
             .filter((co: any) => co.delivery_day);
         const reportEmail = (settingsRes.data as any)?.report_email || '';
+        const sendVendorNextWeekEmails = (settingsRes.data as any)?.send_vendor_next_week_emails !== false;
 
         const vendorMap = new Map(allVendors.map((v: any) => [v.id, v]));
         const statusMap = new Map(allStatuses.map((s: any) => [s.id, s]));
@@ -129,13 +182,30 @@ export async function POST(request: NextRequest) {
                 clientId: c.id,
                 clientName: c.full_name,
                 ordersCreated: 0,
-                reason: ''
+                reason: '',
+                vendors: new Set(),
+                types: new Set()
             });
+        }
+
+        function recordReportOrder(clientId: string, vendorId: string, serviceType: string) {
+            const row = clientReportMap.get(clientId);
+            if (!row) return;
+            const vendor = vendorMap.get(vendorId);
+            if (vendor?.name) row.vendors.add(vendor.name);
+            row.types.add(serviceType);
         }
 
         const { data: maxOrderData } = await supabase.from('orders').select('order_number').order('order_number', { ascending: false }).limit(1).maybeSingle();
         let nextOrderNumber = Math.max(100000, (maxOrderData?.order_number || 0) + 1);
         const creationId = await getNextCreationId();
+
+        // Track orders by vendor and day for vendor emails and admin report
+        const vendorOrdersByDay: Record<string, Record<string, number>> = {};
+        function recordVendorOrder(vendorId: string, deliveryDateStr: string) {
+            if (!vendorOrdersByDay[vendorId]) vendorOrdersByDay[vendorId] = {};
+            vendorOrdersByDay[vendorId][deliveryDateStr] = (vendorOrdersByDay[vendorId][deliveryDateStr] || 0) + 1;
+        }
 
         async function createOrder(
             clientId: string,
@@ -204,8 +274,6 @@ export async function POST(request: NextRequest) {
                 if (row && !row.reason) row.reason = eligible.reason || 'Not eligible';
                 continue;
             }
-            const client = clientMap.get(fo.client_id);
-            if (client?.service_type !== 'Food') continue;
 
             const dayOrders = typeof fo.delivery_day_orders === 'string' ? JSON.parse(fo.delivery_day_orders) : fo.delivery_day_orders;
             if (!dayOrders) continue;
@@ -253,22 +321,16 @@ export async function POST(request: NextRequest) {
                         valueTotal,
                         itemsList.reduce((s, i) => s + i.quantity, 0),
                         (fo as any).notes || null,
-                        fo.case_id,
+                        fo.case_id ?? undefined,
                         assignedId
                     );
                     if (!newOrder) continue;
 
                     const { data: vs } = await supabase.from('order_vendor_selections').insert({ order_id: newOrder.id, vendor_id: sel.vendorId }).select().single();
                     if (vs) {
+                        recordVendorOrder(sel.vendorId, deliveryDateStr);
+                        recordReportOrder(fo.client_id, sel.vendorId, 'Food');
                         await supabase.from('order_items').insert(itemsList.map(i => ({ ...i, vendor_selection_id: vs.id, order_id: newOrder.id })));
-                        await supabase.from('order_items').insert({
-                            order_id: newOrder.id,
-                            vendor_selection_id: vs.id,
-                            menu_item_id: null,
-                            quantity: 1,
-                            unit_value: valueTotal,
-                            total_value: valueTotal
-                        });
                     }
                 }
             }
@@ -281,12 +343,11 @@ export async function POST(request: NextRequest) {
                 if (row && !row.reason) row.reason = eligible.reason || 'Not eligible';
                 continue;
             }
-            const client = clientMap.get(mo.client_id);
-            if (client?.service_type !== 'Food' && client?.service_type !== 'Meal') continue;
 
             const rawSelections = typeof mo.meal_selections === 'string' ? JSON.parse(mo.meal_selections) : mo.meal_selections;
             if (!rawSelections) continue;
 
+            // One Meal order per mealSelections entry (each can be a different vendor). Multiple meal orders per client per week are supported.
             for (const [mealType, group] of Object.entries(rawSelections)) {
                 const g = group as { vendorId?: string; items?: Record<string, number>; itemNotes?: Record<string, string> };
                 if (!g?.vendorId) continue;
@@ -335,49 +396,22 @@ export async function POST(request: NextRequest) {
 
                 const { data: vs } = await supabase.from('order_vendor_selections').insert({ order_id: newOrder.id, vendor_id: g.vendorId }).select().single();
                 if (vs) {
+                    recordVendorOrder(g.vendorId, deliveryDateStr);
+                    recordReportOrder(mo.client_id, g.vendorId, 'Meal');
                     await supabase.from('order_items').insert(itemsList.map(i => ({ ...i, vendor_selection_id: vs.id, order_id: newOrder.id })));
                 }
             }
         }
 
-        const boxCountByClient = new Map<string, number>();
+        // Group box orders by client so we create one combined Boxes order per client per week
+        const boxOrdersByClient = new Map<string, typeof boxOrders>();
         for (const bo of boxOrders) {
-            boxCountByClient.set(bo.client_id, (boxCountByClient.get(bo.client_id) || 0) + 1);
+            const list = boxOrdersByClient.get(bo.client_id) || [];
+            list.push(bo);
+            boxOrdersByClient.set(bo.client_id, list);
         }
 
-        for (const bo of boxOrders) {
-            const eligible = isClientEligible(bo.client_id);
-            if (!eligible.ok) {
-                const row = clientReportMap.get(bo.client_id);
-                if (row && !row.reason) row.reason = eligible.reason || 'Not eligible';
-                continue;
-            }
-            const client = clientMap.get(bo.client_id);
-            if (client?.service_type !== 'Boxes') continue;
-            if (!bo.vendor_id) {
-                const row = clientReportMap.get(bo.client_id);
-                if (row && !row.reason) row.reason = 'No vendor set for box order';
-                continue;
-            }
-
-            const vendor = vendorMap.get(bo.vendor_id);
-            if (!vendor) continue;
-
-            const deliveryDate = getFirstDeliveryDateInWeek(nextWeekStart, vendor.deliveryDays);
-            if (!deliveryDate) continue;
-            const deliveryDateStr = deliveryDate.toISOString().split('T')[0];
-            if (deliveryDateStr < weekStartStr || deliveryDateStr > weekEndStr) continue;
-
-            const limit = boxCountByClient.get(bo.client_id) || 1;
-            const { count } = await supabase
-                .from('orders')
-                .select('*', { count: 'exact', head: true })
-                .eq('client_id', bo.client_id)
-                .eq('service_type', 'Boxes')
-                .gte('scheduled_delivery_date', weekStartStr)
-                .lte('scheduled_delivery_date', weekEndStr);
-            if ((count ?? 0) >= limit) continue;
-
+        function computeBoxValue(bo: any): number {
             let boxValue = 0;
             const boxItems = typeof bo.items === 'string' ? JSON.parse(bo.items) : bo.items;
             if (boxItems) {
@@ -386,31 +420,98 @@ export async function POST(request: NextRequest) {
                     if (m) boxValue += (m.price_each || m.value || 0) * Number(qty);
                 }
             }
-            const totalBoxValue = boxValue * (bo.quantity || 1);
+            return boxValue;
+        }
 
+        for (const [clientId, clientBoxOrders] of boxOrdersByClient) {
+            const eligible = isClientEligible(clientId);
+            if (!eligible.ok) {
+                const row = clientReportMap.get(clientId);
+                if (row && !row.reason) row.reason = eligible.reason || 'Not eligible';
+                continue;
+            }
+
+            const hasNoVendor = clientBoxOrders.some((bo: any) => !bo.vendor_id);
+            if (hasNoVendor) {
+                const row = clientReportMap.get(clientId);
+                if (row && !row.reason) row.reason = 'No vendor set for box order';
+                continue;
+            }
+
+            // Earliest delivery date in the week among all box vendors
+            let earliestDelivery: Date | null = null;
+            for (const bo of clientBoxOrders) {
+                const vendor = vendorMap.get(bo.vendor_id);
+                if (!vendor) continue;
+                const d = getFirstDeliveryDateInWeek(nextWeekStart, vendor.deliveryDays);
+                if (d && (!earliestDelivery || d < earliestDelivery)) earliestDelivery = d;
+            }
+            if (!earliestDelivery) continue;
+            const deliveryDateStr = earliestDelivery.toISOString().split('T')[0];
+            if (deliveryDateStr < weekStartStr || deliveryDateStr > weekEndStr) continue;
+
+            const { count } = await supabase
+                .from('orders')
+                .select('*', { count: 'exact', head: true })
+                .eq('client_id', clientId)
+                .eq('service_type', 'Boxes')
+                .gte('scheduled_delivery_date', weekStartStr)
+                .lte('scheduled_delivery_date', weekEndStr);
+            if ((count ?? 0) >= 1) continue;
+
+            let totalOrderValue = 0;
+            let totalBoxCount = 0;
+            const selectionsToInsert: { vendor_id: string; box_type_id: string | null; quantity: number; unit_value: number; total_value: number; items: any; item_notes?: any }[] = [];
+            for (const bo of clientBoxOrders) {
+                if (!bo.vendor_id) continue;
+                const vendor = vendorMap.get(bo.vendor_id);
+                if (!vendor) continue;
+                const boxValue = computeBoxValue(bo);
+                const qty = bo.quantity || 1;
+                const totalBoxValue = boxValue * qty;
+                totalOrderValue += totalBoxValue;
+                totalBoxCount += qty;
+                const boxTypeId = bo.box_type_id && bo.box_type_id !== '' ? bo.box_type_id : null;
+                selectionsToInsert.push({
+                    vendor_id: bo.vendor_id,
+                    box_type_id: boxTypeId,
+                    quantity: qty,
+                    unit_value: boxValue,
+                    total_value: totalBoxValue,
+                    items: bo.items,
+                    item_notes: bo.item_notes ?? {}
+                });
+            }
+            if (selectionsToInsert.length === 0) continue;
+
+            const firstBo = clientBoxOrders[0];
             const assignedId = nextOrderNumber++;
             const newOrder = await createOrder(
-                bo.client_id,
+                clientId,
                 'Boxes',
-                deliveryDate,
-                totalBoxValue,
-                bo.quantity || 1,
-                (bo as any).notes || null,
-                bo.case_id,
+                earliestDelivery,
+                totalOrderValue,
+                totalBoxCount,
+                (firstBo as any).notes || null,
+                firstBo.case_id,
                 assignedId
             );
             if (!newOrder) continue;
 
-            const boxTypeId = bo.box_type_id && bo.box_type_id !== '' ? bo.box_type_id : null;
-            await supabase.from('order_box_selections').insert({
-                order_id: newOrder.id,
-                vendor_id: bo.vendor_id,
-                box_type_id: boxTypeId,
-                quantity: bo.quantity,
-                unit_value: boxValue,
-                total_value: totalBoxValue,
-                items: bo.items
-            });
+            for (const sel of selectionsToInsert) {
+                recordVendorOrder(sel.vendor_id, deliveryDateStr);
+                recordReportOrder(clientId, sel.vendor_id, 'Boxes');
+                await supabase.from('order_box_selections').insert({
+                    order_id: newOrder.id,
+                    vendor_id: sel.vendor_id,
+                    box_type_id: sel.box_type_id,
+                    quantity: sel.quantity,
+                    unit_value: sel.unit_value,
+                    total_value: sel.total_value,
+                    items: sel.items,
+                    item_notes: sel.item_notes ?? {}
+                });
+            }
         }
 
         if (customOrders.length > 0) {
@@ -434,13 +535,19 @@ export async function POST(request: NextRequest) {
                 if (await orderExists(co.client_id, deliveryDateStr, 'Custom', vendorId)) continue;
 
                 const totalValue = Number(co.total_value) || 0;
+                const rawName = co.custom_name || co.upcoming_order?.custom_name || 'Custom Item';
+                const itemNames = rawName.split(',').map((s: string) => s.trim()).filter(Boolean);
+                const names = itemNames.length >= 1 ? itemNames : ['Custom Item'];
+                const itemCount = names.length;
+                const valuePerItem = totalValue / itemCount;
+
                 const assignedId = nextOrderNumber++;
                 const newOrder = await createOrder(
                     co.client_id,
                     'Custom',
                     deliveryDate,
                     totalValue,
-                    1,
+                    itemCount,
                     co.notes || null,
                     co.case_id,
                     assignedId
@@ -449,17 +556,25 @@ export async function POST(request: NextRequest) {
 
                 const { data: newVs } = await supabase.from('order_vendor_selections').insert({ order_id: newOrder.id, vendor_id: vendorId }).select().single();
                 if (newVs) {
-                    await supabase.from('order_items').insert({
-                        order_id: newOrder.id,
-                        vendor_selection_id: newVs.id,
-                        menu_item_id: null,
-                        custom_name: co.custom_name || co.upcoming_order?.custom_name || 'Custom Item',
-                        custom_price: co.total_value,
-                        quantity: 1,
-                        unit_value: co.total_value,
-                        total_value: co.total_value,
-                        notes: co.notes
+                    recordVendorOrder(vendorId, deliveryDateStr);
+                    recordReportOrder(co.client_id, vendorId, 'Custom');
+                    const itemsToInsert = names.map((name: string, i: number) => {
+                        // Put rounding remainder on last item so total sums exactly
+                        const isLast = i === names.length - 1;
+                        const unitVal = isLast ? totalValue - valuePerItem * (names.length - 1) : valuePerItem;
+                        return {
+                            order_id: newOrder.id,
+                            vendor_selection_id: newVs.id,
+                            menu_item_id: null,
+                            custom_name: name,
+                            custom_price: unitVal,
+                            quantity: 1,
+                            unit_value: unitVal,
+                            total_value: unitVal,
+                            notes: i === 0 ? co.notes : null
+                        };
                     });
+                    await supabase.from('order_items').insert(itemsToInsert);
                 }
             }
         }
@@ -467,10 +582,12 @@ export async function POST(request: NextRequest) {
         for (const row of clientReportMap.values()) {
             if (row.ordersCreated === 0 && !row.reason) {
                 const client = clientMap.get(row.clientId);
-                if (client?.service_type === 'Food') row.reason = 'No upcoming food orders';
-                else if (client?.service_type === 'Meal' || client?.service_type === 'Food') row.reason = 'No upcoming meal orders';
-                else if (client?.service_type === 'Boxes') row.reason = 'No upcoming box orders';
-                else if (client?.service_type === 'Custom') row.reason = 'No upcoming custom orders';
+                const uo = client?.upcoming_order;
+                const st = uo && typeof uo === 'object' ? (uo.serviceType as string) : undefined;
+                if (st === 'Food') row.reason = 'No upcoming food orders';
+                else if (st === 'Meal') row.reason = 'No upcoming meal orders';
+                else if (st === 'Boxes') row.reason = 'No upcoming box orders';
+                else if (st === 'Custom') row.reason = 'No upcoming custom orders';
                 else row.reason = 'No upcoming orders';
             }
         }
@@ -479,12 +596,14 @@ export async function POST(request: NextRequest) {
             'Client ID': row.clientId,
             'Client Name': row.clientName,
             'Orders Created': row.ordersCreated,
-            'Reason (if none)': row.reason || '-'
+            'Vendor(s)': Array.from(row.vendors).sort().join(', ') || '-',
+            'Type(s)': Array.from(row.types).sort().join(', ') || '-',
+            'Reason (if no orders)': row.reason || '-'
         }));
 
         const wb = XLSX.utils.book_new();
         const ws = XLSX.utils.json_to_sheet(excelData);
-        ws['!cols'] = [{ wch: 15 }, { wch: 30 }, { wch: 18 }, { wch: 50 }];
+        ws['!cols'] = [{ wch: 15 }, { wch: 30 }, { wch: 15 }, { wch: 35 }, { wch: 25 }, { wch: 45 }];
         XLSX.utils.book_append_sheet(wb, ws, 'Next Week Report');
 
         const excelBuffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
@@ -494,11 +613,39 @@ export async function POST(request: NextRequest) {
             contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
         };
 
+        // Build vendor breakdown for admin report and vendor emails
+        const vendorBreakdown: VendorBreakdownItem[] = [];
+        for (const vendorId of Object.keys(vendorOrdersByDay)) {
+            const byDay = vendorOrdersByDay[vendorId];
+            const total = Object.values(byDay).reduce((s, n) => s + n, 0);
+            if (total === 0) continue;
+            const vendor = vendorMap.get(vendorId) as { id: string; name: string; email?: string } | undefined;
+            vendorBreakdown.push({
+                vendorId,
+                vendorName: vendor?.name || vendorId,
+                byDay,
+                total
+            });
+        }
+        vendorBreakdown.sort((a, b) => (a.vendorName || '').localeCompare(b.vendorName || ''));
+
+        // Email each vendor their own breakdown (by day) when setting is enabled
+        if (sendVendorNextWeekEmails) {
+            for (const v of vendorBreakdown) {
+                const vendor = vendorMap.get(v.vendorId) as { email?: string } | undefined;
+                const email = vendor?.email?.trim();
+                if (email) {
+                    await sendVendorNextWeekSummary(v.vendorName, email, weekStartStr, weekEndStr, v.byDay);
+                }
+            }
+        }
+
         const reportPayload = {
             ...report,
             creationId,
             orderCreationDate: `Next week: ${weekStartStr} to ${weekEndStr}`,
-            orderCreationDay: ''
+            orderCreationDay: '',
+            vendorBreakdown
         };
         if (reportEmail) {
             await sendSchedulingReport(reportPayload, reportEmail, [excelAttachment]);

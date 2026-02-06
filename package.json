@@ -32,6 +32,7 @@
     "pdf-lib": "^1.17.1",
     "qrcode": "^1.5.4",
     "react": "^19.2.3",
+    "react-day-picker": "^9.13.0",
     "react-dom": "^19.2.3",
     "react-easy-crop": "^5.5.6",
     "react-image-crop": "^11.0.10",

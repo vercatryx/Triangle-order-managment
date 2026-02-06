@@ -141,3 +141,16 @@ export function getWeekOptions(weeksBack: number = 8, weeksForward: number = 2):
     
     return options;
 }
+
+/**
+ * Effective points for a menu/meal item for display and quota calculations.
+ * Use this instead of item.value so we match admin: when value is 0 or missing, use quotaValue (from DB quota_value).
+ * @param item - MenuItem or MealItem (or any { value?, quotaValue? })
+ * @returns Points per unit (value if > 0, else quotaValue, else 0)
+ */
+export function getItemPoints(item: { value?: number; quotaValue?: number } | null | undefined): number {
+    if (!item) return 0;
+    const v = Number(item.value);
+    const q = Number((item as { quotaValue?: number }).quotaValue);
+    return v > 0 ? v : (q || 0);
+}

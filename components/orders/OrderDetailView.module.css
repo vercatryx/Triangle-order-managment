@@ -208,6 +208,12 @@
     padding: 1rem;
 }
 
+.emptyMessage {
+    color: var(--text-secondary);
+    font-size: 0.95rem;
+    margin: 0 0 1rem 0;
+}
+
 .vendorSection {
     margin-bottom: 2rem;
 }
@@ -263,6 +269,18 @@
     margin-top: 1rem;
     font-weight: 600;
     color: var(--text-primary);
+}
+
+.boxBlock {
+    margin-bottom: 1.5rem;
+    padding-bottom: 1.5rem;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.boxBlock:last-of-type {
+    margin-bottom: 0;
+    padding-bottom: 0;
+    border-bottom: none;
 }
 
 .boxDetails {

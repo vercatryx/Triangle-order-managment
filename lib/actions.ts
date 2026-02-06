@@ -1296,7 +1296,8 @@ export const getSettings = reactCache(async function () {
         weeklyCutoffDay: data.weekly_cutoff_day,
         weeklyCutoffTime: data.weekly_cutoff_time,
         reportEmail: data.report_email || '',
-        enablePasswordlessLogin: data.enable_passwordless_login
+        enablePasswordlessLogin: data.enable_passwordless_login,
+        sendVendorNextWeekEmails: data.send_vendor_next_week_emails !== false
     };
 });
 
@@ -1313,7 +1314,8 @@ export async function updateSettings(settings: AppSettings) {
             weekly_cutoff_day: settings.weeklyCutoffDay,
             weekly_cutoff_time: settings.weeklyCutoffTime,
             report_email: settings.reportEmail || null,
-            enable_passwordless_login: settings.enablePasswordlessLogin
+            enable_passwordless_login: settings.enablePasswordlessLogin,
+            send_vendor_next_week_emails: settings.sendVendorNextWeekEmails
         })
         .neq('id', '00000000-0000-0000-0000-000000000000'); // Hack to update all rows
 
@@ -4517,10 +4519,9 @@ export async function processUpcomingOrders() {
                         quantity: bs.quantity,
                         unit_value: bs.unit_value || 0,
                         total_value: bs.total_value || 0,
-                        items: bs.items || {}
+                        items: bs.items || {},
+                        item_notes: bs.item_notes ?? {}
                     };
-
-
 
                     const { error: boxInsertError } = await supabaseClient.from('order_box_selections').insert(insertData);
 
@@ -5305,10 +5306,10 @@ export async function getClientsPaginated(page: number, pageSize: number, query:
             return { clients: [], total: 0 };
         }
 
-        // Fetch clients
+        // Fetch clients (upcoming_order is single source of truth)
         let queryBuilder = supabase
             .from('clients')
-            .select('*, client_meal_orders(*)', { count: 'exact' })
+            .select('*, upcoming_order', { count: 'exact' })
             .in('id', clientIdsNeedingVendor);
 
         if (query) {
@@ -5330,10 +5331,10 @@ export async function getClientsPaginated(page: number, pageSize: number, query:
         };
     }
 
-    // Default behavior - get all clients
+    // Default behavior - get all clients (upcoming_order is single source of truth)
     let queryBuilder = supabase
         .from('clients')
-        .select('*, client_meal_orders(*)', { count: 'exact' });
+        .select('*, upcoming_order', { count: 'exact' });
 
     if (query) {
         queryBuilder = queryBuilder.ilike('full_name', `% ${query}% `);
@@ -5450,19 +5451,19 @@ export async function getOrdersByVendor(vendorId: string) {
 
     try {
         // 1. Fetch completed orders (from orders table)
-        // Include Food, Boxes, and Equipment orders
+        // Supabase defaults to 1000 rows; use a higher limit so we get all order IDs for this vendor
         const { data: foodOrderIds } = await supabaseClient
             .from('order_vendor_selections')
             .select('order_id')
-            .eq('vendor_id', vendorId);
+            .eq('vendor_id', vendorId)
+            .limit(10000);
 
         const { data: boxOrderIds } = await supabaseClient
             .from('order_box_selections')
             .select('order_id')
-            .eq('vendor_id', vendorId);
+            .eq('vendor_id', vendorId)
+            .limit(10000);
 
-        // Also get Equipment orders - they use order_vendor_selections too
-        // But we need to filter by service_type='Equipment' in the orders table
         const orderIds = Array.from(new Set([
             ...(foodOrderIds?.map(o => o.order_id) || []),
             ...(boxOrderIds?.map(o => o.order_id) || [])
@@ -5470,15 +5471,21 @@ export async function getOrdersByVendor(vendorId: string) {
 
         let orders: any[] = [];
         if (orderIds.length > 0) {
-            const { data: ordersData } = await supabaseClient
-                .from('orders')
-                .select('*')
-                .in('id', orderIds)
-                .order('created_at', { ascending: false });
+            // Fetch orders in batches if needed (Supabase returns max 1000 per request by default)
+            const batchSize = 1000;
+            let ordersData: any[] = [];
+            for (let i = 0; i < orderIds.length; i += batchSize) {
+                const batch = orderIds.slice(i, i + batchSize);
+                const { data: batchData } = await supabaseClient
+                    .from('orders')
+                    .select('*')
+                    .in('id', batch)
+                    .order('created_at', { ascending: false })
+                    .limit(batchSize);
+                if (batchData?.length) ordersData = ordersData.concat(batchData);
+            }
 
-            if (ordersData) {
-                // Filter to only include orders for this vendor
-                // For Equipment orders, check if vendor_id matches in notes
+            if (ordersData.length > 0) {
                 const filteredOrders = ordersData.filter(order => {
                     if (order.service_type === 'Equipment') {
                         try {
@@ -5488,7 +5495,6 @@ export async function getOrdersByVendor(vendorId: string) {
                             return false;
                         }
                     }
-                    // For Food and Boxes, they're already filtered by vendor_selections/box_selections
                     return true;
                 });
 
@@ -5499,10 +5505,175 @@ export async function getOrdersByVendor(vendorId: string) {
             }
         }
 
+        /** Normalize delivery date from multiple possible sources so UI can group by date. */
+        function normalizeDeliveryDate(o: any): string | null {
+            const s = o.scheduled_delivery_date;
+            if (s) return typeof s === 'string' ? s.split('T')[0] : (s as Date)?.toISOString?.()?.split('T')[0] ?? null;
+            const a = o.actual_delivery_date;
+            if (a) return typeof a === 'string' ? a.split('T')[0] : (a as Date)?.toISOString?.()?.split('T')[0] ?? null;
+            const c = o.created_at;
+            if (c) return typeof c === 'string' ? c.split('T')[0] : new Date(c).toISOString().split('T')[0];
+            return null;
+        }
+
+        // 2. Fetch upcoming orders for this vendor (scheduled but not yet placed)
+        const { data: upcomingFoodIds } = await supabaseClient
+            .from('upcoming_order_vendor_selections')
+            .select('upcoming_order_id')
+            .eq('vendor_id', vendorId)
+            .limit(10000);
+
+        const { data: upcomingBoxIds } = await supabaseClient
+            .from('upcoming_order_box_selections')
+            .select('upcoming_order_id')
+            .eq('vendor_id', vendorId)
+            .limit(10000);
+
+        const upcomingOrderIds = Array.from(new Set([
+            ...(upcomingFoodIds?.map(o => o.upcoming_order_id) || []),
+            ...(upcomingBoxIds?.map(o => o.upcoming_order_id) || [])
+        ]));
+
+        if (upcomingOrderIds.length > 0) {
+            const batchSize = 1000;
+            let upcomingRows: any[] = [];
+            for (let i = 0; i < upcomingOrderIds.length; i += batchSize) {
+                const batch = upcomingOrderIds.slice(i, i + batchSize);
+                const { data: batchData } = await supabaseClient
+                    .from('upcoming_orders')
+                    .select('*')
+                    .in('id', batch)
+                    .eq('status', 'scheduled')
+                    .limit(batchSize);
+                if (batchData?.length) upcomingRows = upcomingRows.concat(batchData);
+            }
+
+            const vendors = await getVendors();
+            const now = await getCurrentTime();
+            for (const uo of upcomingRows) {
+                let scheduledDeliveryDateStr: string | null = null;
+                if (uo.delivery_day) {
+                    const calculatedDate = getNextDeliveryDateForDay(
+                        uo.delivery_day,
+                        vendors,
+                        vendorId,
+                        now,
+                        now
+                    );
+                    if (calculatedDate) scheduledDeliveryDateStr = calculatedDate.toISOString().split('T')[0];
+                }
+                if (!scheduledDeliveryDateStr && uo.take_effect_date) {
+                    scheduledDeliveryDateStr = typeof uo.take_effect_date === 'string'
+                        ? uo.take_effect_date.split('T')[0]
+                        : null;
+                }
+                const orderLike = {
+                    id: uo.id,
+                    order_number: uo.order_number,
+                    client_id: uo.client_id,
+                    service_type: uo.service_type,
+                    notes: uo.notes,
+                    scheduled_delivery_date: scheduledDeliveryDateStr,
+                    total_items: uo.total_items ?? 0,
+                    total_value: uo.total_value ?? 0,
+                    created_at: uo.created_at
+                };
+                const processed = await processVendorOrderDetails(supabaseClient, orderLike, vendorId, true);
+                orders.push({ ...processed, orderType: 'upcoming' });
+            }
+        }
+
+        // Ensure every order has a display delivery date (scheduled > actual > created_at) so grouping works
+        orders = orders.map(o => {
+            const normalized = normalizeDeliveryDate(o);
+            return normalized ? { ...o, scheduled_delivery_date: normalized } : o;
+        });
+
+        // Sort combined list: by scheduled_delivery_date desc, then by created_at desc
+        orders.sort((a, b) => {
+            const dateA = a.scheduled_delivery_date ? new Date(a.scheduled_delivery_date).getTime() : 0;
+            const dateB = b.scheduled_delivery_date ? new Date(b.scheduled_delivery_date).getTime() : 0;
+            if (dateB !== dateA) return dateB - dateA;
+            const createdA = a.created_at ? new Date(a.created_at).getTime() : 0;
+            const createdB = b.created_at ? new Date(b.created_at).getTime() : 0;
+            return createdB - createdA;
+        });
+
         return orders;
 
     } catch (err) {
         console.error('Error in getOrdersByVendor:', err);
+        return [];
+    }
+}
+
+/** Delivery date summary for a vendor (DB-level aggregation). Use for vendor detail page list. */
+export async function getVendorDeliveryDateSummary(vendorId: string): Promise<Array<{ scheduled_delivery_date: string | null; order_count: number; total_items: number }>> {
+    if (!vendorId) return [];
+
+    const session = await getSession();
+    if (!session || (session.role !== 'admin' && session.userId !== vendorId)) {
+        console.error('Unauthorized access to getVendorDeliveryDateSummary');
+        return [];
+    }
+
+    let supabaseClient = supabase;
+    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    if (serviceRoleKey) {
+        supabaseClient = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, serviceRoleKey, { auth: { persistSession: false } });
+    }
+
+    try {
+        const { data, error } = await supabaseClient.rpc('get_vendor_delivery_date_summary', { p_vendor_id: vendorId });
+        if (error) {
+            console.error('get_vendor_delivery_date_summary RPC error:', error);
+            return [];
+        }
+        return (data || []).map((row: any) => ({
+            scheduled_delivery_date: row.scheduled_delivery_date ? String(row.scheduled_delivery_date).split('T')[0] : null,
+            order_count: Number(row.order_count ?? 0),
+            total_items: Number(row.total_items ?? 0)
+        }));
+    } catch (err) {
+        console.error('Error in getVendorDeliveryDateSummary:', err);
+        return [];
+    }
+}
+
+/** Orders for a single delivery date (DB-level filter). Use for vendor delivery page and exports. */
+export async function getOrdersByVendorForDate(vendorId: string, deliveryDate: string | null): Promise<any[]> {
+    if (!vendorId) return [];
+
+    const session = await getSession();
+    if (!session || (session.role !== 'admin' && session.userId !== vendorId)) {
+        console.error('Unauthorized access to getOrdersByVendorForDate');
+        return [];
+    }
+
+    let supabaseClient = supabase;
+    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    if (serviceRoleKey) {
+        supabaseClient = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, serviceRoleKey, { auth: { persistSession: false } });
+    }
+
+    try {
+        const dateArg = deliveryDate && deliveryDate !== 'no-date' ? deliveryDate : null;
+        const { data: ordersData, error } = await supabaseClient.rpc('get_orders_by_vendor_and_date', {
+            p_vendor_id: vendorId,
+            p_delivery_date: dateArg
+        });
+        if (error) {
+            console.error('get_orders_by_vendor_and_date RPC error:', error);
+            return [];
+        }
+        const rows = Array.isArray(ordersData) ? ordersData : [];
+        const orders = await Promise.all(rows.map(async (order: any) => {
+            const processed = await processVendorOrderDetails(supabaseClient, order, vendorId, false);
+            return { ...processed, orderType: 'completed' as const };
+        }));
+        return orders;
+    } catch (err) {
+        console.error('Error in getOrdersByVendorForDate:', err);
         return [];
     }
 }
@@ -5513,18 +5684,23 @@ export async function processVendorOrderDetails(supabaseClient: any, order: any,
     const itemsTable = isUpcoming ? 'upcoming_order_items' : 'order_items';
     const boxSelectionsTable = isUpcoming ? 'upcoming_order_box_selections' : 'order_box_selections';
 
+    const orderId = order?.id ?? order?.order_id;
+    const clientId = order?.client_id ?? order?.clientId;
+
     const result = {
         ...order,
-        orderNumber: order.order_number, // Ensure mapped for UI
+        id: orderId ?? order?.id,
+        client_id: clientId ?? order?.client_id,
+        orderNumber: order?.order_number ?? order?.orderNumber,
         items: [],
         boxSelection: null
     };
 
-    if (order.service_type === 'Food' || order.service_type === 'Meal' || order.service_type === 'Custom') {
+        if (order.service_type === 'Food' || order.service_type === 'Meal' || order.service_type === 'Custom') {
         const { data: vs } = await supabaseClient
             .from(vendorSelectionsTable)
             .select('id')
-            .eq(orderIdField, order.id)
+            .eq(orderIdField, orderId)
             .eq('vendor_id', vendorId)
             .maybeSingle();
 
@@ -5554,65 +5730,152 @@ export async function processVendorOrderDetails(supabaseClient: any, order: any,
             console.error('Error parsing equipment order notes:', e);
         }
     } else if (order.service_type === 'Boxes') {
-        const { data: bs } = await supabaseClient
+        if (!orderId) {
+            return result;
+        }
+        const { data: boxSelections } = await supabaseClient
             .from(boxSelectionsTable)
             .select('*')
-            .eq(orderIdField, order.id)
-            .eq('vendor_id', vendorId)
-            .maybeSingle();
+            .eq(orderIdField, orderId)
+            .eq('vendor_id', vendorId);
 
-        if (bs) {
-            result.boxSelection = bs;
+        const bsList = Array.isArray(boxSelections) ? boxSelections : [];
+        if (bsList.length > 0) {
+            const first = bsList[0];
+            // Keep boxes separate: no merging. Each box keeps its own items and item_notes.
+            const parsedBoxes = bsList.map((bs: any) => {
+                let items: Record<string, number> = {};
+                const rawItems = bs.items;
+                if (rawItems != null) {
+                    if (typeof rawItems === 'string') {
+                        try {
+                            const parsed = JSON.parse(rawItems) as Record<string, unknown> || {};
+                            Object.entries(parsed).forEach(([itemId, qty]: [string, any]) => {
+                                const n = typeof qty === 'object' && qty != null && 'quantity' in qty ? Number((qty as any).quantity) : Number(qty) || 0;
+                                items[itemId] = n;
+                            });
+                        } catch {
+                            // leave items {}
+                        }
+                    } else if (typeof rawItems === 'object') {
+                        Object.entries(rawItems as Record<string, unknown>).forEach(([itemId, qty]: [string, any]) => {
+                            const n = typeof qty === 'object' && qty != null && 'quantity' in qty ? Number((qty as any).quantity) : Number(qty) || 0;
+                            items[itemId] = n;
+                        });
+                    }
+                }
+                let itemNotes: Record<string, string> = {};
+                const rawNotes = bs.item_notes ?? bs.itemNotes;
+                if (rawNotes != null) {
+                    if (typeof rawNotes === 'string') {
+                        try {
+                            itemNotes = (JSON.parse(rawNotes) as Record<string, string>) || {};
+                        } catch {
+                            // leave itemNotes {}
+                        }
+                    } else if (typeof rawNotes === 'object') {
+                        itemNotes = (rawNotes as Record<string, string>) || {};
+                    }
+                }
+                return {
+                    ...bs,
+                    items,
+                    item_notes: itemNotes,
+                    itemNotes
+                };
+            });
 
-            // If items field is empty, try to fetch from client's upcoming_order
-                if (!bs.items || Object.keys(bs.items).length === 0) {
-                    const { data: clientData } = await supabaseClient
-                        .from('clients')
-                        .select('upcoming_order')
-                        .eq('id', order.client_id)
-                        .maybeSingle();
+            // Optional: fill notes/items from upcoming_order per box (by index) when empty
+            if (clientId) {
+                const { data: clientRow } = await supabaseClient.from('clients').select('upcoming_order').eq('id', clientId).maybeSingle();
+                const uo = clientRow?.upcoming_order && typeof clientRow.upcoming_order === 'object' ? (clientRow.upcoming_order as any) : null;
+                const boxOrders = uo?.boxOrders && Array.isArray(uo.boxOrders) ? uo.boxOrders.filter((b: any) => b.vendorId === first.vendor_id) : [];
+                for (let i = 0; i < parsedBoxes.length; i++) {
+                    const box = boxOrders[i];
+                    if (!box) continue;
+                    if (Object.keys(parsedBoxes[i].item_notes).length === 0 && box.itemNotes && typeof box.itemNotes === 'object') {
+                        parsedBoxes[i].item_notes = { ...box.itemNotes };
+                        parsedBoxes[i].itemNotes = parsedBoxes[i].item_notes;
+                    }
+                    if (Object.keys(parsedBoxes[i].items).length === 0 && box.items && typeof box.items === 'object') {
+                        const fallback: Record<string, number> = {};
+                        Object.entries(box.items).forEach(([itemId, qty]: [string, any]) => {
+                            const n = typeof qty === 'object' && qty != null && 'quantity' in qty ? Number(qty.quantity) : Number(qty) || 0;
+                            if (n > 0) fallback[itemId] = n;
+                        });
+                        parsedBoxes[i].items = fallback;
+                    }
+                }
+            }
 
-                if (clientData && clientData.upcoming_order) {
-                    const uo = clientData.upcoming_order;
-                    const items = uo.boxOrders?.[0]?.items ?? uo.items;
-                    if (uo.serviceType === 'Boxes' && items && Object.keys(items).length > 0) {
-                        result.boxSelection = {
-                            ...bs,
-                            items
-                        };
+            result.boxSelections = parsedBoxes;
+            result.boxSelection = parsedBoxes[0];
+            // Total items = sum of all item quantities across all boxes
+            let totalBoxItems = 0;
+            for (const box of parsedBoxes) {
+                for (const qty of Object.values(box.items)) {
+                    totalBoxItems += Number(qty) || 0;
+                }
+            }
+            result.total_items = totalBoxItems;
+
+            // Legacy fallback: single box with no items -> try order_items / vendor_selection
+            if (parsedBoxes.length === 1 && Object.keys(parsedBoxes[0].items).length === 0 && first.vendor_id) {
+                const { data: clientData } = await supabaseClient
+                    .from('clients')
+                    .select('upcoming_order')
+                    .eq('id', clientId)
+                    .maybeSingle();
+
+                if (clientData?.upcoming_order && typeof clientData.upcoming_order === 'object') {
+                    const uo = clientData.upcoming_order as { serviceType?: string; boxOrders?: Array<{ vendorId?: string; items?: Record<string, unknown> }>; items?: Record<string, unknown> };
+                    if (uo.serviceType === 'Boxes' && Array.isArray(uo.boxOrders)) {
+                        const fallbackItems: Record<string, number> = {};
+                        for (const box of uo.boxOrders) {
+                            if (box.vendorId !== vendorId) continue;
+                            const items = box.items && typeof box.items === 'object' ? box.items : {};
+                            Object.entries(items).forEach(([itemId, qty]: [string, unknown]) => {
+                                const n = typeof qty === 'object' && qty != null && 'quantity' in (qty as object) ? Number((qty as { quantity: number }).quantity) : Number(qty) || 0;
+                                if (n > 0) fallbackItems[itemId] = (fallbackItems[itemId] || 0) + n;
+                            });
+                        }
+                        if (Object.keys(fallbackItems).length > 0) {
+                            result.boxSelections[0].items = fallbackItems;
+                            result.boxSelection = result.boxSelections[0];
+                        }
+                    }
+                    if (Object.keys(result.boxSelections[0].items).length === 0 && uo.boxOrders?.[0]?.items) {
+                        const items = uo.boxOrders[0].items as Record<string, number>;
+                        if (Object.keys(items).length > 0) {
+                            result.boxSelections[0].items = typeof items === 'object' ? items : {};
+                            result.boxSelection = result.boxSelections[0];
+                        }
                     }
                 }
 
-                // If still empty, try to fetch items from order_items table as fallback (for migrated data)
-                if ((!result.boxSelection.items || Object.keys(result.boxSelection.items).length === 0) && bs.vendor_id) {
-                    // Find the vendor_selection for the box vendor in this order
+                if (Object.keys(result.boxSelections[0].items).length === 0) {
                     const { data: vendorSelection } = await supabaseClient
                         .from(vendorSelectionsTable)
                         .select('id')
-                        .eq(orderIdField, order.id)
+                        .eq(orderIdField, orderId)
                         .eq('vendor_id', vendorId)
                         .maybeSingle();
 
                     if (vendorSelection) {
-                        // Fetch box items - both upcoming_order_items and order_items use 'vendor_selection_id' field
                         const { data: boxItems } = await supabaseClient
                             .from(itemsTable)
                             .select('*')
                             .eq('vendor_selection_id', vendorSelection.id);
 
                         if (boxItems && boxItems.length > 0) {
-                            // Convert items array to object format: { itemId: quantity }
                             const itemsObj: any = {};
                             for (const item of boxItems) {
                                 if (item.menu_item_id && item.quantity) {
                                     itemsObj[item.menu_item_id] = item.quantity;
                                 }
                             }
-                            // Update the boxSelection with items
-                            result.boxSelection = {
-                                ...bs,
-                                items: itemsObj
-                            };
+                            result.boxSelections[0].items = itemsObj;
+                            result.boxSelection = result.boxSelections[0];
                         }
                     }
                 }
@@ -6716,6 +6979,14 @@ export async function getOrderById(orderId: string) {
                 totalItems: orderData.total_items,
                 totalValue: parseFloat(orderData.total_value || 0)
             };
+        } else {
+            // Food/Meal order but no vendor selections (e.g. legacy or missing data) – still expose orderDetails so UI can show total
+            orderDetails = {
+                serviceType: orderData.service_type,
+                vendorSelections: [],
+                totalItems: orderData.total_items ?? 0,
+                totalValue: parseFloat(orderData.total_value || 0)
+            };
         }
     } else if (orderData.service_type === 'Custom') {
         // Handle Custom orders - fetch vendor selections and items
@@ -6758,106 +7029,100 @@ export async function getOrderById(orderId: string) {
                 totalValue: parseFloat(orderData.total_value || 0),
                 notes: orderData.notes
             };
+        } else {
+            // Custom order but no vendor selections
+            orderDetails = {
+                serviceType: 'Custom',
+                vendorSelections: [],
+                totalItems: orderData.total_items ?? 0,
+                totalValue: parseFloat(orderData.total_value || 0),
+                notes: orderData.notes
+            };
         }
     } else if (orderData.service_type === 'Boxes') {
-        // Fetch box selection
-        const { data: boxSelection } = await supabaseClient
+        // Fetch all box selection(s) for this order
+        const { data: boxSelectionsRows } = await supabaseClient
             .from('order_box_selections')
             .select('*')
-            .eq('order_id', orderId)
-            .maybeSingle();
+            .eq('order_id', orderId);
 
-        console.log(`[getOrderById] Box selection result for ${orderId}:`, boxSelection ? 'Found' : 'Not Found');
+        const boxSelectionsList = Array.isArray(boxSelectionsRows) ? boxSelectionsRows : [];
+        console.log(`[getOrderById] Box selection result for ${orderId}: ${boxSelectionsList.length} box(es) found`);
 
-        if (boxSelection) {
-            const vendor = vendors.find(v => v.id === boxSelection.vendor_id);
-            const boxType = boxTypes.find(bt => bt.id === boxSelection.box_type_id);
-            const boxTotalValue = boxSelection.total_value
-                ? parseFloat(boxSelection.total_value)
-                : parseFloat(orderData.total_value || 0);
-
-            // Structure box items by category
-            const boxItems = boxSelection.items || {};
+        function buildItemsByCategory(boxItems: Record<string, any>) {
             const itemsByCategory: { [categoryId: string]: { categoryName: string; items: Array<{ itemId: string; itemName: string; quantity: number; quotaValue: number }> } } = {};
-
-            // Group items by category
-            Object.entries(boxItems).forEach(([itemId, qty]: [string, any]) => {
+            Object.entries(boxItems || {}).forEach(([itemId, qty]: [string, any]) => {
                 const menuItem = menuItems.find(mi => mi.id === itemId);
-
-                // Handle both object format {quantity: X} and direct number format
                 const quantity = typeof qty === 'object' && qty !== null ? (qty as any).quantity : Number(qty) || 0;
 
                 if (menuItem && menuItem.categoryId) {
                     const category = categories.find(c => c.id === menuItem.categoryId);
                     if (category) {
                         if (!itemsByCategory[category.id]) {
-                            itemsByCategory[category.id] = {
-                                categoryName: category.name,
-                                items: []
-                            };
+                            itemsByCategory[category.id] = { categoryName: category.name, items: [] };
                         }
-
                         itemsByCategory[category.id].items.push({
-                            itemId: itemId,
-                            itemName: menuItem.name,
-                            quantity: quantity,
-                            quotaValue: menuItem.quotaValue || 1
+                            itemId, itemName: menuItem.name, quantity, quotaValue: menuItem.quotaValue || 1
                         });
                     } else {
-                        // Category not found but item exists
-                        if (!itemsByCategory['uncategorized']) {
-                            itemsByCategory['uncategorized'] = {
-                                categoryName: 'Uncategorized',
-                                items: []
-                            };
-                        }
-                        itemsByCategory['uncategorized'].items.push({
-                            itemId: itemId,
-                            itemName: menuItem.name,
-                            quantity: quantity,
-                            quotaValue: menuItem.quotaValue || 1
-                        });
+                        if (!itemsByCategory['uncategorized']) itemsByCategory['uncategorized'] = { categoryName: 'Uncategorized', items: [] };
+                        itemsByCategory['uncategorized'].items.push({ itemId, itemName: menuItem.name, quantity, quotaValue: menuItem.quotaValue || 1 });
                     }
                 } else {
-                    // Menu item not found - fallback
-                    if (!itemsByCategory['uncategorized']) {
-                        itemsByCategory['uncategorized'] = {
-                            categoryName: 'Uncategorized',
-                            items: []
-                        };
-                    }
-
+                    if (!itemsByCategory['uncategorized']) itemsByCategory['uncategorized'] = { categoryName: 'Uncategorized', items: [] };
                     itemsByCategory['uncategorized'].items.push({
-                        itemId: itemId,
-                        itemName: menuItem?.name || 'Unknown Item (' + itemId + ')',
-                        quantity: quantity,
-                        quotaValue: 1
+                        itemId, itemName: menuItem?.name || 'Unknown Item (' + itemId + ')', quantity, quotaValue: 1
                     });
                 }
             });
+            return itemsByCategory;
+        }
 
+        if (boxSelectionsList.length > 0) {
+            let clientUpcomingOrder: { boxOrders?: Array<{ vendorId?: string; itemNotes?: Record<string, string> }> } | null = null;
+            const hasAnyEmptyItemNotes = boxSelectionsList.some((row: any) => !row.item_notes || typeof row.item_notes !== 'object' || Object.keys(row.item_notes || {}).length === 0);
+            if (hasAnyEmptyItemNotes && orderData.client_id) {
+                const { data: clientRow } = await supabaseClient.from('clients').select('upcoming_order').eq('id', orderData.client_id).maybeSingle();
+                if (clientRow?.upcoming_order && typeof clientRow.upcoming_order === 'object' && Array.isArray((clientRow.upcoming_order as any).boxOrders)) {
+                    clientUpcomingOrder = clientRow.upcoming_order as any;
+                }
+            }
+
+            const boxSelectionsForView = boxSelectionsList.map((boxRow: any) => {
+                const vendor = vendors.find(v => v.id === boxRow.vendor_id);
+                const boxType = boxTypes.find(bt => bt.id === boxRow.box_type_id);
+                const boxTotalValue = boxRow.total_value ? parseFloat(boxRow.total_value) : 0;
+                let itemNotes: Record<string, string> = (boxRow.item_notes && typeof boxRow.item_notes === 'object') ? { ...boxRow.item_notes } : {};
+                if (Object.keys(itemNotes).length === 0 && clientUpcomingOrder?.boxOrders) {
+                    const matchingBox = clientUpcomingOrder.boxOrders.find((b: any) => b.vendorId === boxRow.vendor_id);
+                    if (matchingBox?.itemNotes && typeof matchingBox.itemNotes === 'object') {
+                        itemNotes = { ...matchingBox.itemNotes };
+                    }
+                }
+                return {
+                    vendorId: boxRow.vendor_id,
+                    vendorName: vendor?.name || 'Unknown Vendor',
+                    boxTypeId: boxRow.box_type_id,
+                    boxTypeName: boxType?.name || 'Unknown Box Type',
+                    boxQuantity: boxRow.quantity,
+                    itemsByCategory: buildItemsByCategory(boxRow.items || {}),
+                    itemNotes,
+                    totalValue: boxTotalValue
+                };
+            });
             orderDetails = {
                 serviceType: orderData.service_type,
-                vendorId: boxSelection.vendor_id,
-                vendorName: vendor?.name || 'Unknown Vendor',
-                boxTypeId: boxSelection.box_type_id,
-                boxTypeName: boxType?.name || 'Unknown Box Type',
-                boxQuantity: boxSelection.quantity,
-                items: boxSelection.items || {},
-                itemsByCategory: itemsByCategory,
-                totalValue: boxTotalValue
+                vendorId: boxSelectionsForView[0]?.vendorId ?? null,
+                vendorName: boxSelectionsForView.length === 1 ? boxSelectionsForView[0].vendorName : undefined,
+                boxSelections: boxSelectionsForView,
+                totalValue: parseFloat(orderData.total_value || 0)
             };
         } else {
-            // Fallback if box selection is missing
             orderDetails = {
                 serviceType: orderData.service_type,
                 vendorId: null,
                 vendorName: 'Unknown Vendor (Missing Selection Data)',
-                boxTypeId: null,
-                boxTypeName: 'Unknown Box Type',
-                boxQuantity: 1,
-                items: {},
-                itemsByCategory: {},
+                boxSelections: [],
                 totalValue: parseFloat(orderData.total_value || 0)
             };
         }
@@ -6918,6 +7183,7 @@ export async function getOrderById(orderId: string) {
         totalValue: parseFloat(orderData.total_value || 0),
         totalItems: orderData.total_items,
         notes: orderData.notes,
+        billingNotes: orderData.billing_notes ?? null,
         createdAt: orderData.created_at,
         lastUpdated: orderData.updated_at,
         updatedBy: orderData.updated_by,
@@ -7078,35 +7344,33 @@ export async function getBatchClientDetails(clientIds: string[]) {
 // --- INDEPENDENT ORDER ACTIONS ---
 
 export async function getClientFoodOrder(clientId: string): Promise<ClientFoodOrder | null> {
-    const { data, error } = await supabase
-        .from('client_food_orders')
-        .select('*')
-        .eq('client_id', clientId)
+    const { data: client, error } = await supabase
+        .from('clients')
+        .select('id, service_type, upcoming_order')
+        .eq('id', clientId)
         .maybeSingle();
 
     if (error) {
-        // Suppress table missing error during migration phase? 
-        // Or confirm tables exist. For now log error.
-        console.error('Error fetching food order:', error);
+        console.error('Error fetching client for food order:', error);
         return null;
     }
-    if (!data) return null;
+    if (!client || client.service_type !== 'Food' || !client.upcoming_order?.deliveryDayOrders) return null;
 
+    const uo = client.upcoming_order;
     return {
-        id: data.id,
-        clientId: data.client_id,
-        caseId: data.case_id,
-        deliveryDayOrders: data.delivery_day_orders,
-        notes: data.notes,
-        created_at: data.created_at,
-        updated_at: data.updated_at,
-        updated_by: data.updated_by
+        id: client.id,
+        clientId: client.id,
+        caseId: uo.caseId ?? null,
+        deliveryDayOrders: uo.deliveryDayOrders,
+        notes: uo.notes ?? null,
+        created_at: undefined,
+        updated_at: undefined,
+        updated_by: undefined
     };
 }
 
 export async function saveClientFoodOrder(clientId: string, data: Partial<ClientFoodOrder>, options?: { skipHistory?: boolean }) {
     const session = await getSession();
-    // updated_by is UUID (staff); when client saves, session.userId is "CLIENT-xxx" — leave updated_by null
     const updatedBy = session?.role !== 'client' && session?.userId ? session.userId : null;
 
     const supabaseAdmin = createClient(
@@ -7114,37 +7378,22 @@ export async function saveClientFoodOrder(clientId: string, data: Partial<Client
         process.env.SUPABASE_SERVICE_ROLE_KEY!
     );
 
-    const payload: any = {
-        client_id: clientId,
-        case_id: data.caseId,
-        delivery_day_orders: data.deliveryDayOrders,
-        notes: data.notes,
-        updated_at: new Date().toISOString(),
-        updated_by: updatedBy
+    // Write to clients.upcoming_order (single source of truth)
+    const upcomingOrder = {
+        serviceType: 'Food',
+        caseId: data.caseId ?? null,
+        deliveryDayOrders: data.deliveryDayOrders ?? {},
+        notes: data.notes ?? null
     };
 
-    // Check if order exists first
-    const { data: existing } = await supabaseAdmin
-        .from('client_food_orders')
-        .select('id')
-        .eq('client_id', clientId)
-        .single();
-
-    let query;
-    if (existing) {
-        query = supabaseAdmin
-            .from('client_food_orders')
-            .update(payload)
-            .eq('id', existing.id);
-    } else {
-        query = supabaseAdmin
-            .from('client_food_orders')
-            .insert(payload);
-    }
-
-    const { data: saved, error } = await query.select().single();
+    const { error } = await supabaseAdmin
+        .from('clients')
+        .update({ upcoming_order: upcomingOrder })
+        .eq('id', clientId);
 
     handleError(error);
+
+    const saved = { id: clientId, client_id: clientId, case_id: data.caseId, delivery_day_orders: data.deliveryDayOrders, notes: data.notes };
 
     // Append to order history with comprehensive details
     try {
@@ -7188,7 +7437,7 @@ export async function saveClientFoodOrder(clientId: string, data: Partial<Client
         if (!options?.skipHistory) {
             await appendOrderHistory(clientId, {
                 type: 'upcoming',
-                orderId: saved.id,
+                orderId: clientId,
                 serviceType: 'Food',
                 caseId: data.caseId || null,
                 notes: data.notes || null,
@@ -7213,67 +7462,52 @@ export async function saveClientFoodOrder(clientId: string, data: Partial<Client
 }
 
 export async function getClientMealOrder(clientId: string): Promise<ClientMealOrder | null> {
-    const { data, error } = await supabase
-        .from('client_meal_orders')
-        .select('*')
-        .eq('client_id', clientId)
+    const { data: client, error } = await supabase
+        .from('clients')
+        .select('id, service_type, upcoming_order')
+        .eq('id', clientId)
         .maybeSingle();
 
     if (error) {
-        console.error('Error fetching meal order:', error);
+        console.error('Error fetching client for meal order:', error);
         return null;
     }
-    if (!data) return null;
+    if (!client || (client.service_type !== 'Food' && client.service_type !== 'Meal') || !client.upcoming_order?.mealSelections) return null;
 
+    const uo = client.upcoming_order;
     return {
-        id: data.id,
-        clientId: data.client_id,
-        caseId: data.case_id,
-        mealSelections: data.meal_selections,
-        notes: data.notes,
-        created_at: data.created_at,
-        updated_at: data.updated_at,
-        updated_by: data.updated_by
+        id: client.id,
+        clientId: client.id,
+        caseId: uo.caseId ?? null,
+        mealSelections: uo.mealSelections,
+        notes: uo.notes ?? null,
+        created_at: undefined,
+        updated_at: undefined,
+        updated_by: undefined
     };
 }
 
 export async function saveClientMealOrder(clientId: string, data: Partial<ClientMealOrder>, options?: { skipHistory?: boolean }) {
     const session = await getSession();
-    // updated_by is UUID (staff); when client saves, session.userId is "CLIENT-xxx" — leave updated_by null
     const updatedBy = session?.role !== 'client' && session?.userId ? session.userId : null;
     const supabaseAdmin = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
 
-    const payload: any = {
-        client_id: clientId,
-        case_id: data.caseId,
-        meal_selections: data.mealSelections,
-        notes: data.notes,
-        updated_at: new Date().toISOString(),
-        updated_by: updatedBy
+    // Write to clients.upcoming_order (single source of truth)
+    const upcomingOrder = {
+        serviceType: 'Meal',
+        caseId: data.caseId ?? null,
+        mealSelections: data.mealSelections ?? {},
+        notes: data.notes ?? null
     };
 
-    // Check for existing order
-    const { data: existing } = await supabaseAdmin
-        .from('client_meal_orders')
-        .select('id')
-        .eq('client_id', clientId)
-        .single();
-
-    let query;
-    if (existing) {
-        query = supabaseAdmin
-            .from('client_meal_orders')
-            .update(payload)
-            .eq('id', existing.id);
-    } else {
-        query = supabaseAdmin
-            .from('client_meal_orders')
-            .insert(payload);
-    }
-
-    const { data: saved, error } = await query.select().single();
+    const { error } = await supabaseAdmin
+        .from('clients')
+        .update({ upcoming_order: upcomingOrder })
+        .eq('id', clientId);
 
     handleError(error);
+
+    const saved = { id: clientId, client_id: clientId, case_id: data.caseId, meal_selections: data.mealSelections, notes: data.notes };
 
     // Append to order history with comprehensive details
     try {
@@ -7313,7 +7547,7 @@ export async function saveClientMealOrder(clientId: string, data: Partial<Client
         if (!options?.skipHistory) {
             await appendOrderHistory(clientId, {
                 type: 'upcoming',
-                orderId: saved.id,
+                orderId: clientId,
                 serviceType: 'Meal',
                 caseId: data.caseId || null,
                 notes: data.notes || null,
@@ -7340,35 +7574,32 @@ export async function saveClientMealOrder(clientId: string, data: Partial<Client
 }
 
 export async function getClientBoxOrder(clientId: string): Promise<ClientBoxOrder[]> {
-    const { data, error } = await supabase
-        .from('client_box_orders')
-        .select('*')
-        .eq('client_id', clientId);
+    const { data: client, error } = await supabase
+        .from('clients')
+        .select('id, service_type, upcoming_order')
+        .eq('id', clientId)
+        .maybeSingle();
 
     if (error) {
-        console.error('Error fetching box order:', error);
+        console.error('Error fetching client for box orders:', error);
         return [];
     }
-    if (!data) return [];
+    if (!client || client.service_type !== 'Boxes' || !client.upcoming_order?.boxOrders?.length) return [];
 
-    console.log('[getClientBoxOrder] Fetched data count:', data.length);
-    if (data.length > 0) {
-        console.log('[getClientBoxOrder] Sample item notes:', JSON.stringify(data[0].item_notes, null, 2));
-    }
-
-    return data.map(d => ({
-        id: d.id,
-        clientId: d.client_id,
-        caseId: d.case_id,
-        boxTypeId: d.box_type_id,
-        vendorId: d.vendor_id,
-        quantity: d.quantity,
-        items: d.items,
-        itemNotes: d.item_notes, // Map item_notes from DB
-        notes: d.notes,
-        created_at: d.created_at,
-        updated_at: d.updated_at,
-        updated_by: d.updated_by
+    const uo = client.upcoming_order;
+    return uo.boxOrders.map((b: any, idx: number) => ({
+        id: `${client.id}-box-${idx}`,
+        clientId: client.id,
+        caseId: uo.caseId ?? null,
+        boxTypeId: b.boxTypeId ?? null,
+        vendorId: b.vendorId ?? null,
+        quantity: b.quantity ?? 1,
+        items: b.items ?? {},
+        itemNotes: b.itemNotes ?? null,
+        notes: uo.notes ?? null,
+        created_at: undefined,
+        updated_at: undefined,
+        updated_by: undefined
     }));
 }
 
@@ -7378,59 +7609,42 @@ export async function saveClientBoxOrder(clientId: string, data: Partial<ClientB
     const updatedBy = session?.role !== 'client' && session?.userId ? session.userId : null;
     const supabaseAdmin = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
 
-    // Full replacement strategy: Delete all existing box orders for this client first
-    const { error: deleteError } = await supabaseAdmin
-        .from('client_box_orders')
-        .delete()
-        .eq('client_id', clientId);
-
-    if (deleteError) {
-        handleError(deleteError);
-        throw deleteError;
-    }
-
     if (!data || data.length === 0) {
+        const { error } = await supabaseAdmin.from('clients').update({ upcoming_order: null }).eq('id', clientId);
+        handleError(error);
         revalidatePath(`/client-portal/${clientId}`);
         revalidatePath(`/clients/${clientId}`);
         return [];
     }
 
-    console.log('[saveClientBoxOrder] Received data:', JSON.stringify(data, null, 2));
+    const boxOrders = data.map(order => ({
+        boxTypeId: order.boxTypeId ?? null,
+        vendorId: order.vendorId ?? null,
+        quantity: order.quantity ?? 1,
+        items: order.items ?? {},
+        itemNotes: (order as any).itemNotes ?? {}
+    }));
+    const first = data[0];
+    const upcomingOrder = {
+        serviceType: 'Boxes',
+        caseId: first?.caseId ?? null,
+        boxOrders,
+        notes: first?.notes ?? null
+    };
 
-    const insertPayload = data.map(order => {
-        const payload: any = {
-            client_id: clientId,
-            case_id: order.caseId,
-            box_type_id: order.boxTypeId,
-            vendor_id: order.vendorId,
-            quantity: order.quantity,
-            items: order.items,
-            item_notes: (order as any).itemNotes, // Save item notes to DB
-
-            // notes: order.notes // Removed per user request
-        };
-        if (updatedBy) payload.updated_by = updatedBy;
-        return payload;
-    });
-
-    let { data: created, error } = await supabaseAdmin
-        .from('client_box_orders')
-        .insert(insertPayload)
-        .select();
-
-    if (error && error.code === '23503') {
-        const payloadWithoutUser = insertPayload.map(p => {
-            const { updated_by, ...rest } = p;
-            return rest;
-        });
-        const retry = await supabaseAdmin
-            .from('client_box_orders')
-            .insert(payloadWithoutUser)
-            .select();
-        created = retry.data;
-        error = retry.error;
-    }
+    const { error } = await supabaseAdmin.from('clients').update({ upcoming_order: upcomingOrder }).eq('id', clientId);
     handleError(error);
+
+    let created = data.map((order, idx) => ({
+        id: `${clientId}-box-${idx}`,
+        client_id: clientId,
+        case_id: first?.caseId,
+        box_type_id: order.boxTypeId,
+        vendor_id: order.vendorId,
+        quantity: order.quantity,
+        items: order.items,
+        item_notes: (order as any).itemNotes
+    }));
 
     // Append to order history with comprehensive details
     try {
@@ -7471,7 +7685,7 @@ export async function saveClientBoxOrder(clientId: string, data: Partial<ClientB
 
                     await appendOrderHistory(clientId, {
                         type: 'upcoming',
-                        orderId: boxOrder.id,
+                        orderId: clientId,
                         serviceType: 'Boxes',
                         caseId: boxOrder.case_id || null,
                         updatedBy: updatedBy,

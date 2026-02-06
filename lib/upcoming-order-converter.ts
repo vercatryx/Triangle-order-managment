@@ -68,6 +68,48 @@ export function deliveryDayOrdersToVendorSelections(
     return Array.from(vendorMap.values());
 }
 
+/**
+ * Converts vendorSelections (with itemsByDay) format into deliveryDayOrders format.
+ * Used by Create Orders Next Week to derive per-day Food orders from the canonical shape.
+ */
+export function vendorSelectionsToDeliveryDayOrders(
+    vendorSelections: Array<{ vendorId?: string; items?: Record<string, number>; itemsByDay?: Record<string, Record<string, number>>; selectedDeliveryDays?: string[]; itemNotes?: Record<string, string>; itemNotesByDay?: Record<string, Record<string, string>> }>
+): DeliveryDayOrders {
+    const byDay: DeliveryDayOrders = {};
+    if (!Array.isArray(vendorSelections)) return byDay;
+
+    for (const vs of vendorSelections) {
+        if (!vs?.vendorId) continue;
+
+        const days: string[] = [];
+        if (vs.itemsByDay && typeof vs.itemsByDay === 'object' && Object.keys(vs.itemsByDay).length > 0) {
+            days.push(...Object.keys(vs.itemsByDay));
+        } else if (vs.selectedDeliveryDays && Array.isArray(vs.selectedDeliveryDays) && vs.selectedDeliveryDays.length > 0 && vs.items && Object.keys(vs.items || {}).length > 0) {
+            days.push(...vs.selectedDeliveryDays);
+        }
+        if (days.length === 0) continue;
+
+        for (const day of days) {
+            const items = (vs.itemsByDay && vs.itemsByDay[day] && typeof vs.itemsByDay[day] === 'object')
+                ? { ...vs.itemsByDay[day] }
+                : (vs.items && typeof vs.items === 'object' ? { ...vs.items } : {});
+            if (Object.keys(items).length === 0) continue;
+
+            const dayNotes = (vs.itemNotesByDay && vs.itemNotesByDay[day] && typeof vs.itemNotesByDay[day] === 'object')
+                ? { ...vs.itemNotesByDay[day] }
+                : (vs.itemNotes && typeof vs.itemNotes === 'object' ? { ...vs.itemNotes } : {});
+
+            if (!byDay[day]) byDay[day] = { vendorSelections: [] };
+            byDay[day].vendorSelections!.push({
+                vendorId: vs.vendorId,
+                items,
+                itemNotes: dayNotes
+            });
+        }
+    }
+    return byDay;
+}
+
 export type UpcomingOrderRaw = {
     serviceType?: string;
     caseId?: string | null;

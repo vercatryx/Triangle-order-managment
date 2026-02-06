@@ -24,6 +24,7 @@ interface OrderDetailViewProps {
         totalValue: number;
         totalItems: number | null;
         notes: string | null;
+        billingNotes?: string | null;
         createdAt: string;
         lastUpdated: string;
         updatedBy: string | null;
@@ -77,13 +78,17 @@ export function OrderDetailView({ order }: OrderDetailViewProps) {
         console.log('[OrderDetailView] Rendering items for order:', order);
         if (!order.orderDetails) return null;
 
-        if ((order.orderDetails.serviceType === 'Food' || order.orderDetails.serviceType === 'Meal' || order.orderDetails.serviceType === 'Custom') && order.orderDetails.vendorSelections) {
+        if ((order.orderDetails.serviceType === 'Food' || order.orderDetails.serviceType === 'Meal' || order.orderDetails.serviceType === 'Custom') && Array.isArray(order.orderDetails.vendorSelections)) {
+            const hasVendorSections = order.orderDetails.vendorSelections.length > 0;
             return (
                 <div className={styles.orderItemsSection}>
                     <div className={styles.sectionHeader}>
                         <ShoppingCart size={20} />
                         <h2>{order.orderDetails.serviceType === 'Custom' ? 'Custom Order Items' : 'Order Items'}</h2>
                     </div>
+                    {!hasVendorSections && (
+                        <p className={styles.emptyMessage}>No line items recorded for this order.</p>
+                    )}
                     {order.orderDetails.vendorSelections.map((vs: any, idx: number) => (
                         <div key={idx} className={styles.vendorSection}>
                             <div className={styles.vendorName}>
@@ -122,9 +127,81 @@ export function OrderDetailView({ order }: OrderDetailViewProps) {
                 </div>
             );
         } else if (order.orderDetails.serviceType === 'Boxes') {
+            const boxSelections = order.orderDetails.boxSelections as Array<{ vendorName: string; boxTypeName?: string; boxQuantity?: number; itemsByCategory: Record<string, { categoryName: string; items: Array<{ itemName: string; quantity: number; quotaValue: number }> }>; totalValue: number }> | undefined;
+            const hasMultipleBoxes = Array.isArray(boxSelections) && boxSelections.length > 0;
+
+            if (hasMultipleBoxes) {
+                return (
+                    <div className={styles.orderItemsSection}>
+                        <div className={styles.sectionHeader}>
+                            <Package size={20} />
+                            <h2>Box Order Details</h2>
+                        </div>
+                        {boxSelections.map((box: any, boxIdx: number) => {
+                            const itemsByCategory = box.itemsByCategory || {};
+                            const hasItems = Object.keys(itemsByCategory).length > 0;
+                            return (
+                                <div key={boxIdx} className={styles.boxBlock}>
+                                    <div className={styles.boxDetails}>
+                                        <div><strong>Box {boxIdx + 1}</strong></div>
+                                        <div><strong>Vendor:</strong> {box.vendorName}</div>
+                                        {box.boxTypeName && box.boxTypeName !== 'Unknown Box Type' && (
+                                            <div><strong>Box Type:</strong> {box.boxTypeName}</div>
+                                        )}
+                                        {box.boxQuantity != null && box.boxQuantity > 1 && (
+                                            <div><strong>Quantity:</strong> {box.boxQuantity}</div>
+                                        )}
+                                        <div><strong>Subtotal:</strong> ${(box.totalValue ?? 0).toFixed(2)}</div>
+                                    </div>
+                                    {hasItems && (
+                                        <div className={styles.boxContents}>
+                                            <h3 style={{ marginTop: '1rem', marginBottom: '0.75rem', fontSize: '0.95rem', fontWeight: 600 }}>Contents</h3>
+                                            {Object.entries(itemsByCategory).map(([categoryId, categoryData]: [string, any]) => (
+                                                <div key={categoryId} className={styles.categorySection}>
+                                                    <div className={styles.categoryHeader}><strong>{categoryData.categoryName}</strong></div>
+                                                    <table className={styles.itemsTable}>
+                                                        <thead>
+                                                            <tr>
+                                                                <th>Item</th>
+                                                                <th>Quantity</th>
+                                                                <th>Quota Value</th>
+                                                                <th>Notes</th>
+                                                            </tr>
+                                                        </thead>
+                                                        <tbody>
+                                                            {categoryData.items.map((item: any, itemIdx: number) => {
+                                                                const notesMap = box.itemNotes || box.item_notes || {};
+                                                                const note = (typeof notesMap === 'object' && notesMap !== null) ? notesMap[item.itemId] : undefined;
+                                                                return (
+                                                                <tr key={itemIdx}>
+                                                                    <td>{item.itemName}</td>
+                                                                    <td>{item.quantity}</td>
+                                                                    <td>{item.quotaValue}</td>
+                                                                    <td style={{ maxWidth: '200px', fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
+                                                                        {note && String(note).trim() ? note : '—'}
+                                                                    </td>
+                                                                </tr>
+                                                                );
+                                                            })}
+                                                        </tbody>
+                                                    </table>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
+                            );
+                        })}
+                        <div className={styles.orderSummary}>
+                            <div><strong>Order Total:</strong></div>
+                            <div><strong>${(order.orderDetails.totalValue ?? order.totalValue ?? 0).toFixed(2)}</strong></div>
+                        </div>
+                    </div>
+                );
+            }
+
             const itemsByCategory = order.orderDetails.itemsByCategory || {};
             const hasItems = Object.keys(itemsByCategory).length > 0;
-
             return (
                 <div className={styles.orderItemsSection}>
                     <div className={styles.sectionHeader}>
@@ -133,7 +210,7 @@ export function OrderDetailView({ order }: OrderDetailViewProps) {
                     </div>
                     <div className={styles.boxDetails}>
                         <div><strong>Vendor:</strong> {order.orderDetails.vendorName}</div>
-                        <div><strong>Total Value:</strong> ${order.orderDetails.totalValue.toFixed(2)}</div>
+                        <div><strong>Total Value:</strong> ${(order.orderDetails.totalValue ?? 0).toFixed(2)}</div>
                     </div>
                     {hasItems && (
                         <div className={styles.boxContents}>
@@ -290,10 +367,14 @@ export function OrderDetailView({ order }: OrderDetailViewProps) {
                                 <strong>Total Value:</strong>
                                 <span>${order.totalValue.toFixed(2)}</span>
                             </div>
-                            {order.notes && (
+                            <div className={styles.infoRow}>
+                                <strong>Notes:</strong>
+                                <span>{order.notes && order.notes.trim() ? order.notes : '—'}</span>
+                            </div>
+                            {order.billingNotes && order.billingNotes.trim() && (
                                 <div className={styles.infoRow}>
-                                    <strong>Notes:</strong>
-                                    <span>{order.notes}</span>
+                                    <strong>Billing notes:</strong>
+                                    <span>{order.billingNotes}</span>
                                 </div>
                             )}
                             {order.deliveryProofUrl && (

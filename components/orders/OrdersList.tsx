@@ -1,9 +1,12 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { Search, ChevronRight, Loader2, ArrowUpDown, Trash2, ChevronLeft } from 'lucide-react';
+import { Search, ChevronRight, Loader2, ArrowUpDown, Trash2, ChevronLeft, Calendar } from 'lucide-react';
+import { DayPicker } from 'react-day-picker';
+import type { DateRange } from 'react-day-picker';
+import 'react-day-picker/style.css';
 import { deleteOrder } from '@/lib/actions';
 import styles from './OrdersList.module.css';
 
@@ -19,6 +22,10 @@ export function OrdersList() {
     const [searchQuery, setSearchQuery] = useState('');
     const [statusFilter, setStatusFilter] = useState('all');
     const [creationIdFilter, setCreationIdFilter] = useState('');
+    const [deliveryDateFrom, setDeliveryDateFrom] = useState('');
+    const [deliveryDateTo, setDeliveryDateTo] = useState('');
+    const [datePickerOpen, setDatePickerOpen] = useState(false);
+    const datePickerRef = useRef<HTMLDivElement>(null);
     const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'asc' | 'desc' }>({ key: 'created_at', direction: 'desc' });
     const [isLoading, setIsLoading] = useState(true);
     const [selectedOrders, setSelectedOrders] = useState<Set<string>>(new Set());
@@ -33,6 +40,8 @@ export function OrdersList() {
             if (searchQuery) params.set('search', searchQuery);
             if (statusFilter !== 'all') params.set('status', statusFilter);
             if (creationIdFilter.trim()) params.set('creationId', creationIdFilter.trim());
+            if (deliveryDateFrom) params.set('deliveryDateFrom', deliveryDateFrom);
+            if (deliveryDateTo) params.set('deliveryDateTo', deliveryDateTo);
             params.set('sortBy', sortConfig.key);
             params.set('sortDirection', sortConfig.direction);
             const res = await fetch(`/api/orders?${params.toString()}`);
@@ -47,7 +56,7 @@ export function OrdersList() {
         } finally {
             setIsLoading(false);
         }
-    }, [searchQuery, statusFilter, creationIdFilter, sortConfig.key, sortConfig.direction, pageSize]);
+    }, [searchQuery, statusFilter, creationIdFilter, deliveryDateFrom, deliveryDateTo, sortConfig.key, sortConfig.direction, pageSize]);
 
     // Fetch when page or any server-side param changes
     useEffect(() => {
@@ -62,7 +71,19 @@ export function OrdersList() {
     // When filters, sort, or page size change, go to page 1
     useEffect(() => {
         setPage(1);
-    }, [statusFilter, creationIdFilter, sortConfig.key, sortConfig.direction, pageSize]);
+    }, [statusFilter, creationIdFilter, deliveryDateFrom, deliveryDateTo, sortConfig.key, sortConfig.direction, pageSize]);
+
+    // Close date picker when clicking outside
+    useEffect(() => {
+        if (!datePickerOpen) return;
+        const handleClickOutside = (e: MouseEvent) => {
+            if (datePickerRef.current && !datePickerRef.current.contains(e.target as Node)) {
+                setDatePickerOpen(false);
+            }
+        };
+        document.addEventListener('mousedown', handleClickOutside);
+        return () => document.removeEventListener('mousedown', handleClickOutside);
+    }, [datePickerOpen]);
 
     const handleSort = (key: string) => {
         setSortConfig(prev => ({
@@ -251,6 +272,69 @@ export function OrdersList() {
                         onChange={e => setCreationIdFilter(e.target.value)}
                         min="1"
                     />
+                </div>
+
+                <div className={styles.filterGroupDateRange} ref={datePickerRef}>
+                    <label className="label">Delivery date</label>
+                    <button
+                        type="button"
+                        className={`input ${styles.dateRangeTrigger}`}
+                        onClick={() => setDatePickerOpen((open) => !open)}
+                        aria-expanded={datePickerOpen}
+                        aria-haspopup="dialog"
+                    >
+                        <Calendar size={16} className={styles.dateRangeIcon} />
+                        {deliveryDateFrom && deliveryDateTo
+                            ? `${new Date(deliveryDateFrom + 'Z').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })} – ${new Date(deliveryDateTo + 'Z').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`
+                            : 'All dates'}
+                    </button>
+                    {datePickerOpen && (
+                        <div className={`${styles.dateRangePopover} rdp-root`}>
+                            <DayPicker
+                                mode="range"
+                                selected={
+                                    deliveryDateFrom && deliveryDateTo
+                                        ? { from: new Date(deliveryDateFrom + 'Z'), to: new Date(deliveryDateTo + 'Z') }
+                                        : deliveryDateFrom
+                                        ? { from: new Date(deliveryDateFrom + 'Z'), to: undefined }
+                                        : undefined
+                                }
+                                onSelect={(range: DateRange | undefined) => {
+                                    if (!range) return;
+                                    if (range.from) {
+                                        setDeliveryDateFrom(range.from.toISOString().slice(0, 10));
+                                        setDeliveryDateTo(range.to ? range.to.toISOString().slice(0, 10) : '');
+                                    } else {
+                                        setDeliveryDateFrom('');
+                                        setDeliveryDateTo('');
+                                    }
+                                }}
+                                defaultMonth={deliveryDateFrom ? new Date(deliveryDateFrom + 'Z') : new Date()}
+                                numberOfMonths={2}
+                            />
+                            <div className={styles.dateRangePopoverActions}>
+                                <button
+                                    type="button"
+                                    className="button"
+                                    onClick={() => {
+                                        setDeliveryDateFrom('');
+                                        setDeliveryDateTo('');
+                                        setDatePickerOpen(false);
+                                    }}
+                                >
+                                    Clear
+                                </button>
+                                <button
+                                    type="button"
+                                    className="button"
+                                    style={{ backgroundColor: 'var(--color-primary)', color: '#000' }}
+                                    onClick={() => setDatePickerOpen(false)}
+                                >
+                                    Done
+                                </button>
+                            </div>
+                        </div>
+                    )}
                 </div>
 
                 <button
