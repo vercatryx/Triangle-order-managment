@@ -8,15 +8,15 @@ import { MenuManagement } from '@/components/admin/MenuManagement';
 import { BoxCategoriesManagement } from '@/components/admin/BoxCategoriesManagement';
 import { EquipmentManagement } from '@/components/admin/EquipmentManagement';
 import { NavigatorManagement } from '@/components/admin/NavigatorManagement';
-import { AdminManagement } from '@/components/admin/AdminManagement';
 import { MealSelectionManagement } from '@/components/admin/MealSelectionManagement';
 import { NutritionistManagement } from '@/components/admin/NutritionistManagement';
 import FormBuilder from '@/components/forms/FormBuilder';
 import { saveSingleForm } from '@/lib/form-actions';
 
 import { GlobalSettings } from '@/components/admin/GlobalSettings';
+import { OrdersManagement } from '@/components/admin/OrdersManagement';
 
-type Tab = 'vendors' | 'menus' | 'mealSelect' | 'statuses' | 'boxes' | 'equipment' | 'navigators' | 'nutritionists' | 'settings' | 'admins' | 'form';
+type Tab = 'vendors' | 'menus' | 'mealSelect' | 'statuses' | 'boxes' | 'equipment' | 'navigators' | 'nutritionists' | 'settings' | 'orders' | 'form';
 
 export default function AdminPage() {
     const [activeTab, setActiveTab] = useState<Tab>('menus');
@@ -90,10 +90,10 @@ export default function AdminPage() {
                     Settings
                 </button>
                 <button
-                    className={`${styles.tab} ${activeTab === 'admins' ? styles.activeTab : ''}`}
-                    onClick={() => setActiveTab('admins')}
+                    className={`${styles.tab} ${activeTab === 'orders' ? styles.activeTab : ''}`}
+                    onClick={() => setActiveTab('orders')}
                 >
-                    Admins
+                    Orders
                 </button>
             </div>
 
@@ -121,7 +121,7 @@ export default function AdminPage() {
                     </div>
                 )}
                 {activeTab === 'settings' && <GlobalSettings />}
-                {activeTab === 'admins' && <AdminManagement />}
+                {activeTab === 'orders' && <OrdersManagement />}
             </div>
         </div>
     );

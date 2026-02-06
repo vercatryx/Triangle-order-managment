@@ -1847,6 +1847,26 @@ export async function getRegularClients() {
     }
 }
 
+/** Search primary clients by name (excludes dependants). Returns minimal data for selection. */
+export async function searchClientsByName(query: string): Promise<Array<{ id: string; fullName: string }>> {
+    if (!query || query.trim().length < 1) return [];
+    const term = query.trim();
+    try {
+        const { data, error } = await supabase
+            .from('clients')
+            .select('id, full_name')
+            .is('parent_client_id', null)
+            .ilike('full_name', `%${term}%`)
+            .order('full_name', { ascending: true })
+            .limit(20);
+        if (error) throw error;
+        return (data || []).map((c: { id: string; full_name: string }) => ({ id: c.id, fullName: c.full_name }));
+    } catch (e) {
+        console.error('Error in searchClientsByName:', e);
+        return [];
+    }
+}
+
 export async function getDependentsByParentId(parentClientId: string) {
     try {
         const { data, error } = await supabase

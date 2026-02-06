@@ -30,17 +30,38 @@ export async function POST(request: NextRequest) {
         unexpectedFailures: [] as { clientName: string; orderType: string; date: string; reason: string }[]
     };
 
+    type DiagnosticEntry = {
+        clientId: string;
+        clientName: string;
+        vendorId: string;
+        vendorName: string;
+        date: string;
+        orderType: string;
+        outcome: 'created' | 'skipped' | 'failed';
+        orderId?: string;
+        reason?: string;
+    };
+    const diagnostics: DiagnosticEntry[] = [];
+
     type ClientReportRow = { clientId: string; clientName: string; ordersCreated: number; reason: string; vendors: Set<string>; types: Set<string> };
     const clientReportMap = new Map<string, ClientReportRow>();
 
     let batchMode: { batchIndex: number; batchSize: number; creationId?: number } | null = null;
     let totalClientsCount: number | null = null;
+    /** When set, only process these client IDs (for "Create by Name" feature). Excludes dependants implicitly. */
+    let clientIdsFilter: string[] | null = null;
     try {
         const body = await request.json().catch(() => ({}));
         const batchIndex = typeof body.batchIndex === 'number' ? body.batchIndex : -1;
         const batchSize = typeof body.batchSize === 'number' && body.batchSize > 0 ? Math.min(body.batchSize, 500) : 0;
         if (batchIndex >= 0 && batchSize > 0) {
             batchMode = { batchIndex, batchSize, creationId: typeof body.creationId === 'number' ? body.creationId : undefined };
+        }
+        const ids = body.clientIds;
+        if (Array.isArray(ids) && ids.length > 0 && ids.every((x: unknown) => typeof x === 'string')) {
+            clientIdsFilter = ids as string[];
+        } else if (typeof body.clientId === 'string' && body.clientId.trim()) {
+            clientIdsFilter = [body.clientId.trim()];
         }
     } catch {
         // ignore
@@ -77,7 +98,20 @@ export async function POST(request: NextRequest) {
         ]);
 
         let clients: any[] = [];
-        if (batchMode) {
+        if (clientIdsFilter && clientIdsFilter.length > 0) {
+            // Single-client or name-search mode: load only specified IDs (primary clients only)
+            const { data: pageData, error: clientsError } = await supabase
+                .from('clients')
+                .select('id, full_name, status_id, service_type, parent_client_id, expiration_date, upcoming_order')
+                .in('id', clientIdsFilter)
+                .is('parent_client_id', null);
+            if (clientsError) {
+                console.error('[Create Orders Next Week] Error fetching filtered clients:', clientsError);
+                throw clientsError;
+            }
+            clients = pageData ?? [];
+            console.log(`[Create Orders Next Week] Loaded ${clients.length} client(s) by IDs: ${clientIdsFilter.join(', ')}`);
+        } else if (batchMode) {
             const { batchIndex, batchSize: size } = batchMode;
             const from = batchIndex * size;
             const to = from + size - 1;
@@ -364,8 +398,12 @@ export async function POST(request: NextRequest) {
                     if (!sel.vendorId) continue;
                     const vendor = vendorMap.get(sel.vendorId);
                     if (!vendor) continue;
+                    const clientName = clientMap.get(fo.client_id)?.full_name ?? fo.client_id;
 
-                    if (await orderExists(fo.client_id, deliveryDateStr, 'Food', sel.vendorId)) continue;
+                    if (await orderExists(fo.client_id, deliveryDateStr, 'Food', sel.vendorId)) {
+                        diagnostics.push({ clientId: fo.client_id, clientName, vendorId: sel.vendorId, vendorName: vendor.name, date: deliveryDateStr, orderType: 'Food', outcome: 'skipped', reason: 'Order already exists for this client/date/vendor' });
+                        continue;
+                    }
 
                     let valueTotal = 0;
                     const itemsList: { menu_item_id: string; quantity: number; unit_value: number; total_value: number; notes: string | null }[] = [];
@@ -386,7 +424,10 @@ export async function POST(request: NextRequest) {
                             });
                         }
                     }
-                    if (itemsList.length === 0) continue;
+                    if (itemsList.length === 0) {
+                        diagnostics.push({ clientId: fo.client_id, clientName, vendorId: sel.vendorId, vendorName: vendor.name, date: deliveryDateStr, orderType: 'Food', outcome: 'skipped', reason: 'No valid items in selection' });
+                        continue;
+                    }
 
                     const assignedId = nextOrderNumber++;
                     const newOrder = await createOrder(
@@ -398,15 +439,21 @@ export async function POST(request: NextRequest) {
                         (fo as any).notes || null,
                         fo.case_id ?? undefined,
                         assignedId,
-                        clientMap.get(fo.client_id)?.full_name
+                        clientName
                     );
-                    if (!newOrder) continue;
+                    if (!newOrder) {
+                        diagnostics.push({ clientId: fo.client_id, clientName, vendorId: sel.vendorId, vendorName: vendor.name, date: deliveryDateStr, orderType: 'Food', outcome: 'failed', reason: report.unexpectedFailures[report.unexpectedFailures.length - 1]?.reason ?? 'createOrder failed' });
+                        continue;
+                    }
 
                     const { data: vs } = await supabase.from('order_vendor_selections').insert({ order_id: newOrder.id, vendor_id: sel.vendorId }).select().single();
                     if (vs) {
                         recordVendorOrder(sel.vendorId, deliveryDateStr);
                         recordReportOrder(fo.client_id, sel.vendorId, 'Food');
                         await supabase.from('order_items').insert(itemsList.map(i => ({ ...i, vendor_selection_id: vs.id, order_id: newOrder.id })));
+                        diagnostics.push({ clientId: fo.client_id, clientName, vendorId: sel.vendorId, vendorName: vendor.name, date: deliveryDateStr, orderType: 'Food', outcome: 'created', orderId: newOrder.id });
+                    } else {
+                        diagnostics.push({ clientId: fo.client_id, clientName, vendorId: sel.vendorId, vendorName: vendor.name, date: deliveryDateStr, orderType: 'Food', outcome: 'failed', orderId: newOrder.id, reason: 'order_vendor_selections insert failed' });
                     }
                 }
             }
@@ -458,6 +505,7 @@ export async function POST(request: NextRequest) {
                 }
                 if (itemsList.length === 0) continue;
 
+                const clientName = clientMap.get(mo.client_id)?.full_name ?? mo.client_id;
                 const assignedId = nextOrderNumber++;
                 const newOrder = await createOrder(
                     mo.client_id,
@@ -468,15 +516,21 @@ export async function POST(request: NextRequest) {
                     (mo as any).notes || null,
                     mo.case_id,
                     assignedId,
-                    clientMap.get(mo.client_id)?.full_name
+                    clientName
                 );
-                if (!newOrder) continue;
+                if (!newOrder) {
+                    diagnostics.push({ clientId: mo.client_id, clientName, vendorId: g.vendorId, vendorName: vendor.name, date: deliveryDateStr, orderType: 'Meal', outcome: 'failed', reason: report.unexpectedFailures[report.unexpectedFailures.length - 1]?.reason ?? 'createOrder failed' });
+                    continue;
+                }
 
                 const { data: vs } = await supabase.from('order_vendor_selections').insert({ order_id: newOrder.id, vendor_id: g.vendorId }).select().single();
                 if (vs) {
                     recordVendorOrder(g.vendorId, deliveryDateStr);
                     recordReportOrder(mo.client_id, g.vendorId, 'Meal');
                     await supabase.from('order_items').insert(itemsList.map(i => ({ ...i, vendor_selection_id: vs.id, order_id: newOrder.id })));
+                    diagnostics.push({ clientId: mo.client_id, clientName, vendorId: g.vendorId, vendorName: vendor.name, date: deliveryDateStr, orderType: 'Meal', outcome: 'created', orderId: newOrder.id });
+                } else {
+                    diagnostics.push({ clientId: mo.client_id, clientName, vendorId: g.vendorId, vendorName: vendor.name, date: deliveryDateStr, orderType: 'Meal', outcome: 'failed', orderId: newOrder.id, reason: 'order_vendor_selections insert failed' });
                 }
             }
         }
@@ -576,11 +630,24 @@ export async function POST(request: NextRequest) {
                 assignedId,
                 clientMap.get(clientId)?.full_name
             );
-            if (!newOrder) continue;
+            if (!newOrder) {
+                const clientName = clientMap.get(clientId)?.full_name ?? clientId;
+                for (const vid of [...new Set(selectionsToInsert.map(s => s.vendor_id))]) {
+                    const v = vendorMap.get(vid);
+                    diagnostics.push({ clientId, clientName, vendorId: vid, vendorName: v?.name ?? vid, date: deliveryDateStr, orderType: 'Boxes', outcome: 'failed', reason: report.unexpectedFailures[report.unexpectedFailures.length - 1]?.reason ?? 'createOrder failed' });
+                }
+                continue;
+            }
 
+            // Count each vendor once per order (one Box order can have multiple box lines for same vendor)
+            const vendorIdsInOrder = [...new Set(selectionsToInsert.map(s => s.vendor_id))];
+            for (const vid of vendorIdsInOrder) {
+                recordVendorOrder(vid, deliveryDateStr);
+                recordReportOrder(clientId, vid, 'Boxes');
+                const v = vendorMap.get(vid);
+                diagnostics.push({ clientId, clientName: clientMap.get(clientId)?.full_name ?? clientId, vendorId: vid, vendorName: v?.name ?? vid, date: deliveryDateStr, orderType: 'Boxes', outcome: 'created', orderId: newOrder.id });
+            }
             for (const sel of selectionsToInsert) {
-                recordVendorOrder(sel.vendor_id, deliveryDateStr);
-                recordReportOrder(clientId, sel.vendor_id, 'Boxes');
                 await supabase.from('order_box_selections').insert({
                     order_id: newOrder.id,
                     vendor_id: sel.vendor_id,
@@ -613,7 +680,12 @@ export async function POST(request: NextRequest) {
                 const deliveryDateStr = deliveryDate.toISOString().split('T')[0];
                 if (deliveryDateStr < weekStartStr || deliveryDateStr > weekEndStr) continue;
 
-                if (await orderExists(co.client_id, deliveryDateStr, 'Custom', vendorId)) continue;
+                const vendor = vendorMap.get(vendorId);
+                const clientName = clientMap.get(co.client_id)?.full_name ?? co.client_id;
+                if (await orderExists(co.client_id, deliveryDateStr, 'Custom', vendorId)) {
+                    diagnostics.push({ clientId: co.client_id, clientName, vendorId, vendorName: vendor?.name ?? vendorId, date: deliveryDateStr, orderType: 'Custom', outcome: 'skipped', reason: 'Order already exists for this client/date/vendor' });
+                    continue;
+                }
 
                 const totalValue = Number(co.total_value) || 0;
                 const rawName = co.custom_name || co.upcoming_order?.custom_name || 'Custom Item';
@@ -632,9 +704,12 @@ export async function POST(request: NextRequest) {
                     co.notes || null,
                     co.case_id,
                     assignedId,
-                    clientMap.get(co.client_id)?.full_name
+                    clientName
                 );
-                if (!newOrder) continue;
+                if (!newOrder) {
+                    diagnostics.push({ clientId: co.client_id, clientName, vendorId, vendorName: vendor?.name ?? vendorId, date: deliveryDateStr, orderType: 'Custom', outcome: 'failed', reason: report.unexpectedFailures[report.unexpectedFailures.length - 1]?.reason ?? 'createOrder failed' });
+                    continue;
+                }
 
                 const { data: newVs } = await supabase.from('order_vendor_selections').insert({ order_id: newOrder.id, vendor_id: vendorId }).select().single();
                 if (newVs) {
@@ -657,6 +732,9 @@ export async function POST(request: NextRequest) {
                         };
                     });
                     await supabase.from('order_items').insert(itemsToInsert);
+                    diagnostics.push({ clientId: co.client_id, clientName, vendorId, vendorName: vendor?.name ?? vendorId, date: deliveryDateStr, orderType: 'Custom', outcome: 'created', orderId: newOrder.id });
+                } else {
+                    diagnostics.push({ clientId: co.client_id, clientName, vendorId, vendorName: vendor?.name ?? vendorId, date: deliveryDateStr, orderType: 'Custom', outcome: 'failed', orderId: newOrder.id, reason: 'order_vendor_selections insert failed' });
                 }
             }
         }
@@ -718,7 +796,8 @@ export async function POST(request: NextRequest) {
                     creationId,
                     hasMore,
                     excelRows: excelData,
-                    vendorBreakdown
+                    vendorBreakdown,
+                    diagnostics
                 }
             });
         }
