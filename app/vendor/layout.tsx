@@ -1,6 +1,8 @@
 import { verifySession } from '@/lib/session';
 import { redirect } from 'next/navigation';
 
+export const metadata = { title: 'Vendor Portal' };
+
 export default async function VendorPortalLayout({
     children,
 }: {

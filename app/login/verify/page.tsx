@@ -1,6 +1,7 @@
-
 import { verifyOtp } from '@/lib/auth-actions';
 import { redirect } from 'next/navigation';
+
+export const metadata = { title: 'Verify Email' };
 
 export default async function VerifyPage({
     searchParams,

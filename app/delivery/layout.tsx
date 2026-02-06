@@ -1,6 +1,8 @@
 import { getSession } from '@/lib/session';
 import { redirect } from 'next/navigation';
 
+export const metadata = { title: 'Driver Delivery' };
+
 export default async function DeliveryLayout({
     children,
 }: {

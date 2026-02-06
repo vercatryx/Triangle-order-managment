@@ -2,6 +2,26 @@ import { createClient } from '@supabase/supabase-js';
 import { OrderDeliveryFlow } from './OrderDeliveryFlow';
 import { notFound } from 'next/navigation';
 import '../delivery.css';
+import type { Metadata } from 'next';
+
+async function getOrderNumberForTitle(id: string): Promise<number | null> {
+  const supabaseAdmin = createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!
+  );
+  const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+  let query = supabaseAdmin.from('orders').select('order_number');
+  if (isUuid) query = query.eq('id', id);
+  else query = query.eq('order_number', parseInt(id, 10) || id);
+  const { data } = await query.maybeSingle();
+  return data?.order_number ?? null;
+}
+
+export async function generateMetadata({ params }: { params: Promise<{ id: string }> }): Promise<Metadata> {
+  const { id } = await params;
+  const orderNumber = await getOrderNumberForTitle(id);
+  return { title: orderNumber != null ? `Delivery • Order #${orderNumber}` : 'Delivery' };
+}
 
 export default async function OrderDeliveryPage({ params }: { params: Promise<{ id: string }> }) {
     const { id } = await params;

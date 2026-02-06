@@ -3,8 +3,16 @@ import { getPublicClient, getStatuses, getNavigators, getVendors, getMenuItems, 
 import { ClientPortalInterface } from '@/components/clients/ClientPortalInterface';
 import { getSession } from '@/lib/session';
 import { notFound, redirect } from 'next/navigation';
+import { getClient } from '@/lib/actions-read';
+import type { Metadata } from 'next';
 
-export default async function ClientPortalPage({ params }: { params: { id: string } }) {
+export async function generateMetadata({ params }: { params: Promise<{ id: string }> }): Promise<Metadata> {
+  const { id } = await params;
+  const client = await getClient(id);
+  return { title: client?.fullName ? `My Orders — ${client.fullName}` : 'Client Portal' };
+}
+
+export default async function ClientPortalPage({ params }: { params: Promise<{ id: string }> }) {
     console.log('[ClientPortalPage] START - Server Component Render');
     try {
         const { id } = await params;

@@ -2,6 +2,13 @@ import { getClient, getOrderHistory } from '@/lib/actions-read';
 import ClientOrderHistoryTable from '@/components/clients/ClientOrderHistoryTable';
 import { ArrowLeft } from 'lucide-react';
 import Link from 'next/link';
+import type { Metadata } from 'next';
+
+export async function generateMetadata({ params }: { params: Promise<{ id: string }> }): Promise<Metadata> {
+  const { id } = await params;
+  const client = await getClient(id);
+  return { title: client?.fullName ? `Order History — ${client.fullName}` : 'Order History' };
+}
 
 export default async function ClientHistoryPage({ params }: { params: Promise<{ id: string }> }) {
     const { id } = await params;

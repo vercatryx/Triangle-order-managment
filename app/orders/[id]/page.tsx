@@ -1,6 +1,14 @@
 import { getOrderById } from '@/lib/actions';
+import { getOrderById as getOrderByIdRead } from '@/lib/actions-read';
 import { notFound } from 'next/navigation';
 import { OrderDetailView } from '@/components/orders/OrderDetailView';
+import type { Metadata } from 'next';
+
+export async function generateMetadata({ params }: { params: Promise<{ id: string }> }): Promise<Metadata> {
+  const { id } = await params;
+  const order = await getOrderByIdRead(id);
+  return { title: order ? `Order #${order.orderNumber}` : 'Order' };
+}
 
 export default async function OrderDetailPage({ params }: { params: Promise<{ id: string }> }) {
     const { id } = await params;

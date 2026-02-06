@@ -50,42 +50,54 @@ export async function getNextCreationId(): Promise<number> {
  * Get all creation_ids with their order counts
  * Returns array of { creation_id, count, created_at } sorted by creation_id descending
  * Uses created_at (database timestamp) to show the real time when orders were created, not fake time
+ * Paginates to avoid Supabase row limit (e.g. 450 or 1000) so counts are accurate for 800+ orders.
  */
 export async function getCreationIds(): Promise<Array<{ creation_id: number; count: number; created_at: string }>> {
-    const { data, error } = await supabase
-        .from('orders')
-        .select('creation_id, created_at')
-        .not('creation_id', 'is', null);
+    const pageSize = 1000;
+    let page = 0;
+    const allRows: { creation_id: number; created_at: string }[] = [];
 
-    if (error) {
-        console.error('Error fetching creation_ids:', error);
-        // If column doesn't exist yet, return empty array
-        if (error.code === '42703') {
-            return [];
+    while (true) {
+        const { data, error } = await supabase
+            .from('orders')
+            .select('creation_id, created_at')
+            .not('creation_id', 'is', null)
+            .order('creation_id', { ascending: false })
+            .order('created_at', { ascending: false })
+            .range(page * pageSize, (page + 1) * pageSize - 1);
+
+        if (error) {
+            console.error('Error fetching creation_ids:', error);
+            if (error.code === '42703') {
+                return [];
+            }
+            throw new Error(`Failed to get creation_ids: ${error.message}`);
         }
-        throw new Error(`Failed to get creation_ids: ${error.message}`);
+
+        if (!data || data.length === 0) break;
+        allRows.push(...(data as { creation_id: number; created_at: string }[]));
+        if (data.length < pageSize) break;
+        page++;
     }
 
-    if (!data || data.length === 0) {
+    if (allRows.length === 0) {
         return [];
     }
 
     // Group by creation_id and count
     const grouped = new Map<number, { count: number; created_at: string }>();
-    for (const order of data) {
+    for (const order of allRows) {
         const id = order.creation_id;
         if (!grouped.has(id)) {
             grouped.set(id, { count: 0, created_at: order.created_at });
         }
         const entry = grouped.get(id)!;
         entry.count++;
-        // Use most recent created_at for this creation_id (shows real database time, not fake time)
         if (order.created_at > entry.created_at) {
             entry.created_at = order.created_at;
         }
     }
 
-    // Convert to array and sort by creation_id descending
     return Array.from(grouped.entries())
         .map(([creation_id, { count, created_at }]) => ({ creation_id, count, created_at }))
         .sort((a, b) => b.creation_id - a.creation_id);

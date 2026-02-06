@@ -3,6 +3,8 @@ import { getSession } from '@/lib/session';
 import { getStatuses } from '@/lib/actions';
 import { redirect } from 'next/navigation';
 
+export const metadata = { title: 'Navigator History' };
+
 export default async function NavigatorHistoryPage() {
     const session = await getSession();
 
