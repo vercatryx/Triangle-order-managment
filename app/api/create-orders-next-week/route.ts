@@ -6,8 +6,8 @@ import { sendSchedulingReport, sendVendorNextWeekSummary, type VendorBreakdownIt
 import { getNextCreationId } from '@/lib/actions';
 import * as XLSX from 'xlsx';
 
-// Allow up to 15 minutes so 800+ orders can complete (many sequential DB round-trips per order)
-export const maxDuration = 900;
+// Vercel limit is 800s; allow max so 800+ orders can complete (many sequential DB round-trips per order)
+export const maxDuration = 800;
 
 const supabase = createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
