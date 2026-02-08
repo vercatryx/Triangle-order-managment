@@ -52,10 +52,11 @@ export interface InvalidVendorIssue {
     vendorId: string;
     vendorName?: string;
     isActive: boolean;
-    where: 'deliveryDayOrders' | 'mealSelections';
+    where: 'deliveryDayOrders' | 'mealSelections' | 'vendorSelections' | 'boxOrders';
     day?: string;
     mealKey?: string;
     serviceType: string;
+    boxIndex?: number;
 }
 
 export interface ItemDayIssue {
@@ -314,15 +315,37 @@ export async function GET() {
                 }
             }
 
-            // 2b) Vendor day mismatch + Item-on-disallowed-day from vendorSelections + itemsByDay (when deliveryDayOrders not used)
+            // 2b) Invalid vendor (missing/inactive) + Vendor day mismatch + Item-on-disallowed-day from vendorSelections + itemsByDay (when deliveryDayOrders not used)
             const vsel = uo.vendorSelections as { vendorId?: string; itemsByDay?: Record<string, Record<string, number>> }[] | undefined;
             if (Array.isArray(vsel) && (!ddo || typeof ddo !== 'object' || Object.keys(ddo).length === 0)) {
                 for (const vs of vsel) {
                     const vid = vs.vendorId;
                     if (!vid) continue;
                     const vendor = vendorMap.get(vid);
-                    if (!vendor) continue;
-                    if (!vendor.is_active) continue;
+                    if (!vendor) {
+                        invalidVendorIssues.push({
+                            clientId: client.id,
+                            clientName,
+                            vendorId: vid,
+                            vendorName: `Vendor ${vid} (missing)`,
+                            isActive: false,
+                            where: 'vendorSelections',
+                            serviceType: st
+                        });
+                        continue;
+                    }
+                    if (!vendor.is_active) {
+                        invalidVendorIssues.push({
+                            clientId: client.id,
+                            clientName,
+                            vendorId: vid,
+                            vendorName: vendor.name,
+                            isActive: false,
+                            where: 'vendorSelections',
+                            serviceType: st
+                        });
+                        continue;
+                    }
                     const itemsByDay = vs.itemsByDay && typeof vs.itemsByDay === 'object' ? vs.itemsByDay : {};
                     for (const [day, dayItems] of Object.entries(itemsByDay)) {
                         if (!dayItems || typeof dayItems !== 'object') continue;
@@ -414,7 +437,7 @@ export async function GET() {
 
             // 6) Box clients with category quota mismatch (required vs actual)
             // Read from clients.upcoming_order only; support both camelCase and snake_case, and legacy single-box at root
-            let rawBoxOrders = (uo.boxOrders ?? uo.box_orders) as { boxTypeId?: string; box_type_id?: string; quantity?: number; items?: Record<string, number | { quantity?: number }> }[] | undefined;
+            let rawBoxOrders = (uo.boxOrders ?? uo.box_orders) as { boxTypeId?: string; box_type_id?: string; vendorId?: string; vendor_id?: string; quantity?: number; items?: Record<string, number | { quantity?: number }> }[] | undefined;
             if (st === 'Boxes' && !rawBoxOrders?.length && (uo.boxTypeId ?? (uo as any).box_type_id)) {
                 rawBoxOrders = [{
                     boxTypeId: (uo.boxTypeId ?? (uo as any).box_type_id) as string,
@@ -427,6 +450,33 @@ export async function GET() {
                 const missingItems: { itemId: string; quantity: number; boxIndex: number }[] = [];
                 for (let boxIndex = 0; boxIndex < rawBoxOrders.length; boxIndex++) {
                     const box = rawBoxOrders[boxIndex];
+                    const boxVendorId = box.vendorId ?? (box as { vendor_id?: string }).vendor_id;
+                    if (boxVendorId) {
+                        const vendor = vendorMap.get(boxVendorId);
+                        if (!vendor) {
+                            invalidVendorIssues.push({
+                                clientId: client.id,
+                                clientName,
+                                vendorId: boxVendorId,
+                                vendorName: `Vendor ${boxVendorId} (missing)`,
+                                isActive: false,
+                                where: 'boxOrders',
+                                serviceType: st,
+                                boxIndex
+                            });
+                        } else if (!vendor.is_active) {
+                            invalidVendorIssues.push({
+                                clientId: client.id,
+                                clientName,
+                                vendorId: boxVendorId,
+                                vendorName: vendor.name,
+                                isActive: false,
+                                where: 'boxOrders',
+                                serviceType: st,
+                                boxIndex
+                            });
+                        }
+                    }
                     const boxTypeId = (box.boxTypeId ?? box.box_type_id) || '';
                     const boxQuantity = Math.max(1, Number(box.quantity) || 1);
                     const boxTypeName = boxTypeNameMap.get(boxTypeId) || boxTypeId;
@@ -796,9 +846,10 @@ export async function POST(request: Request) {
             const vendorId = body.vendorId;
             const action = body.action; // 'clear' | 'reassign'
             const newVendorId = body.newVendorId;
-            const where = body.where;
+            const where = body.where as 'deliveryDayOrders' | 'mealSelections' | 'vendorSelections' | 'boxOrders';
             const day = body.day;
             const mealKey = body.mealKey;
+            const boxIndex = typeof body.boxIndex === 'number' ? body.boxIndex : undefined;
             if (!vendorId || !action) {
                 return NextResponse.json({ success: false, error: 'vendorId and action required' }, { status: 400 });
             }
@@ -822,8 +873,31 @@ export async function POST(request: Request) {
                     sel[mealKey].vendorId = setTo as unknown as string;
                     updated.mealSelections = sel;
                 }
+            } else if (where === 'vendorSelections') {
+                const vsel = (updated.vendorSelections as { vendorId?: string }[]) || [];
+                let changed = false;
+                for (const vs of vsel) {
+                    if (vs.vendorId === vendorId) {
+                        (vs as any).vendorId = setTo;
+                        changed = true;
+                    }
+                }
+                if (changed) updated.vendorSelections = vsel;
+            } else if (where === 'boxOrders' && typeof boxIndex === 'number') {
+                const rawBoxOrders = (updated.boxOrders ?? (updated as any).box_orders) as { vendorId?: string; vendor_id?: string }[] | undefined;
+                if (rawBoxOrders && Array.isArray(rawBoxOrders) && rawBoxOrders[boxIndex] && (rawBoxOrders[boxIndex].vendorId === vendorId || (rawBoxOrders[boxIndex] as any).vendor_id === vendorId)) {
+                    const box = rawBoxOrders[boxIndex] as any;
+                    if (setTo === null) {
+                        delete box.vendorId;
+                        delete box.vendor_id;
+                    } else {
+                        box.vendorId = setTo;
+                        box.vendor_id = setTo;
+                    }
+                    updated.boxOrders = rawBoxOrders;
+                }
             } else {
-                return NextResponse.json({ success: false, error: 'where and day/mealKey required' }, { status: 400 });
+                return NextResponse.json({ success: false, error: 'where and day/mealKey/boxIndex required' }, { status: 400 });
             }
             const { error: updErr } = await supabase
                 .from('clients')

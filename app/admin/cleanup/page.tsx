@@ -44,10 +44,11 @@ interface InvalidVendorIssue {
     vendorId: string;
     vendorName?: string;
     isActive: boolean;
-    where: 'deliveryDayOrders' | 'mealSelections';
+    where: 'deliveryDayOrders' | 'mealSelections' | 'vendorSelections' | 'boxOrders';
     day?: string;
     mealKey?: string;
     serviceType: string;
+    boxIndex?: number;
 }
 
 interface ItemDayIssue {
@@ -98,7 +99,7 @@ interface DeletedBoxItemIssue {
 }
 
 function issueKeyVendor(issue: InvalidVendorIssue): string {
-    return `${issue.clientId}-${issue.vendorId}-${issue.where}-${issue.day ?? ''}-${issue.mealKey ?? ''}`;
+    return `${issue.clientId}-${issue.vendorId}-${issue.where}-${issue.day ?? ''}-${issue.mealKey ?? ''}-${issue.boxIndex ?? ''}`;
 }
 
 export default function CleanupPage() {
@@ -380,10 +381,8 @@ export default function CleanupPage() {
                 ← Back to Admin
             </Link>
             <div className={styles.header}>
-                <h1 className={styles.title}>Cleanup — clients.upcoming_order only</h1>
-                <p className={styles.subtitle}>
-                    Issues are read only from the <strong>clients.upcoming_order</strong> column (no upcoming_orders table). Fix invalid meal types, vendor delivery day mismatches, items on disallowed days, deleted menu items, and missing/inactive vendors.
-                </p>
+                <h1 className={styles.title}>Cleanup </h1>
+
             </div>
 
             {message && (
@@ -615,7 +614,10 @@ export default function CleanupPage() {
                                 </div>
                                 {invalidVendorIssues.map((issue) => {
                                     const key = issueKeyVendor(issue);
-                                    const whereLabel = issue.where === 'deliveryDayOrders' ? `Day: ${issue.day}` : `Meal: ${issue.mealKey || '—'}`;
+                                    const whereLabel = issue.where === 'deliveryDayOrders' ? `Day: ${issue.day}`
+                                        : issue.where === 'mealSelections' ? `Meal: ${issue.mealKey || '—'}`
+                                        : issue.where === 'vendorSelections' ? 'vendorSelections'
+                                        : issue.where === 'boxOrders' ? `Box #${(issue.boxIndex ?? 0) + 1}` : issue.where;
                                     return (
                                         <div key={key} className={styles.tableRowWrapper}>
                                             <div className={`${styles.tableRow} ${styles.rowVendor}`}>
