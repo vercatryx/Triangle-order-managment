@@ -995,6 +995,7 @@ export function VendorDetail({ vendorId, isVendorView, vendor: initialVendor }: 
                                                 style={{ flex: '1.5 1 150px', minWidth: 0, display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}
                                                 onClick={(e) => e.stopPropagation()}
                                             >
+                                                {/* TEMP: Download buttons hidden
                                                 <button
                                                     className="btn btn-secondary"
                                                     style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem' }}
@@ -1019,6 +1020,7 @@ export function VendorDetail({ vendorId, isVendorView, vendor: initialVendor }: 
                                                 >
                                                     <Download size={14} /> Download Excel
                                                 </button>
+                                                */}
                                                 <label
                                                     className="btn btn-secondary"
                                                     style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem', cursor: 'pointer', margin: 0 }}
