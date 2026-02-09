@@ -2599,7 +2599,7 @@ export async function getOrderById(orderId: string) {
             orderDetails = {
                 serviceType: orderData.service_type,
                 vendorId: null,
-                vendorName: `Unknown Vendor (ID: ${boxSelection.vendor_id || 'Missing'}) - Deleted?`,
+                vendorName: 'Something is missing (no box selection data)',
                 boxTypeId: null,
                 boxTypeName: 'Unknown Box Type',
                 boxQuantity: 1,

@@ -3013,12 +3013,11 @@ export async function getBillingRequestsByWeek(weekStartDate?: Date): Promise<Bi
     });
 
     // Filter orders to the specified week if provided. When "All weeks", no filter.
-    // Use delivery date when available; otherwise created_at so we never drop orders.
+    // Use scheduled_delivery_date only; fallback to created_at so we never drop orders.
     let filteredOrders = allOrders;
     if (weekStartDate) {
         filteredOrders = allOrders.filter(order => {
-            const deliveryDateStr = order.actual_delivery_date || order.scheduled_delivery_date;
-            const dateToUse = deliveryDateStr ? new Date(deliveryDateStr) : (order.created_at ? new Date(order.created_at) : null);
+            const dateToUse = order.scheduled_delivery_date ? new Date(order.scheduled_delivery_date) : (order.created_at ? new Date(order.created_at) : null);
             if (!dateToUse) return false;
             return isDateInWeek(dateToUse, weekStartDate);
         });
@@ -3028,8 +3027,8 @@ export async function getBillingRequestsByWeek(weekStartDate?: Date): Promise<Bi
     const billingRequestsMap = new Map<string, BillingRequest>();
 
     for (const order of filteredOrders) {
-        // Use delivery date when available; otherwise created_at so we never drop orders.
-        let deliveryDateStr = order.actual_delivery_date || order.scheduled_delivery_date;
+        // Use scheduled_delivery_date only; fallback to created_at so we never drop orders.
+        let deliveryDateStr = order.scheduled_delivery_date;
         let deliveryDate: Date;
 
         if (deliveryDateStr) {
@@ -3183,7 +3182,7 @@ export async function getAllBillingRecords() {
                         status: 'pending',
                         amount: order.total_value || 0,
                         navigator: client.navigator_id || 'Unknown',
-                        delivery_date: order.actual_delivery_date || order.scheduled_delivery_date,
+                        delivery_date: order.scheduled_delivery_date,
                         remarks: 'Auto-generated for billing_pending order'
                     };
 

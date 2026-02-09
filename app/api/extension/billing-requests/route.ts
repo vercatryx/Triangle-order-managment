@@ -113,9 +113,8 @@ export async function GET(request: NextRequest) {
                 CIN: d.cin ? String(d.cin) : ""
             }));
 
-            // Determine date to show
-            // User example: "2025-12-18". Prioritize actual_delivery_date, fallback to scheduled.
-            const dateStr = order.actual_delivery_date || order.scheduled_delivery_date;
+            // Determine date to show - scheduled delivery date only
+            const dateStr = order.scheduled_delivery_date;
 
             // Determine amount
             // User: "amount": 336.

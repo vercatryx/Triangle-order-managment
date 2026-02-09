@@ -53,14 +53,16 @@ export async function GET(request: NextRequest) {
             searchEscaped = search.replace(/%/g, '\\%').replace(/\\/g, '\\\\');
         }
 
-        // Base query: orders for Orders tab (exclude billing_pending, must have scheduled_delivery_date)
+        // Base query: orders for Orders tab.
+        // When searching: include all orders (billing_pending, null delivery date) so search can find them.
+        // When not searching: exclude billing_pending and require scheduled_delivery_date.
         let query = db
             .from('orders')
-            .select('*, clients(full_name)', { count: 'exact' })
-            .neq('status', 'billing_pending')
-            .not('scheduled_delivery_date', 'is', null);
+            .select('*, clients(full_name)', { count: 'exact' });
 
-        if (search.length > 0) {
+        if (search.length === 0) {
+            query = query.neq('status', 'billing_pending').not('scheduled_delivery_date', 'is', null);
+        } else {
             const orderNumLike = `order_number_text.ilike.%${searchEscaped}%`;
             if (searchClientIds.length > 0) {
                 query = query.or(`client_id.in.(${searchClientIds.join(',')}),${orderNumLike}`);
@@ -89,12 +91,10 @@ export async function GET(request: NextRequest) {
         const to = from + pageSize - 1;
 
         // Separate count query (head: true) so total is accurate and not capped by range/response limits
-        let countQuery = db
-            .from('orders')
-            .select('id', { count: 'exact', head: true })
-            .neq('status', 'billing_pending')
-            .not('scheduled_delivery_date', 'is', null);
-        if (search.length > 0) {
+        let countQuery = db.from('orders').select('id', { count: 'exact', head: true });
+        if (search.length === 0) {
+            countQuery = countQuery.neq('status', 'billing_pending').not('scheduled_delivery_date', 'is', null);
+        } else {
             const orderNumLike = `order_number_text.ilike.%${searchEscaped}%`;
             if (searchClientIds.length > 0) {
                 countQuery = countQuery.or(`client_id.in.(${searchClientIds.join(',')}),${orderNumLike}`);

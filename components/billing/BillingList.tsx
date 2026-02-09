@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { Search, ChevronRight, Download, ChevronDown, ChevronUp, ExternalLink, Image } from 'lucide-react';
+import { Search, ChevronRight, Download, ChevronDown, ChevronUp, ExternalLink, Image, AlertTriangle } from 'lucide-react';
 import { getBillingRequestsByWeek, type BillingRequest, type BillingRequestsResult } from '@/lib/actions';
 import { getWeekStart, getWeekOptions, getWeekRangeString } from '@/lib/utils';
 import styles from './BillingList.module.css';
@@ -67,6 +67,13 @@ export function BillingList() {
         }
     }
 
+    const hasMixedStatus = (req: BillingRequest) => {
+        const allOrders = [...(req.orders ?? []), ...(req.equipmentOrders ?? [])];
+        const hasSuccessful = allOrders.some((o: any) => o.status === 'billing_successful');
+        const hasNotSuccessful = allOrders.some((o: any) => o.status !== 'billing_successful');
+        return hasSuccessful && hasNotSuccessful;
+    };
+
     const filteredRequests = billingRequests.filter(req => {
         const matchesSearch = (req.clientName || '').toLowerCase().includes(search.toLowerCase());
         let matchesStatus = true;
@@ -80,6 +87,11 @@ export function BillingList() {
             matchesStatus = req.billingStatus === 'failed';
         }
         return matchesSearch && matchesStatus;
+    });
+
+    const mixedRequests = billingRequests.filter(req => {
+        const matchesSearch = (req.clientName || '').toLowerCase().includes(search.toLowerCase());
+        return matchesSearch && hasMixedStatus(req);
     });
 
     const toggleRequest = (requestKey: string) => {
@@ -202,6 +214,135 @@ export function BillingList() {
                     </select>
                 </div>
             </div>
+
+            {mixedRequests.length > 0 && (
+                <div className={styles.mixedSection}>
+                    <div className={styles.mixedSectionHeader}>
+                        <AlertTriangle size={18} className={styles.mixedSectionIcon} />
+                        <span>Mixed Status — {mixedRequests.length} client{mixedRequests.length !== 1 ? 's' : ''} with some orders billed successfully, others not</span>
+                    </div>
+                    <div className={styles.list}>
+                        <div className={styles.listHeader}>
+                            <span style={{ flex: 2 }}>Client Name</span>
+                            <span style={{ flex: 1.5 }}>Week Range</span>
+                            <span style={{ flex: 1 }}>Orders</span>
+                            <span style={{ flex: 1 }}>Total Amount</span>
+                            <span style={{ flex: 1.5 }}>Status</span>
+                            <span style={{ width: '40px' }}></span>
+                        </div>
+                        {mixedRequests.map(request => {
+                            const requestKey = getRequestKey(request);
+                            const isExpanded = expandedRequest === requestKey;
+                            const getStatusLabel = (status: 'success' | 'failed' | 'pending', ready: boolean, completed: boolean) => {
+                                if (status === 'success') return { label: 'Billing Success', class: styles.statusSuccess };
+                                if (status === 'failed') return { label: 'Billing Failed', class: styles.statusFailed };
+                                if (completed) return { label: 'Billing Completed', class: styles.statusSuccess };
+                                if (ready) return { label: 'Ready for Billing', class: styles.statusReady };
+                                return { label: 'Waiting for Proof', class: styles.statusPending };
+                            };
+                            const ordersStatus = getStatusLabel(request.billingStatus, request.readyForBilling, request.billingCompleted);
+                            const equipmentStatus = getStatusLabel(request.equipmentBillingStatus, request.equipmentReadyForBilling, request.equipmentBillingCompleted);
+                            const hasEquipment = (request.equipmentOrders?.length ?? 0) > 0;
+                            const hasOrders = (request.orders?.length ?? 0) > 0;
+                            return (
+                                <div key={requestKey}>
+                                    <div className={styles.requestRow} onClick={() => toggleRequest(requestKey)}>
+                                        <span style={{ flex: 2, fontWeight: 600, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                            <span style={{ color: 'var(--text-tertiary)', fontSize: '0.875rem', fontWeight: 500 }}>{mixedRequests.indexOf(request) + 1}.</span>
+                                            {request.clientName || 'Unknown'}
+                                        </span>
+                                        <span style={{ flex: 1.5, fontSize: '0.9rem', color: 'var(--text-secondary)' }}>{request.weekRange}</span>
+                                        <span style={{ flex: 1 }}>{request.orderCount}</span>
+                                        <span style={{ flex: 1, fontWeight: 600 }}>${request.totalAmount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                                        <span style={{ flex: 1.5, display: 'flex', flexDirection: 'column', gap: 2 }}>
+                                            {hasOrders && <span className={ordersStatus.class} style={{ fontSize: '0.85rem' }}>{hasEquipment ? 'Food/Meal: ' : ''}{ordersStatus.label.toUpperCase()}</span>}
+                                            {hasEquipment && <span className={equipmentStatus.class} style={{ fontSize: '0.85rem' }}>Equipment: {equipmentStatus.label.toUpperCase()}</span>}
+                                            {!hasOrders && !hasEquipment && <span className={styles.statusNeutral}>—</span>}
+                                        </span>
+                                        <span style={{ width: '40px', display: 'flex', justifyContent: 'center' }}>{isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}</span>
+                                    </div>
+                                    {isExpanded && (
+                                        <div className={styles.ordersDetail}>
+                                            {hasOrders && (
+                                                <>
+                                                    <div className={styles.ordersDetailHeader}>
+                                                        <h3>Food / Meal / Boxes orders</h3>
+                                                        <span className={styles.ordersCount}>{request.orders.length} order{request.orders.length !== 1 ? 's' : ''} · ${(request.totalAmount - (request.equipmentTotalAmount ?? 0)).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                                                    </div>
+                                                    <div className={styles.ordersList}>
+                                                        <div className={styles.ordersListHeader}>
+                                                            <span style={{ width: '100px' }}>Order #</span>
+                                                            <span style={{ flex: 1 }}>Service</span>
+                                                            <span style={{ flex: 1 }}>Amount</span>
+                                                            <span style={{ flex: 1.5 }}>Delivery Date</span>
+                                                            <span style={{ flex: 1 }}>Status</span>
+                                                            <span style={{ flex: 1 }}>Proof of Delivery</span>
+                                                            <span style={{ width: '40px' }}></span>
+                                                        </div>
+                                                        {request.orders.map(order => {
+                                                            const deliveryDate = order.scheduled_delivery_date ? new Date(order.scheduled_delivery_date).toLocaleDateString('en-US', { timeZone: 'UTC' }) : '-';
+                                                            const proofUrl = order.proof_of_delivery_image || order.delivery_proof_url || null;
+                                                            const formatOrderStatus = (s: string) => ({ pending: 'Pending', confirmed: 'Confirmed', completed: 'Completed', waiting_for_proof: 'Waiting for Proof', billing_pending: 'Billing Pending', billing_successful: 'Billing Successful', billing_failed: 'Billing Failed', cancelled: 'Cancelled' }[s] || s);
+                                                            const orderStatusClass = order.status === 'billing_pending' || order.status === 'billing_successful' || order.status === 'completed' ? styles.statusSuccess : order.status === 'waiting_for_proof' ? styles.statusPending : styles.statusNeutral;
+                                                            return (
+                                                                <div key={order.id} className={styles.orderRow}>
+                                                                    <Link href={`/orders/${order.id}`} style={{ width: '100px', fontWeight: 600, textDecoration: 'none', color: 'inherit' }} onClick={e => e.stopPropagation()}>{order.order_number || 'N/A'}</Link>
+                                                                    <Link href={`/orders/${order.id}`} style={{ flex: 1, textDecoration: 'none', color: 'inherit' }} onClick={e => e.stopPropagation()}>{order.service_type}</Link>
+                                                                    <Link href={`/orders/${order.id}`} style={{ flex: 1, textDecoration: 'none', color: 'inherit' }} onClick={e => e.stopPropagation()}>${(order.amount || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</Link>
+                                                                    <Link href={`/orders/${order.id}`} style={{ flex: 1.5, fontSize: '0.85rem', color: 'var(--text-secondary)', textDecoration: 'none' }} onClick={e => e.stopPropagation()}>{deliveryDate}</Link>
+                                                                    <span style={{ flex: 1 }}><span className={orderStatusClass} style={{ fontSize: '0.85rem' }}>{formatOrderStatus(order.status || 'pending').toUpperCase()}</span></span>
+                                                                    <span style={{ flex: 1 }}>{proofUrl ? <a href={proofUrl} target="_blank" rel="noopener noreferrer" className={styles.proofLink} onClick={e => e.stopPropagation()}><Image size={14} /><span>View Proof</span></a> : <span style={{ fontSize: '0.85rem', color: 'var(--text-tertiary)' }}>No proof</span>}</span>
+                                                                    <Link href={`/orders/${order.id}`} style={{ width: '40px', display: 'flex', justifyContent: 'center', textDecoration: 'none', color: 'inherit' }} onClick={e => e.stopPropagation()}><ChevronRight size={14} /></Link>
+                                                                </div>
+                                                            );
+                                                        })}
+                                                    </div>
+                                                </>
+                                            )}
+                                            {hasEquipment && (
+                                                <>
+                                                    <div className={styles.ordersDetailHeader}>
+                                                        <h3>Equipment orders</h3>
+                                                        <span className={styles.ordersCount}>{(request.equipmentOrders ?? []).length} order{((request.equipmentOrders ?? []).length) !== 1 ? 's' : ''} · ${(request.equipmentTotalAmount ?? 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                                                    </div>
+                                                    <div className={styles.ordersList}>
+                                                        <div className={styles.ordersListHeader}>
+                                                            <span style={{ width: '100px' }}>Order #</span>
+                                                            <span style={{ flex: 1 }}>Service</span>
+                                                            <span style={{ flex: 1 }}>Amount</span>
+                                                            <span style={{ flex: 1.5 }}>Delivery Date</span>
+                                                            <span style={{ flex: 1 }}>Status</span>
+                                                            <span style={{ flex: 1 }}>Proof of Delivery</span>
+                                                            <span style={{ width: '40px' }}></span>
+                                                        </div>
+                                                        {(request.equipmentOrders ?? []).map((order: any) => {
+                                                            const deliveryDate = order.scheduled_delivery_date ? new Date(order.scheduled_delivery_date).toLocaleDateString('en-US', { timeZone: 'UTC' }) : '-';
+                                                            const proofUrl = order.proof_of_delivery_image || order.delivery_proof_url || null;
+                                                            const formatOrderStatus = (s: string) => ({ pending: 'Pending', confirmed: 'Confirmed', completed: 'Completed', waiting_for_proof: 'Waiting for Proof', billing_pending: 'Billing Pending', billing_successful: 'Billing Successful', billing_failed: 'Billing Failed', cancelled: 'Cancelled' }[s] || s);
+                                                            const orderStatusClass = order.status === 'billing_pending' || order.status === 'billing_successful' || order.status === 'completed' ? styles.statusSuccess : order.status === 'waiting_for_proof' ? styles.statusPending : styles.statusNeutral;
+                                                            return (
+                                                                <div key={order.id} className={styles.orderRow}>
+                                                                    <Link href={`/orders/${order.id}`} style={{ width: '100px', fontWeight: 600, textDecoration: 'none', color: 'inherit' }} onClick={e => e.stopPropagation()}>{order.order_number || 'N/A'}</Link>
+                                                                    <Link href={`/orders/${order.id}`} style={{ flex: 1, textDecoration: 'none', color: 'inherit' }} onClick={e => e.stopPropagation()}>{order.service_type}</Link>
+                                                                    <Link href={`/orders/${order.id}`} style={{ flex: 1, textDecoration: 'none', color: 'inherit' }} onClick={e => e.stopPropagation()}>${(order.amount ?? order.total_value ?? 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</Link>
+                                                                    <Link href={`/orders/${order.id}`} style={{ flex: 1.5, fontSize: '0.85rem', color: 'var(--text-secondary)', textDecoration: 'none' }} onClick={e => e.stopPropagation()}>{deliveryDate}</Link>
+                                                                    <span style={{ flex: 1 }}><span className={orderStatusClass} style={{ fontSize: '0.85rem' }}>{formatOrderStatus(order.status || 'pending').toUpperCase()}</span></span>
+                                                                    <span style={{ flex: 1 }}>{proofUrl ? <a href={proofUrl} target="_blank" rel="noopener noreferrer" className={styles.proofLink} onClick={e => e.stopPropagation()}><Image size={14} /><span>View Proof</span></a> : <span style={{ fontSize: '0.85rem', color: 'var(--text-tertiary)' }}>No proof</span>}</span>
+                                                                    <Link href={`/orders/${order.id}`} style={{ width: '40px', display: 'flex', justifyContent: 'center', textDecoration: 'none', color: 'inherit' }} onClick={e => e.stopPropagation()}><ChevronRight size={14} /></Link>
+                                                                </div>
+                                                            );
+                                                        })}
+                                                    </div>
+                                                </>
+                                            )}
+                                        </div>
+                                    )}
+                                </div>
+                            );
+                        })}
+                    </div>
+                </div>
+            )}
 
             <div className={styles.list}>
                 {(() => {
@@ -376,11 +517,9 @@ export function BillingList() {
                                                     <span style={{ width: '40px' }}></span>
                                                 </div>
                                         {request.orders.map(order => {
-                                            const deliveryDate = order.actual_delivery_date
-                                                ? new Date(order.actual_delivery_date).toLocaleDateString('en-US', { timeZone: 'UTC' })
-                                                : order.scheduled_delivery_date
-                                                    ? new Date(order.scheduled_delivery_date).toLocaleDateString('en-US', { timeZone: 'UTC' })
-                                                    : '-';
+                                            const deliveryDate = order.scheduled_delivery_date
+                                                ? new Date(order.scheduled_delivery_date).toLocaleDateString('en-US', { timeZone: 'UTC' })
+                                                : '-';
 
                                             const proofUrl = order.proof_of_delivery_image || order.delivery_proof_url || null;
                                             
@@ -512,7 +651,7 @@ export function BillingList() {
                                                     <span style={{ width: '40px' }}></span>
                                                 </div>
                                                 {(request.equipmentOrders ?? []).map((order: any) => {
-                                                    const deliveryDate = order.actual_delivery_date ? new Date(order.actual_delivery_date).toLocaleDateString('en-US', { timeZone: 'UTC' }) : order.scheduled_delivery_date ? new Date(order.scheduled_delivery_date).toLocaleDateString('en-US', { timeZone: 'UTC' }) : '-';
+                                                    const deliveryDate = order.scheduled_delivery_date ? new Date(order.scheduled_delivery_date).toLocaleDateString('en-US', { timeZone: 'UTC' }) : '-';
                                                     const proofUrl = order.proof_of_delivery_image || order.delivery_proof_url || null;
                                                     const formatOrderStatus = (status: string) => ({ pending: 'Pending', confirmed: 'Confirmed', completed: 'Completed', waiting_for_proof: 'Waiting for Proof', billing_pending: 'Billing Pending', billing_successful: 'Billing Successful', billing_failed: 'Billing Failed', cancelled: 'Cancelled' }[status] || status);
                                                     const orderStatus = formatOrderStatus(order.status || 'pending');

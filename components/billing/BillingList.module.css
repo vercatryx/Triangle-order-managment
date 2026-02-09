@@ -74,6 +74,28 @@
     color: var(--text-tertiary);
 }
 
+.mixedSection {
+    margin-bottom: var(--spacing-xl);
+}
+
+.mixedSectionHeader {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: var(--spacing-md) var(--spacing-lg);
+    background: var(--bg-surface-hover);
+    border: 1px solid var(--color-warning);
+    border-radius: var(--radius-md);
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: var(--spacing-sm);
+}
+
+.mixedSectionIcon {
+    flex-shrink: 0;
+    color: var(--color-warning);
+}
+
 .list {
     background: var(--bg-surface);
     border: 1px solid var(--border-color);
