@@ -11,21 +11,112 @@ jobs:
     runs-on: ubuntu-latest
     environment: Production
     steps:
-      - name: Create Orders for Next Week
+      - name: Create Orders for Next Week (Batched)
         run: |
+          set -e
           TARGET_URL="https://trianglesquareservices.com"
+          BATCH_SIZE=100
 
-          echo "🚀 Triggering Weekly Order Creation at: $TARGET_URL (process-weekly-orders)"
+          echo "🚀 Triggering Weekly Order Creation (batched, $BATCH_SIZE per batch) at: $TARGET_URL"
 
-          response=$(curl -s -S -L -w "\nHTTP_STATUS:%{http_code}" -X GET "$TARGET_URL/api/process-weekly-orders" \
-            -H "Content-Type: application/json")
+          batchIndex=0
+          creationId=""
+          mkdir -p /tmp/batch_responses
 
-          echo "--- API RESPONSE ---"
-          echo "$response"
-          echo "--------------------"
+          while true; do
+            body="{ \"batchIndex\": $batchIndex, \"batchSize\": $BATCH_SIZE"
+            if [[ -n "$creationId" ]]; then
+              body="$body, \"creationId\": $creationId"
+            fi
+            body="$body }"
 
-          if [[ "$response" != *"HTTP_STATUS:200"* ]]; then
-            echo "❌ API Request Failed. See response above."
-            exit 1
+            echo "--- Batch $batchIndex ---"
+            full=$(curl -s -S -L -w "\nHTTP_STATUS:%{http_code}" -X POST "$TARGET_URL/api/create-orders-next-week" \
+              -H "Content-Type: application/json" \
+              -d "$body")
+            status=$(echo "$full" | tail -n1)
+            json=$(echo "$full" | sed '$d')
+
+            if [[ "$status" != "HTTP_STATUS:200" ]]; then
+              echo "❌ Batch $batchIndex failed. Status: $status"
+              echo "$json" | jq . 2>/dev/null || echo "$json"
+              exit 1
+            fi
+
+            echo "$json" > "/tmp/batch_responses/response_$batchIndex.json"
+
+            success=$(echo "$json" | jq -r '.success')
+            if [[ "$success" != "true" ]]; then
+              echo "❌ API returned success=false"
+              echo "$json" | jq .
+              exit 1
+            fi
+
+            hasMore=$(echo "$json" | jq -r '.batch.hasMore')
+            creationId=$(echo "$json" | jq -r '.batch.creationId // empty')
+            totalCreated=$(echo "$json" | jq -r '.totalCreated')
+            echo "  Batch $batchIndex: totalCreated=$totalCreated hasMore=$hasMore"
+
+            if [[ "$hasMore" != "true" ]]; then
+              break
+            fi
+            batchIndex=$((batchIndex + 1))
+          done
+
+          echo "--- All batches complete. Sending report email ---"
+
+          # Build merged payload from all response files
+          last=$(ls /tmp/batch_responses/response_*.json | sort -V | tail -n1)
+          weekStart=$(jq -r '.weekStart' "$last")
+          weekEnd=$(jq -r '.weekEnd' "$last")
+          reportCreationId=$(jq -r '.batch.creationId // empty' "$last")
+
+          totalCreated=$(jq -s 'map(.totalCreated) | add' /tmp/batch_responses/response_*.json)
+          breakdown=$(jq -s '
+            {
+              Food: (map(.breakdown.Food) | add),
+              Meal: (map(.breakdown.Meal) | add),
+              Boxes: (map(.breakdown.Boxes) | add),
+              Custom: (map(.breakdown.Custom) | add)
+            }
+          ' /tmp/batch_responses/response_*.json | jq -c '.[0]')
+          excelRows=$(jq -s '[.[].batch.excelRows[]?]' /tmp/batch_responses/response_*.json)
+          failures=$(jq -s '[.[].errors[]?]' /tmp/batch_responses/response_*.json)
+          diagnostics=$(jq -s '[.[].batch.diagnostics[]?]' /tmp/batch_responses/response_*.json)
+          vendorBreakdown=$(jq -s '
+            [.[].batch.vendorBreakdown[]?]
+            | group_by(.vendorId)
+            | map({
+                vendorId: .[0].vendorId,
+                vendorName: .[0].vendorName,
+                byDay: ([.[].byDay | to_entries[]] | group_by(.key) | map({key: .[0].key, value: (map(.value) | add)}) | from_entries),
+                total: (map(.total) | add)
+              })
+          ' /tmp/batch_responses/response_*.json | jq -c '.[0]')
+
+          reportPayload=$(jq -n \
+            --arg weekStart "$weekStart" \
+            --arg weekEnd "$weekEnd" \
+            --argjson totalCreated "$totalCreated" \
+            --argjson breakdown "$breakdown" \
+            --arg creationId "$reportCreationId" \
+            --argjson excelRows "$excelRows" \
+            --argjson failures "$failures" \
+            --argjson vendorBreakdown "$vendorBreakdown" \
+            --argjson diagnostics "$diagnostics" \
+            '{ weekStart: $weekStart, weekEnd: $weekEnd, totalCreated: $totalCreated, breakdown: $breakdown, creationId: (if $creationId == "" then null else ($creationId | tonumber) end), excelRows: $excelRows, failures: $failures, vendorBreakdown: $vendorBreakdown, diagnostics: $diagnostics }')
+
+          reportResp=$(curl -s -S -L -w "\nHTTP_STATUS:%{http_code}" -X POST "$TARGET_URL/api/create-orders-next-week/send-batched-report" \
+            -H "Content-Type: application/json" \
+            -d "$reportPayload")
+          reportStatus=$(echo "$reportResp" | tail -n1)
+          reportJson=$(echo "$reportResp" | sed '$d')
+
+          if [[ "$reportStatus" != "HTTP_STATUS:200" ]]; then
+            echo "⚠️ Report email failed (orders were still created). Status: $reportStatus"
+            echo "$reportJson" | jq . 2>/dev/null || echo "$reportJson"
+          else
+            echo "✅ Report email sent."
           fi
-          echo "✅ Success!"
+
+          echo "✅ Weekly order creation complete. totalCreated=$totalCreated"
