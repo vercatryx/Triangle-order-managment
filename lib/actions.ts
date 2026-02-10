@@ -1451,27 +1451,37 @@ export async function deleteNutritionist(id: string) {
 
 // --- CLIENT ACTIONS ---
 
-// Helper to generate next client ID; uses DB RPC when available to avoid collisions under concurrency.
-// When afterCollisionId is set (e.g. after a 23505 retry), fallback uses that + 1 so retries get a new ID.
+// Client to use for client/dependent inserts when we want to bypass RLS (same as ID generation).
+function getSupabaseForClientWrite() {
+    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    return serviceRoleKey
+        ? createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, serviceRoleKey, { auth: { persistSession: false } })
+        : supabase;
+}
+
+// Helper to generate next client ID. Uses service-role client when available to read all rows
+// (bypassing RLS) and compute max+1 with pagination; skips RPC to avoid schema/RLS mismatches.
 async function generateNextClientId(afterCollisionId?: string) {
     const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
     const supabaseAdmin = serviceRoleKey
         ? createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, serviceRoleKey, { auth: { persistSession: false } })
         : null;
 
-    if (supabaseAdmin && !afterCollisionId) {
-        const { data: rpcId, error: rpcError } = await supabaseAdmin.rpc('get_next_client_id');
-        if (!rpcError && rpcId && typeof rpcId === 'string') {
-            return rpcId;
-        }
-    }
-
-    // Fallback when RPC is not deployed, fails, service role missing, or we're retrying after collision
     const clientForFallback = supabaseAdmin ?? supabase;
-    const { data } = await clientForFallback
-        .from('clients')
-        .select('id')
-        .like('id', 'CLIENT-%');
+    const pageSize = 1000;
+    let allRows: { id: string }[] = [];
+    let page = 0;
+    while (true) {
+        const { data: pageData } = await clientForFallback
+            .from('clients')
+            .select('id')
+            .like('id', 'CLIENT-%')
+            .range(page * pageSize, (page + 1) * pageSize - 1);
+        if (!pageData || pageData.length === 0) break;
+        allRows = allRows.concat(pageData);
+        if (pageData.length < pageSize) break;
+        page++;
+    }
 
     let minNum = 0;
     if (afterCollisionId) {
@@ -1479,12 +1489,12 @@ async function generateNextClientId(afterCollisionId?: string) {
         if (m) minNum = parseInt(m[1], 10);
     }
 
-    if (!data || data.length === 0) {
+    if (allRows.length === 0) {
         return minNum > 0 ? `CLIENT-${(minNum + 1).toString().padStart(3, '0')}` : 'CLIENT-001';
     }
 
     let maxNum = minNum;
-    for (const row of data) {
+    for (const row of allRows) {
         if (!row.id) continue;
         const match = row.id.match(/CLIENT-(\d+)/);
         if (match) {
@@ -1684,7 +1694,7 @@ export async function addClient(data: Omit<ClientProfile, 'id' | 'createdAt' | '
 
         payload.upcoming_order = data.upcomingOrder ?? null;
 
-        const { data: res, error } = await supabase.from('clients').insert([payload]).select().single();
+        const { data: res, error } = await getSupabaseForClientWrite().from('clients').insert([payload]).select().single();
 
         if (error) {
             // Retry on duplicate primary key (race with another create or broken RPC)
@@ -1756,10 +1766,10 @@ export async function addDependent(name: string, parentClientId: string, dob?: s
             id
         };
 
-        const { data: res, error } = await supabase.from('clients').insert([payload]).select().single();
+        const { data: res, error } = await getSupabaseForClientWrite().from('clients').insert([payload]).select().single();
 
         if (error) {
-            // Retry on duplicate primary key (race with another create or broken RPC)
+            // Retry on duplicate primary key (race with another create)
             if (error.code === '23505') {
                 lastError = error;
                 lastAttemptedId = payload.id;

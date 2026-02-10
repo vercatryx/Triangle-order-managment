@@ -9,7 +9,8 @@ CREATE SEQUENCE IF NOT EXISTS client_id_seq
   NO MAXVALUE
   CACHE 1;
 
--- 2. RPC: returns next ID and keeps sequence in sync with existing max (e.g. after manual inserts)
+-- 2. RPC: returns next ID. Always syncs sequence to max(existing) then takes next value,
+--    so the correct sequence is used regardless of schema and we never return an existing ID.
 CREATE OR REPLACE FUNCTION get_next_client_id()
 RETURNS TEXT
 LANGUAGE plpgsql
@@ -17,20 +18,17 @@ SECURITY DEFINER
 SET search_path = public
 AS $$
 DECLARE
-  n INTEGER;
   max_existing INTEGER;
+  n INTEGER;
 BEGIN
-  n := nextval('client_id_seq');
   SELECT COALESCE(MAX(
     (regexp_match(id, '^CLIENT-(\d+)$'))[1]::integer
   ), 0) INTO max_existing
   FROM clients
   WHERE id ~ '^CLIENT-[0-9]+$';
 
-  IF n <= max_existing THEN
-    PERFORM setval('client_id_seq', max_existing);
-    n := nextval('client_id_seq');
-  END IF;
+  PERFORM setval('public.client_id_seq', max_existing);
+  n := nextval('public.client_id_seq');
 
   RETURN 'CLIENT-' || lpad(n::text, 3, '0');
 END;
