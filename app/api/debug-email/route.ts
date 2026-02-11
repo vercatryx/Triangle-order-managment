@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
+import { createClient } from '@/lib/supabase';
 import { sendEmail } from '@/lib/email';
 import { AppSettings } from '@/lib/types';
 

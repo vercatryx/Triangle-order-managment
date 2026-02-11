@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
+import { createClient } from '@/lib/supabase';
 import { DAY_NAME_TO_NUMBER, getFirstDeliveryDateInWeek } from '@/lib/order-dates';
 import { vendorSelectionsToDeliveryDayOrders } from '@/lib/upcoming-order-converter';
 import { sendSchedulingReport, sendVendorNextWeekSummary, type VendorBreakdownItem } from '@/lib/email-report';
@@ -248,8 +248,8 @@ export async function POST(request: NextRequest) {
         const reportEmail = (settingsRes.data as any)?.report_email || '';
         const sendVendorNextWeekEmails = (settingsRes.data as any)?.send_vendor_next_week_emails !== false;
 
-        const vendorMap = new Map(allVendors.map((v: any) => [v.id, v]));
-        const statusMap = new Map(allStatuses.map((s: any) => [s.id, s]));
+        const vendorMap = new Map<string, { id: string; name?: string; [k: string]: any }>(allVendors.map((v: any) => [v.id, v]));
+        const statusMap = new Map<string, { id: string; name: string; deliveriesAllowed?: boolean }>(allStatuses.map((s: any) => [s.id, s]));
         const clientMap = new Map(clients.map((c: any) => [c.id, c]));
         const menuItemMap = new Map(allMenuItems.map((i: any) => [i.id, i]));
         const mealItemMap = new Map(allMealItems.map((i: any) => [i.id, i]));
@@ -401,7 +401,7 @@ export async function POST(request: NextRequest) {
                     const clientName = clientMap.get(fo.client_id)?.full_name ?? fo.client_id;
 
                     if (await orderExists(fo.client_id, deliveryDateStr, 'Food', sel.vendorId)) {
-                        diagnostics.push({ clientId: fo.client_id, clientName, vendorId: sel.vendorId, vendorName: vendor.name, date: deliveryDateStr, orderType: 'Food', outcome: 'skipped', reason: 'Order already exists for this client/date/vendor' });
+                        diagnostics.push({ clientId: fo.client_id, clientName, vendorId: sel.vendorId, vendorName: vendor.name || 'Unknown', date: deliveryDateStr, orderType: 'Food', outcome: 'skipped', reason: 'Order already exists for this client/date/vendor' });
                         continue;
                     }
 
@@ -413,7 +413,7 @@ export async function POST(request: NextRequest) {
                             if (q <= 0) continue;
                             const mItem = menuItemMap.get(itemId) || mealItemMap.get(itemId);
                             if (!mItem) continue;
-                            const price = (mItem as any).itemType === 'meal' ? (mItem.price_each ?? 0) : (mItem.price_each ?? mItem.value ?? 0);
+                            const price = (mItem as any).itemType === 'meal' ? ((mItem as any).price_each ?? 0) : ((mItem as any).price_each ?? (mItem as any).value ?? 0);
                             valueTotal += price * q;
                             itemsList.push({
                                 menu_item_id: itemId,
@@ -425,7 +425,7 @@ export async function POST(request: NextRequest) {
                         }
                     }
                     if (itemsList.length === 0) {
-                        diagnostics.push({ clientId: fo.client_id, clientName, vendorId: sel.vendorId, vendorName: vendor.name, date: deliveryDateStr, orderType: 'Food', outcome: 'skipped', reason: 'No valid items in selection' });
+                        diagnostics.push({ clientId: fo.client_id, clientName, vendorId: sel.vendorId, vendorName: vendor.name || 'Unknown', date: deliveryDateStr, orderType: 'Food', outcome: 'skipped', reason: 'No valid items in selection' });
                         continue;
                     }
 
@@ -442,7 +442,7 @@ export async function POST(request: NextRequest) {
                         clientName
                     );
                     if (!newOrder) {
-                        diagnostics.push({ clientId: fo.client_id, clientName, vendorId: sel.vendorId, vendorName: vendor.name, date: deliveryDateStr, orderType: 'Food', outcome: 'failed', reason: report.unexpectedFailures[report.unexpectedFailures.length - 1]?.reason ?? 'createOrder failed' });
+                        diagnostics.push({ clientId: fo.client_id, clientName, vendorId: sel.vendorId, vendorName: vendor.name || 'Unknown', date: deliveryDateStr, orderType: 'Food', outcome: 'failed', reason: report.unexpectedFailures[report.unexpectedFailures.length - 1]?.reason ?? 'createOrder failed' });
                         continue;
                     }
 
@@ -451,9 +451,9 @@ export async function POST(request: NextRequest) {
                         recordVendorOrder(sel.vendorId, deliveryDateStr);
                         recordReportOrder(fo.client_id, sel.vendorId, 'Food');
                         await supabase.from('order_items').insert(itemsList.map(i => ({ ...i, vendor_selection_id: vs.id, order_id: newOrder.id })));
-                        diagnostics.push({ clientId: fo.client_id, clientName, vendorId: sel.vendorId, vendorName: vendor.name, date: deliveryDateStr, orderType: 'Food', outcome: 'created', orderId: newOrder.id });
+                        diagnostics.push({ clientId: fo.client_id, clientName, vendorId: sel.vendorId, vendorName: vendor.name || 'Unknown', date: deliveryDateStr, orderType: 'Food', outcome: 'created', orderId: newOrder.id });
                     } else {
-                        diagnostics.push({ clientId: fo.client_id, clientName, vendorId: sel.vendorId, vendorName: vendor.name, date: deliveryDateStr, orderType: 'Food', outcome: 'failed', orderId: newOrder.id, reason: 'order_vendor_selections insert failed' });
+                        diagnostics.push({ clientId: fo.client_id, clientName, vendorId: sel.vendorId, vendorName: vendor.name || 'Unknown', date: deliveryDateStr, orderType: 'Food', outcome: 'failed', orderId: newOrder.id, reason: 'order_vendor_selections insert failed' });
                     }
                 }
             }
@@ -519,7 +519,7 @@ export async function POST(request: NextRequest) {
                     clientName
                 );
                 if (!newOrder) {
-                    diagnostics.push({ clientId: mo.client_id, clientName, vendorId: g.vendorId, vendorName: vendor.name, date: deliveryDateStr, orderType: 'Meal', outcome: 'failed', reason: report.unexpectedFailures[report.unexpectedFailures.length - 1]?.reason ?? 'createOrder failed' });
+                    diagnostics.push({ clientId: mo.client_id, clientName, vendorId: g.vendorId, vendorName: vendor.name || 'Unknown', date: deliveryDateStr, orderType: 'Meal', outcome: 'failed', reason: report.unexpectedFailures[report.unexpectedFailures.length - 1]?.reason ?? 'createOrder failed' });
                     continue;
                 }
 
@@ -528,9 +528,9 @@ export async function POST(request: NextRequest) {
                     recordVendorOrder(g.vendorId, deliveryDateStr);
                     recordReportOrder(mo.client_id, g.vendorId, 'Meal');
                     await supabase.from('order_items').insert(itemsList.map(i => ({ ...i, vendor_selection_id: vs.id, order_id: newOrder.id })));
-                    diagnostics.push({ clientId: mo.client_id, clientName, vendorId: g.vendorId, vendorName: vendor.name, date: deliveryDateStr, orderType: 'Meal', outcome: 'created', orderId: newOrder.id });
+                    diagnostics.push({ clientId: mo.client_id, clientName, vendorId: g.vendorId, vendorName: vendor.name || 'Unknown', date: deliveryDateStr, orderType: 'Meal', outcome: 'created', orderId: newOrder.id });
                 } else {
-                    diagnostics.push({ clientId: mo.client_id, clientName, vendorId: g.vendorId, vendorName: vendor.name, date: deliveryDateStr, orderType: 'Meal', outcome: 'failed', orderId: newOrder.id, reason: 'order_vendor_selections insert failed' });
+                    diagnostics.push({ clientId: mo.client_id, clientName, vendorId: g.vendorId, vendorName: vendor.name || 'Unknown', date: deliveryDateStr, orderType: 'Meal', outcome: 'failed', orderId: newOrder.id, reason: 'order_vendor_selections insert failed' });
                 }
             }
         }
@@ -574,6 +574,7 @@ export async function POST(request: NextRequest) {
             // Earliest delivery date in the week among all box vendors
             let earliestDelivery: Date | null = null;
             for (const bo of clientBoxOrders) {
+                if (!bo.vendor_id) continue;
                 const vendor = vendorMap.get(bo.vendor_id);
                 if (!vendor) continue;
                 const d = getFirstDeliveryDateInWeek(nextWeekStart, vendor.deliveryDays);

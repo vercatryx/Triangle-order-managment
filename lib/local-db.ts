@@ -2,7 +2,6 @@
 
 import { promises as fs } from 'fs';
 import path from 'path';
-import { createClient } from '@supabase/supabase-js';
 import { supabase } from './supabase';
 import { getMenuItems, getVendors, getBoxTypes } from './actions';
 
@@ -198,14 +197,7 @@ export async function syncLocalDBFromSupabase(): Promise<void> {
     console.log('[LocalDB] Starting full sync...');
 
     try {
-        let supabaseClient = supabase;
-        const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-        if (serviceRoleKey) {
-            supabaseClient = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, serviceRoleKey, {
-                auth: { persistSession: false }
-            });
-        }
-
+        const supabaseClient = supabase;
 
         // Fetch all orders with status pending, confirmed, or processing
         const { data: orders, error: ordersError } = await supabaseClient
@@ -412,13 +404,7 @@ export async function updateClientInLocalDB(clientId: string, isDeletion: boolea
         }
 
         // 3. Otherwise, fetch new data
-        let supabaseClient = supabase;
-        const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-        if (serviceRoleKey) {
-            supabaseClient = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, serviceRoleKey, {
-                auth: { persistSession: false }
-            });
-        }
+        const supabaseClient = supabase;
 
         const [
             { data: orders },

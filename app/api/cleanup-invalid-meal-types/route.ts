@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
+import { createClient } from '@/lib/supabase';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
@@ -10,7 +10,7 @@ async function getValidMealTypes(): Promise<string[]> {
         .from('breakfast_categories')
         .select('meal_type');
     if (error) throw error;
-    return [...new Set((data || []).map((r: { meal_type: string }) => r.meal_type).filter(Boolean))].sort();
+    return [...new Set((data || []).map((r: { meal_type: string }) => r.meal_type).filter(Boolean))].sort() as string[];
 }
 
 function isInvalidSelectionKey(key: string, validTypes: string[]): boolean {

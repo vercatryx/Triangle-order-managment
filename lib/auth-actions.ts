@@ -4,7 +4,7 @@ import { createSession, deleteSession, verifySession } from './session';
 import { hashPassword, verifyPassword } from './password';
 import { supabase } from './supabase';
 import { redirect } from 'next/navigation';
-import { createClient } from '@supabase/supabase-js';
+import { createClient } from '@/lib/supabase';
 
 import { getSettings } from './actions';
 import { sendEmail } from './email';

@@ -8,7 +8,7 @@ import { ClientStatus, Vendor, MenuItem, BoxType, AppSettings, Navigator, Nutrit
 import { uploadFile, deleteFile } from './storage';
 import { randomUUID } from 'crypto';
 import { getSession } from './session';
-import { createClient } from '@supabase/supabase-js';
+import { createClient } from '@/lib/supabase';
 import { roundCurrency } from './utils';
 import { getNextDeliveryDateForDay } from './order-dates';
 

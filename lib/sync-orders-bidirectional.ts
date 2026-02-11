@@ -6,7 +6,7 @@
  * 2. If order exists in upcoming_orders but not in clients.active_order → sync to clients.active_order
  */
 
-import { createClient } from '@supabase/supabase-js';
+import { createClient } from '@/lib/supabase';
 import { getVendors, getMenuItems, getBoxTypes } from './actions';
 import { getCurrentTime } from './time';
 import type { ClientProfile } from './types';

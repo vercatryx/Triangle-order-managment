@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
+import { createClient } from '@/lib/supabase';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
@@ -27,7 +27,7 @@ export async function GET(request: NextRequest) {
         }
 
         // Filter out clients with empty active_order objects
-        const clientsWithActiveOrder = clients.filter(c => {
+        const clientsWithActiveOrder = clients.filter((c: any) => {
             const ao = c.active_order;
             return ao && typeof ao === 'object' && Object.keys(ao).length > 0;
         });
@@ -41,7 +41,7 @@ export async function GET(request: NextRequest) {
         }
 
         // Get all client IDs
-        const clientIds = clientsWithActiveOrder.map(c => c.id);
+        const clientIds = clientsWithActiveOrder.map((c: any) => c.id);
 
         // Fetch all upcoming_orders for these clients in a single query
         const { data: allUpcomingOrders, error: uoError } = await supabase
@@ -57,7 +57,7 @@ export async function GET(request: NextRequest) {
 
         // Create a Set of client IDs that have upcoming orders
         const clientsWithUpcomingOrders = new Set(
-            (allUpcomingOrders || []).map(uo => uo.client_id)
+            (allUpcomingOrders || []).map((uo: any) => uo.client_id)
         );
 
         // Find clients without upcoming_orders

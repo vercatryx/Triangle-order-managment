@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
+import { createClient } from '@/lib/supabase';
 import { sendSchedulingReport } from '@/lib/email-report';
 import * as XLSX from 'xlsx';
 

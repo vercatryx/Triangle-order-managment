@@ -1,6 +1,6 @@
 'use server';
 
-import { createClient } from '@supabase/supabase-js';
+import { createClient } from '@/lib/supabase';
 import { supabase } from './supabase';
 import { ClientProfile } from './types';
 import { syncCurrentOrderToUpcoming, getVendors } from './actions';

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
+import { createClient } from '@/lib/supabase';
 
 const PAGE_SIZE_DEFAULT = 50;
 const PAGE_SIZE_MAX = 1000;
@@ -33,13 +33,7 @@ export async function GET(request: NextRequest) {
         const sortBy = searchParams.get('sortBy') || 'created_at';
         const sortDirection = (searchParams.get('sortDirection') || 'desc') as 'asc' | 'desc';
 
-        const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-        if (!serviceRoleKey) {
-            return NextResponse.json({ error: 'Server configuration error' }, { status: 500 });
-        }
-        const db = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, serviceRoleKey, {
-            auth: { persistSession: false }
-        });
+        const db = createClient();
 
         // Resolve search once (client ids + escaped term) for both data and count
         let searchClientIds: string[] = [];

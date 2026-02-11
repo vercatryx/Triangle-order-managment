@@ -1,7 +1,14 @@
+/**
+ * Database client - uses MySQL (replaces Supabase/PostgreSQL).
+ * Exports a Supabase-compatible API for drop-in replacement.
+ */
 
-import { createClient } from '@supabase/supabase-js';
+import { db } from './db';
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+// Export as 'supabase' for backward compatibility - all imports of supabase will use MySQL
+export const supabase = db;
 
-export const supabase = createClient(supabaseUrl, supabaseKey);
+/** createClient returns the same db (no anon vs service role in MySQL - full access) */
+export function createClient(_url?: string, _key?: string, _opts?: any) {
+    return db;
+}

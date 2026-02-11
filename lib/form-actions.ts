@@ -1,6 +1,6 @@
 'use server';
 
-import { createClient } from '@supabase/supabase-js';
+import { createClient } from '@/lib/supabase';
 import { FormSchema, Question, FilledForm, Answer, QuestionType } from './form-types';
 import { revalidatePath } from 'next/cache';
 

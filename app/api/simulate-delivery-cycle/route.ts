@@ -1,6 +1,6 @@
 import { getSession } from '@/lib/session';
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
+import { createClient } from '@/lib/supabase';
 import { getCurrentTime } from '@/lib/time';
 // Imports removed to prevent RLS issues with anonymous client
 // import { getMenuItems, getVendors... } from '@/lib/actions';

@@ -1,7 +1,7 @@
 'use server';
 
 import { uploadFile } from '@/lib/storage';
-import { createClient } from '@supabase/supabase-js';
+import { createClient } from '@/lib/supabase';
 import { revalidatePath } from 'next/cache';
 import { saveDeliveryProofUrlAndProcessOrder } from '@/lib/actions';
 import { roundCurrency } from '@/lib/utils';

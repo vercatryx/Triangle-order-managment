@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
+import { createClient } from '@/lib/supabase';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
@@ -8,7 +8,7 @@ const supabase = createClient(supabaseUrl, supabaseKey);
 async function getValidMealTypes(): Promise<string[]> {
     const { data, error } = await supabase.from('breakfast_categories').select('meal_type');
     if (error) throw error;
-    return [...new Set((data || []).map((r: { meal_type: string }) => r.meal_type).filter(Boolean))].sort();
+    return [...new Set((data || []).map((r: { meal_type: string }) => r.meal_type).filter(Boolean))].sort() as string[];
 }
 
 function isInvalidMealKey(key: string, validTypes: string[]): boolean {
@@ -538,7 +538,7 @@ export async function GET() {
             }
         }
 
-        const activeVendors = (vendors || []).filter((v) => v.is_active).map((v) => ({ id: v.id, name: v.name || v.id }));
+        const activeVendors = (vendors || []).filter((v: { is_active?: boolean }) => v.is_active).map((v: { id: string; name?: string }) => ({ id: v.id, name: v.name || v.id }));
 
         return NextResponse.json({
             success: true,

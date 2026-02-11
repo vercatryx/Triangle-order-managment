@@ -1,4 +1,4 @@
-import { createClient } from '@supabase/supabase-js';
+import { createClient } from '@/lib/supabase';
 import { OrderDeliveryFlow } from './OrderDeliveryFlow';
 import { notFound } from 'next/navigation';
 import '../delivery.css';

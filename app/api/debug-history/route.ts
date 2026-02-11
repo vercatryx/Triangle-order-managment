@@ -1,6 +1,6 @@
 
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
+import { createClient } from '@/lib/supabase';
 import { appendOrderHistory } from '@/lib/actions';
 
 // Use Service Role to bypass RLS for debugging
