@@ -174,7 +174,9 @@ All tools are **independent** — each calls its own operator API. Use `lib/oper
 | Tool | Purpose | Inputs |
 |------|---------|--------|
 | `lookup_client` | Resolve caller | `phone_number` or `client_id` |
-| `inquire_current_orders` | Inquire client's current week orders and upcoming order | `client_id` |
+| `inquire_current_orders` | Inquire client's current week orders and upcoming order | `client_id`, `phone` |
+| `inquire_orders_current` | Inquire client's current week orders only (new) | `phone`, `client_id` |
+| `inquire_upcoming_order` | Inquire client's upcoming order only (new) | `phone`, `client_id` |
 | `request_menu` | Request menu items for vendor or all items | `vendor_id` (optional) |
 | `create_upcoming_order` | Create upcoming order | `client_id`, `service_type`, plus Custom/Food/Meal fields |
 | `create_from_previous_order` | Repeat client's last order as upcoming | `client_id` |
@@ -188,7 +190,9 @@ All tools are **independent** — each calls its own operator API. Use `lib/oper
 | Route | Method | Role |
 |-------|--------|------|
 | `/api/operator/lookup-client` | GET | Resolve client by phone or ID |
-| `/api/operator/inquire-current-orders` | GET | Inquire current week orders and upcoming order |
+| `/api/operator/inquire-current-orders` | GET, POST | Inquire current week orders and upcoming order |
+| `/api/operator/inquire-orders-current` | POST | Inquire current week orders only (new) |
+| `/api/operator/inquire-upcoming-order` | POST | Inquire upcoming order only (new) |
 | `/api/operator/request-menu` | GET | Request menu items (optionally by vendorId) |
 | `/api/operator/create-upcoming-order` | POST | Create upcoming order (Custom, Food, Meal with items & quantities) |
 | `/api/operator/create-from-previous-order` | POST | Create upcoming order from client's last order |

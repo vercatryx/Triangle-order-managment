@@ -50,19 +50,34 @@ curl -X POST "http://localhost:3000/api/operator/lookup-client" -H "Content-Type
 curl -X POST "http://localhost:3000/api/operator/lookup-client" -H "Content-Type: application/json" -d "{\"phone\":\"555-123-4567\",\"select\":[\"clientId\",\"fullName\"],\"attach\":[\"upcomingOrder\"]}"
 ```
 
-### 2. Inquire Current Orders
+### 2. Inquire Current Orders (original — GET or POST, returns both)
 
 ```bash
 curl "http://localhost:3000/api/operator/inquire-current-orders?clientId=1001"
 ```
 
 ```bash
-curl "http://localhost:3000/api/operator/inquire-current-orders?clientId=1002"
+curl "http://localhost:3000/api/operator/inquire-current-orders?phone=555-123-4567"
 ```
 
-**By phone number:**
+### 2a. Inquire Orders Current (new — POST only, current orders only)
+
 ```bash
-curl "http://localhost:3000/api/operator/inquire-current-orders?phone=555-1001"
+curl -X POST "http://localhost:3000/api/operator/inquire-orders-current" -H "Content-Type: application/json" -d "{\"phone\":\"555-123-4567\"}"
+```
+
+```bash
+curl -X POST "http://localhost:3000/api/operator/inquire-orders-current" -H "Content-Type: application/json" -d "{\"clientId\":\"1001\"}"
+```
+
+### 2b. Inquire Upcoming Order (new — POST only, upcoming order only)
+
+```bash
+curl -X POST "http://localhost:3000/api/operator/inquire-upcoming-order" -H "Content-Type: application/json" -d "{\"phone\":\"555-123-4567\"}"
+```
+
+```bash
+curl -X POST "http://localhost:3000/api/operator/inquire-upcoming-order" -H "Content-Type: application/json" -d "{\"clientId\":\"1001\"}"
 ```
 
 ### 3. Request Menu (all items)
@@ -219,9 +234,9 @@ With `attach: ["currentOrders","upcomingOrder"]`:
 
 ---
 
-## 2. Inquire Current Orders
+## 2. Inquire Current Orders (original)
 
-**Endpoint:** `GET /api/operator/inquire-current-orders`
+**Endpoint:** `GET /api/operator/inquire-current-orders` | `POST /api/operator/inquire-current-orders`
 
 ### Functionality
 
@@ -229,14 +244,19 @@ Returns the client's current week orders and their upcoming order. Use when the 
 
 ### How to Test
 
-**By client ID:**
+**By client ID (GET):**
 ```bash
 curl "http://localhost:3000/api/operator/inquire-current-orders?clientId=YOUR_CLIENT_ID"
 ```
 
-**By phone number:**
+**By phone number (GET):**
 ```bash
-curl "http://localhost:3000/api/operator/inquire-current-orders?phone=+15551234567"
+curl "http://localhost:3000/api/operator/inquire-current-orders?phone=555-123-4567"
+```
+
+**POST** with body `{ "phone": "..." }` or `{ "clientId": "..." }`:
+```bash
+curl -X POST "http://localhost:3000/api/operator/inquire-current-orders" -H "Content-Type: application/json" -d "{\"phone\":\"555-123-4567\"}"
 ```
 
 ### Test Parameters
@@ -250,22 +270,100 @@ curl "http://localhost:3000/api/operator/inquire-current-orders?phone=+155512345
 
 ```json
 {
-  "currentOrders": [
-    {
-      "orderId": "order-uuid",
-      "orderNumber": "ORD-001",
-      "serviceType": "Food",
-      "status": "Delivered",
-      "scheduledDeliveryDate": "2025-02-10",
-      "totalItems": 5,
-      "totalValue": 45.00,
-      "notes": null,
-      "items": [
-        { "name": "Grilled Chicken", "price": 12.99, "value": 25.98, "quantity": 2 },
-        { "name": "Salad", "price": 8.99, "value": 8.99, "quantity": 1 }
-      ]
-    }
-  ],
+  "currentOrders": [...],
+  "upcomingOrder": { ... }
+}
+```
+
+- `upcomingOrder` may be `null` if no upcoming order is set.
+
+### Expected Output (Error)
+
+- **400:** `{ "error": "clientId or phone is required" }` or `{ "error": "Client is not eligible" }`
+- **404:** `{ "error": "Client not found for this phone number" }` (when using phone)
+- **500:** `{ "error": "Internal server error" }`
+
+### Retell Integration
+
+- **Tool name:** `inquire_current_orders`
+- **When to call:** After `lookup_client` when the caller asks about their orders
+- **Retell tool config:** GET `?clientId={client_id}` or `?phone={phone}`; or POST with body `{ "phone": "..." }` or `{ "client_id": "..." }`
+- **Agent prompt:** "If the caller asks what they have ordered, what they're scheduled for, or if they have an upcoming order, call inquire_current_orders with the client_id or phone."
+
+---
+
+## 2a. Inquire Orders Current (new segregated)
+
+**Endpoint:** `POST /api/operator/inquire-orders-current`
+
+### Functionality
+
+Returns the client's current week orders only. Use when the caller asks "What are my orders?" or "What have I received this week?"
+
+### How to Test
+
+```bash
+curl -X POST "http://localhost:3000/api/operator/inquire-orders-current" -H "Content-Type: application/json" -d "{\"phone\":\"555-123-4567\"}"
+```
+
+```bash
+curl -X POST "http://localhost:3000/api/operator/inquire-orders-current" -H "Content-Type: application/json" -d "{\"clientId\":\"YOUR_CLIENT_ID\"}"
+```
+
+### Test Parameters
+
+| Parameter   | Value              | Notes                                      |
+|------------|--------------------|--------------------------------------------|
+| `phone`    | E.164 or common format | Primary identifier; look up client by phone |
+| `clientId` | Valid client UUID  | Alternative; use from `lookup_client`      |
+
+### Expected Output (Success)
+
+```json
+{
+  "currentOrders": [...]
+}
+```
+
+### Retell Integration
+
+- **Tool name:** `inquire_orders_current`
+- **When to call:** When the caller asks about their current week orders only
+- **Retell tool config:** POST to `https://your-domain.com/api/operator/inquire-orders-current` with body `{ "phone": "..." }` or `{ "client_id": "..." }`
+
+---
+
+## 2b. Inquire Upcoming Order (new segregated)
+
+**Endpoint:** `POST /api/operator/inquire-upcoming-order`
+
+### Functionality
+
+Returns the client's upcoming order only. Use when the caller asks "Do I have an upcoming order?" or "What am I scheduled for next?"
+
+### How to Test
+
+**By phone number:**
+```bash
+curl -X POST "http://localhost:3000/api/operator/inquire-upcoming-order" -H "Content-Type: application/json" -d "{\"phone\":\"555-123-4567\"}"
+```
+
+**By client ID:**
+```bash
+curl -X POST "http://localhost:3000/api/operator/inquire-upcoming-order" -H "Content-Type: application/json" -d "{\"clientId\":\"YOUR_CLIENT_ID\"}"
+```
+
+### Test Parameters
+
+| Parameter   | Value              | Notes                                      |
+|------------|--------------------|--------------------------------------------|
+| `phone`    | E.164 or common format | Primary identifier; look up client by phone |
+| `clientId` | Valid client UUID  | Alternative; use from `lookup_client`      |
+
+### Expected Output (Success)
+
+```json
+{
   "upcomingOrder": {
     "serviceType": "Food",
     "caseId": "432432",
@@ -305,10 +403,10 @@ curl "http://localhost:3000/api/operator/inquire-current-orders?phone=+155512345
 
 ### Retell Integration
 
-- **Tool name:** `inquire_current_orders`
-- **When to call:** After `lookup_client` when the caller asks about their orders
-- **Retell tool config:** Point to `https://your-domain.com/api/operator/inquire-current-orders?clientId={client_id}` or `?phone={phone_number}` (client_id from prior lookup, or phone for direct lookup)
-- **Agent prompt:** "If the caller asks what they have ordered, what they're scheduled for, or if they have an upcoming order, call inquire_current_orders with the client_id."
+- **Tool name:** `inquire_upcoming_order`
+- **When to call:** When the caller asks about their upcoming order or what they're scheduled for next
+- **Retell tool config:** POST to `https://your-domain.com/api/operator/inquire-upcoming-order` with body `{ "phone": "..." }` or `{ "client_id": "..." }`
+- **Agent prompt:** "If the caller asks if they have an upcoming order or what they're scheduled for next, call inquire_upcoming_order with the phone number or client_id."
 
 ---
 
@@ -542,7 +640,9 @@ curl -X POST "http://localhost:3000/api/operator/create-from-previous-order" \
 |--------------------------------|--------|--------------------------------|-------------------------------|
 | `/api/operator/lookup-client`  | GET    | `phone`, `clientId`            | `lookup_client`               |
 | `/api/operator/lookup-client`  | POST   | `phone`, `clientId`, `select`, `attach` | `lookup_client`        |
-| `/api/operator/inquire-current-orders` | GET | `clientId`, `phone`     | `inquire_current_orders`      |
+| `/api/operator/inquire-current-orders` | GET, POST | `clientId`, `phone`     | `inquire_current_orders`      |
+| `/api/operator/inquire-orders-current` | POST | `phone`, `clientId`     | `inquire_orders_current`      |
+| `/api/operator/inquire-upcoming-order` | POST | `phone`, `clientId`     | `inquire_upcoming_order`      |
 | `/api/operator/request-menu`   | GET    | `vendorId` (optional)          | `request_menu`                |
 | `/api/operator/create-upcoming-order` | POST | `clientId`, `serviceType`, ... | `create_upcoming_order` |
 | `/api/operator/create-from-previous-order` | POST | `clientId`            | `create_from_previous_order`   |
@@ -557,7 +657,9 @@ curl -X POST "http://localhost:3000/api/operator/create-from-previous-order" \
 4. **Suggested call flow:**
    - `lookup_client` (with `from_number` if available, else `client_id` from spoken input)
    - Based on intent:
-     - "What are my orders?" → `inquire_current_orders`
+     - "What are my orders?" (both) → `inquire_current_orders` (original)
+     - "What have I received?" (current only) → `inquire_orders_current` (new)
+     - "Do I have an upcoming order?" (upcoming only) → `inquire_upcoming_order` (new)
      - "What can I order?" → `request_menu` (optionally with vendor)
      - "Same as last time" → `create_from_previous_order`
      - "Place new order" → `request_menu` (if needed) → `create_upcoming_order`
