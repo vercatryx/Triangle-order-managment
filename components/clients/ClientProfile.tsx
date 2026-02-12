@@ -3370,11 +3370,11 @@ export function ClientProfileDetail({
                                             </div>
                                         ) : (
                                             <>
-                                                {categories.map(category => {
+                                                {categories.filter(c => c.isActive !== false).map(category => {
                                                     const searchTerm = '';
                                                     const availableItems = menuItems.filter(i =>
                                                         ((i.vendorId === null || i.vendorId === '') || i.vendorId === box.vendorId) &&
-                                                        i.isActive &&
+                                                        i.isActive !== false &&
                                                         i.categoryId === category.id
                                                     );
                                                     if (availableItems.length === 0) return null;
@@ -4965,12 +4965,12 @@ export function ClientProfileDetail({
                                                                         </div>
                                                                     ) : (
                                                                         <>
-                                                                            {/* Show all categories with box items */}
-                                                                            {categories.map(category => {
-                                                                                // Filter items for this category
+                                                                            {/* Show all categories with box items (active only) */}
+                                                                            {categories.filter(c => c.isActive !== false).map(category => {
+                                                                                // Filter items for this category (active only)
                                                                                 const availableItems = menuItems.filter(i =>
                                                                                     (i.vendorId === null || i.vendorId === '') &&
-                                                                                    i.isActive &&
+                                                                                    i.isActive !== false &&
                                                                                     i.categoryId === category.id
                                                                                 );
 
@@ -5214,11 +5214,11 @@ export function ClientProfileDetail({
                                                                                 );
                                                                             })}
 
-                                                                            {/* Show uncategorized items if any */}
+                                                                            {/* Show uncategorized items if any (active only) */}
                                                                             {(() => {
                                                                                 const uncategorizedItems = menuItems.filter(i =>
                                                                                     (i.vendorId === null || i.vendorId === '') &&
-                                                                                    i.isActive &&
+                                                                                    i.isActive !== false &&
                                                                                     (!i.categoryId || i.categoryId === '')
                                                                                 );
 
@@ -5712,8 +5712,8 @@ export function ClientProfileDetail({
                                                                         </div>
                                                                     ) : (
                                                                         <>
-                                                                            {categories.map(category => {
-                                                                                const availableItems = menuItems.filter(i => (i.vendorId === null || i.vendorId === '') && i.isActive && i.categoryId === category.id);
+                                                                            {categories.filter(c => c.isActive !== false).map(category => {
+                                                                                const availableItems = menuItems.filter(i => (i.vendorId === null || i.vendorId === '') && i.isActive !== false && i.categoryId === category.id);
                                                                                 if (availableItems.length === 0) return null;
                                                                                 const selectedItems = box.items || {};
                                                                                 let categoryQuotaValue = 0;
@@ -5783,7 +5783,7 @@ export function ClientProfileDetail({
                                                                                 );
                                                                             })}
                                                                             {(() => {
-                                                                                const uncategorizedItems = menuItems.filter(i => (i.vendorId === null || i.vendorId === '') && i.isActive && (!i.categoryId || i.categoryId === ''));
+                                                                                const uncategorizedItems = menuItems.filter(i => (i.vendorId === null || i.vendorId === '') && i.isActive !== false && (!i.categoryId || i.categoryId === ''));
                                                                                 if (uncategorizedItems.length === 0) return null;
                                                                                 const selectedItems = box.items || {};
                                                                                 return (

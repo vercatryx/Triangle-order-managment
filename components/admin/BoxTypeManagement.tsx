@@ -8,7 +8,7 @@ import { Plus, Edit2, Trash2, X, Check, Package, Scale, Save } from 'lucide-reac
 import styles from './BoxTypeManagement.module.css';
 
 export function BoxTypeManagement() {
-    const { getCategories, getMenuItems, getBoxTypes, invalidateReferenceData } = useDataCache();
+    const { getCategoriesForAdmin, getMenuItems, getBoxTypes, invalidateReferenceData } = useDataCache();
     const [boxTypes, setBoxTypes] = useState<BoxType[]>([]);
     const [categories, setCategories] = useState<ItemCategory[]>([]);
     const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
@@ -61,7 +61,7 @@ export function BoxTypeManagement() {
     }, [selectedBoxId]);
 
     async function loadData() {
-        const [bData, cData, mData] = await Promise.all([getBoxTypes(), getCategories(), getMenuItems()]);
+        const [bData, cData, mData] = await Promise.all([getBoxTypes(), getCategoriesForAdmin(), getMenuItems()]);
         setBoxTypes(bData);
         setCategories(cData);
         setMenuItems(mData);
@@ -111,7 +111,7 @@ export function BoxTypeManagement() {
         invalidateReferenceData(); // Invalidate cache after category creation
 
         // Refresh categories
-        const cData = await getCategories();
+        const cData = await getCategoriesForAdmin();
         setCategories(cData);
         setNewQuotaCategoryId(newCat.id);
         setIsAddingCategory(false);
@@ -225,7 +225,7 @@ export function BoxTypeManagement() {
         // 3. Refresh
         const qData = await getBoxQuotas(selectedBoxId);
         setCurrentQuotas(qData);
-        const cData = await getCategories();
+        const cData = await getCategoriesForAdmin();
         setCategories(cData);
 
         handleCancelEdit();
@@ -517,7 +517,7 @@ export function BoxTypeManagement() {
                                             }}
                                         >
                                             <option value="">-- Select Category --</option>
-                                            {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                                            {categories.filter(c => c.isActive !== false).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                                             <option value="NEW" style={{ fontWeight: 'bold', color: 'var(--color-primary)' }}>+ Create New Category</option>
                                         </select>
                                     </div>

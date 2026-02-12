@@ -608,13 +608,17 @@ export async function uploadMenuItemImage(formData: FormData) {
 
 // --- MENU ACTIONS ---
 
-export const getMenuItems = reactCache(async function () {
-    const { data, error } = await supabase.from('menu_items')
+export const getMenuItems = reactCache(async function (options?: { includeInactive?: boolean }) {
+    let query = supabase.from('menu_items')
         .select('*')
         .order('sort_order', { ascending: true })
         .order('name', { ascending: true });
+    if (!options?.includeInactive) {
+        query = query.eq('is_active', true);
+    }
+    const { data, error } = await query;
     if (error) return [];
-    return data.map((i: any) => ({
+    return (data || []).map((i: any) => ({
         id: i.id,
         vendorId: i.vendor_id,
         name: i.name,
@@ -631,6 +635,11 @@ export const getMenuItems = reactCache(async function () {
         itemType: 'menu'
     }));
 });
+
+/** Get all menu items including inactive. Use only in admin Box Categories settings. */
+export async function getMenuItemsForAdmin() {
+    return getMenuItems({ includeInactive: true });
+}
 
 export async function addMenuItem(data: Omit<MenuItem, 'id'>) {
     const payload: any = {
@@ -735,19 +744,30 @@ export async function deleteMenuItem(id: string) {
 
 // --- ITEM CATEGORY ACTIONS ---
 
-export async function getCategories() {
-    const { data, error } = await supabase.from('item_categories').select('*').order('sort_order', { ascending: true }).order('name');
+/** Get categories. By default returns only active (for order building). Use getCategoriesForAdmin for settings. */
+export async function getCategories(options?: { includeInactive?: boolean }) {
+    let query = supabase.from('item_categories').select('*').order('sort_order', { ascending: true }).order('name');
+    if (!options?.includeInactive) {
+        query = query.eq('is_active', true);
+    }
+    const { data, error } = await query;
     if (error) return [];
-    return data.map((c: any) => ({
+    return (data || []).map((c: any) => ({
         id: c.id,
         name: c.name,
         setValue: c.set_value ?? undefined,
-        sortOrder: c.sort_order ?? 0
+        sortOrder: c.sort_order ?? 0,
+        isActive: c.is_active !== false
     }));
 }
 
+/** Get all categories including inactive. Use only in admin Box Categories settings. */
+export async function getCategoriesForAdmin() {
+    return getCategories({ includeInactive: true });
+}
+
 export async function addCategory(name: string, setValue?: number | null) {
-    const payload: any = { name };
+    const payload: any = { name, is_active: true };
     if (setValue !== undefined) {
         payload.set_value = setValue;
     }
@@ -773,14 +793,16 @@ export async function updateCategoryOrder(updates: { id: string; sortOrder: numb
     return { success: true };
 }
 
-export async function updateCategory(id: string, name: string, setValue?: number | null) {
+export async function updateCategory(id: string, name: string, setValue?: number | null, isActive?: boolean) {
     const payload: any = { name };
     if (setValue !== undefined) {
         payload.set_value = setValue;
     }
+    if (isActive !== undefined) {
+        payload.is_active = isActive;
+    }
     const { error } = await supabase.from('item_categories').update(payload).eq('id', id);
     handleError(error);
-    revalidatePath('/admin');
     revalidatePath('/admin');
 }
 

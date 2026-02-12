@@ -1079,10 +1079,10 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
                                                         </div>
                                                     ) : (
                                                         <>
-                                                            {categories.map(category => {
+                                                            {categories.filter(c => c.isActive !== false).map(category => {
                                                                 const availableItems = menuItems.filter(i =>
                                                                     ((i.vendorId === null || i.vendorId === '') || i.vendorId === box.vendorId) &&
-                                                                    i.isActive &&
+                                                                    i.isActive !== false &&
                                                                     i.categoryId === category.id &&
                                                                     (searchTerm === '' || i.name.toLowerCase().includes(searchTerm.toLowerCase()))
                                                                 );

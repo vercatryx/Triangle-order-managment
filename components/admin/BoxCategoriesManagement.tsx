@@ -14,7 +14,7 @@ import { CSS } from '@dnd-kit/utilities';
 import getCroppedImg from '@/lib/canvasUtils';
 
 export function BoxCategoriesManagement() {
-    const { getCategories, getMenuItems, invalidateReferenceData } = useDataCache();
+    const { getCategoriesForAdmin, getMenuItemsForAdmin, invalidateReferenceData } = useDataCache();
     const [categories, setCategories] = useState<ItemCategory[]>([]);
     const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
 
@@ -60,7 +60,7 @@ export function BoxCategoriesManagement() {
     }, []);
 
     async function loadData() {
-        const [cData, mData] = await Promise.all([getCategories(), getMenuItems()]);
+        const [cData, mData] = await Promise.all([getCategoriesForAdmin(), getMenuItemsForAdmin()]);
         setCategories(cData);
         setMenuItems(mData);
     }
@@ -75,7 +75,7 @@ export function BoxCategoriesManagement() {
         }
         await addCategory(newCategoryName, setValue);
         invalidateReferenceData();
-        const cData = await getCategories();
+        const cData = await getCategoriesForAdmin();
         setCategories(cData);
         setIsAddingCategory(false);
         setNewCategoryName('');
@@ -91,7 +91,7 @@ export function BoxCategoriesManagement() {
         if (confirm('Delete this category?')) {
             await deleteCategory(id);
             invalidateReferenceData();
-            const cData = await getCategories();
+            const cData = await getCategoriesForAdmin();
             setCategories(cData);
         }
     }
@@ -103,11 +103,28 @@ export function BoxCategoriesManagement() {
             alert('Set value must be a positive number or empty');
             return;
         }
-        await updateCategory(editingCategoryId, tempCategoryName, setValue);
+        const editingCat = categories.find(c => c.id === editingCategoryId);
+        await updateCategory(editingCategoryId, tempCategoryName, setValue, editingCat?.isActive);
         invalidateReferenceData();
-        const cData = await getCategories();
+        const cData = await getCategoriesForAdmin();
         setCategories(cData);
         setEditingCategoryId(null);
+    }
+
+    async function handleToggleActive(cat: ItemCategory) {
+        const newActive = !(cat.isActive !== false);
+        await updateCategory(cat.id, cat.name, cat.setValue ?? undefined, newActive);
+        invalidateReferenceData();
+        const cData = await getCategoriesForAdmin();
+        setCategories(cData);
+    }
+
+    async function handleToggleItemActive(item: MenuItem) {
+        const newActive = !(item.isActive !== false);
+        await updateMenuItem(item.id, { isActive: newActive });
+        invalidateReferenceData();
+        const mData = await getMenuItemsForAdmin();
+        setMenuItems(mData);
     }
 
     // --- ITEM ACTIONS (MODAL) ---
@@ -156,7 +173,7 @@ export function BoxCategoriesManagement() {
             });
         }
         invalidateReferenceData();
-        const mData = await getMenuItems();
+        const mData = await getMenuItemsForAdmin();
         setMenuItems(mData);
         setIsEditingItem(false);
     }
@@ -165,7 +182,7 @@ export function BoxCategoriesManagement() {
         if (confirm('Remove this item?')) {
             await deleteMenuItem(id);
             invalidateReferenceData();
-            const mData = await getMenuItems();
+            const mData = await getMenuItemsForAdmin();
             setMenuItems(mData);
         }
     }
@@ -305,12 +322,16 @@ export function BoxCategoriesManagement() {
 
     function SortableCategoryRow({ cat }: { cat: ItemCategory }) {
         const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: cat.id });
+        const isInactive = cat.isActive === false;
         const style = {
             transform: CSS.Transform.toString(transform),
             transition,
             zIndex: isDragging ? 100 : 'auto',
             opacity: isDragging ? 0.5 : 1,
-            background: 'var(--bg-surface-hover)', padding: '1rem', borderRadius: '6px', border: '1px solid var(--border-color)'
+            background: isInactive ? 'rgba(255,255,255,0.04)' : 'var(--bg-surface-hover)',
+            padding: '1rem',
+            borderRadius: '6px',
+            border: isInactive ? '1px dashed var(--border-color)' : '1px solid var(--border-color)'
         };
 
         const catItems = getBoxItemsForCategory(cat.id);
@@ -350,10 +371,13 @@ export function BoxCategoriesManagement() {
                                     <GripVertical size={16} />
                                 </div>
                                 <Package size={18} style={{ color: 'var(--color-primary)' }} />
-                                <span style={{ fontWeight: 600, fontSize: '1rem' }}>{cat.name}</span>
+                                <span style={{ fontWeight: 600, fontSize: '1rem', opacity: 1 }}>{cat.name}</span>
                                 <span style={{ color: 'var(--text-tertiary)', fontSize: '0.85rem' }}>
                                     ({catItems.length} items)
                                 </span>
+                                {cat.isActive === false && (
+                                    <span style={{ fontSize: '0.75rem', padding: '2px 8px', borderRadius: '12px', background: 'rgba(234,179,8,0.2)', color: 'var(--text-secondary)', fontWeight: 500 }}>Inactive — check box to reactivate</span>
+                                )}
                                 {cat.setValue !== undefined && cat.setValue !== null && (
                                     <span style={{
                                         color: '#000000',
@@ -364,7 +388,16 @@ export function BoxCategoriesManagement() {
                                     </span>
                                 )}
                             </div>
-                            <div style={{ display: 'flex', gap: '0.25rem' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                <label style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', cursor: 'pointer', fontSize: '0.85rem', color: 'var(--text-secondary)' }} title={cat.isActive !== false ? 'Active — click to deactivate' : 'Inactive — click to activate'}>
+                                    <input
+                                        type="checkbox"
+                                        checked={cat.isActive !== false}
+                                        onChange={() => handleToggleActive(cat)}
+                                        style={{ width: '16px', height: '16px', cursor: 'pointer' }}
+                                    />
+                                    {cat.isActive !== false ? 'Active' : 'Inactive'}
+                                </label>
                                 <button onClick={() => {
                                     setEditingCategoryId(cat.id);
                                     setTempCategoryName(cat.name);
@@ -421,13 +454,25 @@ export function BoxCategoriesManagement() {
                 {item.imageUrl && (
                     <img src={item.imageUrl} alt="" style={{ width: '40px', height: '40px', borderRadius: '4px', objectFit: 'cover' }} />
                 )}
-                <span>{item.name}</span>
+                <span style={{ opacity: 1 }}>{item.name}</span>
                 <span style={{ color: 'var(--text-tertiary)' }}>(x{typeof item.quotaValue === 'number' && item.quotaValue % 1 !== 0 ? item.quotaValue.toFixed(2) : (item.quotaValue || 1)})</span>
                 {item.priceEach !== undefined && item.priceEach !== null && (
                     <span style={{ color: 'var(--text-primary)', fontWeight: 600 }}>${item.priceEach.toFixed(2)}</span>
                 )}
+                {item.isActive === false && (
+                    <span style={{ fontSize: '0.7rem', padding: '2px 6px', borderRadius: '10px', background: 'rgba(234,179,8,0.2)', color: 'var(--text-secondary)', fontWeight: 500 }}>Inactive — check box to reactivate</span>
+                )}
 
-                <div style={{ marginLeft: 'auto', display: 'flex', gap: '0.25rem' }}>
+                <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', cursor: 'pointer', fontSize: '0.75rem', color: 'var(--text-secondary)' }} title={item.isActive !== false ? 'Active — click to deactivate' : 'Inactive — click to activate'}>
+                        <input
+                            type="checkbox"
+                            checked={item.isActive !== false}
+                            onChange={() => handleToggleItemActive(item)}
+                            style={{ width: '14px', height: '14px', cursor: 'pointer' }}
+                        />
+                        {item.isActive !== false ? 'Active' : 'Inactive'}
+                    </label>
                     <button onClick={() => openEditItem(item)} style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: 'var(--text-primary)', padding: 0 }} title="Edit Item">
                         <Edit2 size={12} />
                     </button>

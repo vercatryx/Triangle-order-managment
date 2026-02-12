@@ -25,8 +25,10 @@ interface DataCacheContextType {
     getVendors: () => Promise<Vendor[]>;
     getGlobalLocations: () => Promise<any[]>; // Renamed from getVendorLocations
     getMenuItems: () => Promise<MenuItem[]>;
+    getMenuItemsForAdmin: () => Promise<MenuItem[]>;
     getBoxTypes: () => Promise<BoxType[]>;
     getCategories: () => Promise<ItemCategory[]>;
+    getCategoriesForAdmin: () => Promise<ItemCategory[]>; // Includes inactive (Box Categories settings only)
     getSettings: () => Promise<AppSettings>;
 
     // Client data cache
@@ -52,8 +54,10 @@ export function DataCacheProvider({ children }: { children: React.ReactNode }) {
         vendors?: CacheEntry<Vendor[]>;
         globalLocations?: CacheEntry<any[]>; // Renamed
         menuItems?: CacheEntry<MenuItem[]>;
+        menuItemsAll?: CacheEntry<MenuItem[]>;
         boxTypes?: CacheEntry<BoxType[]>;
         categories?: CacheEntry<ItemCategory[]>;
+        categoriesAll?: CacheEntry<ItemCategory[]>;
         settings?: CacheEntry<AppSettings>;
     }>({});
 
@@ -110,12 +114,20 @@ export function DataCacheProvider({ children }: { children: React.ReactNode }) {
         return fetchAndCache('menuItems', () => serverActions.getMenuItems());
     }, [fetchAndCache]);
 
+    const getMenuItemsForAdmin = useCallback(async () => {
+        return fetchAndCache('menuItemsAll', () => serverActions.getMenuItemsForAdmin());
+    }, [fetchAndCache]);
+
     const getBoxTypes = useCallback(async () => {
         return fetchAndCache('boxTypes', () => serverActions.getBoxTypes());
     }, [fetchAndCache]);
 
     const getCategories = useCallback(async () => {
         return fetchAndCache('categories', () => serverActions.getCategories());
+    }, [fetchAndCache]);
+
+    const getCategoriesForAdmin = useCallback(async () => {
+        return fetchAndCache('categoriesAll', () => serverActions.getCategoriesForAdmin());
     }, [fetchAndCache]);
 
     const getSettings = useCallback(async () => {
@@ -248,8 +260,10 @@ export function DataCacheProvider({ children }: { children: React.ReactNode }) {
         getVendors,
         getGlobalLocations,
         getMenuItems,
+        getMenuItemsForAdmin,
         getBoxTypes,
         getCategories,
+        getCategoriesForAdmin,
         getSettings,
         getClients,
         getClient,

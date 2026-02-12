@@ -151,13 +151,17 @@ export async function getVendorLocations(vendorId: string) {
     }));
 }
 
-export const getMenuItems = cacheFn(async function () {
-    const { data, error } = await supabase.from('menu_items')
+export const getMenuItems = cacheFn(async function (options?: { includeInactive?: boolean }) {
+    let query = supabase.from('menu_items')
         .select('*')
         .order('sort_order', { ascending: true })
         .order('name', { ascending: true });
+    if (!options?.includeInactive) {
+        query = query.eq('is_active', true);
+    }
+    const { data, error } = await query;
     if (error) return [];
-    return data.map((i: any) => ({
+    return (data || []).map((i: any) => ({
         id: i.id,
         vendorId: i.vendor_id,
         name: i.name,
@@ -173,14 +177,19 @@ export const getMenuItems = cacheFn(async function () {
     }));
 });
 
-export async function getCategories() {
-    const { data, error } = await supabase.from('item_categories').select('*').order('sort_order', { ascending: true }).order('name');
+export async function getCategories(options?: { includeInactive?: boolean }) {
+    let query = supabase.from('item_categories').select('*').order('sort_order', { ascending: true }).order('name');
+    if (!options?.includeInactive) {
+        query = query.eq('is_active', true);
+    }
+    const { data, error } = await query;
     if (error) return [];
-    return data.map((c: any) => ({
+    return (data || []).map((c: any) => ({
         id: c.id,
         name: c.name,
         setValue: c.set_value ?? undefined,
-        sortOrder: c.sort_order ?? 0
+        sortOrder: c.sort_order ?? 0,
+        isActive: c.is_active !== false
     }));
 }
 
@@ -2384,7 +2393,7 @@ export async function getOrderById(orderId: string) {
         getVendors(),
         getBoxTypes(),
         getEquipment(),
-        getCategories(),
+        getCategories({ includeInactive: true }),
         getMealItems()
     ]);
 

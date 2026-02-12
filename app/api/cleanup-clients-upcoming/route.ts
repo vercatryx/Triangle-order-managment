@@ -132,7 +132,8 @@ export async function GET() {
 
         const { data: menuItems, error: miErr } = await supabase
             .from('menu_items')
-            .select('id, name, delivery_days, vendor_id, category_id, quota_value');
+            .select('id, name, delivery_days, vendor_id, category_id, quota_value')
+            .eq('is_active', true);
         if (miErr) throw miErr;
         const menuItemMap = new Map<string, { name: string; delivery_days: string[] | null; vendor_id: string | null; category_id: string | null; quota_value: number }>();
         for (const mi of menuItems || []) {
@@ -147,7 +148,7 @@ export async function GET() {
             });
         }
 
-        const { data: breakfastItems, error: biErr } = await supabase.from('breakfast_items').select('id');
+        const { data: breakfastItems, error: biErr } = await supabase.from('breakfast_items').select('id').eq('is_active', true);
         if (biErr) console.warn('cleanup-clients-upcoming: breakfast_items not available:', biErr.message);
         const validBoxItemIds = new Set<string>([...menuItemMap.keys(), ...((breakfastItems || []).map((r: { id: string }) => r.id))]);
 
@@ -166,7 +167,7 @@ export async function GET() {
             }
         }
 
-        const { data: categories, error: catErr } = await supabase.from('item_categories').select('id, name, set_value');
+        const { data: categories, error: catErr } = await supabase.from('item_categories').select('id, name, set_value').eq('is_active', true);
         if (catErr) throw catErr;
         const categorySetValue = new Map<string, number>(); // categoryId -> required value (when no box_quotas)
         for (const c of categories || []) {

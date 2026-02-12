@@ -216,6 +216,7 @@ export interface ItemCategory {
   name: string;
   setValue?: number | null; // Required quota value for this category (enforces exact amount)
   sortOrder?: number;
+  isActive?: boolean; // Inactive categories only show in admin Box Categories settings
 }
 
 export interface MenuItem {

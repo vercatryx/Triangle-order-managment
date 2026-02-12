@@ -366,7 +366,7 @@ export async function deleteMenuItem(id: string) {
 }
 
 export async function addCategory(name: string, setValue?: number | null) {
-    const payload: any = { name };
+    const payload: any = { name, is_active: true };
     if (setValue !== undefined) {
         payload.set_value = setValue;
     }
@@ -392,14 +392,16 @@ export async function updateCategoryOrder(updates: { id: string; sortOrder: numb
     return { success: true };
 }
 
-export async function updateCategory(id: string, name: string, setValue?: number | null) {
+export async function updateCategory(id: string, name: string, setValue?: number | null, isActive?: boolean) {
     const payload: any = { name };
     if (setValue !== undefined) {
         payload.set_value = setValue;
     }
+    if (isActive !== undefined) {
+        payload.is_active = isActive;
+    }
     const { error } = await supabase.from('item_categories').update(payload).eq('id', id);
     handleError(error);
-    revalidatePath('/admin');
     revalidatePath('/admin');
 }
 
