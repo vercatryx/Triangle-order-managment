@@ -1,6 +1,7 @@
 'use client';
 
 import React from 'react';
+import { usePathname } from 'next/navigation';
 import { MenuItem, MealItem } from '@/lib/types';
 import { getItemPoints } from '@/lib/utils';
 import { Minus, Plus, Utensils, X } from 'lucide-react';
@@ -25,6 +26,10 @@ export default function MenuItemCard({
     onNoteChange,
     contextLabel
 }: Props) {
+    const pathname = usePathname();
+    const isClientPortal = (pathname ?? '').startsWith('/client-portal');
+    const allowNotes = !isClientPortal;
+
     const [isModalOpen, setIsModalOpen] = React.useState(false);
     const handleIncrement = (e?: React.MouseEvent) => {
         e?.stopPropagation();
@@ -76,8 +81,8 @@ export default function MenuItemCard({
                     </div>
                 )}
 
-                {/* Note Input (only if selected and enabled) */}
-                {quantity > 0 && item.notesEnabled && (
+                {/* Note Input (only if selected, enabled, and not in client portal) */}
+                {quantity > 0 && item.notesEnabled && allowNotes && (
                     <TextareaAutosize
                         className={styles.noteInput}
                         minRows={1}
@@ -131,7 +136,7 @@ export default function MenuItemCard({
 
                             {contextLabel && <div className={styles.modalContext}>{contextLabel}</div>}
 
-                            {item.notesEnabled && (
+                            {item.notesEnabled && allowNotes && (
                                 <div className={styles.modalNoteSection}>
                                     <label className={styles.modalLabel}>Special Instructions</label>
                                     <TextareaAutosize

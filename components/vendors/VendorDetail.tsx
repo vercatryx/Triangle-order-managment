@@ -529,23 +529,29 @@ export function VendorDetail({ vendorId, isVendorView, vendor: initialVendor }: 
 
         dateOrders.forEach(order => {
             const clientName = getClientName(order.client_id);
+            const clientAddress = getClientAddress(order.client_id);
             const items = getParsedOrderItems(order);
 
             // Header for this order block
-            detailsData.push([`Client: ${clientName}`, `Order ID: ${order.orderNumber || order.id}`]);
-            detailsData.push(['Item Name', 'Quantity', 'Notes/Category']);
+            detailsData.push([`Client: ${clientName}`, `Order ID: ${order.orderNumber || order.id}`, '', '']);
+            detailsData.push([`Address: ${clientAddress}`, '', '', '']);
+            detailsData.push(['Item Name', 'Quantity', 'Category', 'Notes']);
 
             // Items
             if (items.length > 0) {
                 items.forEach(item => {
-                    const extraInfo = [];
-                    if (item.category) extraInfo.push(getCategoryName(item.category));
-                    if (item.notes) extraInfo.push(`Note: ${item.notes}`);
+                    let category = item.category ? getCategoryName(item.category) : '';
+                    if (category === 'Uncategorized') category = '';
+                    const notes = item.notes || '';
 
-                    detailsData.push([item.name, item.quantity, extraInfo.join(' | ')]);
+                    // If item name contains comma, split into separate lines for visibility (notes copied for each)
+                    const nameParts = item.name.includes(',')
+                        ? item.name.split(',').map(s => s.trim()).filter(Boolean)
+                        : [item.name];
+                    nameParts.forEach(part => detailsData.push([part, item.quantity, category, notes]));
                 });
             } else {
-                detailsData.push(['No items found', '', '']);
+                detailsData.push(['No items found', '', '', '']);
             }
 
             // Empty row for separation
@@ -553,7 +559,7 @@ export function VendorDetail({ vendorId, isVendorView, vendor: initialVendor }: 
         });
 
         const wsDetails = XLSX.utils.aoa_to_sheet(detailsData);
-        wsDetails['!cols'] = [{ wch: 30 }, { wch: 10 }, { wch: 40 }];
+        wsDetails['!cols'] = [{ wch: 30 }, { wch: 10 }, { wch: 20 }, { wch: 40 }];
 
         /* --- Sheet 3: Cooking List (Aggregated) --- */
         const aggregation: Record<string, { name: string; quantity: number; notes: string }> = {};
