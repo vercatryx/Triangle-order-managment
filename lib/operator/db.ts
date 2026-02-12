@@ -76,6 +76,48 @@ export async function operatorGetClientByPhone(
   return { client: rows[0], error: null };
 }
 
+/** Get client by full name (case-insensitive exact match). */
+export async function operatorGetClientByName(
+  fullName: string
+): Promise<{ client: OperatorDbRow | null; error: Error | null }> {
+  const trimmed = typeof fullName === 'string' ? fullName.trim() : '';
+  if (!trimmed) return { client: null, error: null };
+
+  const { rows, error } = await operatorQuery<OperatorDbRow>(
+    `SELECT id, full_name, phone_number, secondary_phone_number, service_type, status_id, expiration_date, parent_client_id
+     FROM clients
+     WHERE LOWER(TRIM(full_name)) = LOWER(?)
+       AND (parent_client_id IS NULL OR parent_client_id = '')
+     LIMIT 2`,
+    [trimmed]
+  );
+  if (error) return { client: null, error };
+  if (rows.length === 0) return { client: null, error: null };
+  if (rows.length > 1) return { client: null, error: new Error('Multiple clients match this name') };
+  return { client: rows[0], error: null };
+}
+
+/** Get client by first name when full name is unknown. Matches clients whose full_name starts with the given name. */
+export async function operatorGetClientByFirstName(
+  firstName: string
+): Promise<{ client: OperatorDbRow | null; error: Error | null }> {
+  const trimmed = typeof firstName === 'string' ? firstName.trim() : '';
+  if (!trimmed || trimmed.includes(' ')) return { client: null, error: null };
+
+  const { rows, error } = await operatorQuery<OperatorDbRow>(
+    `SELECT id, full_name, phone_number, secondary_phone_number, service_type, status_id, expiration_date, parent_client_id
+     FROM clients
+     WHERE (LOWER(TRIM(full_name)) = LOWER(?) OR LOWER(TRIM(full_name)) LIKE CONCAT(LOWER(?), ' %'))
+       AND (parent_client_id IS NULL OR parent_client_id = '')
+     LIMIT 3`,
+    [trimmed, trimmed]
+  );
+  if (error) return { client: null, error };
+  if (rows.length === 0) return { client: null, error: null };
+  if (rows.length > 1) return { client: null, error: new Error('Multiple clients match this first name; please provide full name') };
+  return { client: rows[0], error: null };
+}
+
 /** Get client by ID. */
 export async function operatorGetClientById(
   clientId: string
