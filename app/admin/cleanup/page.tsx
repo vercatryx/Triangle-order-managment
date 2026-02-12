@@ -95,7 +95,7 @@ interface BoxQuotaIssue {
 interface DeletedBoxItemIssue {
     clientId: string;
     clientName: string;
-    missingItems: { itemId: string; quantity: number; boxIndex: number }[];
+    missingItems: { itemId: string; quantity: number; boxIndex: number; itemName?: string }[];
 }
 
 function issueKeyVendor(issue: InvalidVendorIssue): string {
@@ -114,6 +114,7 @@ export default function CleanupPage() {
     const [deletedMenuItemIssues, setDeletedMenuItemIssues] = useState<DeletedMenuItemIssue[]>([]);
     const [boxQuotaIssues, setBoxQuotaIssues] = useState<BoxQuotaIssue[]>([]);
     const [deletedBoxItemIssues, setDeletedBoxItemIssues] = useState<DeletedBoxItemIssue[]>([]);
+    const [inactiveBoxItemIssues, setInactiveBoxItemIssues] = useState<DeletedBoxItemIssue[]>([]);
     const [activeVendors, setActiveVendors] = useState<{ id: string; name: string }[]>([]);
 
     const [cleaningMealClientId, setCleaningMealClientId] = useState<string | null>(null);
@@ -126,6 +127,9 @@ export default function CleanupPage() {
     const [reassigningItemDay, setReassigningItemDay] = useState<string | null>(null);
     const [removingDeletedItem, setRemovingDeletedItem] = useState<string | null>(null);
     const [removingDeletedBoxItemsClientId, setRemovingDeletedBoxItemsClientId] = useState<string | null>(null);
+    const [removingInactiveBoxItemsClientId, setRemovingInactiveBoxItemsClientId] = useState<string | null>(null);
+    const [removeAllInactiveBoxItemsInProgress, setRemoveAllInactiveBoxItemsInProgress] = useState(false);
+    const [removingInvalidVendor, setRemovingInvalidVendor] = useState<string | null>(null);
 
     const [profileClientId, setProfileClientId] = useState<string | null>(null);
     const [profileLookupsReady, setProfileLookupsReady] = useState(false);
@@ -159,6 +163,7 @@ export default function CleanupPage() {
                 setDeletedMenuItemIssues(data.deletedMenuItemIssues || []);
                 setBoxQuotaIssues(data.boxQuotaIssues || []);
                 setDeletedBoxItemIssues(data.deletedBoxItemIssues || []);
+                setInactiveBoxItemIssues(data.inactiveBoxItemIssues || []);
                 setActiveVendors(data.activeVendors || []);
                 setSelectedMealClients(new Set());
                 const dayInitial: Record<string, string> = {};
@@ -372,8 +377,62 @@ export default function CleanupPage() {
         setRemovingDeletedBoxItemsClientId(null);
     };
 
+    const handleRemoveInactiveBoxItems = async (issue: DeletedBoxItemIssue) => {
+        const itemIds = [...new Set(issue.missingItems.map((m) => m.itemId))];
+        setRemovingInactiveBoxItemsClientId(issue.clientId);
+        await runFix({ fix: 'deletedBoxItems', clientId: issue.clientId, itemIds });
+        setRemovingInactiveBoxItemsClientId(null);
+    };
+
+    const handleRemoveAllInactiveBoxItems = async () => {
+        if (inactiveBoxItemIssues.length === 0) return;
+        if (!confirm(`Remove inactive items from all ${inactiveBoxItemIssues.length} clients?`)) return;
+        setMessage(null);
+        setRemoveAllInactiveBoxItemsInProgress(true);
+        let done = 0;
+        let failed = 0;
+        try {
+            for (const issue of inactiveBoxItemIssues) {
+                const itemIds = [...new Set(issue.missingItems.map((m) => m.itemId))];
+                const res = await fetch('/api/cleanup-clients-upcoming', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ fix: 'deletedBoxItems', clientId: issue.clientId, itemIds })
+                });
+                const data = await res.json();
+                if (data.success) done++; else failed++;
+            }
+            if (failed === 0) {
+                setMessage({ type: 'success', text: `Removed inactive items from ${done} clients.` });
+            } else {
+                setMessage({ type: 'error', text: `Done: ${done}. Failed: ${failed}.` });
+            }
+            fetchAll();
+        } catch (e) {
+            setMessage({ type: 'error', text: e instanceof Error ? e.message : 'Delete all failed' });
+        } finally {
+            setRemoveAllInactiveBoxItemsInProgress(false);
+        }
+    };
+
+    const handleRemoveInvalidVendor = async (issue: InvalidVendorIssue) => {
+        const key = issueKeyVendor(issue);
+        setRemovingInvalidVendor(key);
+        await runFix({
+            fix: 'invalidVendor',
+            clientId: issue.clientId,
+            vendorId: issue.vendorId,
+            action: 'clear',
+            where: issue.where,
+            day: issue.day,
+            mealKey: issue.mealKey,
+            boxIndex: issue.boxIndex
+        });
+        setRemovingInvalidVendor(null);
+    };
+
     const mealTotal = mealIssues.length;
-    const totalIssues = mealTotal + vendorDayIssues.length + invalidVendorIssues.length + itemDayIssues.length + deletedMenuItemIssues.length + boxQuotaIssues.length + deletedBoxItemIssues.length;
+    const totalIssues = mealTotal + vendorDayIssues.length + invalidVendorIssues.length + itemDayIssues.length + deletedMenuItemIssues.length + boxQuotaIssues.length + deletedBoxItemIssues.length + inactiveBoxItemIssues.length;
 
     return (
         <div className={styles.container}>
@@ -437,6 +496,12 @@ export default function CleanupPage() {
                             <div className={styles.statLabel}>Deleted items in box orders</div>
                             <div className={`${styles.statValue} ${deletedBoxItemIssues.length > 0 ? styles.statValueWarning : ''}`}>
                                 {deletedBoxItemIssues.length}
+                            </div>
+                        </div>
+                        <div className={styles.statCard}>
+                            <div className={styles.statLabel}>Inactive items in box orders</div>
+                            <div className={`${styles.statValue} ${inactiveBoxItemIssues.length > 0 ? styles.statValueWarning : ''}`}>
+                                {inactiveBoxItemIssues.length}
                             </div>
                         </div>
                         <button className={styles.refreshButton} onClick={fetchAll} disabled={loading}>
@@ -593,11 +658,11 @@ export default function CleanupPage() {
                         )}
                     </section>
 
-                    {/* Section 3: Vendor missing/inactive — open profile to edit */}
+                    {/* Section 3: Vendor missing/inactive — delete from order or open profile */}
                     <section className={styles.section}>
                         <h2 className={styles.sectionTitle}>3. Vendor missing or inactive</h2>
                         <p className={styles.sectionDesc}>
-                            upcoming_order references a vendor that no longer exists or is inactive. Open the client profile to edit the order directly (same as on the dashboard).
+                            upcoming_order references a vendor that no longer exists or is inactive. Delete to remove it from the order, or open the client profile to edit manually.
                         </p>
                         {invalidVendorIssues.length === 0 && (
                             <div className={styles.emptyState}>No invalid vendor issues.</div>
@@ -614,6 +679,7 @@ export default function CleanupPage() {
                                 </div>
                                 {invalidVendorIssues.map((issue) => {
                                     const key = issueKeyVendor(issue);
+                                    const isRemoving = removingInvalidVendor === key;
                                     const whereLabel = issue.where === 'deliveryDayOrders' ? `Day: ${issue.day}`
                                         : issue.where === 'mealSelections' ? `Meal: ${issue.mealKey || '—'}`
                                         : issue.where === 'vendorSelections' ? 'vendorSelections'
@@ -635,6 +701,14 @@ export default function CleanupPage() {
                                                 </div>
                                                 <div className={styles.tableCell}>{whereLabel}</div>
                                                 <div className={styles.tableCell}>
+                                                    <button
+                                                        className={`${styles.actionButton} ${styles.btnClean}`}
+                                                        onClick={() => handleRemoveInvalidVendor(issue)}
+                                                        disabled={isRemoving}
+                                                        style={{ marginRight: '8px' }}
+                                                    >
+                                                        {isRemoving ? '…' : 'Delete'}
+                                                    </button>
                                                     <button
                                                         className={`${styles.actionButton} ${styles.btnOpenProfile}`}
                                                         onClick={() => setProfileClientId(issue.clientId)}
@@ -846,7 +920,7 @@ export default function CleanupPage() {
                                 <div className={styles.tableHeader}>
                                     <div className={`${styles.tableRow} ${styles.rowVendor}`}>
                                         <div className={styles.tableHeaderCell}>Client</div>
-                                        <div className={styles.tableHeaderCell}>Missing items (item ID · qty · box #)</div>
+                                        <div className={styles.tableHeaderCell}>Missing items (name · qty · box #)</div>
                                         <div className={styles.tableHeaderCell}>Action</div>
                                     </div>
                                 </div>
@@ -863,7 +937,7 @@ export default function CleanupPage() {
                                                 <ul className={styles.mismatchList}>
                                                     {issue.missingItems.map((m, i) => (
                                                         <li key={i}>
-                                                            <span className={styles.invalidVendor}>{m.itemId}</span> · qty {m.quantity} · Box {m.boxIndex + 1}
+                                                            <span className={styles.invalidVendor}>{m.itemName ?? m.itemId}</span> · qty {m.quantity} · Box {m.boxIndex + 1}
                                                         </li>
                                                     ))}
                                                 </ul>
@@ -888,6 +962,77 @@ export default function CleanupPage() {
                                     </div>
                                 ))}
                             </div>
+                        )}
+                    </section>
+
+                    {/* Section 8: Inactive items in box orders */}
+                    <section className={styles.section}>
+                        <h2 className={styles.sectionTitle}>8. Inactive items in box orders</h2>
+                        <p className={styles.sectionDesc}>
+                            These clients have items in their <strong>boxOrders</strong> that are inactive (the item or its category is marked inactive in <strong>menu_items</strong> / <strong>item_categories</strong> or <strong>breakfast_items</strong> / <strong>breakfast_categories</strong>). Delete to remove them from the order.
+                        </p>
+                        {inactiveBoxItemIssues.length === 0 && (
+                            <div className={styles.emptyState}>No clients with inactive box items.</div>
+                        )}
+                        {inactiveBoxItemIssues.length > 0 && (
+                            <>
+                                <div className={styles.bulkActions}>
+                                    <button
+                                        className={`${styles.actionButton} ${styles.btnClean}`}
+                                        onClick={handleRemoveAllInactiveBoxItems}
+                                        disabled={removeAllInactiveBoxItemsInProgress}
+                                    >
+                                        {removeAllInactiveBoxItemsInProgress ? 'Deleting…' : `Delete all (${inactiveBoxItemIssues.length})`}
+                                    </button>
+                                </div>
+                                <div className={styles.table}>
+                                <div className={styles.tableHeader}>
+                                    <div className={`${styles.tableRow} ${styles.rowVendor}`}>
+                                        <div className={styles.tableHeaderCell}>Client</div>
+                                        <div className={styles.tableHeaderCell}>Inactive items (name · qty · box #)</div>
+                                        <div className={styles.tableHeaderCell}>Action</div>
+                                    </div>
+                                </div>
+                                {inactiveBoxItemIssues.map((issue) => (
+                                    <div key={issue.clientId} className={styles.tableRowWrapper}>
+                                        <div className={`${styles.tableRow} ${styles.rowVendor}`}>
+                                            <div className={styles.tableCell}>
+                                                <Link href={`/clients?id=${issue.clientId}`} className={styles.clientLink}>
+                                                    {issue.clientName}
+                                                </Link>
+                                                <div className={styles.cellMeta}>Boxes · {issue.missingItems.length} inactive item{issue.missingItems.length !== 1 ? 's' : ''}</div>
+                                            </div>
+                                            <div className={styles.tableCell}>
+                                                <ul className={styles.mismatchList}>
+                                                    {issue.missingItems.map((m, i) => (
+                                                        <li key={i}>
+                                                            <span className={styles.invalidVendor}>{m.itemName ?? m.itemId}</span> · qty {m.quantity} · Box {m.boxIndex + 1}
+                                                        </li>
+                                                    ))}
+                                                </ul>
+                                            </div>
+                                            <div className={styles.tableCell}>
+                                                <button
+                                                    className={`${styles.actionButton} ${styles.btnClean}`}
+                                                    onClick={() => handleRemoveInactiveBoxItems(issue)}
+                                                    disabled={removingInactiveBoxItemsClientId === issue.clientId || removeAllInactiveBoxItemsInProgress}
+                                                    style={{ marginRight: '8px' }}
+                                                >
+                                                    {removingInactiveBoxItemsClientId === issue.clientId ? '…' : 'Delete'}
+                                                </button>
+                                                <button
+                                                    className={`${styles.actionButton} ${styles.btnOpenProfile}`}
+                                                    onClick={() => setProfileClientId(issue.clientId)}
+                                                    disabled={removeAllInactiveBoxItemsInProgress}
+                                                >
+                                                    Open profile
+                                                </button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                            </>
                         )}
                     </section>
 

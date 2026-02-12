@@ -108,7 +108,7 @@ export interface BoxQuotaIssue {
 export interface DeletedBoxItemIssue {
     clientId: string;
     clientName: string;
-    missingItems: { itemId: string; quantity: number; boxIndex: number }[];
+    missingItems: { itemId: string; quantity: number; boxIndex: number; itemName?: string }[];
 }
 
 /**
@@ -151,6 +151,54 @@ export async function GET() {
         const { data: breakfastItems, error: biErr } = await supabase.from('breakfast_items').select('id').eq('is_active', true);
         if (biErr) console.warn('cleanup-clients-upcoming: breakfast_items not available:', biErr.message);
         const validBoxItemIds = new Set<string>([...menuItemMap.keys(), ...((breakfastItems || []).map((r: { id: string }) => r.id))]);
+
+        // All item ids (active + inactive) to distinguish deleted vs inactive in box orders.
+        // Treat only explicit true as active. Item is inactive if the item is inactive OR its category is inactive.
+        function isActiveFlag(r: { is_active?: boolean; isActive?: boolean }): boolean {
+            const v = r.is_active ?? (r as { isActive?: boolean }).isActive;
+            return v === true;
+        }
+        // Active category ids (item_categories and breakfast_categories if they have is_active)
+        const { data: allItemCategories, error: allCatErr } = await supabase.from('item_categories').select('id, is_active');
+        if (allCatErr) console.warn('cleanup-clients-upcoming: item_categories (all) not available:', allCatErr.message);
+        const activeItemCategoryIds = new Set<string>(
+            (allItemCategories || []).filter((r: { is_active?: boolean; isActive?: boolean }) => isActiveFlag(r)).map((r: { id: string }) => r.id)
+        );
+        const { data: allBreakfastCategories } = await supabase.from('breakfast_categories').select('id, is_active');
+        const activeBreakfastCategoryIds = new Set<string>(
+            (allBreakfastCategories || []).filter((r: { is_active?: boolean; isActive?: boolean }) => isActiveFlag(r)).map((r: { id: string }) => r.id)
+        );
+        const { data: allMenuItems, error: allMiErr } = await supabase.from('menu_items').select('id, name, is_active, category_id');
+        if (allMiErr) console.warn('cleanup-clients-upcoming: menu_items (all) not available:', allMiErr.message);
+        const allMenuItemIds = new Set<string>((allMenuItems || []).map((r: { id: string }) => r.id));
+        const activeMenuItemIds = new Set<string>(
+            (allMenuItems || []).filter((r: { id: string; is_active?: boolean; isActive?: boolean; category_id?: string | null }) => {
+                if (!isActiveFlag(r)) return false;
+                const cid = r.category_id ?? (r as { categoryId?: string }).categoryId;
+                if (cid == null || cid === '') return true;
+                return activeItemCategoryIds.size === 0 || activeItemCategoryIds.has(cid);
+            }).map((r: { id: string }) => r.id)
+        );
+        const { data: allBreakfastItems, error: allBiErr } = await supabase.from('breakfast_items').select('id, name, is_active, category_id');
+        if (allBiErr) console.warn('cleanup-clients-upcoming: breakfast_items (all) not available:', allBiErr.message);
+        const allBreakfastItemIds = new Set<string>((allBreakfastItems || []).map((r: { id: string }) => r.id));
+        const activeBreakfastItemIds = new Set<string>(
+            (allBreakfastItems || []).filter((r: { id: string; is_active?: boolean; isActive?: boolean; category_id?: string | null }) => {
+                if (!isActiveFlag(r)) return false;
+                const cid = r.category_id ?? (r as { categoryId?: string }).categoryId;
+                if (cid == null || cid === '') return true;
+                return activeBreakfastCategoryIds.size === 0 || activeBreakfastCategoryIds.has(cid);
+            }).map((r: { id: string }) => r.id)
+        );
+        const itemIdToName = new Map<string, string>();
+        for (const r of allMenuItems || []) {
+            const name = (r as { name?: string }).name;
+            if (name != null && String(name).trim()) itemIdToName.set(r.id, String(name).trim());
+        }
+        for (const r of allBreakfastItems || []) {
+            const name = (r as { name?: string }).name;
+            if (name != null && String(name).trim()) itemIdToName.set(r.id, String(name).trim());
+        }
 
         // Box quota definitions: table may not exist in all environments (clients.upcoming_order is source of truth for order data)
         let quotasByBoxType = new Map<string, { categoryId: string; targetValue: number }[]>();
@@ -197,6 +245,7 @@ export async function GET() {
         const deletedMenuItemIssues: DeletedMenuItemIssue[] = [];
         const boxQuotaIssues: BoxQuotaIssue[] = [];
         const deletedBoxItemIssues: DeletedBoxItemIssue[] = [];
+        const inactiveBoxItemIssues: DeletedBoxItemIssue[] = [];
 
         for (const client of clients || []) {
             const uo = client.upcoming_order as Record<string, unknown> | null;
@@ -436,7 +485,7 @@ export async function GET() {
                 }
             }
 
-            // 6) Box clients with category quota mismatch (required vs actual)
+            // 6) Box clients: quota mismatch, deleted/inactive items in box orders
             // Read from clients.upcoming_order only; support both camelCase and snake_case, and legacy single-box at root
             let rawBoxOrders = (uo.boxOrders ?? uo.box_orders) as { boxTypeId?: string; box_type_id?: string; vendorId?: string; vendor_id?: string; quantity?: number; items?: Record<string, number | { quantity?: number }> }[] | undefined;
             if (st === 'Boxes' && !rawBoxOrders?.length && (uo.boxTypeId ?? (uo as any).box_type_id)) {
@@ -446,9 +495,11 @@ export async function GET() {
                     items: ((uo as any).items || {}) as Record<string, number>
                 }];
             }
-            if (st === 'Boxes' && rawBoxOrders && Array.isArray(rawBoxOrders) && rawBoxOrders.length > 0) {
+            // Process box orders whenever present (not only when serviceType === 'Boxes') so we catch all inactive/deleted box items
+            if (rawBoxOrders && Array.isArray(rawBoxOrders) && rawBoxOrders.length > 0) {
                 const mismatches: BoxQuotaMismatch[] = [];
                 const missingItems: { itemId: string; quantity: number; boxIndex: number }[] = [];
+                const inactiveItems: { itemId: string; quantity: number; boxIndex: number }[] = [];
                 for (let boxIndex = 0; boxIndex < rawBoxOrders.length; boxIndex++) {
                     const box = rawBoxOrders[boxIndex];
                     const boxVendorId = box.vendorId ?? (box as { vendor_id?: string }).vendor_id;
@@ -486,8 +537,12 @@ export async function GET() {
                     for (const [itemId, val] of Object.entries(items)) {
                         const qty = typeof val === 'object' && val != null && 'quantity' in val ? Number((val as { quantity?: number }).quantity) || 0 : Number(val) || 0;
                         if (qty <= 0) continue;
-                        if (!validBoxItemIds.has(itemId)) {
-                            missingItems.push({ itemId, quantity: qty, boxIndex });
+                        const exists = allMenuItemIds.has(itemId) || allBreakfastItemIds.has(itemId);
+                        const isActive = activeMenuItemIds.has(itemId) || activeBreakfastItemIds.has(itemId);
+                        if (!exists) {
+                            missingItems.push({ itemId, quantity: qty, boxIndex, itemName: itemIdToName.get(itemId) });
+                        } else if (!isActive) {
+                            inactiveItems.push({ itemId, quantity: qty, boxIndex, itemName: itemIdToName.get(itemId) });
                         }
                     }
 
@@ -536,6 +591,9 @@ export async function GET() {
                 if (missingItems.length > 0) {
                     deletedBoxItemIssues.push({ clientId: client.id, clientName, missingItems });
                 }
+                if (inactiveItems.length > 0) {
+                    inactiveBoxItemIssues.push({ clientId: client.id, clientName, missingItems: inactiveItems });
+                }
             }
         }
 
@@ -551,6 +609,7 @@ export async function GET() {
             deletedMenuItemIssues,
             boxQuotaIssues,
             deletedBoxItemIssues,
+            inactiveBoxItemIssues,
             activeVendors
         });
     } catch (e: unknown) {
