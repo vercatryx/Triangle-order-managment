@@ -58,6 +58,22 @@ function escapeString(s: string): string {
     return s.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\0/g, '\\0').replace(/\n/g, '\\n').replace(/\r/g, '\\r');
 }
 
+/**
+ * Convert a value to a MySQL-safe parameter for prepared statements.
+ * Fixes "Incorrect arguments to mysqld_stmt_execute" when passing objects/arrays
+ * or types that mysql2's binding doesn't handle correctly.
+ */
+function toSqlParam(val: any): any {
+    if (val === null || val === undefined) return null;
+    if (typeof val === 'boolean') return val ? 1 : 0;
+    if (typeof val === 'number') return Number.isFinite(val) ? val : null;
+    if (typeof val === 'string') return val;
+    if (val instanceof Date) return val.toISOString().slice(0, 19).replace('T', ' ');
+    if (typeof val === 'object') return JSON.stringify(val);
+    if (typeof val === 'bigint') return Number(val);
+    return String(val);
+}
+
 type QueryBuilder = {
     _table: string;
     _select: string;
@@ -284,7 +300,7 @@ async function executeInsert(b: QueryBuilder): Promise<QueryResult> {
     const cols = Object.keys(row).filter(k => row[k] !== undefined);
     const colsEscaped = cols.map(escapeId).join(', ');
     const placeholders = cols.map(() => '?').join(', ');
-    const values = cols.map(c => row[c]);
+    const values = cols.map(c => toSqlParam(row[c]));
     try {
         await pool.execute(
             `INSERT INTO ${table} (${colsEscaped}) VALUES (${placeholders})`,
@@ -334,17 +350,14 @@ async function executeUpdate(b: QueryBuilder): Promise<QueryResult> {
         return { data: null, error: { message: 'No update data' } };
     }
     const table = escapeId(b._table);
-    const sets = Object.keys(data)
-        .filter(k => data[k] !== undefined)
-        .map(k => `${escapeId(k)} = ?`);
-    const values = Object.keys(data)
-        .filter(k => data[k] !== undefined)
-        .map(k => data[k]);
+    const keys = Object.keys(data).filter(k => data[k] !== undefined);
+    const sets = keys.map(k => `${escapeId(k)} = ?`);
+    const values = keys.map(k => toSqlParam(data[k]));
     if (sets.length === 0) {
         return { data: null, error: null };
     }
     const whereClause = b._wheres.length > 0 ? ' WHERE ' + b._wheres.join(' AND ') : '';
-    const params = [...values, ...b._params];
+    const params = [...values, ...b._params.map(toSqlParam)];
     try {
         await pool.execute(`UPDATE ${table} SET ${sets.join(', ')}${whereClause}`, params);
         return { data: null, error: null };
@@ -364,8 +377,9 @@ async function executeDelete(b: QueryBuilder): Promise<QueryResult> {
     const pool = getPool();
     const table = escapeId(b._table);
     const whereClause = b._wheres.length > 0 ? ' WHERE ' + b._wheres.join(' AND ') : '';
+    const params = b._params.map(toSqlParam);
     try {
-        await pool.execute(`DELETE FROM ${table}${whereClause}`, b._params);
+        await pool.execute(`DELETE FROM ${table}${whereClause}`, params);
         return { data: null, error: null };
     } catch (err: any) {
         return {
