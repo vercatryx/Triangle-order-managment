@@ -94,6 +94,29 @@ function createBuilder(table: string): QueryBuilder {
     };
 }
 
+/** Split select string by comma, respecting nested parentheses (e.g. vendor_locations (id, locations (name))) */
+function splitSelectParts(select: string): string[] {
+    const parts: string[] = [];
+    let current = '';
+    let depth = 0;
+    for (const char of select) {
+        if (char === '(') {
+            depth++;
+            current += char;
+        } else if (char === ')') {
+            depth--;
+            current += char;
+        } else if (char === ',' && depth === 0) {
+            parts.push(current.trim());
+            current = '';
+        } else {
+            current += char;
+        }
+    }
+    if (current.trim()) parts.push(current.trim());
+    return parts;
+}
+
 function cloneBuilder(b: QueryBuilder): QueryBuilder {
     return {
         _table: b._table,
@@ -115,10 +138,11 @@ function cloneBuilder(b: QueryBuilder): QueryBuilder {
 
 function buildSelectSQL(b: QueryBuilder): { sql: string; params: any[]; joinTransform?: (row: any) => any } {
     const table = escapeId(b._table);
-    const tableAlias = b._table === 'orders' ? 'o' : b._table;
-    const tableQualified = b._table === 'orders' ? `${escapeId(b._table)} ${tableAlias}` : escapeId(b._table);
-    const selectParts = b._select.split(',').map(s => s.trim());
+    const tableAlias = b._table === 'orders' ? 'o' : b._table === 'vendor_locations' ? 'vl' : b._table;
+    const tableQualified = b._table === 'orders' ? `${escapeId(b._table)} ${tableAlias}` : b._table === 'vendor_locations' ? `${escapeId(b._table)} ${tableAlias}` : escapeId(b._table);
+    const selectParts = splitSelectParts(b._select);
     const embedMatch = selectParts.find(s => s.includes('clients(full_name)'));
+    const locationsEmbedMatch = selectParts.find(s => /\blocations\s*\(\s*name\s*\)/.test(s));
     let selectRaw: string;
     let joinClause = '';
     let joinTransform: ((row: any) => any) | undefined;
@@ -128,6 +152,15 @@ function buildSelectSQL(b: QueryBuilder): { sql: string; params: any[]; joinTran
         joinTransform = (row: any) => {
             const { clients_full_name, ...rest } = row;
             return { ...rest, clients: clients_full_name != null ? { full_name: clients_full_name } : null };
+        };
+    } else if (locationsEmbedMatch && b._table === 'vendor_locations' && !b._count) {
+        const baseCols = selectParts.filter(s => !s.includes('(')).map(s => s.trim());
+        const prefixedBase = baseCols.length ? baseCols.map(c => `${tableAlias}.${escapeId(c)}`).join(', ') : `${tableAlias}.*`;
+        selectRaw = `${prefixedBase}, l.name AS locations_name`;
+        joinClause = ` LEFT JOIN locations l ON ${tableAlias}.location_id = l.id`;
+        joinTransform = (row: any) => {
+            const { locations_name, ...rest } = row;
+            return { ...rest, locations: locations_name != null ? { name: locations_name } : null };
         };
     } else {
         selectRaw = selectParts.filter(s => !s.includes('(')).join(', ') || '*';
@@ -173,6 +206,36 @@ async function executeSelect(b: QueryBuilder): Promise<QueryResult> {
         let arr = Array.isArray(rows) ? rows : [];
         if (joinTransform && arr.length > 0) {
             arr = arr.map((r: any) => joinTransform!(r));
+        }
+        // Embed vendor_locations for vendors table (when select includes vendor_locations)
+        const vendorsEmbedMatch = b._table === 'vendors' && b._select.includes('vendor_locations');
+        if (vendorsEmbedMatch && arr.length > 0 && !b._count) {
+            const vendorIds = arr.map((r: any) => r.id).filter(Boolean);
+            if (vendorIds.length > 0) {
+                const placeholders = vendorIds.map(() => '?').join(',');
+                const [vlRows] = await pool.execute(
+                    `SELECT vl.id, vl.vendor_id, vl.location_id, l.name AS locations_name
+                     FROM vendor_locations vl
+                     LEFT JOIN locations l ON vl.location_id = l.id
+                     WHERE vl.vendor_id IN (${placeholders})`,
+                    vendorIds
+                );
+                const vlArr = Array.isArray(vlRows) ? vlRows : [];
+                const byVendor = new Map<string, any[]>();
+                for (const vl of vlArr as any[]) {
+                    const list = byVendor.get(vl.vendor_id) || [];
+                    list.push({
+                        id: vl.id,
+                        location_id: vl.location_id,
+                        locations: vl.locations_name != null ? { name: vl.locations_name } : null
+                    });
+                    byVendor.set(vl.vendor_id, list);
+                }
+                arr = arr.map((r: any) => ({
+                    ...r,
+                    vendor_locations: byVendor.get(r.id) || []
+                }));
+            }
         }
         if (b._count) {
             const count = arr[0] && typeof (arr[0] as any)['COUNT(*)'] !== 'undefined'
@@ -229,11 +292,28 @@ async function executeInsert(b: QueryBuilder): Promise<QueryResult> {
         );
         const id = row.id;
         const selectCols = b._select === '*' ? '*' : b._select;
-        const [rows] = await pool.execute(
-            `SELECT ${selectCols} FROM ${table} WHERE id = ? LIMIT 1`,
-            [id]
-        );
-        const arr = Array.isArray(rows) ? rows : [];
+        let arr: any[];
+        if (b._table === 'vendor_locations' && /\blocations\s*\(\s*name\s*\)/.test(selectCols)) {
+            const [rows] = await pool.execute(
+                `SELECT vl.id, vl.vendor_id, vl.location_id, l.name AS locations_name
+                 FROM ${table} vl
+                 LEFT JOIN locations l ON vl.location_id = l.id
+                 WHERE vl.id = ? LIMIT 1`,
+                [id]
+            );
+            arr = Array.isArray(rows) ? rows : [];
+            if (arr[0]) {
+                const { locations_name, ...rest } = arr[0];
+                arr[0] = { ...rest, locations: locations_name != null ? { name: locations_name } : null };
+            }
+        } else {
+            const plainSelect = selectCols.split(',').map((s: string) => s.trim()).filter((s: string) => !s.includes('(')).join(', ') || '*';
+            const [rows] = await pool.execute(
+                `SELECT ${plainSelect} FROM ${table} WHERE id = ? LIMIT 1`,
+                [id]
+            );
+            arr = Array.isArray(rows) ? rows : [];
+        }
         return { data: arr[0] as any, error: null };
     } catch (err: any) {
         return {

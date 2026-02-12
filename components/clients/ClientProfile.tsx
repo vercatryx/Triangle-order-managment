@@ -6450,7 +6450,7 @@ export function ClientProfileDetail({
         const performSave = async () => {
             const success = await executeSave(0);
             if (!success) {
-                // If the background save fails, throw an error so the background handler knows
+                // Non-exception failure (e.g. duplicate name, API returned null)
                 throw new Error("Failed to save client data");
             }
         };
@@ -7111,7 +7111,7 @@ export function ClientProfileDetail({
             return true;
         } catch (error) {
             setMessage('Error saving changes.');
-            console.error(error);
+            console.error('[ClientProfile] executeSave error:', error);
             // Even on error, close modal and portal if navigator was adding units
             const wasNavigatorAddingUnits = currentUser?.role === 'navigator' && pendingStatusChange !== null;
             setShowUnitsModal(false);
@@ -7124,7 +7124,8 @@ export function ClientProfileDetail({
             }
 
             setSaving(false);
-            return false;
+            // Re-throw so background save handler gets the actual error (not just "Failed to save")
+            throw error;
         } finally {
             setSaving(false);
             // Ensure modal is closed

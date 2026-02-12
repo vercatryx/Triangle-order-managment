@@ -245,16 +245,18 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
         // Add to background tasks
         setBackgroundTasks(prev => new Map(prev).set(clientId, clientName));
 
+        let saveSucceeded = false;
         try {
             // Execute the save action
             await saveAction();
+            saveSucceeded = true;
 
             // Refresh this client's data in the list
             await refreshSingleClient(clientId);
         } catch (error) {
             console.error(`Error saving client ${clientName}:`, error);
-            // Ideally assume we'd show a toast here, but for now console error is consistent with app
-            alert(`Failed to save ${clientName} in background. Please try again.`);
+            const errMsg = error instanceof Error ? error.message : 'Unknown error';
+            alert(`Failed to save ${clientName} in background. ${errMsg}`);
         } finally {
             // Remove from tasks
             setBackgroundTasks(prev => {
@@ -263,8 +265,7 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
                 return next;
             });
 
-            // Show success message if no error occurred
-            if (!backgroundTasks.has(clientId)) { // Check simplistic error handling, ideally based on try/catch flow
+            if (saveSucceeded) {
                 setSuccessMessage(`Successfully saved ${clientName}`);
                 setTimeout(() => setSuccessMessage(null), 3000);
             }

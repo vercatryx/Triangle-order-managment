@@ -316,14 +316,16 @@ export const getVendors = reactCache(async function () {
             )
         )
     `);
-    if (error) return [];
+    if (error || !data) return [];
 
-    return data.map((v: any) => ({
+    return data.map((v: any) => {
+        const deliveryDays = Array.isArray(v.delivery_days) ? v.delivery_days : (typeof v.delivery_days === 'string' ? (() => { try { return JSON.parse(v.delivery_days) || []; } catch { return []; } })() : []);
+        return {
         id: v.id,
         name: v.name,
         email: v.email || null,
         serviceTypes: (v.service_type || '').split(',').map((s: string) => s.trim()).filter(Boolean) as ServiceType[],
-        deliveryDays: v.delivery_days || [],
+        deliveryDays,
         allowsMultipleDeliveries: v.delivery_frequency === 'Multiple',
         isActive: v.is_active,
         minimumMeals: v.minimum_meals ?? 0,
@@ -334,7 +336,8 @@ export const getVendors = reactCache(async function () {
             locationId: vl.location_id,
             name: vl.locations?.name || 'Unknown'
         })) || []
-    }));
+    };
+    });
 });
 
 export async function getVendor(id: string) {
@@ -358,7 +361,7 @@ export async function addVendor(data: Omit<Vendor, 'id'> & { password?: string; 
     const payload: any = {
         name: data.name,
         service_type: (data.serviceTypes || []).join(','),
-        delivery_days: data.deliveryDays,
+        delivery_days: Array.isArray(data.deliveryDays) ? JSON.stringify(data.deliveryDays) : '[]',
         delivery_frequency: data.allowsMultipleDeliveries ? 'Multiple' : 'Once',
         is_active: data.isActive,
         minimum_meals: data.minimumMeals ?? 0,
@@ -385,7 +388,7 @@ export async function updateVendor(id: string, data: Partial<Vendor & { password
     const payload: any = {};
     if (data.name) payload.name = data.name;
     if (data.serviceTypes) payload.service_type = data.serviceTypes.join(',');
-    if (data.deliveryDays) payload.delivery_days = data.deliveryDays;
+    if (data.deliveryDays) payload.delivery_days = Array.isArray(data.deliveryDays) ? JSON.stringify(data.deliveryDays) : '[]';
     if (data.allowsMultipleDeliveries !== undefined) {
         payload.delivery_frequency = data.allowsMultipleDeliveries ? 'Multiple' : 'Once';
     }

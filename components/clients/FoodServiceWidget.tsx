@@ -98,6 +98,20 @@ export default function FoodServiceWidget({
         return days.includes(day);
     }
 
+    /** Vendors available for Food/Meal orders: active, Food or Meal service type, compatible with client location. */
+    function getAvailableFoodMealVendors(excludeVendorIds?: string[]): Vendor[] {
+        return vendors.filter(v => {
+            const st = v.serviceTypes || [];
+            const hasFoodOrMeal = st.includes('Food') || st.includes('Meal');
+            if (!hasFoodOrMeal || !v.isActive) return false;
+            if (client.locationId && v.locations && v.locations.length > 0) {
+                if (!v.locations.some(l => l.locationId === client.locationId)) return false;
+            }
+            if (excludeVendorIds?.length && excludeVendorIds.includes(v.id)) return false;
+            return true;
+        });
+    }
+
     /** Filter vendor items to only those allowed on the given day (or all if no day). */
     function getVendorMenuItemsForDay(vendorId: string, day: string | null): MenuItem[] {
         const list = menuItems
@@ -777,23 +791,20 @@ export default function FoodServiceWidget({
                                             onChange={(e) => handleVendorSelectionChange(index, e.target.value)}
                                         >
                                             <option value="">Select Vendor...</option>
-                                            {vendors
-                                                .filter(v => {
-                                                    if (!v.serviceTypes.includes('Food') || !v.isActive) return false;
-
-                                                    // Feature: Filter by Client Location (if assigned)
-                                                    if (client.locationId) {
-                                                        const vendorHasLocation = v.locations?.some(l => l.locationId === client.locationId);
-                                                        if (!vendorHasLocation) return false;
-                                                    }
-
-                                                    // Feature: Filter out vendors already selected in OTHER blocks
-                                                    return !selections.some((s: any, idx: number) => s.vendorId === v.id && idx !== index);
-                                                })
+                                            {getAvailableFoodMealVendors(
+                                                selections
+                                                    .filter((s: any, idx: number) => idx !== index && s.vendorId)
+                                                    .map((s: any) => s.vendorId)
+                                            )
                                                 .map(v => (
                                                     <option key={v.id} value={v.id}>{v.name}</option>
                                                 ))}
                                         </select>
+                                        {getAvailableFoodMealVendors().length === 0 && (
+                                            <p style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)', marginTop: '0.5rem', fontStyle: 'italic' }}>
+                                                No vendors available. Ensure vendors have Food or Meal service type, are active, and (if client has a location) either serve that location or have no locations assigned.
+                                            </p>
+                                        )}
                                     </div>
 
                                 {/* Multi-Day Selection - Toggle Buttons */}
@@ -1157,8 +1168,7 @@ export default function FoodServiceWidget({
                                         onChange={(e) => handleMealVendorChange(uniqueKey, e.target.value)}
                                     >
                                         <option value="">Select Vendor (Optional)</option>
-                                        {vendors
-                                            .filter(v => v.serviceTypes.includes('Food') && v.isActive)
+                                        {getAvailableFoodMealVendors()
                                             .map(v => (
                                                 <option key={v.id} value={v.id}>{v.name}</option>
                                             ))}
