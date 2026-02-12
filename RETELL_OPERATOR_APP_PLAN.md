@@ -93,7 +93,7 @@ Client calls landline → Retell answers → Agent identifies caller (phone/ID)
    - Or ask for client ID.
 3. Announce: “This is [client name], client ID [id]” (for logging/monitoring).
 4. Listen for intent:
-   - If “create order” / “place order” / “upcoming order” → use create-upcoming-order tool.
+   - If “create order” / “place order” / “upcoming order” → use `create_upcoming_order` tool. Also support: `inquire_current_orders`, `request_menu`, `create_from_previous_order` (repeat last order). For Food/Meal: collect items and quantities.
 5. Confirm and close.
 
 ### Prompt Variables
@@ -154,36 +154,32 @@ Suggested MVP: **Custom** or a very simple **Food** order (e.g. one vendor, one 
 ### API
 
 - `POST /api/operator/create-upcoming-order`
-- Body: `{ clientId, serviceType, ... }` (shape depends on `serviceType`).
+- Body: `{ clientId, serviceType, ... }` (shape depends on `serviceType`):
+  - **Custom**: `custom_name`, `custom_price`, `vendorId`, `deliveryDay`, `notes`, `caseId`
+  - **Food**: `vendorSelections` (array of `{ vendorId, items: { itemId: quantity } }`) or `deliveryDayOrders`
+  - **Meal**: `mealSelections` (object of meal type → `{ vendorId?, items: { itemId: quantity } }`)
 - Validates:
   - Client exists and is eligible.
-  - Vendor exists.
-  - Delivery day valid.
+  - Vendor exists (when specified).
+  - Delivery day valid (Custom).
+  - Items and quantities provided (Food/Meal).
 - **Operator writes directly** to `clients.upcoming_order` via its own DB layer (`lib/operator/db.ts`). No call to `updateClientUpcomingOrder` or any existing lib.
 
 ---
 
 ## 6. Retell Tools (Function Calling)
 
-Define tools for the agent:
+All tools are **independent** — each calls its own operator API. Use `lib/operator/retell-tools.ts` for schema reference.
 
 | Tool | Purpose | Inputs |
 |------|---------|--------|
 | `lookup_client` | Resolve caller | `phone_number` or `client_id` |
-| `create_upcoming_order` | Create upcoming order | `client_id`, `service_type`, plus order-specific fields |
+| `inquire_current_orders` | Inquire client's current week orders and upcoming order | `client_id` |
+| `request_menu` | Request menu items for vendor or all items | `vendor_id` (optional) |
+| `create_upcoming_order` | Create upcoming order | `client_id`, `service_type`, plus Custom/Food/Meal fields |
+| `create_from_previous_order` | Repeat client's last order as upcoming | `client_id` |
 
-Tool schema example:
-
-```json
-{
-  "name": "lookup_client",
-  "description": "Look up client by phone number or client ID. Call this first to identify who is on the line.",
-  "parameters": {
-    "phone_number": { "type": "string", "description": "Caller phone in E.164" },
-    "client_id": { "type": "string", "description": "Client ID if provided by caller" }
-  }
-}
-```
+**Order creation choice**: Agent can offer caller "same as last time" (→ `create_from_previous_order`) or "custom new order" (→ `create_upcoming_order`).
 
 ---
 
@@ -192,7 +188,10 @@ Tool schema example:
 | Route | Method | Role |
 |-------|--------|------|
 | `/api/operator/lookup-client` | GET | Resolve client by phone or ID |
-| `/api/operator/create-upcoming-order` | POST | Create upcoming order for client |
+| `/api/operator/inquire-current-orders` | GET | Inquire current week orders and upcoming order |
+| `/api/operator/request-menu` | GET | Request menu items (optionally by vendorId) |
+| `/api/operator/create-upcoming-order` | POST | Create upcoming order (Custom, Food, Meal with items & quantities) |
+| `/api/operator/create-from-previous-order` | POST | Create upcoming order from client's last order |
 | `/api/retell/webhook` | POST | Retell call event webhooks |
 
 Webhook events:
@@ -286,19 +285,29 @@ app/
     operator/
       lookup-client/
         route.ts          # GET ?phone=... | ?clientId=...
+      inquire-current-orders/
+        route.ts          # GET ?clientId=...
+      request-menu/
+        route.ts          # GET ?vendorId=... (optional)
       create-upcoming-order/
-        route.ts          # POST { clientId, serviceType, ... }
+        route.ts          # POST { clientId, serviceType, ... } (Custom, Food, Meal)
+      create-from-previous-order/
+        route.ts          # POST { clientId }
     retell/
       webhook/
         route.ts          # POST — Retell call events
 lib/
   operator/
-    db.ts                 # Operator's own DB client (MySQL or Supabase)
+    db.ts                 # Operator's own DB client (MySQL)
     types.ts              # Operator-specific types (no import from lib/types)
     client-lookup.ts      # Lookup by phone or client ID
-    create-upcoming-order.ts  # Validate and write to clients.upcoming_order
+    inquire-current-orders.ts
+    request-menu.ts
+    create-upcoming-order.ts  # Custom, Food, Meal (items & quantities)
+    create-from-previous-order.ts
     phone-normalize.ts    # E.164 normalization
     eligibility.ts       # Check client eligibility (deliveries_allowed, expiration)
+    retell-tools.ts      # Retell tool schemas
 ```
 
 ### Import Rules
