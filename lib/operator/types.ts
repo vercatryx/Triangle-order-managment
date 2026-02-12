@@ -43,6 +43,34 @@ export interface OperatorVendorSelection {
   itemNotes?: Record<string, string>;
 }
 
+/** Enriched item line for upcoming order (name, price, value, quantity) */
+export interface OperatorUpcomingItemLine {
+  itemId: string;
+  name: string;
+  price: number;
+  value: number;
+  quantity: number;
+}
+
+/** Vendor selection with enriched item details (for upcoming order response) */
+export interface OperatorVendorSelectionWithDetails extends OperatorVendorSelection {
+  itemsByDay?: Record<string, Record<string, number>>;
+  itemNotesByDay?: Record<string, Record<string, string>>;
+  selectedDeliveryDays?: string[];
+  /** Resolved item details for `items` (when not using itemsByDay) */
+  itemsWithDetails?: OperatorUpcomingItemLine[];
+  /** Resolved item details per delivery day */
+  itemsByDayWithDetails?: Record<string, OperatorUpcomingItemLine[]>;
+}
+
+/** Item detail for inquire-current-orders (name, price, value) */
+export interface OperatorItemDetail {
+  name: string;
+  price: number;
+  value: number;
+  quantity?: number;
+}
+
 /** Current order summary for inquire-current-orders */
 export interface OperatorCurrentOrder {
   orderId: string;
@@ -53,6 +81,7 @@ export interface OperatorCurrentOrder {
   totalItems: number;
   totalValue: number;
   notes: string | null;
+  items?: OperatorItemDetail[];
 }
 
 /** Menu item for request-menu */

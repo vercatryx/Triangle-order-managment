@@ -5,7 +5,7 @@
  */
 
 import mysql from 'mysql2/promise';
-import type { OperatorCurrentOrder, OperatorMenuItem, OperatorLastOrder } from './types';
+import type { OperatorCurrentOrder, OperatorMenuItem, OperatorLastOrder, OperatorItemDetail } from './types';
 
 const config = {
   host: process.env.MYSQL_HOST || process.env.DATABASE_HOST || 'localhost',
@@ -169,6 +169,80 @@ export async function operatorUpdateClientUpcomingOrder(
   return { error };
 }
 
+/** Get item details for Food/Meal orders (order_items + menu_items/breakfast_items). */
+async function operatorGetOrderItemsForOrders(
+  orderIds: string[]
+): Promise<Record<string, OperatorItemDetail[]>> {
+  if (orderIds.length === 0) return {};
+  const placeholders = orderIds.map(() => '?').join(',');
+  const { rows, error } = await operatorQuery<{
+    order_id: string;
+    name: string | null;
+    unit_value: number;
+    total_value: number;
+    quantity: number;
+  }>(
+    `SELECT oi.order_id,
+            COALESCE(oi.custom_name, mi.name, bi.name, 'Unknown') AS name,
+            COALESCE(oi.custom_price, oi.unit_value, mi.price_each, bi.price_each, 0) AS unit_value,
+            oi.total_value, oi.quantity
+     FROM order_items oi
+     LEFT JOIN menu_items mi ON oi.menu_item_id = mi.id
+     LEFT JOIN breakfast_items bi ON oi.meal_item_id = bi.id
+     WHERE oi.order_id IN (${placeholders})`,
+    orderIds
+  );
+  if (error) return {};
+  const byOrder: Record<string, OperatorItemDetail[]> = {};
+  for (const r of rows) {
+    const items = byOrder[r.order_id] ?? [];
+    items.push({
+      name: r.name ?? 'Unknown',
+      price: Number(r.unit_value) ?? 0,
+      value: Number(r.total_value) ?? 0,
+      quantity: r.quantity ?? 1,
+    });
+    byOrder[r.order_id] = items;
+  }
+  return byOrder;
+}
+
+/** Get item details for Box orders (order_box_selections + box_types). */
+async function operatorGetBoxSelectionsForOrders(
+  orderIds: string[]
+): Promise<Record<string, OperatorItemDetail[]>> {
+  if (orderIds.length === 0) return {};
+  const placeholders = orderIds.map(() => '?').join(',');
+  const { rows, error } = await operatorQuery<{
+    order_id: string;
+    name: string | null;
+    unit_value: number;
+    total_value: number;
+    quantity: number;
+  }>(
+    `SELECT obs.order_id,
+            COALESCE(bt.name, 'Box') AS name,
+            obs.unit_value, obs.total_value, obs.quantity
+     FROM order_box_selections obs
+     LEFT JOIN box_types bt ON obs.box_type_id = bt.id
+     WHERE obs.order_id IN (${placeholders})`,
+    orderIds
+  );
+  if (error) return {};
+  const byOrder: Record<string, OperatorItemDetail[]> = {};
+  for (const r of rows) {
+    const items = byOrder[r.order_id] ?? [];
+    items.push({
+      name: r.name ?? 'Box',
+      price: Number(r.unit_value) ?? 0,
+      value: Number(r.total_value) ?? 0,
+      quantity: r.quantity ?? 1,
+    });
+    byOrder[r.order_id] = items;
+  }
+  return byOrder;
+}
+
 /** Get client's current week orders from orders table. Operator's own implementation. */
 export async function operatorGetCurrentOrders(
   clientId: string
@@ -202,16 +276,31 @@ export async function operatorGetCurrentOrders(
     [clientId, startStr, endStr]
   );
   if (error) return { orders: [], error };
-  const orders: OperatorCurrentOrder[] = rows.map((r) => ({
-    orderId: r.id,
-    orderNumber: String(r.order_number ?? ''),
-    serviceType: r.service_type,
-    status: r.status,
-    scheduledDeliveryDate: r.scheduled_delivery_date ?? null,
-    totalItems: r.total_items ?? 0,
-    totalValue: r.total_value ?? 0,
-    notes: r.notes ?? null,
-  }));
+  const orderIds = rows.map((r) => r.id);
+
+  // Fetch item details for Food/Meal and Box orders
+  const [foodMealItems, boxItems] = await Promise.all([
+    operatorGetOrderItemsForOrders(orderIds),
+    operatorGetBoxSelectionsForOrders(orderIds),
+  ]);
+
+  const orders: OperatorCurrentOrder[] = rows.map((r) => {
+    const items =
+      r.service_type === 'Boxes'
+        ? boxItems[r.id] ?? []
+        : foodMealItems[r.id] ?? [];
+    return {
+      orderId: r.id,
+      orderNumber: String(r.order_number ?? ''),
+      serviceType: r.service_type,
+      status: r.status,
+      scheduledDeliveryDate: r.scheduled_delivery_date ?? null,
+      totalItems: r.total_items ?? 0,
+      totalValue: r.total_value ?? 0,
+      notes: r.notes ?? null,
+      items: items.length > 0 ? items : undefined,
+    };
+  });
   return { orders, error: null };
 }
 
@@ -232,6 +321,35 @@ export async function operatorGetClientUpcomingOrder(
   } catch {
     return { upcomingOrder: null, error: null };
   }
+}
+
+/** Get item details (name, price) by IDs from menu_items and breakfast_items. */
+export async function operatorGetItemDetailsByIds(
+  itemIds: string[]
+): Promise<Record<string, { name: string; price: number }>> {
+  if (itemIds.length === 0) return {};
+  const unique = [...new Set(itemIds.filter(Boolean))];
+  const placeholders = unique.map(() => '?').join(',');
+  const params = [...unique, ...unique];
+
+  const { rows, error } = await operatorQuery<{
+    id: string;
+    name: string | null;
+    price: number;
+  }>(
+    `SELECT id, name, COALESCE(price_each, 0) AS price FROM menu_items WHERE id IN (${placeholders})
+     UNION ALL
+     SELECT id, name, COALESCE(price_each, 0) AS price FROM breakfast_items WHERE id IN (${placeholders})`,
+    params
+  );
+  if (error) return {};
+  const map: Record<string, { name: string; price: number }> = {};
+  for (const r of rows) {
+    if (r.id && !map[r.id]) {
+      map[r.id] = { name: r.name ?? 'Unknown', price: Number(r.price) ?? 0 };
+    }
+  }
+  return map;
 }
 
 /** Get menu items for a vendor. Operator's own implementation. */

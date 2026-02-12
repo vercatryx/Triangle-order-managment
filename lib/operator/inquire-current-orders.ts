@@ -8,6 +8,7 @@ import { operatorGetClientById } from './db';
 import { operatorGetCurrentOrders } from './db';
 import { operatorGetClientUpcomingOrder } from './db';
 import { checkClientEligibility } from './eligibility';
+import { enrichUpcomingOrderWithItemDetails } from './enrich-upcoming-order';
 
 export interface InquireCurrentOrdersResult {
   success: boolean;
@@ -43,7 +44,8 @@ export async function inquireCurrentOrders(clientId: string): Promise<InquireCur
     return { success: false, error: 'Could not fetch current orders' };
   }
 
-  const { upcomingOrder } = await operatorGetClientUpcomingOrder(id);
+  const { upcomingOrder: raw } = await operatorGetClientUpcomingOrder(id);
+  const upcomingOrder = raw ? await enrichUpcomingOrderWithItemDetails(raw) : undefined;
 
   return {
     success: true,

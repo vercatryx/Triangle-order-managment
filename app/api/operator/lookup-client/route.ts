@@ -12,6 +12,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { lookupClient } from '@/lib/operator/client-lookup';
 import { operatorGetCurrentOrders, operatorGetClientUpcomingOrder } from '@/lib/operator/db';
+import { enrichUpcomingOrderWithItemDetails } from '@/lib/operator/enrich-upcoming-order';
 
 /**
  * Remove special characters from name field (e.g. ".", ",", etc.).
@@ -173,8 +174,8 @@ export async function POST(request: NextRequest) {
         const { orders, error } = await operatorGetCurrentOrders(client.clientId);
         response.currentOrders = error ? [] : orders ?? [];
       } else if (key === 'upcomingOrder') {
-        const { upcomingOrder } = await operatorGetClientUpcomingOrder(client.clientId);
-        response.upcomingOrder = upcomingOrder ?? null;
+        const { upcomingOrder: raw } = await operatorGetClientUpcomingOrder(client.clientId);
+        response.upcomingOrder = raw ? await enrichUpcomingOrderWithItemDetails(raw) : null;
       }
     }
 
