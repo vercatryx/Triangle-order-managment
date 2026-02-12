@@ -9,6 +9,8 @@ export type OperatorServiceType = 'Food' | 'Meal' | 'Boxes' | 'Custom';
 export interface OperatorClientInfo {
   clientId: string;
   fullName: string;
+  phoneNumber?: string | null;
+  secondaryPhoneNumber?: string | null;
   serviceType: OperatorServiceType;
   eligibility: boolean;
   eligibilityReason?: string;

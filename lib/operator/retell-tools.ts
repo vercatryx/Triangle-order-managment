@@ -7,11 +7,11 @@
 
 export const RETELL_TOOL_LOOKUP_CLIENT = {
   name: 'lookup_client',
-  description: 'Look up client by phone number or client ID. Call this first to identify who is on the line.',
+  description: 'Look up client by phone number, client ID, or client name. Call this first to identify who is on the line.',
   type: 'function' as const,
   function: {
     name: 'lookup_client',
-    description: 'Look up client by phone number (E.164 or common format) or client ID. Returns client info and eligibility.',
+    description: 'Look up client by phone number (E.164 or common format), client ID, or client full name. Returns client info and eligibility.',
     parameters: {
       type: 'object',
       properties: {
@@ -22,6 +22,10 @@ export const RETELL_TOOL_LOOKUP_CLIENT = {
         client_id: {
           type: 'string',
           description: 'Client ID if provided by caller (e.g. "12345")',
+        },
+        client_name: {
+          type: 'string',
+          description: 'Client full name if provided by caller (e.g. "Rivka Muller")',
         },
       },
     },
