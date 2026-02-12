@@ -2080,7 +2080,7 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
                                     </span>
                                     <span style={{ minWidth: '150px', flex: 1.2, fontSize: '0.85rem', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: '16px' }}>
                                         {client.authorizedAmount !== null && client.authorizedAmount !== undefined
-                                            ? `$${client.authorizedAmount.toFixed(2)}`
+                                            ? `$${Number(client.authorizedAmount).toFixed(2)}`
                                             : '-'}
                                     </span>
                                     <span style={{ minWidth: '150px', flex: 1.2, fontSize: '0.85rem', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: '16px' }}>

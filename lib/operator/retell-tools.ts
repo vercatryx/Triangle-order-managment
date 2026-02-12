@@ -41,11 +41,60 @@ export const RETELL_TOOL_INQUIRE_CURRENT_ORDERS = {
     description: 'Get current week orders and upcoming order for an identified client.',
     parameters: {
       type: 'object',
-      required: ['client_id'],
       properties: {
+        phone: {
+          type: 'string',
+          description: 'Caller phone number (E.164 or common format). Required if client_id not provided.',
+        },
         client_id: {
           type: 'string',
-          description: 'Client ID (from lookup_client)',
+          description: 'Client ID (from lookup_client). Required if phone not provided.',
+        },
+      },
+    },
+  },
+};
+
+export const RETELL_TOOL_INQUIRE_ORDERS_CURRENT = {
+  name: 'inquire_orders_current',
+  description: 'Inquire about the client\'s current week orders only. Use when caller asks "What are my orders?" or "What have I received?" Call after identifying the client.',
+  type: 'function' as const,
+  function: {
+    name: 'inquire_orders_current',
+    description: 'Get current week orders only for an identified client.',
+    parameters: {
+      type: 'object',
+      properties: {
+        phone: {
+          type: 'string',
+          description: 'Caller phone number (E.164 or common format). Required if client_id not provided.',
+        },
+        client_id: {
+          type: 'string',
+          description: 'Client ID (from lookup_client). Required if phone not provided.',
+        },
+      },
+    },
+  },
+};
+
+export const RETELL_TOOL_INQUIRE_UPCOMING_ORDER = {
+  name: 'inquire_upcoming_order',
+  description: 'Inquire about the client\'s upcoming order. Use when caller asks "Do I have an upcoming order?" or "What am I scheduled for next?" Call after identifying the client.',
+  type: 'function' as const,
+  function: {
+    name: 'inquire_upcoming_order',
+    description: 'Get upcoming order for an identified client.',
+    parameters: {
+      type: 'object',
+      properties: {
+        phone: {
+          type: 'string',
+          description: 'Caller phone number (E.164 or common format). Required if client_id not provided.',
+        },
+        client_id: {
+          type: 'string',
+          description: 'Client ID (from lookup_client). Required if phone not provided.',
         },
       },
     },
@@ -189,6 +238,8 @@ export const RETELL_TOOL_CREATE_FROM_PREVIOUS_ORDER = {
 export const RETELL_TOOLS = [
   RETELL_TOOL_LOOKUP_CLIENT,
   RETELL_TOOL_INQUIRE_CURRENT_ORDERS,
+  RETELL_TOOL_INQUIRE_ORDERS_CURRENT,
+  RETELL_TOOL_INQUIRE_UPCOMING_ORDER,
   RETELL_TOOL_REQUEST_MENU,
   RETELL_TOOL_CREATE_UPCOMING_ORDER,
   RETELL_TOOL_CREATE_FROM_PREVIOUS_ORDER,

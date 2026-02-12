@@ -566,7 +566,7 @@ export function ClientInfoShelf({
                                         </div>
                                     ) : (
                                         client.authorizedAmount !== null && client.authorizedAmount !== undefined
-                                            ? `$${client.authorizedAmount.toFixed(2)}`
+                                            ? `$${Number(client.authorizedAmount).toFixed(2)}`
                                             : '-'
                                     )}
                                 </div>
