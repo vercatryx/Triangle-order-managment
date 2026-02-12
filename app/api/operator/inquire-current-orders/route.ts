@@ -1,26 +1,41 @@
 /**
  * Operator inquire current orders API.
- * GET /api/operator/inquire-current-orders?clientId=...
+ * GET /api/operator/inquire-current-orders?clientId=... | ?phone=...
  * Returns: { currentOrders, upcomingOrder } or error.
  * Uses only lib/operator/* — no imports from main app lib.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
 import { inquireCurrentOrders } from '@/lib/operator/inquire-current-orders';
+import { lookupClient } from '@/lib/operator/client-lookup';
 
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
     const clientId = searchParams.get('clientId') || searchParams.get('client_id') || undefined;
+    const phone = searchParams.get('phone') || undefined;
 
-    if (!clientId) {
+    let resolvedClientId = clientId;
+
+    if (!resolvedClientId && phone) {
+      const lookup = await lookupClient({ phone });
+      if (!lookup.success || !lookup.client) {
+        return NextResponse.json(
+          { error: lookup.error ?? 'Client not found for this phone number' },
+          { status: 404 }
+        );
+      }
+      resolvedClientId = lookup.client.clientId;
+    }
+
+    if (!resolvedClientId) {
       return NextResponse.json(
-        { error: 'clientId is required' },
+        { error: 'clientId or phone is required' },
         { status: 400 }
       );
     }
 
-    const result = await inquireCurrentOrders(clientId);
+    const result = await inquireCurrentOrders(resolvedClientId);
 
     if (!result.success) {
       return NextResponse.json(
