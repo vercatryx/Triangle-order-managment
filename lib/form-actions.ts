@@ -385,7 +385,7 @@ export async function getSubmissionByToken(token: string) {
         }
 
         // Fetch client info if client_id exists
-        let client = null;
+        let client: unknown = null;
         if (submission.client_id) {
             const { getClient } = await import('./actions');
             client = await getClient(submission.client_id);
@@ -407,7 +407,7 @@ export async function getSubmissionByToken(token: string) {
 
 export async function updateSubmissionStatus(token: string, status: 'accepted' | 'rejected', signatureDataUrl?: string, comments?: string) {
     try {
-        let signatureUrl = null;
+        let signatureUrl: string | null = null;
 
         // If signature provided, upload it
         if (signatureDataUrl && status === 'accepted') {

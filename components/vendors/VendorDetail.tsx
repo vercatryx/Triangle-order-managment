@@ -538,7 +538,7 @@ export function VendorDetail({ vendorId, isVendorView, vendor: initialVendor }: 
             // Items
             if (items.length > 0) {
                 items.forEach(item => {
-                    const extraInfo = [];
+                    const extraInfo: string[] = [];
                     if (item.category) extraInfo.push(getCategoryName(item.category));
                     if (item.notes) extraInfo.push(`Note: ${item.notes}`);
 

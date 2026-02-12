@@ -88,7 +88,7 @@ export function MealSelectionManagement() {
         // If nothing exists, default to standards for a better Empty State experience
         const defaultTypes = ['Breakfast', 'Lunch', 'Dinner'];
         const allTypes = existingTypes.length > 0
-            ? existingTypes.sort((a, b) => defaultTypes.indexOf(a) - defaultTypes.indexOf(b))
+            ? (existingTypes as string[]).sort((a, b) => defaultTypes.indexOf(a) - defaultTypes.indexOf(b))
             : defaultTypes;
 
         setMealTypes(allTypes);

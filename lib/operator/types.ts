@@ -41,6 +41,44 @@ export interface OperatorVendorSelection {
   itemNotes?: Record<string, string>;
 }
 
+/** Current order summary for inquire-current-orders */
+export interface OperatorCurrentOrder {
+  orderId: string;
+  orderNumber: string;
+  serviceType: string;
+  status: string;
+  scheduledDeliveryDate: string | null;
+  totalItems: number;
+  totalValue: number;
+  notes: string | null;
+}
+
+/** Menu item for request-menu */
+export interface OperatorMenuItem {
+  id: string;
+  vendorId?: string;
+  name: string;
+  value: number;
+  priceEach?: number;
+  minimumOrder?: number;
+  deliveryDays?: string[] | null;
+  itemType?: 'menu' | 'meal';
+}
+
+/** Last order structure for create-from-previous-order */
+export interface OperatorLastOrder {
+  orderId: string;
+  serviceType: string;
+  scheduledDeliveryDate: string | null;
+  vendorSelections?: { vendorId: string; items: Record<string, number> }[];
+  boxOrders?: {
+    boxTypeId?: string;
+    vendorId?: string;
+    quantity: number;
+    items?: Record<string, number>;
+  }[];
+}
+
 /** Generic upcoming order payload (union for validation) */
 export type OperatorUpcomingOrderPayload =
   | OperatorCustomOrderPayload

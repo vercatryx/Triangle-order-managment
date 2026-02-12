@@ -243,7 +243,7 @@ async function cleanupEquipmentOrders(validIds: Set<string>) {
     if (!orders || orders.length === 0) return;
 
     let updatedCount = 0;
-    const updates = [];
+    const updates: { id: string; notes: string }[] = [];
 
     for (const order of orders) {
         if (!order.notes) continue;

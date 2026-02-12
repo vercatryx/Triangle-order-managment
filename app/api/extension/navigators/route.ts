@@ -51,7 +51,7 @@ export async function GET(request: NextRequest) {
 
         return NextResponse.json({
             success: true,
-            navigators: navigators.filter(n => n.isActive) // Only return active navigators
+            navigators: navigators.filter((n: { isActive?: boolean }) => n.isActive) // Only return active navigators
         }, { 
             status: 200,
             headers: {

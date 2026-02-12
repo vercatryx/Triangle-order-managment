@@ -5,6 +5,7 @@
  */
 
 import mysql from 'mysql2/promise';
+import type { OperatorCurrentOrder, OperatorMenuItem, OperatorLastOrder } from './types';
 
 const config = {
   host: process.env.MYSQL_HOST || process.env.DATABASE_HOST || 'localhost',
@@ -124,6 +125,256 @@ export async function operatorUpdateClientUpcomingOrder(
     [json, clientId]
   );
   return { error };
+}
+
+/** Get client's current week orders from orders table. Operator's own implementation. */
+export async function operatorGetCurrentOrders(
+  clientId: string
+): Promise<{ orders: OperatorCurrentOrder[]; error: Error | null }> {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const day = today.getDay();
+  const startOfWeek = new Date(today);
+  startOfWeek.setDate(today.getDate() - day);
+  const endOfWeek = new Date(startOfWeek);
+  endOfWeek.setDate(startOfWeek.getDate() + 6);
+  const startStr = startOfWeek.toISOString().split('T')[0];
+  const endStr = endOfWeek.toISOString().split('T')[0];
+
+  const { rows, error } = await operatorQuery<{
+    id: string;
+    order_number: string | number;
+    service_type: string;
+    status: string;
+    scheduled_delivery_date: string | null;
+    total_items: number;
+    total_value: number;
+    notes: string | null;
+  }>(
+    `SELECT id, order_number, service_type, status, scheduled_delivery_date, total_items, total_value, notes
+     FROM orders
+     WHERE client_id = ?
+       AND status IN ('pending', 'confirmed', 'processing', 'completed', 'waiting_for_proof', 'billing_pending')
+       AND scheduled_delivery_date >= ? AND scheduled_delivery_date <= ?
+     ORDER BY scheduled_delivery_date ASC, created_at DESC`,
+    [clientId, startStr, endStr]
+  );
+  if (error) return { orders: [], error };
+  const orders: OperatorCurrentOrder[] = rows.map((r) => ({
+    orderId: r.id,
+    orderNumber: String(r.order_number ?? ''),
+    serviceType: r.service_type,
+    status: r.status,
+    scheduledDeliveryDate: r.scheduled_delivery_date ?? null,
+    totalItems: r.total_items ?? 0,
+    totalValue: r.total_value ?? 0,
+    notes: r.notes ?? null,
+  }));
+  return { orders, error: null };
+}
+
+/** Get client's upcoming order from clients.upcoming_order. Operator's own implementation. */
+export async function operatorGetClientUpcomingOrder(
+  clientId: string
+): Promise<{ upcomingOrder: unknown; error: Error | null }> {
+  const { rows, error } = await operatorQuery<{ upcoming_order: string | null }>(
+    `SELECT upcoming_order FROM clients WHERE id = ? LIMIT 1`,
+    [clientId]
+  );
+  if (error) return { upcomingOrder: null, error };
+  const row = rows[0];
+  if (!row?.upcoming_order) return { upcomingOrder: null, error: null };
+  try {
+    const parsed = JSON.parse(row.upcoming_order);
+    return { upcomingOrder: parsed, error: null };
+  } catch {
+    return { upcomingOrder: null, error: null };
+  }
+}
+
+/** Get menu items for a vendor. Operator's own implementation. */
+export async function operatorGetMenuItemsForVendor(
+  vendorId: string
+): Promise<{ items: OperatorMenuItem[]; error: Error | null }> {
+  const { rows, error } = await operatorQuery<{
+    id: string;
+    name: string;
+    value: number;
+    price_each: number | null;
+    minimum_order: number;
+    delivery_days: string | null;
+  }>(
+    `SELECT id, name, value, price_each, minimum_order, delivery_days
+     FROM menu_items
+     WHERE vendor_id = ? AND is_active = 1
+     ORDER BY sort_order ASC, name ASC`,
+    [vendorId]
+  );
+  if (error) return { items: [], error };
+  const items: OperatorMenuItem[] = rows.map((r) => ({
+    id: r.id,
+    name: r.name ?? 'Unknown',
+    value: r.value ?? 0,
+    priceEach: r.price_each ?? undefined,
+    minimumOrder: r.minimum_order ?? 0,
+    deliveryDays: r.delivery_days
+      ? (typeof r.delivery_days === 'string' ? JSON.parse(r.delivery_days) : r.delivery_days) as string[] | null
+      : null,
+  }));
+  return { items, error: null };
+}
+
+/** Get all active menu items (for Request Menu when no vendor specified). */
+export async function operatorGetAllMenuItems(): Promise<{
+  items: OperatorMenuItem[];
+  error: Error | null;
+}> {
+  const { rows, error } = await operatorQuery<{
+    id: string;
+    vendor_id: string | null;
+    name: string;
+    value: number;
+    price_each: number | null;
+    minimum_order: number;
+    delivery_days: string | null;
+  }>(
+    `SELECT id, vendor_id, name, value, price_each, minimum_order, delivery_days
+     FROM menu_items
+     WHERE is_active = 1
+     ORDER BY sort_order ASC, name ASC`
+  );
+  if (error) return { items: [], error };
+  const items: OperatorMenuItem[] = rows.map((r) => ({
+    id: r.id,
+    vendorId: r.vendor_id ?? undefined,
+    name: r.name ?? 'Unknown',
+    value: r.value ?? 0,
+    priceEach: r.price_each ?? undefined,
+    minimumOrder: r.minimum_order ?? 0,
+    deliveryDays: r.delivery_days
+      ? (typeof r.delivery_days === 'string' ? JSON.parse(r.delivery_days) : r.delivery_days) as string[] | null
+      : null,
+  }));
+  return { items, error: null };
+}
+
+/** Get meal items (breakfast_items). Operator's own implementation. */
+export async function operatorGetMealItems(): Promise<{
+  items: OperatorMenuItem[];
+  error: Error | null;
+}> {
+  const { rows, error } = await operatorQuery<{
+    id: string;
+    vendor_id: string | null;
+    name: string;
+    quota_value: number;
+    price_each: number | null;
+  }>(
+    `SELECT id, vendor_id, name, quota_value, price_each
+     FROM breakfast_items
+     WHERE is_active = 1
+     ORDER BY sort_order ASC, name ASC`
+  );
+  if (error) return { items: [], error };
+  const items: OperatorMenuItem[] = rows.map((r) => ({
+    id: r.id,
+    vendorId: r.vendor_id ?? undefined,
+    name: r.name ?? 'Unknown',
+    value: r.quota_value ?? 1,
+    priceEach: r.price_each ?? undefined,
+    itemType: 'meal',
+  }));
+  return { items, error: null };
+}
+
+/** Get client's most recent order (for repeat previous order). */
+export async function operatorGetLastOrderForClient(
+  clientId: string
+): Promise<{ order: OperatorLastOrder | null; error: Error | null }> {
+  const { rows, error } = await operatorQuery<{
+    id: string;
+    service_type: string;
+    scheduled_delivery_date: string | null;
+  }>(
+    `SELECT id, service_type, scheduled_delivery_date
+     FROM orders
+     WHERE client_id = ?
+       AND status IN ('pending', 'confirmed', 'processing', 'completed', 'waiting_for_proof', 'billing_pending')
+     ORDER BY created_at DESC
+     LIMIT 1`,
+    [clientId]
+  );
+  if (error || rows.length === 0) return { order: null, error };
+  const orderRow = rows[0];
+
+  // Fetch order items for Food/Meal
+  const { rows: vsRows } = await operatorQuery<{ id: string; vendor_id: string }>(
+    `SELECT id, vendor_id FROM order_vendor_selections WHERE order_id = ?`,
+    [orderRow.id]
+  );
+
+  const itemsByVendor: Record<string, Record<string, number>> = {};
+  for (const vs of vsRows) {
+    const { rows: itemRows } = await operatorQuery<{
+      menu_item_id: string | null;
+      meal_item_id: string | null;
+      quantity: number;
+    }>(
+      `SELECT menu_item_id, meal_item_id, quantity FROM order_items WHERE vendor_selection_id = ?`,
+      [vs.id]
+    );
+    const items: Record<string, number> = {};
+    for (const it of itemRows) {
+      const itemId = it.menu_item_id ?? it.meal_item_id;
+      if (itemId) items[itemId] = (items[itemId] ?? 0) + it.quantity;
+    }
+    if (vs.vendor_id) itemsByVendor[vs.vendor_id] = items;
+  }
+
+  // Box selections
+  let boxOrders: { boxTypeId?: string; vendorId?: string; quantity: number; items?: Record<string, number> }[] = [];
+  if (orderRow.service_type === 'Boxes') {
+    const { rows: boxRows } = await operatorQuery<{
+      box_type_id: string | null;
+      vendor_id: string | null;
+      quantity: number;
+      items: string | null;
+    }>(
+      `SELECT box_type_id, vendor_id, quantity, items FROM order_box_selections WHERE order_id = ?`,
+      [orderRow.id]
+    );
+    boxOrders = boxRows.map((b) => {
+      let itemsObj: Record<string, number> = {};
+      if (b.items) {
+        try {
+          const parsed = JSON.parse(b.items);
+          itemsObj = typeof parsed === 'object' ? parsed : {};
+        } catch {}
+      }
+      return {
+        boxTypeId: b.box_type_id ?? undefined,
+        vendorId: b.vendor_id ?? undefined,
+        quantity: b.quantity ?? 1,
+        items: Object.keys(itemsObj).length ? itemsObj : undefined,
+      };
+    });
+  }
+
+  const vendorSelections =
+    Object.keys(itemsByVendor).length > 0
+      ? Object.entries(itemsByVendor).map(([vendorId, items]) => ({ vendorId, items }))
+      : undefined;
+
+  return {
+    order: {
+      orderId: orderRow.id,
+      serviceType: orderRow.service_type,
+      scheduledDeliveryDate: orderRow.scheduled_delivery_date ?? null,
+      vendorSelections,
+      boxOrders: boxOrders.length ? boxOrders : undefined,
+    },
+    error: null,
+  };
 }
 
 /** Append to client order_history. Operator's own implementation. */

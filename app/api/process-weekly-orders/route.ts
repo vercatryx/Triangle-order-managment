@@ -700,7 +700,7 @@ export async function GET(request: NextRequest) {
 
                                 if (allOrderItems && allOrderItems.length > 0) {
                                     // Calculate from unit_value * quantity (same logic as getOrderById)
-                                    const calculatedTotal = allOrderItems.reduce((sum, item) => {
+                                    const calculatedTotal = allOrderItems.reduce((sum: number, item: { custom_price?: unknown; unit_value?: number; quantity?: number }) => {
                                         // Use custom_price if available, otherwise use unit_value * quantity
                                         const itemPrice = item.custom_price 
                                             ? parseFloat(item.custom_price.toString() || '0')
@@ -834,7 +834,7 @@ export async function GET(request: NextRequest) {
                             }
 
                             // Log successful copy summary
-                            const copySummary = [];
+                            const copySummary: string[] = [];
                             if (vendorSelectionsCopied > 0) copySummary.push(`${vendorSelectionsCopied} vendor selection(s)`);
                             if (itemsCopied > 0) copySummary.push(`${itemsCopied} item(s)`);
                             if (boxSelectionsCopied > 0) copySummary.push(`${boxSelectionsCopied} box selection(s)`);

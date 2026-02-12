@@ -69,10 +69,10 @@ export async function GET(request: NextRequest) {
             getMealItems()
         ]);
 
-        const menuItemsById = new Map(menuItems.map(m => [m.id, m]));
-        const vendorsById = new Map(vendors.map(v => [v.id, v]));
-        const boxTypesById = new Map(boxTypes.map(b => [b.id, b]));
-        const mealItemsById = new Map(mealItems.map(m => [m.id, m]));
+        const menuItemsById = new Map(menuItems.map((m: { id: string }) => [m.id, m]));
+        const vendorsById = new Map(vendors.map((v: { id: string }) => [v.id, v]));
+        const boxTypesById = new Map(boxTypes.map((b: { id: string }) => [b.id, b]));
+        const mealItemsById = new Map(mealItems.map((m: { id: string }) => [m.id, m]));
 
         // Get all clients with their active_order
         const { data: clients, error: clientsError } = await supabase
@@ -94,7 +94,7 @@ export async function GET(request: NextRequest) {
         }
 
         // Get vendor selections, box selections, and items for all upcoming orders
-        const upcomingOrderIds = upcomingOrders?.map(o => o.id) || [];
+        const upcomingOrderIds = upcomingOrders?.map((o: { id: string }) => o.id) || [];
         let vendorSelections: any[] = [];
         let boxSelections: any[] = [];
         let orderItems: any[] = [];
@@ -112,20 +112,20 @@ export async function GET(request: NextRequest) {
 
         // Group upcoming orders by client
         const upcomingByClient: Record<string, any[]> = {};
-        upcomingOrders?.forEach(order => {
+        upcomingOrders?.forEach((order: { id: string; client_id: string; delivery_day?: string; service_type?: string; case_id?: string }) => {
             if (!upcomingByClient[order.client_id]) {
                 upcomingByClient[order.client_id] = [];
             }
 
             // Get vendor selections for this order
-            const orderVS = vendorSelections.filter(vs => vs.upcoming_order_id === order.id);
-            const orderBS = boxSelections.find(bs => bs.upcoming_order_id === order.id);
-            const vsWithItems = orderVS.map(vs => {
-                const vsItems = orderItems.filter(item => item.vendor_selection_id === vs.id);
+            const orderVS = vendorSelections.filter((vs: { upcoming_order_id?: string }) => vs.upcoming_order_id === order.id);
+            const orderBS = boxSelections.find((bs: { upcoming_order_id?: string }) => bs.upcoming_order_id === order.id);
+            const vsWithItems = orderVS.map((vs: { id?: string; vendor_id?: string }) => {
+                const vsItems = orderItems.filter((item: { vendor_selection_id?: string }) => item.vendor_selection_id === vs.id);
                 return {
-                    vendorName: vendorsById.get(vs.vendor_id)?.name || vs.vendor_id || 'Unknown Vendor',
-                    items: vsItems.map(item => {
-                        const menuItem = menuItemsById.get(item.menu_item_id) || mealItemsById.get(item.meal_item_id);
+                    vendorName: (vendorsById.get(vs.vendor_id) as { name?: string } | undefined)?.name || vs.vendor_id || 'Unknown Vendor',
+                    items: vsItems.map((item: { menu_item_id?: string; meal_item_id?: string; quantity?: number; notes?: string }) => {
+                        const menuItem = (menuItemsById.get(item.menu_item_id) || mealItemsById.get(item.meal_item_id)) as { name?: string } | undefined;
                         return {
                             name: menuItem?.name || item.menu_item_id || item.meal_item_id || 'Unknown Item',
                             quantity: item.quantity,
@@ -138,11 +138,11 @@ export async function GET(request: NextRequest) {
             let boxOrder: BoxOrderDetail | undefined;
             if (orderBS) {
                 boxOrder = {
-                    boxTypeName: boxTypesById.get(orderBS.box_type_id)?.name || orderBS.box_type_id || 'Unknown Box',
-                    vendorName: vendorsById.get(orderBS.vendor_id)?.name,
+                    boxTypeName: (boxTypesById.get(orderBS.box_type_id) as { name?: string } | undefined)?.name || orderBS.box_type_id || 'Unknown Box',
+                    vendorName: (vendorsById.get(orderBS.vendor_id) as { name?: string } | undefined)?.name,
                     quantity: orderBS.quantity || 1,
                     items: Object.entries(orderBS.items || {}).map(([itemId, qty]) => {
-                        const menuItem = menuItemsById.get(itemId);
+                        const menuItem = menuItemsById.get(itemId) as { name?: string } | undefined;
                         return {
                             name: menuItem?.name || itemId,
                             quantity: qty as number
@@ -151,8 +151,8 @@ export async function GET(request: NextRequest) {
                 };
             }
 
-            const itemCount = orderItems.filter(item =>
-                orderVS.some(vs => vs.id === item.vendor_selection_id) || item.upcoming_order_id === order.id
+            const itemCount = orderItems.filter((item: { vendor_selection_id?: string; upcoming_order_id?: string }) =>
+                orderVS.some((vs: { id?: string }) => vs.id === item.vendor_selection_id) || item.upcoming_order_id === order.id
             ).length;
 
             upcomingByClient[order.client_id].push({
@@ -202,9 +202,9 @@ export async function GET(request: NextRequest) {
                     // Parse vendor selections
                     if (activeOrder.vendorSelections && activeOrder.vendorSelections.length > 0) {
                         activeOrderDetails.vendorSelections = activeOrder.vendorSelections.map((vs: any) => ({
-                            vendorName: vendorsById.get(vs.vendorId)?.name || vs.vendorId || 'Unknown Vendor',
+                            vendorName: (vendorsById.get(vs.vendorId) as { name?: string } | undefined)?.name || vs.vendorId || 'Unknown Vendor',
                             items: Object.entries(vs.items || {}).map(([itemId, qty]) => {
-                                const menuItem = menuItemsById.get(itemId) || mealItemsById.get(itemId);
+                                const menuItem = (menuItemsById.get(itemId) || mealItemsById.get(itemId)) as { name?: string } | undefined;
                                 return {
                                     name: menuItem?.name || itemId,
                                     quantity: qty as number,
@@ -222,9 +222,9 @@ export async function GET(request: NextRequest) {
                         Object.entries(activeOrder.deliveryDayOrders).forEach(([day, dayData]: [string, any]) => {
                             (dayData.vendorSelections || []).forEach((vs: any) => {
                                 allVS.push({
-                                    vendorName: `${vendorsById.get(vs.vendorId)?.name || vs.vendorId || 'Unknown'} (${day})`,
+                                    vendorName: `${(vendorsById.get(vs.vendorId) as { name?: string } | undefined)?.name || vs.vendorId || 'Unknown'} (${day})`,
                                     items: Object.entries(vs.items || {}).map(([itemId, qty]) => {
-                                        const menuItem = menuItemsById.get(itemId);
+                                        const menuItem = menuItemsById.get(itemId) as { name?: string } | undefined;
                                         return {
                                             name: menuItem?.name || itemId,
                                             quantity: qty as number,
@@ -242,11 +242,11 @@ export async function GET(request: NextRequest) {
                     // Parse box orders
                     if (activeOrder.boxOrders && activeOrder.boxOrders.length > 0) {
                         activeOrderDetails.boxOrders = activeOrder.boxOrders.map((box: any) => ({
-                            boxTypeName: boxTypesById.get(box.boxTypeId)?.name || box.boxTypeId || 'Unknown Box',
-                            vendorName: vendorsById.get(box.vendorId)?.name,
+                            boxTypeName: (boxTypesById.get(box.boxTypeId) as { name?: string } | undefined)?.name || box.boxTypeId || 'Unknown Box',
+                            vendorName: (vendorsById.get(box.vendorId) as { name?: string } | undefined)?.name,
                             quantity: box.quantity || 1,
                             items: Object.entries(box.items || {}).map(([itemId, qty]) => {
-                                const menuItem = menuItemsById.get(itemId);
+                                const menuItem = menuItemsById.get(itemId) as { name?: string } | undefined;
                                 return {
                                     name: menuItem?.name || itemId,
                                     quantity: qty as number,
@@ -259,11 +259,11 @@ export async function GET(request: NextRequest) {
                     // Legacy single box
                     if (activeOrder.boxTypeId && !activeOrderDetails.boxOrders) {
                         activeOrderDetails.boxOrders = [{
-                            boxTypeName: boxTypesById.get(activeOrder.boxTypeId)?.name || activeOrder.boxTypeId || 'Unknown Box',
-                            vendorName: vendorsById.get(activeOrder.vendorId)?.name,
+                            boxTypeName: (boxTypesById.get(activeOrder.boxTypeId) as { name?: string } | undefined)?.name || activeOrder.boxTypeId || 'Unknown Box',
+                            vendorName: (vendorsById.get(activeOrder.vendorId) as { name?: string } | undefined)?.name,
                             quantity: activeOrder.boxQuantity || 1,
                             items: Object.entries(activeOrder.items || {}).map(([itemId, qty]) => ({
-                                name: menuItemsById.get(itemId)?.name || itemId,
+                                name: (menuItemsById.get(itemId) as { name?: string } | undefined)?.name || itemId,
                                 quantity: qty as number
                             }))
                         }];
@@ -274,9 +274,9 @@ export async function GET(request: NextRequest) {
                         activeOrderDetails.mealSelections = {};
                         Object.entries(activeOrder.mealSelections).forEach(([mealType, mealData]: [string, any]) => {
                             activeOrderDetails.mealSelections![mealType] = {
-                                vendorName: vendorsById.get(mealData.vendorId)?.name || mealData.vendorId || 'No Vendor',
+                                vendorName: (vendorsById.get(mealData.vendorId) as { name?: string } | undefined)?.name || mealData.vendorId || 'No Vendor',
                                 items: Object.entries(mealData.items || {}).map(([itemId, qty]) => {
-                                    const item = mealItemsById.get(itemId) || menuItemsById.get(itemId);
+                                    const item = (mealItemsById.get(itemId) || menuItemsById.get(itemId)) as { name?: string } | undefined;
                                     return {
                                         name: item?.name || itemId,
                                         quantity: qty as number,

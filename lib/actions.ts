@@ -4681,7 +4681,7 @@ export async function processUpcomingOrders() {
     const clientIds = [...new Set(upcomingOrders.map(uo => uo.client_id))];
     if (clientIds.length > 0) {
         const { syncClientsInLocalDB } = await import('./local-db');
-        syncClientsInLocalDB(clientIds).catch(e => console.error('Bulk sync error:', e));
+        syncClientsInLocalDB(clientIds as string[]).catch((e: unknown) => console.error('Bulk sync error:', e));
     }
 
 

@@ -35,7 +35,7 @@ export async function GET(request: NextRequest) {
         const processedOrder = await getUpcomingOrderForClientLocal(clientId);
 
         // Compare with another client if provided
-        let compareData = null;
+        let compareData: { rawOrders: unknown[]; processedOrder: unknown } | null = null;
         if (compareClientId) {
             const compareOrders = db.upcomingOrders.filter(
                 o => o.client_id === compareClientId && o.status === 'scheduled'

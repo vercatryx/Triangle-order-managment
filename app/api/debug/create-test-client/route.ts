@@ -19,7 +19,7 @@ export async function GET() {
         const vendor1 = vendors[0];
         // Ensure we find items associated with this vendor if possible, or just any items
         const mlItems = mealItems.slice(0, 10); // Take a pool
-        let vendor1Items = mlItems.filter(i => i.vendorId === vendor1.id).slice(0, 2);
+        let vendor1Items = mlItems.filter((i: { vendorId?: string }) => i.vendorId === vendor1.id).slice(0, 2);
 
         // FALLBACK: If no specific items for this vendor, just steal some other items for testing purposes
         if (vendor1Items.length === 0) {
@@ -27,7 +27,7 @@ export async function GET() {
         }
 
         // Find breakfast items
-        const breakfastItems = mealItems.filter(i => i.categoryId && i.name.toLowerCase().includes('breakfast') || true).slice(2, 4); // Use different items
+        const breakfastItems = mealItems.filter((i: { categoryId?: string; name?: string }) => i.categoryId && i.name?.toLowerCase().includes('breakfast') || true).slice(2, 4); // Use different items
 
         // 2. Construct Active Order
         const activeOrder: any = {

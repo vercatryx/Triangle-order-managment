@@ -168,7 +168,7 @@ export async function POST(request: NextRequest) {
                 }
 
                 // Get vendor selections and items for the upcoming orders
-                const upcomingOrderIds = upcomingOrders.map(o => o.id);
+                const upcomingOrderIds = upcomingOrders.map((o: { id: string }) => o.id);
 
                 const [vendorSelections, items, boxSelections] = await Promise.all([
                     supabase.from('upcoming_order_vendor_selections').select('*').in('upcoming_order_id', upcomingOrderIds),
@@ -188,7 +188,7 @@ export async function POST(request: NextRequest) {
                         status: order.status
                     };
 
-                    const orderVS = vendorSelections.data?.filter(vs => vs.upcoming_order_id === order.id) || [];
+                    const orderVS = vendorSelections.data?.filter((vs: { upcoming_order_id?: string }) => vs.upcoming_order_id === order.id) || [];
 
                     if (order.service_type === 'Food' || order.service_type === 'Meal') {
                         if (order.service_type === 'Meal' && order.meal_type) {
@@ -198,8 +198,8 @@ export async function POST(request: NextRequest) {
 
                             if (orderVS.length > 0) {
                                 const vs = orderVS[0];
-                                const vsItems = items.data?.filter(item => item.vendor_selection_id === vs.id) || [];
-                                vsItems.forEach(item => {
+                                const vsItems = items.data?.filter((item: { vendor_selection_id?: string }) => item.vendor_selection_id === vs.id) || [];
+                                vsItems.forEach((item: { meal_item_id?: string; menu_item_id?: string; quantity?: number }) => {
                                     const itemId = item.meal_item_id || item.menu_item_id;
                                     if (itemId) mealItems[itemId] = item.quantity;
                                 });
@@ -209,10 +209,10 @@ export async function POST(request: NextRequest) {
                             }
                         } else {
                             // Food order - use vendorSelections format
-                            activeOrderConfig.vendorSelections = orderVS.map(vs => {
-                                const vsItems = items.data?.filter(item => item.vendor_selection_id === vs.id) || [];
+                            activeOrderConfig.vendorSelections = orderVS.map((vs: { id?: string; vendor_id?: string }) => {
+                                const vsItems = items.data?.filter((item: { vendor_selection_id?: string }) => item.vendor_selection_id === vs.id) || [];
                                 const itemsMap: any = {};
-                                vsItems.forEach(item => {
+                                vsItems.forEach((item: { menu_item_id?: string; meal_item_id?: string; quantity?: number }) => {
                                     const itemId = item.menu_item_id || item.meal_item_id;
                                     if (itemId) itemsMap[itemId] = item.quantity;
                                 });
@@ -220,7 +220,7 @@ export async function POST(request: NextRequest) {
                             });
                         }
                     } else if (order.service_type === 'Boxes') {
-                        const boxSel = boxSelections.data?.find(bs => bs.upcoming_order_id === order.id);
+                        const boxSel = boxSelections.data?.find((bs: { upcoming_order_id?: string }) => bs.upcoming_order_id === order.id);
                         if (boxSel) {
                             activeOrderConfig.vendorId = boxSel.vendor_id;
                             activeOrderConfig.boxTypeId = boxSel.box_type_id;
@@ -240,13 +240,13 @@ export async function POST(request: NextRequest) {
 
                     for (const order of upcomingOrders) {
                         const deliveryDay = order.delivery_day || 'default';
-                        const orderVS = vendorSelections.data?.filter(vs => vs.upcoming_order_id === order.id) || [];
+                        const orderVS = vendorSelections.data?.filter((vs: { upcoming_order_id?: string }) => vs.upcoming_order_id === order.id) || [];
 
                         activeOrderConfig.deliveryDayOrders[deliveryDay] = {
-                            vendorSelections: orderVS.map(vs => {
-                                const vsItems = items.data?.filter(item => item.vendor_selection_id === vs.id) || [];
+                            vendorSelections: orderVS.map((vs: { id?: string; vendor_id?: string }) => {
+                                const vsItems = items.data?.filter((item: { vendor_selection_id?: string }) => item.vendor_selection_id === vs.id) || [];
                                 const itemsMap: any = {};
-                                vsItems.forEach(item => {
+                                vsItems.forEach((item: { menu_item_id?: string; meal_item_id?: string; quantity?: number }) => {
                                     const itemId = item.menu_item_id || item.meal_item_id;
                                     if (itemId) itemsMap[itemId] = item.quantity;
                                 });
