@@ -1309,7 +1309,8 @@ export const getSettings = reactCache(async function () {
         weeklyCutoffTime: data.weekly_cutoff_time,
         reportEmail: data.report_email || '',
         enablePasswordlessLogin: data.enable_passwordless_login,
-        sendVendorNextWeekEmails: data.send_vendor_next_week_emails !== false
+        sendVendorNextWeekEmails: data.send_vendor_next_week_emails !== false,
+        clientLoginMaintenanceMode: (data as any).client_login_maintenance_mode !== false
     };
 });
 
@@ -1327,7 +1328,8 @@ export async function updateSettings(settings: AppSettings) {
             weekly_cutoff_time: settings.weeklyCutoffTime,
             report_email: settings.reportEmail || null,
             enable_passwordless_login: settings.enablePasswordlessLogin,
-            send_vendor_next_week_emails: settings.sendVendorNextWeekEmails
+            send_vendor_next_week_emails: settings.sendVendorNextWeekEmails,
+            client_login_maintenance_mode: settings.clientLoginMaintenanceMode !== false
         })
         .neq('id', '00000000-0000-0000-0000-000000000000'); // Hack to update all rows
 

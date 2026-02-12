@@ -14,7 +14,8 @@ export function GlobalSettings() {
         weeklyCutoffDay: 'Friday',
         weeklyCutoffTime: '17:00',
         reportEmail: '',
-        sendVendorNextWeekEmails: true
+        sendVendorNextWeekEmails: true,
+        clientLoginMaintenanceMode: true
     });
     const [saving, setSaving] = useState(false);
     const [message, setMessage] = useState<string | null>(null);
@@ -71,6 +72,26 @@ export function GlobalSettings() {
                                 className="sr-only peer"
                                 checked={settings.sendVendorNextWeekEmails !== false}
                                 onChange={e => setSettings({ ...settings, sendVendorNextWeekEmails: e.target.checked })}
+                            />
+                            <div className="w-11 h-6 bg-gray-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+                        </label>
+                    </div>
+                </div>
+
+                <div className={styles.formGroup} style={{ marginBottom: 'var(--spacing-lg)' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                        <div>
+                            <label className="label" style={{ marginBottom: 0 }}>Client login maintenance mode</label>
+                            <p style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)', marginTop: '0.25rem' }}>
+                                When ON, clients cannot log in and see a maintenance message. When OFF, clients can log in with OTP as usual.
+                            </p>
+                        </div>
+                        <label className="relative inline-flex items-center cursor-pointer">
+                            <input
+                                type="checkbox"
+                                className="sr-only peer"
+                                checked={settings.clientLoginMaintenanceMode !== false}
+                                onChange={e => setSettings({ ...settings, clientLoginMaintenanceMode: e.target.checked })}
                             />
                             <div className="w-11 h-6 bg-gray-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
                         </label>

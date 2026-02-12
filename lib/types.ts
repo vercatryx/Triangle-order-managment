@@ -308,6 +308,8 @@ export interface AppSettings {
   enablePasswordlessLogin?: boolean;
   /** When true, "Create orders for the next week" emails each vendor their order count by day. */
   sendVendorNextWeekEmails?: boolean;
+  /** When true, client login is disabled and clients see a maintenance message. */
+  clientLoginMaintenanceMode?: boolean;
 }
 
 export interface OrderHistoryLog {

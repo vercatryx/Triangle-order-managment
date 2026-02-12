@@ -6,9 +6,6 @@ import Image from 'next/image';
 import { login, checkEmailIdentity, sendOtp, verifyOtp, loginWithAlwaysCode } from '@/lib/auth-actions';
 import styles from './page.module.css';
 
-/** Set to true to show maintenance message for clients (no password/OTP). Set to false for normal login. */
-const UNDER_MAINTENANCE = true;
-
 export default function LoginPage() {
     const router = useRouter();
     const [state, action, isPending] = useActionState(login, undefined);
@@ -63,7 +60,7 @@ export default function LoginPage() {
 
             if (result.exists) {
                 // Under maintenance: show message for clients only (no OTP, no password)
-                if (UNDER_MAINTENANCE && result.type === 'client') {
+                if (result.type === 'client' && (result as { underMaintenance?: boolean }).underMaintenance) {
                     setShowMaintenanceMessage(true);
                     setCheckingIdentity(false);
                     return;

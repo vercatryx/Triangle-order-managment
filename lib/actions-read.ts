@@ -259,7 +259,8 @@ export async function getSettings() {
         weeklyCutoffTime: data.weekly_cutoff_time,
         reportEmail: data.report_email || '',
         enablePasswordlessLogin: data.enable_passwordless_login,
-        sendVendorNextWeekEmails: data.send_vendor_next_week_emails !== false
+        sendVendorNextWeekEmails: data.send_vendor_next_week_emails !== false,
+        clientLoginMaintenanceMode: (data as any).client_login_maintenance_mode !== false
     };
 }
 

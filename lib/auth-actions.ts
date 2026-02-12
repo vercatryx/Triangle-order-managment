@@ -484,7 +484,8 @@ export async function checkEmailIdentity(identifier: string) {
             type: 'client',
             id: match.id,
             serviceType: (match as any).serviceType,
-            enablePasswordless
+            enablePasswordless,
+            underMaintenance: settings.clientLoginMaintenanceMode !== false
         };
     }
 
