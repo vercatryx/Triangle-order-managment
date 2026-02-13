@@ -930,36 +930,8 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
         let headerEffectiveDate: React.ReactNode = null;
 
         if (serviceType === 'Food') {
-            const uniqueVendorIds = new Set<string>();
-            // Collect vendors from either format
-            if (orderConfig.deliveryDayOrders) {
-                Object.values(orderConfig.deliveryDayOrders).forEach((dayOrder: any) => {
-                    if (dayOrder.vendorSelections) {
-                        dayOrder.vendorSelections.forEach((s: any) => s.vendorId && uniqueVendorIds.add(s.vendorId));
-                    }
-                });
-            } else if (orderConfig.vendorSelections) {
-                orderConfig.vendorSelections.forEach((s: any) => s.vendorId && uniqueVendorIds.add(s.vendorId));
-            }
-
-            const dates: React.ReactNode[] = [];
-            uniqueVendorIds.forEach(vId => {
-                const v = vendors.find(vend => vend.id === vId);
-                if (v) {
-                    const cutoff = v.cutoffDays || 0;
-                    const effectiveDate = calculateVendorEffectiveDate(cutoff);
-                    const dateString = effectiveDate.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', timeZone: 'UTC' });
-                    dates.push(
-                        <div key={v.id} style={{ lineHeight: '1.2' }}>
-                            Changes for <strong>{v.name}</strong>: <strong>{dateString}</strong>
-                        </div>
-                    );
-                }
-            });
-
-            if (dates.length > 0) {
-                headerEffectiveDate = <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '0.9rem' }}>{dates}</div>;
-            }
+            // Food: no vendor-specific "Changes take effect from" — only the Tuesday 11:59 PM note in the alert below.
+            headerEffectiveDate = null;
         } else if (settings && serviceType !== 'Boxes') {
             // const nextDate = getNextDeliveryDateUtil(client, settings); // Broken signature
             const takeEffect = getTakeEffectDate(settings, new Date());
