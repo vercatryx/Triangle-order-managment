@@ -498,8 +498,8 @@ export async function GET() {
             // Process box orders whenever present (not only when serviceType === 'Boxes') so we catch all inactive/deleted box items
             if (rawBoxOrders && Array.isArray(rawBoxOrders) && rawBoxOrders.length > 0) {
                 const mismatches: BoxQuotaMismatch[] = [];
-                const missingItems: { itemId: string; quantity: number; boxIndex: number }[] = [];
-                const inactiveItems: { itemId: string; quantity: number; boxIndex: number }[] = [];
+                const missingItems: { itemId: string; quantity: number; boxIndex: number; itemName?: string }[] = [];
+                const inactiveItems: { itemId: string; quantity: number; boxIndex: number; itemName?: string }[] = [];
                 for (let boxIndex = 0; boxIndex < rawBoxOrders.length; boxIndex++) {
                     const box = rawBoxOrders[boxIndex];
                     const boxVendorId = box.vendorId ?? (box as { vendor_id?: string }).vendor_id;
