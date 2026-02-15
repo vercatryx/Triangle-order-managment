@@ -1,11 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { verifyRetellSignature } from '../_lib/verify-retell';
-
-function normalizePhone(input: string | null | undefined): string {
-    if (input == null || typeof input !== 'string') return '';
-    return input.replace(/\D/g, '');
-}
+import { normalizePhone, phoneMatches, escapeForIlike } from '../_lib/phone-utils';
 
 export async function POST(request: NextRequest) {
     const rawBody = await request.text();
@@ -28,14 +24,20 @@ export async function POST(request: NextRequest) {
     const supabase = createClient(supabaseUrl, supabaseKey);
 
     if (phone) {
-        const { data: byPhone, error: phoneError } = await supabase
+        // Fetch clients; filter by normalized phone match to handle formatted numbers
+        // (e.g. DB has "(845) 782-6353", search is "8457826353") and US country code edge cases
+        const { data: candidates, error: phoneError } = await supabase
             .from('clients')
             .select('id, full_name, phone_number, secondary_phone_number, address, service_type, approved_meals_per_week, expiration_date')
-            .or(`phone_number.eq.${phone},secondary_phone_number.eq.${phone}`);
+            .limit(10000);
         if (phoneError) {
             return NextResponse.json({ success: false, error: 'database_error', message: 'Lookup failed.' }, { status: 500 });
         }
-        const list = (byPhone ?? []).filter((r: { id?: string }) => r.id);
+        const list = (candidates ?? [])
+            .filter((r: { id?: string; phone_number?: string | null; secondary_phone_number?: string | null }) => {
+                if (!r.id) return false;
+                return phoneMatches(r.phone_number, phone) || phoneMatches(r.secondary_phone_number, phone);
+            });
         if (list.length === 0) {
             return NextResponse.json({
                 success: false,
@@ -83,7 +85,7 @@ export async function POST(request: NextRequest) {
     const { data: byName, error: nameError } = await supabase
         .from('clients')
         .select('id, full_name, phone_number, secondary_phone_number, address, service_type, approved_meals_per_week, expiration_date')
-        .ilike('full_name', `%${fullName}%`);
+        .ilike('full_name', `%${escapeForIlike(fullName)}%`);
     if (nameError) {
         return NextResponse.json({ success: false, error: 'database_error', message: 'Lookup failed.' }, { status: 500 });
     }

@@ -36,7 +36,7 @@ Before starting on the Retell dashboard, make sure you have:
 
 - [ ] A Retell AI account at [dashboard.retellai.com](https://dashboard.retellai.com)
 - [ ] A payment method added under **Billing** tab
-- [ ] Your API endpoints deployed and publicly accessible (e.g., `https://your-domain.com/api/retell/...`)
+- [ ] Your API endpoints deployed and publicly accessible (e.g., `http://trianglesquareservices.com/api/retell/...`)
 - [ ] Your `RETELL_API_KEY` saved — find it under **Settings > Keys** in the Retell dashboard
 - [ ] The system prompt ready (from `retell-ai-voice-system-plan.md`, Section 5)
 - [ ] Your human agent transfer phone number ready (for the transfer call function)
@@ -181,11 +181,14 @@ proteins
 
 Navigate to the **"Functions"** section on the agent detail page. Click **"+ Add"** to add each function.
 
-Your base URL for all custom function endpoints is:
+Your base URL for all custom function endpoints (paste as-is in the Retell dashboard):
 ```
-https://your-domain.com/api/retell
+http://trianglesquareservices.com/api/retell
 ```
-Replace `your-domain.com` with your actual production domain.
+
+### Testing each API (Step 7)
+
+To test endpoints manually (e.g. with curl or Postman), set **`RETELL_SKIP_VERIFY=true`** in `.env.local` so the server accepts requests without the `x-retell-signature` header. Replace `CLIENT-001` and other placeholder IDs with real values from your database or from a previous response (e.g. after `look_up_client` or `get_box_client_info`).
 
 ---
 
@@ -199,7 +202,7 @@ Replace `your-domain.com` with your actual production domain.
 
 4. **HTTP Method:** `POST`
 
-5. **Endpoint URL:** `https://your-domain.com/api/retell/look-up-client`
+5. **Endpoint URL:** `http://trianglesquareservices.com/api/retell/look-up-client`
 
 6. **Request Headers:**
    | Header Name | Value |
@@ -247,6 +250,20 @@ Replace `your-domain.com` with your actual production domain.
 
 11. Click **Save**
 
+**Test this API** (requires `RETELL_SKIP_VERIFY=true`). Retell sends a wrapper; use this body:
+
+```json
+{"name":"look_up_client","args":{"phone_number":"5551234567"},"call":{}}
+```
+
+Optional: search by name instead — `"args":{"full_name":"Jane Doe"}`. Example curl:
+
+```bash
+curl -X POST http://trianglesquareservices.com/api/retell/look-up-client \
+  -H "Content-Type: application/json" \
+  -d '{"name":"look_up_client","args":{"phone_number":"5551234567"},"call":{}}'
+```
+
 ---
 
 ### 7.1b `select_client` — Custom Function (required after multi-match)
@@ -259,7 +276,7 @@ Replace `your-domain.com` with your actual production domain.
 
 4. **HTTP Method:** `POST`
 
-5. **Endpoint URL:** `https://your-domain.com/api/retell/select-client`
+5. **Endpoint URL:** `http://trianglesquareservices.com/api/retell/select-client`
 
 6. **Request Headers:**
    | Header Name | Value |
@@ -288,6 +305,18 @@ Replace `your-domain.com` with your actual production domain.
 
 11. Click **Save**
 
+**Test this API.** Replace `CLIENT-001` with a real client ID (e.g. from `look_up_client`).
+
+```json
+{"name":"select_client","args":{"client_id":"CLIENT-001"},"call":{}}
+```
+
+```bash
+curl -X POST http://trianglesquareservices.com/api/retell/select-client \
+  -H "Content-Type: application/json" \
+  -d '{"name":"select_client","args":{"client_id":"CLIENT-001"},"call":{}}'
+```
+
 ---
 
 ### 7.2 `get_custom_order_details` — Custom Function
@@ -300,7 +329,7 @@ Replace `your-domain.com` with your actual production domain.
 
 4. **HTTP Method:** `GET`
 
-5. **Endpoint URL:** `https://your-domain.com/api/retell/get-custom-order-details`
+5. **Endpoint URL:** `http://trianglesquareservices.com/api/retell/get-custom-order-details`
 
 6. **Query Parameters:**
 
@@ -317,6 +346,12 @@ Replace `your-domain.com` with your actual production domain.
 
 10. Click **Save**
 
+**Test this API.** GET with query param; replace `CLIENT-001` with a Custom client ID.
+
+```bash
+curl "http://trianglesquareservices.com/api/retell/get-custom-order-details?client_id=CLIENT-001"
+```
+
 ---
 
 ### 7.3 `get_box_client_info` — Custom Function
@@ -329,7 +364,7 @@ Replace `your-domain.com` with your actual production domain.
 
 4. **HTTP Method:** `GET`
 
-5. **Endpoint URL:** `https://your-domain.com/api/retell/get-box-client-info`
+5. **Endpoint URL:** `http://trianglesquareservices.com/api/retell/get-box-client-info`
 
 6. **Query Parameters:**
 
@@ -346,6 +381,12 @@ Replace `your-domain.com` with your actual production domain.
 
 10. Click **Save**
 
+**Test this API.** GET with query param; replace `CLIENT-001` with a Boxes client ID.
+
+```bash
+curl "http://trianglesquareservices.com/api/retell/get-box-client-info?client_id=CLIENT-001"
+```
+
 ---
 
 ### 7.4 `save_box_order` — Custom Function
@@ -358,7 +399,7 @@ Replace `your-domain.com` with your actual production domain.
 
 4. **HTTP Method:** `POST`
 
-5. **Endpoint URL:** `https://your-domain.com/api/retell/save-box-order`
+5. **Endpoint URL:** `http://trianglesquareservices.com/api/retell/save-box-order`
 
 6. **Request Headers:**
    | Header Name | Value |
@@ -434,6 +475,38 @@ Replace `your-domain.com` with your actual production domain.
 
 10. Click **Save**
 
+**Test this API.** Replace `CLIENT-001` with a Boxes client ID; use real `box_type_id`, `category_id`, and `item_id` values from `get_box_client_info` response. This example is one box with one category and one item (adjust to match your box count and point rules).
+
+```json
+{
+  "name": "save_box_order",
+  "args": {
+    "client_id": "CLIENT-001",
+    "box_selections": [
+      {
+        "box_index": 1,
+        "box_type_id": "<box_type_id from get_box_client_info>",
+        "category_selections": [
+          {
+            "category_id": "<category_id from get_box_client_info>",
+            "items": [
+              { "item_id": "<item_id from get_box_client_info>", "quantity": 1 }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "call": {}
+}
+```
+
+```bash
+curl -X POST http://trianglesquareservices.com/api/retell/save-box-order \
+  -H "Content-Type: application/json" \
+  -d '{"name":"save_box_order","args":{"client_id":"CLIENT-001","box_selections":[{"box_index":1,"box_type_id":"YOUR_BOX_TYPE_ID","category_selections":[{"category_id":"YOUR_CATEGORY_ID","items":[{"item_id":"YOUR_ITEM_ID","quantity":1}]}]}]},"call":{}}'
+```
+
 ---
 
 ### 7.5 `get_food_vendors_and_menu` — Custom Function
@@ -446,7 +519,7 @@ Replace `your-domain.com` with your actual production domain.
 
 4. **HTTP Method:** `GET`
 
-5. **Endpoint URL:** `https://your-domain.com/api/retell/get-food-vendors-and-menu`
+5. **Endpoint URL:** `http://trianglesquareservices.com/api/retell/get-food-vendors-and-menu`
 
 6. **Query Parameters:**
 
@@ -463,6 +536,12 @@ Replace `your-domain.com` with your actual production domain.
 
 10. Click **Save**
 
+**Test this API.** GET with query param; replace `CLIENT-001` with a Food client ID.
+
+```bash
+curl "http://trianglesquareservices.com/api/retell/get-food-vendors-and-menu?client_id=CLIENT-001"
+```
+
 ---
 
 ### 7.6 `save_food_order` — Custom Function
@@ -475,7 +554,7 @@ Replace `your-domain.com` with your actual production domain.
 
 4. **HTTP Method:** `POST`
 
-5. **Endpoint URL:** `https://your-domain.com/api/retell/save-food-order`
+5. **Endpoint URL:** `http://trianglesquareservices.com/api/retell/save-food-order`
 
 6. **Request Headers:**
    | Header Name | Value |
@@ -534,6 +613,32 @@ Replace `your-domain.com` with your actual production domain.
 
 10. Click **Save**
 
+**Test this API.** Replace `CLIENT-001` with a Food client ID; use real `vendor_id` and `item_id` from `get_food_vendors_and_menu` response.
+
+```json
+{
+  "name": "save_food_order",
+  "args": {
+    "client_id": "CLIENT-001",
+    "vendor_selections": [
+      {
+        "vendor_id": "<vendor_id from get_food_vendors_and_menu>",
+        "items": [
+          { "item_id": "<item_id from menu>", "quantity": 1 }
+        ]
+      }
+    ]
+  },
+  "call": {}
+}
+```
+
+```bash
+curl -X POST http://trianglesquareservices.com/api/retell/save-food-order \
+  -H "Content-Type: application/json" \
+  -d '{"name":"save_food_order","args":{"client_id":"CLIENT-001","vendor_selections":[{"vendor_id":"YOUR_VENDOR_ID","items":[{"item_id":"YOUR_ITEM_ID","quantity":1}]}]},"call":{}}'
+```
+
 ---
 
 ### 7.7 `get_order_history` — Custom Function
@@ -546,7 +651,7 @@ Replace `your-domain.com` with your actual production domain.
 
 4. **HTTP Method:** `GET`
 
-5. **Endpoint URL:** `https://your-domain.com/api/retell/get-order-history`
+5. **Endpoint URL:** `http://trianglesquareservices.com/api/retell/get-order-history`
 
 6. **Query Parameters:**
 
@@ -562,6 +667,12 @@ Replace `your-domain.com` with your actual production domain.
 9. **Speak After Execution:** **Enabled**
 
 10. Click **Save**
+
+**Test this API.** GET with query param; replace `CLIENT-001` with any client ID.
+
+```bash
+curl "http://trianglesquareservices.com/api/retell/get-order-history?client_id=CLIENT-001"
+```
 
 ---
 
@@ -622,7 +733,7 @@ For the initial setup, using the built-in `{{user_number}}` variable is sufficie
 
 1. On the phone number settings page, find **"Inbound Webhook"**
 2. Toggle it **On**
-3. Set the URL to: `https://your-domain.com/api/retell/inbound-webhook` (you'd need to build this endpoint)
+3. Set the URL to: `http://trianglesquareservices.com/api/retell/inbound-webhook` (you'd need to build this endpoint)
 4. This endpoint receives a POST with `from_number` and `to_number` and can return `dynamic_variables` to inject into the call
 
 **For now, skip the webhook** — the built-in `{{user_number}}` variable in the prompt is enough for the caller ID auto-lookup.
