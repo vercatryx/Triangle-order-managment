@@ -1239,6 +1239,7 @@ export default function FoodServiceWidget({
                                                     onQuantityChange={(newQty) => handleMealItemChange(uniqueKey, item.id, newQty)}
                                                     onNoteChange={(newNote) => handleMealItemChange(uniqueKey, item.id, qty, newNote)}
                                                     contextLabel={mealType}
+                                                    checkboxMode={isClientPortal}
                                                 />
                                             );
                                         })}

@@ -4,7 +4,7 @@ import React from 'react';
 import { usePathname } from 'next/navigation';
 import { MenuItem, MealItem } from '@/lib/types';
 import { getItemPoints } from '@/lib/utils';
-import { Minus, Plus, Utensils, X } from 'lucide-react';
+import { Check, Minus, Plus, Utensils, X } from 'lucide-react';
 import TextareaAutosize from 'react-textarea-autosize';
 import { createPortal } from 'react-dom';
 import styles from './MenuItemCard.module.css';
@@ -16,6 +16,8 @@ interface Props {
     onQuantityChange: (newQty: number) => void;
     onNoteChange: (note: string) => void;
     contextLabel?: string; // e.g. "Vendor Name" or "Category"
+    /** When true, show checkbox instead of +/- controls; checked = 1, unchecked = 0 */
+    checkboxMode?: boolean;
 }
 
 export default function MenuItemCard({
@@ -24,7 +26,8 @@ export default function MenuItemCard({
     note = '',
     onQuantityChange,
     onNoteChange,
-    contextLabel
+    contextLabel,
+    checkboxMode = false
 }: Props) {
     const pathname = usePathname();
     const isClientPortal = (pathname ?? '').startsWith('/client-portal');
@@ -40,11 +43,20 @@ export default function MenuItemCard({
         onQuantityChange(Math.max(0, quantity - 1));
     };
 
-    const toggleModal = () => setIsModalOpen(!isModalOpen);
+    const toggleModal = () => {
+        if (checkboxMode) return; // No modal in checkbox mode
+        setIsModalOpen(!isModalOpen);
+    };
 
     const stopPropagation = (e: React.MouseEvent) => e.stopPropagation();
 
+    const handleCheckboxChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        e.stopPropagation();
+        onQuantityChange(e.target.checked ? 1 : 0);
+    };
+
     const displayPoints = getItemPoints(item);
+    const isChecked = checkboxMode ? quantity >= 1 : false;
 
     return (
         <div className={`${styles.card} ${quantity > 0 ? styles.selected : ''}`} onClick={toggleModal}>
@@ -95,22 +107,37 @@ export default function MenuItemCard({
 
                 {/* Controls */}
                 <div className={styles.controls} onClick={stopPropagation}>
-                    <div className={styles.qtyGroup}>
-                        <button
-                            className={styles.qtyBtn}
-                            onClick={handleDecrement}
-                            disabled={quantity === 0}
-                        >
-                            <Minus size={14} />
-                        </button>
-                        <span className={styles.qtyValue}>{quantity}</span>
-                        <button
-                            className={styles.qtyBtn}
-                            onClick={handleIncrement}
-                        >
-                            <Plus size={14} />
-                        </button>
-                    </div>
+                    {checkboxMode ? (
+                        <label className={styles.checkboxLabel}>
+                            <input
+                                type="checkbox"
+                                checked={isChecked}
+                                onChange={handleCheckboxChange}
+                                className={styles.checkbox}
+                            />
+                            <span className={styles.checkboxCustom}>
+                                {isChecked && <Check size={14} strokeWidth={3} />}
+                            </span>
+                            <span className={styles.checkboxText}>Select</span>
+                        </label>
+                    ) : (
+                        <div className={styles.qtyGroup}>
+                            <button
+                                className={styles.qtyBtn}
+                                onClick={handleDecrement}
+                                disabled={quantity === 0}
+                            >
+                                <Minus size={14} />
+                            </button>
+                            <span className={styles.qtyValue}>{quantity}</span>
+                            <button
+                                className={styles.qtyBtn}
+                                onClick={handleIncrement}
+                            >
+                                <Plus size={14} />
+                            </button>
+                        </div>
+                    )}
                 </div>
             </div>
 

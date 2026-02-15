@@ -35,6 +35,20 @@
     padding: 2rem;
 }
 
+/* When save bar is fixed at bottom, add space so content doesn't go under it */
+.saveBarVisible .scrollableContent,
+.saveBarVisible .sidebarColumn,
+.saveBarVisible .summaryColumn {
+    padding-bottom: 120px;
+}
+
+/* On mobile, portal stacks and page scrolls - reserve bottom space */
+@media (max-width: 768px) {
+    .saveBarVisible.portalContainer {
+        padding-bottom: 120px;
+    }
+}
+
 /* Header Styles */
 .headerContainer {
     position: sticky;

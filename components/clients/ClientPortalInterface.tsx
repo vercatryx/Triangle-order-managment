@@ -946,8 +946,10 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
     // --- SEARCH STATE ---
     const [searchTerm, setSearchTerm] = useState('');
 
+    const saveBarVisible = configChanged || saving;
+
     return (
-        <div className={stylesClientPortal.portalContainer}>
+        <div className={`${stylesClientPortal.portalContainer} ${saveBarVisible ? stylesClientPortal.saveBarVisible : ''}`}>
             {/* Left Sidebar */}
             <ClientPortalSidebar client={client} serviceType={serviceType} />
 
@@ -1155,7 +1157,7 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
             />
 
             {
-                (configChanged || saving) && (
+                saveBarVisible && (
                     <>
                         <style>{`
                             @media (max-width: 768px) {
