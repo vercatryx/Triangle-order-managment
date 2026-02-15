@@ -28,7 +28,7 @@ export async function POST(request: NextRequest) {
 
     if (phone) {
         const result = await lookupByPhone(phone);
-        console.log(LOG, 'lookupByPhone result', { success: result.success, multiple_matches: result.multiple_matches, error: result.error, message: result.message });
+        console.log(LOG, 'lookupByPhone result', { success: result.success, multiple_matches: result.success ? result.multiple_matches : undefined, error: !result.success ? result.error : undefined, message: !result.success ? result.message : undefined });
         if (result.success && !result.multiple_matches) {
             const c = result.client;
             console.log(LOG, 'single phone match, returning client', c.id);

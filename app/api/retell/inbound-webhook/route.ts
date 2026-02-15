@@ -44,7 +44,7 @@ export async function POST(request: NextRequest) {
 
     // Look up client by caller ID (runs while call is ringing)
     const result = await lookupByPhone(phone);
-    console.log(LOG, 'lookupByPhone result', { success: result.success, multiple_matches: result.multiple_matches });
+    console.log(LOG, 'lookupByPhone result', { success: result.success, multiple_matches: result.success ? result.multiple_matches : undefined });
 
     const dynamicVariables: Record<string, string> = {
         pre_call_lookup_done: 'true'
