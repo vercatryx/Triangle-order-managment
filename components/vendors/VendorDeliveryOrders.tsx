@@ -305,11 +305,11 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate, isVendorView }: P
             for (const categoryId of sortedCategoryIds) {
                 const category = categories.find(c => c.id === categoryId);
                 const categoryName = category?.name || 'Unknown Category';
-                parts.push(`${categoryName}: ${itemsByCategory[categoryId].join(', ')}`);
+                parts.push(`${categoryName}: ${itemsByCategory[categoryId].join('; ')}`);
             }
 
             if (uncategorizedItems.length > 0) {
-                parts.push(`Uncategorized: ${uncategorizedItems.join(', ')}`);
+                parts.push(`Uncategorized: ${uncategorizedItems.join('; ')}`);
             }
 
             return parts.join('; ');
@@ -380,12 +380,7 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate, isVendorView }: P
                     let category = item.category ? getCategoryName(item.category) : '';
                     if (category === 'Uncategorized') category = '';
                     const notes = item.notes || '';
-
-                    // If item name contains comma, split into separate lines for visibility (notes copied for each)
-                    const nameParts = item.name.includes(',')
-                        ? item.name.split(',').map(s => s.trim()).filter(Boolean)
-                        : [item.name];
-                    nameParts.forEach(part => detailsData.push([part, item.quantity, category, notes]));
+                    detailsData.push([item.name, item.quantity, category, notes]);
                 });
             } else {
                 detailsData.push(['No items found', '', '', '']);
