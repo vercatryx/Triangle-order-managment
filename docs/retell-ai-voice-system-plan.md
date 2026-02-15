@@ -44,7 +44,11 @@ All Retell AI API endpoints live in a **self-contained folder**: `app/api/retell
 ```
 app/api/retell/
 ├── _lib/
-│   └── verify-retell.ts          ← Shared signature verification helper
+│   ├── verify-retell.ts          ← Shared signature verification helper
+│   ├── phone-utils.ts            ← Phone normalization and matching
+│   └── lookup-by-phone.ts        ← Shared phone lookup (used by look-up-client and inbound-webhook)
+├── inbound-webhook/
+│   └── route.ts                  ← Runs on call arrival; does lookup, injects dynamic variables
 ├── look-up-client/
 │   └── route.ts
 ├── select-client/
@@ -82,17 +86,30 @@ This means the entire Retell AI integration can be **added, removed, or replaced
 ### Phase 1: Greeting & Identity Verification
 
 ```
-Call Starts
+Inbound call arrives (phone rings)
     │
     ▼
-AI introduces itself:
-"Hello, thank you for calling Triangle Square Services.
-I'm an AI secretary. I can help you review or make changes
-to your upcoming selections, or hear details about previous
-orders that are scheduled or have already been completed."
+Inbound Webhook runs (before call connects)
+    │
+    ├── Lookup by from_number (caller ID)
+    │   │
+    │   ├── SINGLE MATCH → Inject client_id, full_name, etc.
+    │   │   Override begin message to: "Hello {{full_name}}, thank you for calling..."
+    │   │
+    │   ├── MULTIPLE MATCHES → Inject pre_call_clients (JSON)
+    │   │
+    │   └── NO MATCH → Inject pre_call_lookup_result: no_match
     │
     ▼
-FIRST: Attempt automatic lookup using caller ID
+Call connects, AI speaks begin message
+    │
+    ▼
+(If pre-call single match: AI confirms address and asks how to help — no lookup needed)
+(If pre-call multiple matches: AI presents list from pre_call_clients, calls select_client when picked)
+(If no match or webhook not used: Standard flow below)
+    │
+    ▼
+FIRST (standard flow): Attempt automatic lookup using caller ID
 (the phone number the caller is calling from)
     │
     ▼
@@ -952,6 +969,14 @@ Orders are processed every **Tuesday at 11:59 PM Eastern Time**. This is a hard 
 
 The **begin message** (configured in Retell) is already played when the call connects — do NOT repeat the greeting. Go straight to identification.
 
+**Pre-call lookup (Inbound Webhook):** When the inbound webhook is enabled, the lookup runs as soon as the call arrives (while ringing). You may receive {{pre_call_lookup_done}} and {{pre_call_lookup_result}}:
+
+- **{{pre_call_lookup_result}} is "single_match"** and {{client_id}} is already set: The lookup already ran during the welcome message. Do NOT call `look_up_client`. The begin message may have already greeted them by name. Simply confirm: "I have you at {{address}}. How can I help you today?" Then proceed to Step 2.
+- **{{pre_call_lookup_result}} is "multiple_matches"**: {{pre_call_clients}} contains a JSON array of clients. Parse it and present the numbered list (see "Multiple matches found" below). Do NOT call `look_up_client`. When the caller picks one, call `select_client` with the chosen client_id.
+- **{{pre_call_lookup_result}} is "no_match"** or pre-call lookup was not done: Use the standard flow below.
+
+**Standard flow (when no pre-call single match):**
+
 **If {{user_number}} is available and not empty** (real phone call): Immediately call `look_up_client` with `phone_number` set to {{user_number}}. Do not ask the caller for anything yet.
 
 **If {{user_number}} is missing, empty, or still shows as literal {{user_number}}** (e.g. web call test): Skip the automatic lookup. Say: "To pull up your account, could I get your phone number or full name?" Wait for their response, then call `look_up_client` with what they provide.
@@ -959,7 +984,7 @@ The **begin message** (configured in Retell) is already played when the call con
 - If the caller ID lookup finds a match → proceed directly to greeting them by name. The caller never has to identify themselves.
 - If the caller ID lookup returns no match → then ask: "I wasn't able to pull up an account from the number you're calling from. Could I get your phone number or full name so I can look you up?" Wait for their response, then call `look_up_client` again with what they provide.
 
-**Single match found:**
+**Single match found (from look_up_client or pre-call):**
 - "Great, I found your account. Welcome, {{full_name}}! I have you at {{address}}. How can I help you today?"
 
 **Multiple matches found (phone registered to several clients, or ambiguous name):**
@@ -1103,7 +1128,7 @@ Then call `end_call`.
 
 ## Tool Usage Instructions
 
-1. **look_up_client**: Call with {{user_number}} right after the begin message (if user_number is available). If not (e.g. web test), ask for phone or name and then call with what they provide. Also call again when the caller wants to switch to a different client profile mid-call. Trigger words: any phone number pattern, "my name is", client name, "switch account", "other account", "next person", "my wife/husband/son/daughter".
+1. **look_up_client**: Do NOT call if {{pre_call_lookup_result}} is "single_match" (client already identified). Do NOT call if {{pre_call_lookup_result}} is "multiple_matches" (use {{pre_call_clients}} and select_client instead). Otherwise: call with {{user_number}} right after the begin message (if user_number is available). If not (e.g. web test), ask for phone or name and then call with what they provide. Also call again when the caller wants to switch to a different client profile mid-call (only if switching to a different phone number's account). Trigger words: any phone number pattern, "my name is", client name, "switch account", "other account", "next person", "my wife/husband/son/daughter".
 2. **select_client**: Call ONLY after look_up_client returned multiple matches and the caller has chosen which client (by number or name). Pass the chosen client_id. This sets {{client_id}}, {{full_name}}, etc. for the rest of the call.
 4. **get_custom_order_details**: Call when a Custom client asks to hear/review/see their order. Trigger: "my order", "what's on my order", "read my order".
 5. **get_box_client_info**: Call immediately after identifying a Box client, before starting the selection conversation.

@@ -83,7 +83,7 @@ On the agent detail page:
 Hello, thank you for calling Triangle Square Services. I'm an AI secretary. I can help you review or make changes to your upcoming selections, or hear details about previous orders that are scheduled or have already been completed.
 ```
 
-> **Important:** This begin message is played automatically — the system prompt tells the AI **not** to repeat the greeting. The AI goes straight to calling `look_up_client` with the caller ID (or asks for phone/name if {{user_number}} is missing, e.g. on web call tests).
+> **Important:** With the **Inbound Webhook** enabled (Step 8), the client lookup runs as soon as the call arrives — while it is ringing — and injects dynamic variables before the call connects. When a single match is found, the begin message is overridden to greet the caller by name: "Hello {{full_name}}, thank you for calling...". The AI receives client_id, full_name, etc. and skips the lookup. If no match or multiple matches, the default begin message above is used, and the AI proceeds with the usual identification flow.
 
 ### Language
 
@@ -188,7 +188,11 @@ http://trianglesquareservices.com/api/retell
 
 ### Testing each API (Step 7)
 
-To test endpoints manually (e.g. with curl or Postman), set **`RETELL_SKIP_VERIFY=true`** in `.env.local` so the server accepts requests without the `x-retell-signature` header. Replace `CLIENT-001` and other placeholder IDs with real values from your database or from a previous response (e.g. after `look_up_client` or `get_box_client_info`).
+Every custom function (7.1–7.7) has a **Test this API** block below it with the exact **query** (for GET) or **body** (for POST) and a **curl** example. Use these to verify each endpoint before or after adding it in the Retell dashboard.
+
+- **Requirement:** Set **`RETELL_SKIP_VERIFY=true`** in `.env.local` so the server accepts requests without the `x-retell-signature` header when testing with curl or Postman.
+- **Placeholders:** Replace `CLIENT-001` and other IDs with real values from your database or from a previous response (e.g. after `look_up_client` or `get_box_client_info`).
+- **Base URL:** Use your deployed URL (e.g. `http://trianglesquareservices.com`) or `http://localhost:3000` when testing locally.
 
 ---
 
@@ -250,19 +254,25 @@ To test endpoints manually (e.g. with curl or Postman), set **`RETELL_SKIP_VERIF
 
 11. Click **Save**
 
-**Test this API** (requires `RETELL_SKIP_VERIFY=true`). Retell sends a wrapper; use this body:
+**Test this API.** (Requires `RETELL_SKIP_VERIFY=true` in `.env.local` for local/manual testing.)
+
+- **Body (Retell wrapper):** Retell sends a wrapper; use this shape. You can use `phone_number` or `full_name`.
+- **Example (by phone):** Replace `5551234567` with a real client phone number.
 
 ```json
 {"name":"look_up_client","args":{"phone_number":"5551234567"},"call":{}}
 ```
 
-Optional: search by name instead — `"args":{"full_name":"Jane Doe"}`. Example curl:
+- **Example (by name):** `"args":{"full_name":"Jane Doe"}` if phone lookup returned no results.
+- **curl:**
 
 ```bash
 curl -X POST http://trianglesquareservices.com/api/retell/look-up-client \
   -H "Content-Type: application/json" \
   -d '{"name":"look_up_client","args":{"phone_number":"5551234567"},"call":{}}'
 ```
+
+Expected: `200` JSON with `client_id`, `full_name`, `service_type`, etc. on single match; or `multiple_matches: true` and a list; or `no_client_found` / `no_match_by_name`.
 
 ---
 
@@ -305,7 +315,10 @@ curl -X POST http://trianglesquareservices.com/api/retell/look-up-client \
 
 11. Click **Save**
 
-**Test this API.** Replace `CLIENT-001` with a real client ID (e.g. from `look_up_client`).
+**Test this API.** (Requires `RETELL_SKIP_VERIFY=true` in `.env.local` for local/manual testing.)
+
+- **Body (Retell wrapper):** Pass the chosen `client_id` from a multi-match `look_up_client` response.
+- **Example:** Replace `CLIENT-001` with a real client ID.
 
 ```json
 {"name":"select_client","args":{"client_id":"CLIENT-001"},"call":{}}
@@ -316,6 +329,8 @@ curl -X POST http://trianglesquareservices.com/api/retell/select-client \
   -H "Content-Type: application/json" \
   -d '{"name":"select_client","args":{"client_id":"CLIENT-001"},"call":{}}'
 ```
+
+Expected: `200` JSON with same shape as single-match `look_up_client` (client_id, full_name, service_type, etc.).
 
 ---
 
@@ -346,11 +361,16 @@ curl -X POST http://trianglesquareservices.com/api/retell/select-client \
 
 10. Click **Save**
 
-**Test this API.** GET with query param; replace `CLIENT-001` with a Custom client ID.
+**Test this API.** (Requires `RETELL_SKIP_VERIFY=true` in `.env.local` for local/manual testing.)
+
+- **Query:** `client_id` — use a Custom service client ID (e.g. from a `look_up_client` response).
+- **Example:** Replace `CLIENT-001` with a real Custom client ID. Use your deployed base URL or `http://localhost:3000` when testing locally.
 
 ```bash
 curl "http://trianglesquareservices.com/api/retell/get-custom-order-details?client_id=CLIENT-001"
 ```
+
+Expected: `200` JSON with `success`, `has_order`, and `order` (items, next_delivery_date, notes) or `client_not_found` / `not_custom_client` if invalid.
 
 ---
 
@@ -381,11 +401,16 @@ curl "http://trianglesquareservices.com/api/retell/get-custom-order-details?clie
 
 10. Click **Save**
 
-**Test this API.** GET with query param; replace `CLIENT-001` with a Boxes client ID.
+**Test this API.** (Requires `RETELL_SKIP_VERIFY=true` in `.env.local` for local/manual testing.)
+
+- **Query:** `client_id` — use a Boxes service client ID (e.g. from a `look_up_client` response).
+- **Example:** Replace `CLIENT-001` with a real Boxes client ID.
 
 ```bash
 curl "http://trianglesquareservices.com/api/retell/get-box-client-info?client_id=CLIENT-001"
 ```
+
+Expected: `200` JSON with box count, categories, items (with point values), and required point totals.
 
 ---
 
@@ -475,7 +500,10 @@ curl "http://trianglesquareservices.com/api/retell/get-box-client-info?client_id
 
 10. Click **Save**
 
-**Test this API.** Replace `CLIENT-001` with a Boxes client ID; use real `box_type_id`, `category_id`, and `item_id` values from `get_box_client_info` response. This example is one box with one category and one item (adjust to match your box count and point rules).
+**Test this API.** (Requires `RETELL_SKIP_VERIFY=true` in `.env.local` for local/manual testing.)
+
+- **Body (Retell wrapper):** `client_id` (Boxes client) and `box_selections` — use real `box_type_id`, `category_id`, and `item_id` from `get_box_client_info` response.
+- **Example:** Replace `CLIENT-001` and the placeholder IDs with real values. This is one box, one category, one item; adjust to match your box count and point rules.
 
 ```json
 {
@@ -507,6 +535,8 @@ curl -X POST http://trianglesquareservices.com/api/retell/save-box-order \
   -d '{"name":"save_box_order","args":{"client_id":"CLIENT-001","box_selections":[{"box_index":1,"box_type_id":"YOUR_BOX_TYPE_ID","category_selections":[{"category_id":"YOUR_CATEGORY_ID","items":[{"item_id":"YOUR_ITEM_ID","quantity":1}]}]}]},"call":{}}'
 ```
 
+Expected: `200` JSON with `success: true` when valid; or validation errors if point totals or structure are wrong.
+
 ---
 
 ### 7.5 `get_food_vendors_and_menu` — Custom Function
@@ -536,11 +566,16 @@ curl -X POST http://trianglesquareservices.com/api/retell/save-box-order \
 
 10. Click **Save**
 
-**Test this API.** GET with query param; replace `CLIENT-001` with a Food client ID.
+**Test this API.** (Requires `RETELL_SKIP_VERIFY=true` in `.env.local` for local/manual testing.)
+
+- **Query:** `client_id` — use a Food service client ID (e.g. from a `look_up_client` response).
+- **Example:** Replace `CLIENT-001` with a real Food client ID.
 
 ```bash
 curl "http://trianglesquareservices.com/api/retell/get-food-vendors-and-menu?client_id=CLIENT-001"
 ```
+
+Expected: `200` JSON with vendors, menu items, minimum meals per vendor, and the client's `approved_meals_per_week`.
 
 ---
 
@@ -613,7 +648,10 @@ curl "http://trianglesquareservices.com/api/retell/get-food-vendors-and-menu?cli
 
 10. Click **Save**
 
-**Test this API.** Replace `CLIENT-001` with a Food client ID; use real `vendor_id` and `item_id` from `get_food_vendors_and_menu` response.
+**Test this API.** (Requires `RETELL_SKIP_VERIFY=true` in `.env.local` for local/manual testing.)
+
+- **Body (Retell wrapper):** `client_id` (Food client) and `vendor_selections` — use real `vendor_id` and `item_id` from `get_food_vendors_and_menu` response.
+- **Example:** Replace `CLIENT-001`, `YOUR_VENDOR_ID`, and `YOUR_ITEM_ID` with real values.
 
 ```json
 {
@@ -638,6 +676,8 @@ curl -X POST http://trianglesquareservices.com/api/retell/save-food-order \
   -H "Content-Type: application/json" \
   -d '{"name":"save_food_order","args":{"client_id":"CLIENT-001","vendor_selections":[{"vendor_id":"YOUR_VENDOR_ID","items":[{"item_id":"YOUR_ITEM_ID","quantity":1}]}]},"call":{}}'
 ```
+
+Expected: `200` JSON with `success: true` when valid; or validation errors if vendor minimums or total meals exceed `approved_meals_per_week`.
 
 ---
 
@@ -668,11 +708,16 @@ curl -X POST http://trianglesquareservices.com/api/retell/save-food-order \
 
 10. Click **Save**
 
-**Test this API.** GET with query param; replace `CLIENT-001` with any client ID.
+**Test this API.** (Requires `RETELL_SKIP_VERIFY=true` in `.env.local` for local/manual testing.)
+
+- **Query:** `client_id` — use any client ID (e.g. from a `look_up_client` response).
+- **Example:** Replace `CLIENT-001` with a real client ID.
 
 ```bash
 curl "http://trianglesquareservices.com/api/retell/get-order-history?client_id=CLIENT-001"
 ```
+
+Expected: `200` JSON with order history (order numbers, scheduled delivery dates, status, item summaries).
 
 ---
 
@@ -695,6 +740,8 @@ curl "http://trianglesquareservices.com/api/retell/get-order-history?client_id=C
 
 6. Click **Save**
 
+**Test:** No API to call — this is a built-in Retell action. Test by triggering a transfer during a web or phone test call.
+
 > **Prompt instruction to add:** The system prompt already includes instructions for when to use `transfer_to_agent` (Custom client changes, caller requests a human, repeated failures, frustration). No extra prompt changes needed.
 
 ---
@@ -709,7 +756,26 @@ curl "http://trianglesquareservices.com/api/retell/get-order-history?client_id=C
 
 4. Click **Save**
 
+**Test:** No API to call — this is a built-in Retell action. Test by saying goodbye or "I'm done" during a web or phone test call.
+
 > **Prompt instruction to add:** The system prompt already includes end call trigger instructions. No extra changes needed.
+
+---
+
+### Quick reference: test request for each API (7.1–7.7)
+
+| Step | Function | Method | What to send (query or body) |
+|------|----------|--------|------------------------------|
+| 7.1 | `look_up_client` | POST | Body: `{"name":"look_up_client","args":{"phone_number":"…"},"call":{}}` or `args.full_name` |
+| 7.1b | `select_client` | POST | Body: `{"name":"select_client","args":{"client_id":"…"},"call":{}}` |
+| 7.2 | `get_custom_order_details` | GET | Query: `?client_id=<Custom client ID>` |
+| 7.3 | `get_box_client_info` | GET | Query: `?client_id=<Boxes client ID>` |
+| 7.4 | `save_box_order` | POST | Body: `{"name":"save_box_order","args":{"client_id":"…","box_selections":[…]},"call":{}}` |
+| 7.5 | `get_food_vendors_and_menu` | GET | Query: `?client_id=<Food client ID>` |
+| 7.6 | `save_food_order` | POST | Body: `{"name":"save_food_order","args":{"client_id":"…","vendor_selections":[…]},"call":{}}` |
+| 7.7 | `get_order_history` | GET | Query: `?client_id=<any client ID>` |
+
+Use the full **Test this API** block under each step for the exact JSON and curl.
 
 ---
 
@@ -723,20 +789,21 @@ curl "http://trianglesquareservices.com/api/retell/get-order-history?client_id=C
 6. Under **"Inbound Call Agent"**, select your **"Triangle Square Order Operator"** agent
 7. Click **Save**
 
-### (Recommended) Set Up Inbound Webhook
+### (Recommended) Set Up Inbound Webhook — Lookup During Welcome Message
 
-This is how the caller's phone number (`from_number`) gets passed to the agent automatically. While Retell already provides `{{user_number}}` as a built-in variable, the inbound webhook lets you do pre-call processing (e.g., looking up the caller in your DB before the call even connects).
+The inbound webhook runs **as soon as an inbound call arrives** (while it is ringing, before the call connects). It performs the client lookup by caller ID and injects `dynamic_variables` so that when the welcome message plays, the AI already has the client data. This enables:
 
-For the initial setup, using the built-in `{{user_number}}` variable is sufficient — the agent will use it in the prompt to auto-look up the caller. The inbound webhook is an optional enhancement for later.
+- **Single match:** Personalized greeting: "Hello {{full_name}}, thank you for calling Triangle Square Services..." — no "Let me look that up" delay
+- **Multiple matches / No match:** Default greeting plays; the AI proceeds with the usual identification flow
 
-**If you do want to set up the inbound webhook:**
+**Set up the inbound webhook:**
 
 1. On the phone number settings page, find **"Inbound Webhook"**
 2. Toggle it **On**
-3. Set the URL to: `http://trianglesquareservices.com/api/retell/inbound-webhook` (you'd need to build this endpoint)
-4. This endpoint receives a POST with `from_number` and `to_number` and can return `dynamic_variables` to inject into the call
+3. Set the URL to: `https://trianglesquareservices.com/api/retell/inbound-webhook`
+4. The webhook receives a POST with `from_number` and `to_number`, runs the client lookup, and returns `dynamic_variables` (and optionally overrides the begin message for single-match). The call stays ringing until the webhook responds (10 second timeout).
 
-**For now, skip the webhook** — the built-in `{{user_number}}` variable in the prompt is enough for the caller ID auto-lookup.
+**Note:** Ensure the phone number has an **Inbound Call Agent** assigned. When the webhook is enabled, Retell will still connect the call to that agent after the webhook returns; if the webhook fails after retries, Retell falls back to the configured agent.
 
 ---
 
@@ -833,9 +900,22 @@ These variables are **automatically available** in your prompt and function conf
 | `{{call_id}}` | Unique ID for this call session | Logging reference |
 | `{{session_duration}}` | How long the call has been running | Reference only |
 
+### Variables Set by the Inbound Webhook (Pre-Call Lookup)
+
+When the inbound webhook is enabled, these are set **before the call connects** (during the ringing phase):
+
+| Variable | When Set | Description |
+|----------|----------|-------------|
+| `{{pre_call_lookup_done}}` | Always | `"true"` when the webhook ran |
+| `{{pre_call_lookup_result}}` | Always | `"single_match"`, `"multiple_matches"`, or `"no_match"` |
+| `{{client_id}}`, `{{full_name}}`, etc. | `single_match` only | Same as look_up_client response variables |
+| `{{pre_call_clients}}` | `multiple_matches` only | JSON string of the clients array for the AI to parse |
+
+When `pre_call_lookup_result` is `single_match`, the begin message is overridden to greet by name. The AI skips `look_up_client`.
+
 ### Variables Set by Our Functions (Response Variables)
 
-These are populated after `look_up_client` returns a successful single match:
+These are populated after `look_up_client` returns a successful single match (or when pre-call lookup did not find a single match):
 
 | Variable | Set By | Used In |
 |----------|--------|---------|
@@ -869,6 +949,7 @@ These are populated after `look_up_client` returns a successful single match:
 
 ## Checklist Before Going Live
 
+- [ ] Inbound webhook enabled on the phone number with URL `https://trianglesquareservices.com/api/retell/inbound-webhook` (enables lookup during welcome message)
 - [ ] All 8 custom function endpoints are deployed (look_up_client, select_client, get_custom_order_details, get_box_client_info, save_box_order, get_food_vendors_and_menu, save_food_order, get_order_history) and returning correct responses
 - [ ] `RETELL_API_KEY` is in your production environment variables
 - [ ] Agent created with correct model (GPT-4.1 or GPT-4o)
