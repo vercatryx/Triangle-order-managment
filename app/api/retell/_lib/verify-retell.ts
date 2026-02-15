@@ -11,12 +11,22 @@ const SKIP_VERIFY = process.env.RETELL_SKIP_VERIFY === 'true' || process.env.RET
  * @param signature - The value of the X-Retell-Signature header.
  * @returns true if the signature is valid (or verification is skipped).
  */
+const LOG = '[retell:verify-signature]';
+
 export function verifyRetellSignature(rawBody: string, signature: string | null | undefined): boolean {
     if (SKIP_VERIFY) return true;
     const apiKey = process.env.RETELL_API_KEY;
-    if (!apiKey || !signature) return false;
+    if (!apiKey || !signature) {
+        console.error(LOG, 'verification failed', { hasApiKey: !!apiKey, hasSignature: !!signature });
+        return false;
+    }
     const expected = crypto.createHmac('sha256', apiKey).update(rawBody).digest('hex');
     const sigBuf = Buffer.from(signature, 'hex');
-    if (sigBuf.length !== expected.length) return false;
-    return crypto.timingSafeEqual(sigBuf, Buffer.from(expected, 'hex'));
+    if (sigBuf.length !== expected.length) {
+        console.error(LOG, 'signature length mismatch');
+        return false;
+    }
+    const ok = crypto.timingSafeEqual(sigBuf, Buffer.from(expected, 'hex'));
+    if (!ok) console.error(LOG, 'signature mismatch (invalid key or body tampered)');
+    return ok;
 }

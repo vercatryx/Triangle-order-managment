@@ -13,30 +13,38 @@ import { lookupByPhone } from '../_lib/lookup-by-phone';
 const PERSONALIZED_BEGIN_MESSAGE =
     'Hello {{full_name}}, thank you for calling Triangle Square Services. I\'m an AI secretary. I can help you review or make changes to your upcoming selections, or hear details about previous orders that are scheduled or have already been completed.';
 
+const LOG = '[retell:inbound-webhook]';
+
 export async function POST(request: NextRequest) {
     const rawBody = await request.text();
     const signature = request.headers.get('x-retell-signature');
+    console.log(LOG, 'request received');
     if (!verifyRetellSignature(rawBody, signature)) {
+        console.error(LOG, 'auth failed: invalid or missing signature');
         return NextResponse.json({ error: 'Invalid signature' }, { status: 401 });
     }
 
     let body: { event?: string; call_inbound?: { from_number?: string; to_number?: string; agent_id?: string; agent_version?: number } };
     try {
         body = rawBody ? JSON.parse(rawBody) : {};
-    } catch {
+    } catch (e) {
+        console.error(LOG, 'invalid JSON body', e);
         return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 });
     }
 
     if (body.event !== 'call_inbound' || !body.call_inbound) {
+        console.error(LOG, 'invalid event', { event: body.event, hasCallInbound: !!body.call_inbound });
         return NextResponse.json({ error: 'Invalid event' }, { status: 400 });
     }
 
     const fromNumber = body.call_inbound.from_number ?? '';
     const agentId = body.call_inbound.agent_id;
     const phone = normalizePhone(fromNumber);
+    console.log(LOG, 'call_inbound', { fromLast4: fromNumber ? `${fromNumber.slice(-4)}****` : null, agentId });
 
     // Look up client by caller ID (runs while call is ringing)
     const result = await lookupByPhone(phone);
+    console.log(LOG, 'lookupByPhone result', { success: result.success, multiple_matches: result.multiple_matches });
 
     const dynamicVariables: Record<string, string> = {
         pre_call_lookup_done: 'true'
@@ -67,16 +75,19 @@ export async function POST(request: NextRequest) {
         callInbound.agent_override = {
             retell_llm: { begin_message: PERSONALIZED_BEGIN_MESSAGE }
         };
+        console.log(LOG, 'responding: single match, personalized greeting', result.client?.id);
         return NextResponse.json({ call_inbound: callInbound });
     }
 
     if (result.success && result.multiple_matches) {
         dynamicVariables.pre_call_lookup_result = 'multiple_matches';
         dynamicVariables.pre_call_clients = JSON.stringify(result.clients);
+        console.log(LOG, 'responding: multiple matches');
         return NextResponse.json({ call_inbound: callInbound });
     }
 
     // No match — use default begin message, AI will ask for phone/name
     dynamicVariables.pre_call_lookup_result = 'no_match';
+    console.log(LOG, 'responding: no match');
     return NextResponse.json({ call_inbound: callInbound });
 }

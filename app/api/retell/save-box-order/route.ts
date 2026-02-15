@@ -2,23 +2,30 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { verifyRetellSignature } from '../_lib/verify-retell';
 
+const LOG = '[retell:save-box-order]';
+
 export async function POST(request: NextRequest) {
     const rawBody = await request.text();
     const signature = request.headers.get('x-retell-signature');
+    console.log(LOG, 'request received');
     if (!verifyRetellSignature(rawBody, signature)) {
+        console.error(LOG, 'auth failed: invalid or missing signature');
         return NextResponse.json({ success: false, error: 'unauthorized', message: 'Invalid signature' }, { status: 401 });
     }
     let body: { name?: string; args?: { client_id?: string; box_selections?: any[] }; call?: unknown };
     try {
         body = rawBody ? JSON.parse(rawBody) : {};
-    } catch {
+    } catch (e) {
+        console.error(LOG, 'invalid JSON body', e);
         return NextResponse.json({ success: false, error: 'invalid_body', message: 'Invalid JSON' }, { status: 400 });
     }
     const clientId = (body.args?.client_id ?? '').trim();
     const boxSelections = Array.isArray(body.args?.box_selections) ? body.args.box_selections : [];
     if (!clientId) {
+        console.error(LOG, 'missing client_id');
         return NextResponse.json({ success: false, error: 'missing_client_id', message: 'client_id is required.' }, { status: 400 });
     }
+    console.log(LOG, 'client_id', clientId, 'boxSelections count', boxSelections.length);
 
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
     const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
@@ -30,13 +37,16 @@ export async function POST(request: NextRequest) {
         .eq('id', clientId)
         .single();
     if (clientErr || !client) {
+        console.error(LOG, 'client not found', { clientId, error: clientErr });
         return NextResponse.json({ success: false, error: 'client_not_found', message: 'Client not found.' }, { status: 200 });
     }
     if ((client.service_type ?? '').toString() !== 'Boxes') {
+        console.error(LOG, 'not a Box client', { clientId, service_type: client.service_type });
         return NextResponse.json({ success: false, error: 'not_box_client', message: 'This client is not a Box client.' }, { status: 200 });
     }
     const totalBoxes = Math.max(0, Number(client.approved_meals_per_week) || 0);
     if (boxSelections.length !== totalBoxes) {
+        console.error(LOG, 'validation_failed: box count mismatch', { expected: totalBoxes, received: boxSelections.length });
         return NextResponse.json({
             success: false,
             error: 'validation_failed',
@@ -82,6 +92,7 @@ export async function POST(request: NextRequest) {
                 }
             }
             if (required > 0 && Math.abs(points - required) > 0.01) {
+                console.error(LOG, 'validation_failed: category points', { points, required, categoryId });
                 return NextResponse.json({
                     success: false,
                     error: 'validation_failed',
@@ -107,8 +118,10 @@ export async function POST(request: NextRequest) {
         .eq('id', clientId);
 
     if (updateErr) {
+        console.error(LOG, 'database error saving order', updateErr);
         return NextResponse.json({ success: false, error: 'database_error', message: 'Failed to save order.' }, { status: 500 });
     }
+    console.log(LOG, 'order saved', { clientId, totalBoxes });
     return NextResponse.json({
         success: true,
         message: `Box order saved successfully for all ${totalBoxes} box(es).`

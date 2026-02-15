@@ -2,16 +2,22 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { verifyRetellSignature } from '../_lib/verify-retell';
 
+const LOG = '[retell:get-order-history]';
+
 export async function GET(request: NextRequest) {
     const signature = request.headers.get('x-retell-signature');
     const rawBody = await request.text().catch(() => '');
+    console.log(LOG, 'request received');
     if (signature && !verifyRetellSignature(rawBody, signature)) {
+        console.error(LOG, 'auth failed: invalid or missing signature');
         return NextResponse.json({ success: false, error: 'unauthorized', message: 'Invalid signature' }, { status: 401 });
     }
     const clientId = request.nextUrl.searchParams.get('client_id') ?? '';
     if (!clientId.trim()) {
+        console.error(LOG, 'missing client_id');
         return NextResponse.json({ success: false, error: 'missing_client_id', message: 'client_id is required.' }, { status: 400 });
     }
+    console.log(LOG, 'client_id', clientId);
 
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
     const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
@@ -24,6 +30,7 @@ export async function GET(request: NextRequest) {
         .order('scheduled_delivery_date', { ascending: false });
 
     if (ordersError) {
+        console.error(LOG, 'failed to load orders', ordersError);
         return NextResponse.json({ success: false, error: 'database_error', message: 'Failed to load orders.' }, { status: 500 });
     }
     const orderList = orders ?? [];
@@ -78,5 +85,6 @@ export async function GET(request: NextRequest) {
         });
     }
 
+    console.log(LOG, 'success', { clientId, ordersCount: result.length });
     return NextResponse.json({ success: true, orders: result });
 }

@@ -30,8 +30,11 @@ type ClientSummary = {
     service_type: string;
 };
 
+const LOG = '[retell:lookup-by-phone]';
+
 export async function lookupByPhone(normalizedPhone: string): Promise<LookupByPhoneResult> {
     if (!normalizedPhone) {
+        console.log(LOG, 'empty normalizedPhone');
         return {
             success: false,
             error: 'no_client_found',
@@ -50,6 +53,7 @@ export async function lookupByPhone(normalizedPhone: string): Promise<LookupByPh
         .limit(100000);
 
     if (phoneError) {
+        console.error(LOG, 'database error fetching clients', phoneError);
         return { success: false, error: 'database_error', message: 'Lookup failed.' };
     }
 
@@ -60,6 +64,7 @@ export async function lookupByPhone(normalizedPhone: string): Promise<LookupByPh
         }
     );
 
+    console.log(LOG, 'phone filter result', { candidatesCount: (candidates ?? []).length, matchCount: list.length, phoneLast4: normalizedPhone.slice(-4) });
     if (list.length === 0) {
         return {
             success: false,

@@ -2,22 +2,29 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { verifyRetellSignature } from '../_lib/verify-retell';
 
+const LOG = '[retell:select-client]';
+
 export async function POST(request: NextRequest) {
     const rawBody = await request.text();
     const signature = request.headers.get('x-retell-signature');
+    console.log(LOG, 'request received');
     if (!verifyRetellSignature(rawBody, signature)) {
+        console.error(LOG, 'auth failed: invalid or missing signature');
         return NextResponse.json({ success: false, error: 'unauthorized', message: 'Invalid signature' }, { status: 401 });
     }
     let body: { name?: string; args?: { client_id?: string }; call?: unknown };
     try {
         body = rawBody ? JSON.parse(rawBody) : {};
-    } catch {
+    } catch (e) {
+        console.error(LOG, 'invalid JSON body', e);
         return NextResponse.json({ success: false, error: 'invalid_body', message: 'Invalid JSON' }, { status: 400 });
     }
     const clientId = (body.args?.client_id ?? '').trim();
     if (!clientId) {
+        console.error(LOG, 'missing client_id');
         return NextResponse.json({ success: false, error: 'missing_client_id', message: 'client_id is required.' }, { status: 400 });
     }
+    console.log(LOG, 'client_id', clientId);
 
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
     const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
@@ -30,9 +37,11 @@ export async function POST(request: NextRequest) {
         .single();
 
     if (error || !c) {
+        console.error(LOG, 'client not found', { clientId, error });
         return NextResponse.json({ success: false, error: 'no_client_found', message: 'That client could not be found.' }, { status: 200 });
     }
 
+    console.log(LOG, 'success', { clientId, full_name: c.full_name });
     return NextResponse.json({
         success: true,
         client_id: c.id,

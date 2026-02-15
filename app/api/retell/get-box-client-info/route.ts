@@ -2,16 +2,22 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { verifyRetellSignature } from '../_lib/verify-retell';
 
+const LOG = '[retell:get-box-client-info]';
+
 export async function GET(request: NextRequest) {
     const signature = request.headers.get('x-retell-signature');
     const rawBody = await request.text().catch(() => '');
+    console.log(LOG, 'request received');
     if (signature && !verifyRetellSignature(rawBody, signature)) {
+        console.error(LOG, 'auth failed: invalid or missing signature');
         return NextResponse.json({ success: false, error: 'unauthorized', message: 'Invalid signature' }, { status: 401 });
     }
     const clientId = request.nextUrl.searchParams.get('client_id') ?? '';
     if (!clientId.trim()) {
+        console.error(LOG, 'missing client_id');
         return NextResponse.json({ success: false, error: 'missing_client_id', message: 'client_id is required.' }, { status: 400 });
     }
+    console.log(LOG, 'client_id', clientId);
 
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
     const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
@@ -23,18 +29,22 @@ export async function GET(request: NextRequest) {
         .eq('id', clientId.trim())
         .single();
     if (clientErr || !client) {
+        console.error(LOG, 'client not found', { clientId, error: clientErr });
         return NextResponse.json({ success: false, error: 'client_not_found', message: 'Client not found.' }, { status: 200 });
     }
     if ((client.service_type ?? '').toString() !== 'Boxes') {
+        console.error(LOG, 'not a Box client', { clientId, service_type: client.service_type });
         return NextResponse.json({ success: false, error: 'not_box_client', message: 'This client is not a Box client.' }, { status: 200 });
     }
     const totalBoxes = Math.max(0, Number(client.approved_meals_per_week) || 0);
     if (totalBoxes === 0) {
+        console.error(LOG, 'no boxes authorized', { clientId });
         return NextResponse.json({ success: false, error: 'no_boxes', message: 'This client has no boxes authorized.' }, { status: 200 });
     }
 
     const { data: boxTypes, error: btErr } = await supabase.from('box_types').select('id, name').eq('is_active', true);
     if (btErr || !boxTypes?.length) {
+        console.error(LOG, 'no box types or error', { error: btErr });
         return NextResponse.json({ success: false, error: 'no_box_types', message: 'No box types configured.' }, { status: 200 });
     }
     const boxType = boxTypes[0];
@@ -90,6 +100,7 @@ export async function GET(request: NextRequest) {
         current_selections: currentSelectionsByBox[i] ?? null
     }));
 
+    console.log(LOG, 'success', { clientId, totalBoxes, boxesCount: boxes.length });
     return NextResponse.json({
         success: true,
         total_boxes: totalBoxes,

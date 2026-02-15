@@ -4,26 +4,34 @@ import { verifyRetellSignature } from '../_lib/verify-retell';
 import { normalizePhone, escapeForIlike } from '../_lib/phone-utils';
 import { lookupByPhone } from '../_lib/lookup-by-phone';
 
+const LOG = '[retell:look-up-client]';
+
 export async function POST(request: NextRequest) {
     const rawBody = await request.text();
     const signature = request.headers.get('x-retell-signature');
+    console.log(LOG, 'request received');
     if (!verifyRetellSignature(rawBody, signature)) {
+        console.error(LOG, 'auth failed: invalid or missing signature');
         return NextResponse.json({ success: false, error: 'unauthorized', message: 'Invalid signature' }, { status: 401 });
     }
     let body: { name?: string; args?: { phone_number?: string; full_name?: string }; call?: unknown };
     try {
         body = rawBody ? JSON.parse(rawBody) : {};
-    } catch {
+    } catch (e) {
+        console.error(LOG, 'invalid JSON body', e);
         return NextResponse.json({ success: false, error: 'invalid_body', message: 'Invalid JSON' }, { status: 400 });
     }
     const args = body.args ?? {};
     const phone = normalizePhone(args.phone_number);
     const fullName = (args.full_name ?? '').trim();
+    console.log(LOG, 'input', { phone: phone ? `${phone.slice(-4)}****` : null, hasFullName: !!fullName });
 
     if (phone) {
         const result = await lookupByPhone(phone);
+        console.log(LOG, 'lookupByPhone result', { success: result.success, multiple_matches: result.multiple_matches, error: result.error, message: result.message });
         if (result.success && !result.multiple_matches) {
             const c = result.client;
+            console.log(LOG, 'single phone match, returning client', c.id);
             return NextResponse.json({
                 success: true,
                 multiple_matches: false,
@@ -38,6 +46,7 @@ export async function POST(request: NextRequest) {
             });
         }
         if (result.success && result.multiple_matches) {
+            console.log(LOG, 'multiple phone matches', result.clients?.length);
             return NextResponse.json({
                 success: true,
                 multiple_matches: true,
@@ -45,6 +54,7 @@ export async function POST(request: NextRequest) {
                 clients: result.clients
             });
         }
+        console.log(LOG, 'responding: phone lookup failed or no match', result);
         return NextResponse.json({
             success: result.success,
             error: result.error,
@@ -53,6 +63,7 @@ export async function POST(request: NextRequest) {
     }
 
     if (!fullName) {
+        console.log(LOG, 'no phone and no fullName -> no_client_found');
         return NextResponse.json({
             success: false,
             error: 'no_client_found',
@@ -64,14 +75,17 @@ export async function POST(request: NextRequest) {
     const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
     const supabase = createClient(supabaseUrl, supabaseKey);
 
+    console.log(LOG, 'looking up by name', { fullNameLength: fullName.length });
     const { data: byName, error: nameError } = await supabase
         .from('clients')
         .select('id, full_name, phone_number, secondary_phone_number, address, service_type, approved_meals_per_week, expiration_date')
         .ilike('full_name', `%${escapeForIlike(fullName)}%`);
     if (nameError) {
+        console.error(LOG, 'database error on name lookup', nameError);
         return NextResponse.json({ success: false, error: 'database_error', message: 'Lookup failed.' }, { status: 500 });
     }
     const nameList = (byName ?? []).filter((r: { id?: string }) => r.id);
+    console.log(LOG, 'name lookup count', nameList.length);
     if (nameList.length === 0) {
         return NextResponse.json({
             success: false,
@@ -81,6 +95,7 @@ export async function POST(request: NextRequest) {
     }
     if (nameList.length === 1) {
         const c = nameList[0];
+        console.log(LOG, 'single name match, returning client', c.id);
         return NextResponse.json({
             success: true,
             multiple_matches: false,
@@ -94,6 +109,7 @@ export async function POST(request: NextRequest) {
             expiration_date: c.expiration_date ?? null
         });
     }
+    console.log(LOG, 'multiple name matches', nameList.length);
     return NextResponse.json({
         success: true,
         multiple_matches: true,
