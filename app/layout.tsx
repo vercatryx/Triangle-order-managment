@@ -16,8 +16,8 @@ export const metadata: Metadata = {
   },
   description: 'Admin portal for managing client food services.',
   icons: {
-    icon: '/favicon.ico',
-    apple: '/apple-touch-icon.png',
+    icon: '/images/favicon.ico',
+    apple: '/images/apple-touch-icon.png',
   },
 };
 

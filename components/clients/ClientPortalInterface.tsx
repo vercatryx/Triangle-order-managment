@@ -1040,7 +1040,21 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
                         <div>
                             {(() => {
                                 const currentBoxes = orderConfig.boxOrders || [];
-                                if (currentBoxes.length === 0) return null;
+                                if (currentBoxes.length === 0) {
+                                    return (
+                                        <div style={{ padding: '1.5rem', border: '1px dashed var(--border-color)', borderRadius: '8px', textAlign: 'center' }}>
+                                            <p style={{ marginBottom: '1rem', color: 'var(--text-secondary)' }}>You don&apos;t have any boxes in this order yet.</p>
+                                            <button
+                                                type="button"
+                                                className="btn btn-outline"
+                                                style={{ borderStyle: 'dashed', padding: '1rem', display: 'inline-flex', justifyContent: 'center', alignItems: 'center', gap: '0.5rem' }}
+                                                onClick={handleAddBox}
+                                            >
+                                                <Plus size={16} /> Add Box
+                                            </button>
+                                        </div>
+                                    );
+                                }
 
                                 return (
                                     <div>
