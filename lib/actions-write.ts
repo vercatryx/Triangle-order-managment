@@ -14,6 +14,7 @@ import { handleError, mapClientFromDB } from './client-mappers';
 import { getVendors, getMenuItems, getMealItems, getEquipment, getBoxTypes, getClient, getVendorSession } from './actions-read';
 import { syncSingleOrderForDeliveryDay, updateClientUpcomingOrder } from './actions';
 import { getNextDeliveryDateForDay } from './order-dates';
+import { hasBlockingCleanupIssues, type BlockContext } from './order-creation-block';
 
 
 
@@ -1300,8 +1301,41 @@ export async function processUpcomingOrders() {
     const errors: string[] = [];
     let processedCount = 0;
 
+    // Build block context and skip clients with inactive/deleted items or invalid vendors
+    const clientIds = [...new Set(upcomingOrders.map((o: any) => o.client_id))];
+    const { data: clientsForBlock } = await supabaseClient.from('clients').select('id, upcoming_order').in('id', clientIds);
+    const clientUpcomingMap = new Map<string, Record<string, unknown> | null>();
+    for (const row of clientsForBlock || []) {
+        clientUpcomingMap.set(row.id, row.upcoming_order as Record<string, unknown> | null);
+    }
+    const { data: allMenuRows } = await supabaseClient.from('menu_items').select('id, is_active, category_id');
+    const { data: allBreakfastRows } = await supabaseClient.from('breakfast_items').select('id, is_active, category_id');
+    const { data: itemCatRows } = await supabaseClient.from('item_categories').select('id, is_active');
+    const { data: breakfastCatRows } = await supabaseClient.from('breakfast_categories').select('id, is_active');
+    const vendors = await getVendors();
+    const activeItemCatIds = new Set((itemCatRows || []).filter((r: any) => r.is_active === true).map((r: any) => r.id));
+    const activeBreakfastCatIds = new Set((breakfastCatRows || []).filter((r: any) => r.is_active === true).map((r: any) => r.id));
+    const allMenuItemIds = new Set((allMenuRows || []).map((r: any) => r.id));
+    const allBreakfastItemIds = new Set((allBreakfastRows || []).map((r: any) => r.id));
+    const activeMenuItemIds = new Set(
+        (allMenuRows || []).filter((r: any) => r.is_active === true && (r.category_id == null || r.category_id === '' || activeItemCatIds.size === 0 || activeItemCatIds.has(r.category_id))).map((r: any) => r.id)
+    );
+    const activeBreakfastItemIds = new Set(
+        (allBreakfastRows || []).filter((r: any) => r.is_active === true && (r.category_id == null || r.category_id === '' || activeBreakfastCatIds.size === 0 || activeBreakfastCatIds.has(r.category_id))).map((r: any) => r.id)
+    );
+    const vendorMap = new Map<string, { is_active: boolean }>();
+    for (const v of vendors || []) {
+        vendorMap.set(v.id, { is_active: !!v.isActive });
+    }
+    const blockCtx: BlockContext = { activeMenuItemIds, activeBreakfastItemIds, allMenuItemIds, allBreakfastItemIds, vendorMap };
+
     for (const upcomingOrder of upcomingOrders) {
         try {
+            const uo = clientUpcomingMap.get(upcomingOrder.client_id);
+            if (uo && hasBlockingCleanupIssues(uo, blockCtx)) {
+                errors.push(`Skipped client ${upcomingOrder.client_id}: has inactive/deleted items or invalid vendor (fix on cleanup page).`);
+                continue;
+            }
             // Calculate scheduled_delivery_date from delivery_day if available
             let scheduledDeliveryDate: string | null = null;
             if (upcomingOrder.delivery_day) {
@@ -1478,7 +1512,6 @@ export async function processUpcomingOrders() {
     } catch (e) { }
 
     // Targeted local DB sync for all affected clients
-    const clientIds = [...new Set(upcomingOrders.map(uo => uo.client_id))];
     if (clientIds.length > 0) {
         const { syncClientsInLocalDB } = await import('./local-db');
         syncClientsInLocalDB(clientIds).catch(e => console.error('Bulk sync error:', e));

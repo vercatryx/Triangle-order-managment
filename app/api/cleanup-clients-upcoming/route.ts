@@ -81,7 +81,7 @@ export interface DeletedMenuItemIssue {
     itemId: string;
     quantity: number;
     serviceType: string;
-    where: 'deliveryDayOrders' | 'vendorSelections';
+    where: 'deliveryDayOrders' | 'vendorSelections' | 'mealSelections';
 }
 
 const VAL_TOLERANCE = 0.05;
@@ -109,6 +109,21 @@ export interface DeletedBoxItemIssue {
     clientId: string;
     clientName: string;
     missingItems: { itemId: string; quantity: number; boxIndex: number; itemName?: string }[];
+}
+
+/** Same shape as DeletedMenuItemIssue: Food/Meal items that exist but are inactive (item or category inactive). */
+export interface InactiveMenuItemIssue {
+    clientId: string;
+    clientName: string;
+    orderDeliveryDay: string | null;
+    vendorId: string;
+    vendorName: string;
+    itemId: string;
+    itemName?: string;
+    quantity: number;
+    serviceType: string;
+    where: 'deliveryDayOrders' | 'vendorSelections' | 'mealSelections';
+    mealKey?: string;
 }
 
 /**
@@ -243,6 +258,7 @@ export async function GET() {
         const invalidVendorIssues: InvalidVendorIssue[] = [];
         const itemDayIssues: ItemDayIssue[] = [];
         const deletedMenuItemIssues: DeletedMenuItemIssue[] = [];
+        const inactiveMenuItemIssues: InactiveMenuItemIssue[] = [];
         const boxQuotaIssues: BoxQuotaIssue[] = [];
         const deletedBoxItemIssues: DeletedBoxItemIssue[] = [];
         const inactiveBoxItemIssues: DeletedBoxItemIssue[] = [];
@@ -330,18 +346,35 @@ export async function GET() {
                             const q = Number(qty);
                             if (q <= 0) continue;
                             const mi = menuItemMap.get(itemId);
+                            const exists = allMenuItemIds.has(itemId) || allBreakfastItemIds.has(itemId);
+                            const isActive = activeMenuItemIds.has(itemId) || activeBreakfastItemIds.has(itemId);
                             if (!mi) {
-                                deletedMenuItemIssues.push({
-                                    clientId: client.id,
-                                    clientName,
-                                    orderDeliveryDay: day,
-                                    vendorId: vid,
-                                    vendorName: vendor.name,
-                                    itemId,
-                                    quantity: q,
-                                    serviceType: st,
-                                    where: 'deliveryDayOrders'
-                                });
+                                if (exists && !isActive) {
+                                    inactiveMenuItemIssues.push({
+                                        clientId: client.id,
+                                        clientName,
+                                        orderDeliveryDay: day,
+                                        vendorId: vid,
+                                        vendorName: vendor.name,
+                                        itemId,
+                                        itemName: itemIdToName.get(itemId),
+                                        quantity: q,
+                                        serviceType: st,
+                                        where: 'deliveryDayOrders'
+                                    });
+                                } else {
+                                    deletedMenuItemIssues.push({
+                                        clientId: client.id,
+                                        clientName,
+                                        orderDeliveryDay: day,
+                                        vendorId: vid,
+                                        vendorName: vendor.name,
+                                        itemId,
+                                        quantity: q,
+                                        serviceType: st,
+                                        where: 'deliveryDayOrders'
+                                    });
+                                }
                                 continue;
                             }
                             if (mi.vendor_id !== vid) continue; // item must belong to this vendor
@@ -417,18 +450,35 @@ export async function GET() {
                             const q = Number(qty);
                             if (q <= 0) continue;
                             const mi = menuItemMap.get(itemId);
+                            const exists = allMenuItemIds.has(itemId) || allBreakfastItemIds.has(itemId);
+                            const isActive = activeMenuItemIds.has(itemId) || activeBreakfastItemIds.has(itemId);
                             if (!mi) {
-                                deletedMenuItemIssues.push({
-                                    clientId: client.id,
-                                    clientName,
-                                    orderDeliveryDay: day,
-                                    vendorId: vid,
-                                    vendorName: vendor.name,
-                                    itemId,
-                                    quantity: q,
-                                    serviceType: st,
-                                    where: 'vendorSelections'
-                                });
+                                if (exists && !isActive) {
+                                    inactiveMenuItemIssues.push({
+                                        clientId: client.id,
+                                        clientName,
+                                        orderDeliveryDay: day,
+                                        vendorId: vid,
+                                        vendorName: vendor.name,
+                                        itemId,
+                                        itemName: itemIdToName.get(itemId),
+                                        quantity: q,
+                                        serviceType: st,
+                                        where: 'vendorSelections'
+                                    });
+                                } else {
+                                    deletedMenuItemIssues.push({
+                                        clientId: client.id,
+                                        clientName,
+                                        orderDeliveryDay: day,
+                                        vendorId: vid,
+                                        vendorName: vendor.name,
+                                        itemId,
+                                        quantity: q,
+                                        serviceType: st,
+                                        where: 'vendorSelections'
+                                    });
+                                }
                                 continue;
                             }
                             if (mi.vendor_id !== vid) continue;
@@ -452,35 +502,58 @@ export async function GET() {
                 }
             }
 
-            // 3) Invalid vendor from mealSelections
+            // 3) Invalid vendor from mealSelections + deleted/inactive items in mealSelections
             if (uo.mealSelections && typeof uo.mealSelections === 'object') {
-                const sel = uo.mealSelections as Record<string, { vendorId?: string }>;
+                const sel = uo.mealSelections as Record<string, { vendorId?: string; items?: Record<string, number> }>;
                 for (const [mealKey, data] of Object.entries(sel)) {
                     const vid = data?.vendorId;
-                    if (!vid) continue;
-                    const vendor = vendorMap.get(vid);
-                    if (!vendor) {
+                    const vendor = vid ? vendorMap.get(vid) : null;
+                    const vendorName = vendor?.name ?? (vid ? `Vendor ${vid}` : '');
+                    if (vid && (!vendor || !vendor.is_active)) {
                         invalidVendorIssues.push({
                             clientId: client.id,
                             clientName,
                             vendorId: vid,
-                            vendorName: `Vendor ${vid} (missing)`,
-                            isActive: false,
+                            vendorName: vendor?.name ?? `Vendor ${vid} (missing)`,
+                            isActive: !!vendor?.is_active,
                             where: 'mealSelections',
                             mealKey,
                             serviceType: st
                         });
-                    } else if (!vendor.is_active) {
-                        invalidVendorIssues.push({
-                            clientId: client.id,
-                            clientName,
-                            vendorId: vid,
-                            vendorName: vendor.name,
-                            isActive: false,
-                            where: 'mealSelections',
-                            mealKey,
-                            serviceType: st
-                        });
+                    }
+                    const mealItems = data?.items && typeof data.items === 'object' ? data.items : {};
+                    for (const [itemId, qty] of Object.entries(mealItems)) {
+                        const q = Number(qty);
+                        if (q <= 0) continue;
+                        const exists = allMenuItemIds.has(itemId) || allBreakfastItemIds.has(itemId);
+                        const isActive = activeMenuItemIds.has(itemId) || activeBreakfastItemIds.has(itemId);
+                        if (exists && !isActive) {
+                            inactiveMenuItemIssues.push({
+                                clientId: client.id,
+                                clientName,
+                                orderDeliveryDay: null,
+                                vendorId: vid ?? '',
+                                vendorName,
+                                itemId,
+                                itemName: itemIdToName.get(itemId),
+                                quantity: q,
+                                serviceType: st,
+                                where: 'mealSelections',
+                                mealKey
+                            });
+                        } else if (!exists) {
+                            deletedMenuItemIssues.push({
+                                clientId: client.id,
+                                clientName,
+                                orderDeliveryDay: null,
+                                vendorId: vid ?? '',
+                                vendorName,
+                                itemId,
+                                quantity: q,
+                                serviceType: st,
+                                where: 'mealSelections'
+                            });
+                        }
                     }
                 }
             }
@@ -607,6 +680,7 @@ export async function GET() {
             invalidVendorIssues,
             itemDayIssues,
             deletedMenuItemIssues,
+            inactiveMenuItemIssues,
             boxQuotaIssues,
             deletedBoxItemIssues,
             inactiveBoxItemIssues,
@@ -807,12 +881,32 @@ export async function POST(request: Request) {
         }
 
         if (fix === 'deletedItem') {
-            const vendorId = body.vendorId;
-            const itemId = body.itemId;
+            const vendorId = body.vendorId as string | undefined;
+            const itemId = body.itemId as string;
             const orderDeliveryDay = body.orderDeliveryDay as string | null;
-            const where = body.where as 'deliveryDayOrders' | 'vendorSelections';
-            if (!vendorId || !itemId || !where) {
-                return NextResponse.json({ success: false, error: 'vendorId, itemId and where required' }, { status: 400 });
+            const where = body.where as 'deliveryDayOrders' | 'vendorSelections' | 'mealSelections';
+            const mealKey = body.mealKey as string | undefined;
+            if (!itemId || !where) {
+                return NextResponse.json({ success: false, error: 'itemId and where required' }, { status: 400 });
+            }
+            if (where === 'mealSelections' && mealKey) {
+                const sel = (updated.mealSelections as Record<string, { items?: Record<string, number> }>) || {};
+                const mealData = sel[mealKey];
+                if (mealData?.items && itemId in mealData.items) {
+                    const items = { ...mealData.items };
+                    delete items[itemId];
+                    sel[mealKey] = { ...mealData, items: Object.keys(items).length > 0 ? items : undefined };
+                    updated.mealSelections = sel;
+                }
+                const { error: updErr } = await supabase
+                    .from('clients')
+                    .update({ upcoming_order: updated, updated_at: new Date().toISOString() })
+                    .eq('id', clientId);
+                if (updErr) throw updErr;
+                return NextResponse.json({ success: true, message: 'Inactive/deleted meal item removed.' });
+            }
+            if (!vendorId) {
+                return NextResponse.json({ success: false, error: 'vendorId required for this where' }, { status: 400 });
             }
             if (where === 'deliveryDayOrders') {
                 if (!orderDeliveryDay) {

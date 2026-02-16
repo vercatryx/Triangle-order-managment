@@ -42,19 +42,19 @@ export default async function ClientPortalPage({ params }: { params: Promise<{ i
             statuses,
             navigators,
             vendors,
-            menuItems,
+            menuItemsRaw,
             boxTypes,
             categories,
             upcomingOrder,
             activeOrder,
             mealCategories,
-            mealItems
+            mealItemsRaw
         ] = await Promise.all([
             getPublicClient(id),
             getStatuses(),
             getNavigators(),
             getVendors(),
-            getMenuItems(),
+            getMenuItems({ includeInactive: true }),
             getBoxTypes(),
             getCategories(),
             getUpcomingOrderForClient(id),
@@ -62,6 +62,16 @@ export default async function ClientPortalPage({ params }: { params: Promise<{ i
             getMealCategories(),
             getMealItems()
         ]);
+
+        const menuItemsCountAll = menuItemsRaw?.length ?? 0;
+        const menuItemsCountActive = menuItemsRaw?.filter((m: { isActive?: boolean }) => m.isActive === true).length ?? 0;
+        console.log('[ClientPortalPage] menuItems: total=', menuItemsCountAll, 'active=', menuItemsCountActive);
+        const mealItemsCountAll = mealItemsRaw?.length ?? 0;
+        const mealItemsCountActive = mealItemsRaw?.filter((m: { isActive?: boolean }) => m.isActive === true).length ?? 0;
+        console.log('[ClientPortalPage] mealItems: total=', mealItemsCountAll, 'active=', mealItemsCountActive);
+
+        const menuItems = menuItemsRaw ?? [];
+        const mealItems = mealItemsRaw ?? [];
 
         console.log('[ClientPortalPage] Data fetched:', {
             client: client?.id,
@@ -82,13 +92,15 @@ export default async function ClientPortalPage({ params }: { params: Promise<{ i
             notFound();
         }
 
+        const activeVendors = vendors.filter((v: { isActive?: boolean }) => v.isActive === true);
+
         console.log('[ClientPortalPage] Rendering ClientPortalInterface');
         return (
             <ClientPortalInterface
                 client={client}
                 statuses={statuses}
                 navigators={navigators}
-                vendors={vendors}
+                vendors={activeVendors}
                 menuItems={menuItems}
                 boxTypes={boxTypes}
                 categories={categories}

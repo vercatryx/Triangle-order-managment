@@ -29,9 +29,10 @@ export async function GET(request: NextRequest) {
         .eq('id', clientId.trim())
         .single();
     if (clientErr || !client) {
-        console.error(LOG, 'client not found', { clientId, error: clientErr });
+        console.error(LOG, 'client not found', { clientId, error: clientErr?.message ?? clientErr, code: clientErr?.code });
         return NextResponse.json({ success: false, error: 'client_not_found', message: 'Client not found.' }, { status: 200 });
     }
+    console.log(LOG, 'client found', { service_type: client.service_type, approved_meals_per_week: client.approved_meals_per_week });
     if ((client.service_type ?? '').toString() !== 'Food') {
         console.error(LOG, 'not a Food client', { clientId, service_type: client.service_type });
         return NextResponse.json({ success: false, error: 'not_food_client', message: 'This client is not a Food client.' }, { status: 200 });
@@ -44,16 +45,22 @@ export async function GET(request: NextRequest) {
         .eq('service_type', 'Food')
         .eq('is_active', true);
     if (vErr) {
-        console.error(LOG, 'failed to load vendors', vErr);
+        console.error(LOG, 'failed to load vendors', { error: vErr.message, code: vErr.code });
         return NextResponse.json({ success: false, error: 'database_error', message: 'Failed to load vendors.' }, { status: 500 });
     }
     const vendorList = vendors ?? [];
     const vendorIds = vendorList.map((v: any) => v.id);
+    console.log(LOG, 'vendors loaded', { count: vendorList.length, vendorIds: vendorIds.length ? vendorIds.slice(0, 3) : [] });
 
-    const { data: menuItems } = await supabase
+    const { data: menuItems, error: menuErr } = await supabase
         .from('menu_items')
         .select('id, name, value, vendor_id')
         .in('vendor_id', vendorIds.length ? vendorIds : ['00000000-0000-0000-0000-000000000000']);
+    if (menuErr) {
+        console.error(LOG, 'failed to load menu_items', { error: menuErr.message, code: menuErr.code });
+        return NextResponse.json({ success: false, error: 'database_error', message: 'Failed to load menu items.' }, { status: 500 });
+    }
+    console.log(LOG, 'menu_items loaded', { count: (menuItems ?? []).length });
     const itemsByVendor = new Map<string, Array<{ item_id: string; name: string; meal_value: number }>>();
     for (const mi of menuItems ?? []) {
         const vid = mi.vendor_id ?? '';
@@ -67,8 +74,31 @@ export async function GET(request: NextRequest) {
         itemsByVendor.set(vid, list);
     }
 
-    const uo = client?.upcoming_order;
-    const currentSelections = (uo && typeof uo === 'object' && Array.isArray((uo as any).vendorSelections)) ? (uo as any).vendorSelections : null;
+    const uo = client?.upcoming_order as Record<string, unknown> | null | undefined;
+    let currentSelections: Array<{ vendorId: string; items: Record<string, number>; itemNotes?: Record<string, string> }> | null = null;
+    let currentSelectionsByDay: Record<string, Array<{ vendorId: string; items: Record<string, number>; itemNotes?: Record<string, string> }>> | null = null;
+
+    if (uo && typeof uo === 'object') {
+        const ddo = uo.deliveryDayOrders;
+        if (ddo != null && typeof ddo === 'object' && !Array.isArray(ddo)) {
+            currentSelectionsByDay = {};
+            const days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+            for (const day of days) {
+                const dayData = (ddo as Record<string, unknown>)[day];
+                if (dayData && typeof dayData === 'object' && Array.isArray((dayData as any).vendorSelections)) {
+                    currentSelectionsByDay[day] = (dayData as any).vendorSelections;
+                }
+            }
+            if (Object.keys(currentSelectionsByDay).length === 0) currentSelectionsByDay = null;
+            else {
+                const firstDay = Object.keys(currentSelectionsByDay).sort()[0];
+                currentSelections = currentSelectionsByDay[firstDay] ?? null;
+            }
+        }
+        if (!currentSelections && Array.isArray(uo.vendorSelections)) {
+            currentSelections = uo.vendorSelections as Array<{ vendorId: string; items: Record<string, number>; itemNotes?: Record<string, string> }>;
+        }
+    }
 
     const vendorsPayload = vendorList.map((v: any) => ({
         vendor_id: v.id,
@@ -84,6 +114,7 @@ export async function GET(request: NextRequest) {
         approved_meals_per_week: approvedMeals,
         current_total_used: 0,
         vendors: vendorsPayload,
-        current_selections: currentSelections
+        current_selections: currentSelections,
+        ...(currentSelectionsByDay ? { current_selections_by_day: currentSelectionsByDay } : {})
     });
 }

@@ -345,7 +345,7 @@ export async function checkEmailIdentity(identifier: string) {
     const normalizedInput = normalizeEmail(identifier);
     const trimmedInput = identifier.trim().toLowerCase();
 
-    // Use Service Role if available to bypass RLS
+    // Use Service Role if available so RPC can read all tables (bypass RLS)
     let supabaseClient = supabase;
     const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
     if (serviceRoleKey) {
@@ -354,83 +354,45 @@ export async function checkEmailIdentity(identifier: string) {
         });
     }
 
-    // Collect all matches to determine if there are multiple accounts
-    // Priority order: admin > vendor > navigator > client
-    const matches: Array<{ type: 'admin' | 'vendor' | 'navigator' | 'client', id?: string, isActive?: boolean }> = [];
-
-    // 1. Check Env Super Admin (match by username)
-    const envUser = process.env.ADMIN_USERNAME;
     const originalTrimmed = identifier.trim();
+
+    const matches: Array<{ type: 'admin' | 'vendor' | 'navigator' | 'client', id?: string, isActive?: boolean, serviceType?: string }> = [];
+
+    // Env Super Admin (not in DB)
+    const envUser = process.env.ADMIN_USERNAME;
     if (envUser && originalTrimmed === envUser) {
         matches.push({ type: 'admin' });
     }
 
-    // 2. Check Database Admins (by username - case sensitive)
-    const { data: admins } = await supabase
-        .from('admins')
-        .select('id')
-        .eq('username', originalTrimmed);
+    // Single DB round-trip: lookup_login_identity RPC (admin by username, vendor/navigator/client by normalized email)
+    const { data: rows, error: rpcError } = await supabaseClient.rpc('lookup_login_identity', {
+        p_username_trimmed: originalTrimmed,
+        p_email_normalized: normalizedInput
+    });
 
-    if (admins && admins.length > 0) {
-        matches.push(...admins.map(a => ({ type: 'admin' as const, id: a.id })));
-    }
-
-    // 3. Check Vendors (by Email) - fetch all and normalize for comparison
-    // This ensures we match emails regardless of spaces or case
-    const { data: vendorsData } = await supabaseClient
-        .from('vendors')
-        .select('id, email, is_active')
-        .not('email', 'is', null);
-
-    if (vendorsData && vendorsData.length > 0) {
-        // Normalize both input and database emails (remove all spaces, lowercase)
-        const exactMatches = vendorsData.filter(v =>
-            v.email && normalizeEmail(v.email) === normalizedInput
-        );
-        if (exactMatches.length > 0) {
-            matches.push(...exactMatches.map(v => ({
-                type: 'vendor' as const,
-                id: v.id,
-                isActive: v.is_active
-            })));
+    if (!rpcError && rows && Array.isArray(rows)) {
+        for (const r of rows as Array<{ account_type: string; account_id: string | null; service_type: string | null; is_active: boolean | null }>) {
+            if (r.account_type === 'admin') matches.push({ type: 'admin', id: r.account_id ?? undefined });
+            else if (r.account_type === 'vendor') matches.push({ type: 'vendor', id: r.account_id ?? undefined, isActive: r.is_active ?? undefined });
+            else if (r.account_type === 'navigator') matches.push({ type: 'navigator', id: r.account_id ?? undefined });
+            else if (r.account_type === 'client') matches.push({ type: 'client', id: r.account_id ?? undefined, serviceType: r.service_type ?? undefined });
         }
-    }
+    } else if (rpcError) {
+        // Fallback if RPC not deployed or fails: run per-table queries (slower)
+        const { data: admins } = await supabase.from('admins').select('id').eq('username', originalTrimmed);
+        if (admins?.length) matches.push(...admins.map(a => ({ type: 'admin' as const, id: a.id })));
 
-    // 4. Check Navigators (by Email)
-    const { data: navigatorsData } = await supabaseClient
-        .from('navigators')
-        .select('id, email')
-        .not('email', 'is', null);
+        const { data: vendorsData } = await supabaseClient.from('vendors').select('id, email, is_active').ilike('email', normalizedInput);
+        const vendorMatches = vendorsData?.filter(v => v.email && normalizeEmail(v.email) === normalizedInput) ?? [];
+        if (vendorMatches.length) matches.push(...vendorMatches.map(v => ({ type: 'vendor' as const, id: v.id, isActive: v.is_active })));
 
-    if (navigatorsData && navigatorsData.length > 0) {
-        const exactMatches = navigatorsData.filter(n =>
-            n.email && normalizeEmail(n.email) === normalizedInput
-        );
-        if (exactMatches.length > 0) {
-            matches.push(...exactMatches.map(n => ({
-                type: 'navigator' as const,
-                id: n.id
-            })));
-        }
-    }
+        const { data: navData } = await supabaseClient.from('navigators').select('id, email').ilike('email', normalizedInput);
+        const navMatches = navData?.filter(n => n.email && normalizeEmail(n.email) === normalizedInput) ?? [];
+        if (navMatches.length) matches.push(...navMatches.map(n => ({ type: 'navigator' as const, id: n.id })));
 
-    // 5. Check Clients (by Email)
-    const { data: clientsData } = await supabaseClient
-        .from('clients')
-        .select('id, email, service_type')
-        .not('email', 'is', null);
-
-    if (clientsData && clientsData.length > 0) {
-        const exactMatches = clientsData.filter(c =>
-            c.email && normalizeEmail(c.email) === normalizedInput
-        );
-        if (exactMatches.length > 0) {
-            matches.push(...exactMatches.map(c => ({
-                type: 'client' as const,
-                id: c.id,
-                serviceType: c.service_type
-            })));
-        }
+        const { data: clientsData } = await supabaseClient.from('clients').select('id, email, service_type').ilike('email', normalizedInput);
+        const clientMatches = clientsData?.filter(c => c.email && normalizeEmail(c.email) === normalizedInput) ?? [];
+        if (clientMatches.length) matches.push(...clientMatches.map(c => ({ type: 'client' as const, id: c.id, serviceType: c.service_type })));
     }
 
     // If no matches found

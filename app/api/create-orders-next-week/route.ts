@@ -4,6 +4,7 @@ import { DAY_NAME_TO_NUMBER, getFirstDeliveryDateInWeek } from '@/lib/order-date
 import { vendorSelectionsToDeliveryDayOrders } from '@/lib/upcoming-order-converter';
 import { sendSchedulingReport, sendVendorNextWeekSummary, type VendorBreakdownItem } from '@/lib/email-report';
 import { getNextCreationId } from '@/lib/actions';
+import { hasBlockingCleanupIssues, type BlockContext } from '@/lib/order-creation-block';
 import * as XLSX from 'xlsx';
 
 // Vercel limit is 800s; allow max so 800+ orders can complete (many sequential DB round-trips per order)
@@ -167,6 +168,45 @@ export async function POST(request: NextRequest) {
         const allMealItems = (mealItemsRes.data || []).map((i: any) => ({ ...i, itemType: 'meal' as const }));
         const allBoxTypes = boxTypesRes.data || [];
 
+        // Build block context: clients with inactive/deleted items or invalid vendors must not get orders (fix on cleanup page first)
+        const { data: itemCategories } = await supabase.from('item_categories').select('id, is_active');
+        const { data: breakfastCategories } = await supabase.from('breakfast_categories').select('id, is_active');
+        const activeItemCategoryIds = new Set<string>(
+            (itemCategories || []).filter((r: { is_active?: boolean }) => r.is_active === true).map((r: { id: string }) => r.id)
+        );
+        const activeBreakfastCategoryIds = new Set<string>(
+            (breakfastCategories || []).filter((r: { is_active?: boolean }) => r.is_active === true).map((r: { id: string }) => r.id)
+        );
+        const allMenuItemIds = new Set<string>((allMenuItems as { id: string }[]).map((r) => r.id));
+        const allBreakfastItemIds = new Set<string>((allMealItems as { id: string }[]).map((r) => r.id));
+        const activeMenuItemIds = new Set<string>(
+            (allMenuItems as { id: string; is_active?: boolean; category_id?: string | null }[]).filter((r) => {
+                if (r.is_active !== true) return false;
+                const cid = r.category_id;
+                if (cid == null || cid === '') return true;
+                return activeItemCategoryIds.size === 0 || activeItemCategoryIds.has(cid);
+            }).map((r) => r.id)
+        );
+        const activeBreakfastItemIds = new Set<string>(
+            (allMealItems as { id: string; is_active?: boolean; category_id?: string | null }[]).filter((r) => {
+                if (r.is_active !== true) return false;
+                const cid = r.category_id;
+                if (cid == null || cid === '') return true;
+                return activeBreakfastCategoryIds.size === 0 || activeBreakfastCategoryIds.has(cid);
+            }).map((r) => r.id)
+        );
+        const vendorActiveMap = new Map<string, { is_active: boolean }>();
+        for (const v of vendorsRes.data || []) {
+            vendorActiveMap.set(v.id, { is_active: !!v.is_active });
+        }
+        const blockCtx: BlockContext = {
+            activeMenuItemIds,
+            activeBreakfastItemIds,
+            allMenuItemIds,
+            allBreakfastItemIds,
+            vendorMap: vendorActiveMap
+        };
+
         // Derive food/meal/box/custom from clients.upcoming_order only (single source of truth per UPCOMING_ORDER_SCHEMA)
         // Type is determined by upcoming_order.serviceType, not clients.service_type.
         // Food: serviceType 'Food' (or legacy missing), with deliveryDayOrders or vendorSelections
@@ -174,6 +214,7 @@ export async function POST(request: NextRequest) {
         for (const c of clients || []) {
             const uo = c.upcoming_order;
             if (!uo || typeof uo !== 'object') continue;
+            if (hasBlockingCleanupIssues(uo, blockCtx)) continue; // skip until fixed on cleanup page
             // Only Food payloads (or legacy without serviceType) have delivery-day food data
             const isFoodType = uo.serviceType === 'Food' || uo.serviceType === undefined;
             if (!isFoodType) continue;
@@ -201,6 +242,7 @@ export async function POST(request: NextRequest) {
             .filter((c: any) => {
                 const uo = c.upcoming_order;
                 if (!uo || typeof uo !== 'object' || !uo.mealSelections) return false;
+                if (hasBlockingCleanupIssues(uo, blockCtx)) return false;
                 return uo.serviceType === 'Food' || uo.serviceType === 'Meal';
             })
             .map((c: any) => ({
@@ -214,6 +256,7 @@ export async function POST(request: NextRequest) {
         for (const c of clients || []) {
             const uo = c.upcoming_order;
             if (!uo || typeof uo !== 'object' || uo.serviceType !== 'Boxes' || !uo.boxOrders?.length) continue;
+            if (hasBlockingCleanupIssues(uo, blockCtx)) continue;
             for (const b of uo.boxOrders) {
                 boxOrders.push({
                     client_id: c.id,
@@ -229,7 +272,10 @@ export async function POST(request: NextRequest) {
         }
         // Custom orders from clients.upcoming_order (single source of truth)
         const customOrders = (clients || [])
-            .filter((c: any) => c.upcoming_order && c.upcoming_order.serviceType === 'Custom')
+            .filter((c: any) => {
+                const uo = c.upcoming_order;
+                return uo && uo.serviceType === 'Custom' && !hasBlockingCleanupIssues(uo, blockCtx);
+            })
             .map((c: any) => ({
                 client_id: c.id,
                 id: c.id,

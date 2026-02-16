@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabase } from '@/lib/supabase';
 import { getMenuItems, getVendors, getBoxTypes, getSettings, getClient, appendOrderHistory, getNextCreationId } from '@/lib/actions';
+import { hasBlockingCleanupIssues, type BlockContext } from '@/lib/order-creation-block';
 import { randomUUID } from 'crypto';
 import { getNextDeliveryDate, getTakeEffectDateLegacy } from '@/lib/order-dates';
 import { getCurrentTime } from '@/lib/time';
@@ -84,11 +85,38 @@ export async function GET(request: NextRequest) {
                 throw new Error(`Failed to fetch clients with upcoming orders: ${clientsError.message}`);
             }
 
+            // Build block context so we skip clients with inactive/deleted items or invalid vendors
+            const [menuItemsData, breakfastData, vendorsData, itemCatData, breakfastCatData] = await Promise.all([
+                supabase.from('menu_items').select('id, is_active, category_id'),
+                supabase.from('breakfast_items').select('id, is_active, category_id'),
+                supabase.from('vendors').select('id, is_active'),
+                supabase.from('item_categories').select('id, is_active'),
+                supabase.from('breakfast_categories').select('id, is_active')
+            ]);
+            const allMenu = menuItemsData.data || [];
+            const allBreakfast = breakfastData.data || [];
+            const activeItemCatIds = new Set((itemCatData.data || []).filter((r: any) => r.is_active === true).map((r: any) => r.id));
+            const activeBreakfastCatIds = new Set((breakfastCatData.data || []).filter((r: any) => r.is_active === true).map((r: any) => r.id));
+            const allMenuItemIds = new Set(allMenu.map((r: any) => r.id));
+            const allBreakfastItemIds = new Set(allBreakfast.map((r: any) => r.id));
+            const activeMenuItemIds = new Set(
+                allMenu.filter((r: any) => r.is_active === true && (r.category_id == null || r.category_id === '' || activeItemCatIds.size === 0 || activeItemCatIds.has(r.category_id))).map((r: any) => r.id)
+            );
+            const activeBreakfastItemIds = new Set(
+                allBreakfast.filter((r: any) => r.is_active === true && (r.category_id == null || r.category_id === '' || activeBreakfastCatIds.size === 0 || activeBreakfastCatIds.has(r.category_id))).map((r: any) => r.id)
+            );
+            const vendorMap = new Map<string, { is_active: boolean }>();
+            for (const v of vendorsData.data || []) {
+                vendorMap.set(v.id, { is_active: !!v.is_active });
+            }
+            const blockCtx: BlockContext = { activeMenuItemIds, activeBreakfastItemIds, allMenuItemIds, allBreakfastItemIds, vendorMap };
+
             // Expand clients.upcoming_order JSON into order-like records
             const expanded: any[] = [];
             for (const c of clientsWithUpcoming || []) {
                 const uo = c.upcoming_order;
                 if (!uo || typeof uo !== 'object') continue;
+                if (hasBlockingCleanupIssues(uo, blockCtx)) continue;
                 const st = uo.serviceType || c.service_type || 'Food';
                 const caseId = uo.caseId || null;
 

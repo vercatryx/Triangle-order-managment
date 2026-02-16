@@ -14,6 +14,7 @@ import { sendSchedulingReport } from '@/lib/email-report';
 import { AppSettings, Vendor } from '@/lib/types';
 import * as XLSX from 'xlsx';
 import { getNextCreationId } from '@/lib/actions';
+import { hasBlockingCleanupIssues, type BlockContext } from '@/lib/order-creation-block';
 
 // Initialize Supabase Admin Client to bypass RLS
 const supabase = createClient(
@@ -177,6 +178,25 @@ export async function POST(request: NextRequest) {
         const mealItemMap = new Map(allMealItems.map(i => [i.id, i]));
         const boxTypeMap = new Map(allBoxTypes.map(bt => [bt.id, bt.name]));
 
+        // Block context: skip clients with inactive/deleted items or invalid vendors (fix on cleanup page first)
+        const { data: itemCatData } = await supabase.from('item_categories').select('id, is_active');
+        const { data: breakfastCatData } = await supabase.from('breakfast_categories').select('id, is_active');
+        const activeItemCatIds = new Set((itemCatData || []).filter((r: any) => r.is_active === true).map((r: any) => r.id));
+        const activeBreakfastCatIds = new Set((breakfastCatData || []).filter((r: any) => r.is_active === true).map((r: any) => r.id));
+        const allMenuItemIds = new Set(allMenuItems.map((i: any) => i.id));
+        const allBreakfastItemIds = new Set(allMealItems.map((i: any) => i.id));
+        const activeMenuItemIds = new Set(
+            allMenuItems.filter((i: any) => i.isActive === true && (i.categoryId == null || i.categoryId === '' || activeItemCatIds.size === 0 || activeItemCatIds.has(i.categoryId))).map((i: any) => i.id)
+        );
+        const activeBreakfastItemIds = new Set(
+            allMealItems.filter((i: any) => i.isActive === true && (i.categoryId == null || i.categoryId === '' || activeBreakfastCatIds.size === 0 || activeBreakfastCatIds.has(i.categoryId))).map((i: any) => i.id)
+        );
+        const blockVendorMap = new Map<string, { is_active: boolean }>();
+        for (const v of allVendors) {
+            blockVendorMap.set(v.id, { is_active: !!v.isActive });
+        }
+        const blockCtx: BlockContext = { activeMenuItemIds, activeBreakfastItemIds, allMenuItemIds, allBreakfastItemIds, vendorMap: blockVendorMap };
+
         // Fetch Clients (Optimized Select) - Exclude dependents; include upcoming_order (single source of truth)
         const { data: clients, error: clientsError } = await supabase
             .from('clients')
@@ -237,15 +257,15 @@ export async function POST(request: NextRequest) {
             });
         }
 
-        // Build summary from clients.upcoming_order (single source of truth)
+        // Build summary from clients.upcoming_order (single source of truth). Skip clients with blocking cleanup issues.
         const foodOrdersForSummary = (clients || [])
-            .filter((c: any) => c.service_type === 'Food' && c.upcoming_order?.deliveryDayOrders)
+            .filter((c: any) => c.service_type === 'Food' && c.upcoming_order?.deliveryDayOrders && !hasBlockingCleanupIssues(c.upcoming_order, blockCtx))
             .map((c: any) => ({
                 client_id: c.id,
                 delivery_day_orders: c.upcoming_order.deliveryDayOrders
             }));
         const mealOrdersForSummary = (clients || [])
-            .filter((c: any) => (c.service_type === 'Food' || c.service_type === 'Meal') && c.upcoming_order?.mealSelections)
+            .filter((c: any) => (c.service_type === 'Food' || c.service_type === 'Meal') && c.upcoming_order?.mealSelections && !hasBlockingCleanupIssues(c.upcoming_order, blockCtx))
             .map((c: any) => ({
                 client_id: c.id,
                 meal_selections: c.upcoming_order.mealSelections
@@ -253,6 +273,7 @@ export async function POST(request: NextRequest) {
         const boxOrdersForSummary: { client_id: string; vendor_id?: string; box_type_id?: string; quantity: number; items: any }[] = [];
         for (const c of clients || []) {
             if (c.service_type !== 'Boxes' || !c.upcoming_order?.boxOrders?.length) continue;
+            if (hasBlockingCleanupIssues(c.upcoming_order, blockCtx)) continue;
             for (const b of c.upcoming_order.boxOrders) {
                 boxOrdersForSummary.push({
                     client_id: c.id,
@@ -264,7 +285,7 @@ export async function POST(request: NextRequest) {
             }
         }
         const customOrdersFromClients = (clients || [])
-            .filter((c: any) => c.upcoming_order?.serviceType === 'Custom')
+            .filter((c: any) => c.upcoming_order?.serviceType === 'Custom' && !hasBlockingCleanupIssues(c.upcoming_order, blockCtx))
             .map((c: any) => ({
                 client_id: c.id,
                 delivery_day: c.upcoming_order.deliveryDay,
@@ -1202,6 +1223,7 @@ export async function POST(request: NextRequest) {
         const boxOrders: { client_id: string; vendor_id?: string; box_type_id?: string; quantity: number; items: any }[] = [];
         for (const c of clients || []) {
             if (c.service_type !== 'Boxes' || !c.upcoming_order?.boxOrders?.length) continue;
+            if (hasBlockingCleanupIssues(c.upcoming_order, blockCtx)) continue;
             for (const b of c.upcoming_order.boxOrders) {
                 boxOrders.push({
                     client_id: c.id,

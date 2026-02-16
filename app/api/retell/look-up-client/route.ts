@@ -14,7 +14,11 @@ export async function POST(request: NextRequest) {
         console.error(LOG, 'auth failed: invalid or missing signature');
         return NextResponse.json({ success: false, error: 'unauthorized', message: 'Invalid signature' }, { status: 401 });
     }
-    let body: { name?: string; args?: { phone_number?: string; full_name?: string }; call?: unknown };
+    let body: {
+        name?: string;
+        args?: { phone_number?: string; full_name?: string; phoneNumber?: string; fullName?: string; phone?: string };
+        call?: { from_number?: string; to_number?: string; call_type?: string; [k: string]: unknown };
+    };
     try {
         body = rawBody ? JSON.parse(rawBody) : {};
     } catch (e) {
@@ -22,9 +26,20 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ success: false, error: 'invalid_body', message: 'Invalid JSON' }, { status: 400 });
     }
     const args = body.args ?? {};
-    const phone = normalizePhone(args.phone_number);
-    const fullName = (args.full_name ?? '').trim();
-    console.log(LOG, 'input', { phone: phone ? `${phone.slice(-4)}****` : null, hasFullName: !!fullName });
+    // Retell sends phone_number from JSON schema; accept camelCase/alternates and fallback to call.from_number (caller ID)
+    const phoneFromArgs =
+        args.phone_number ?? args.phoneNumber ?? args.phone ?? '';
+    let phone = normalizePhone(phoneFromArgs);
+    if (!phone && body.call && typeof body.call === 'object' && body.call.from_number) {
+        phone = normalizePhone(body.call.from_number);
+        console.log(LOG, 'using call.from_number as fallback (args had no phone)');
+    }
+    const fullName = (args.full_name ?? args.fullName ?? '').trim();
+    console.log(LOG, 'input', {
+        argsKeys: Object.keys(args),
+        phone: phone ? `${phone.slice(-4)}****` : null,
+        hasFullName: !!fullName
+    });
 
     if (phone) {
         const result = await lookupByPhone(phone);

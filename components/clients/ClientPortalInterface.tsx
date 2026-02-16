@@ -33,12 +33,55 @@ interface Props {
     boxOrders?: any[];
 }
 
+function computeInitialOrderConfig(upcomingOrder: any, client: ClientProfile | null): any {
+    if (!client) return {};
+    let configToSet: any = {};
+    if (upcomingOrder && typeof upcomingOrder === 'object') {
+        const isMultiDayFormat = !upcomingOrder.serviceType &&
+            !upcomingOrder.deliveryDayOrders &&
+            Object.keys(upcomingOrder).some(key => {
+                const val = (upcomingOrder as any)[key];
+                return val && val.serviceType;
+            });
+        if (isMultiDayFormat) {
+            const deliveryDayOrders: any = {};
+            for (const day of Object.keys(upcomingOrder)) {
+                const dayOrder = (upcomingOrder as any)[day];
+                if (dayOrder && dayOrder.serviceType) {
+                    deliveryDayOrders[day] = { vendorSelections: dayOrder.vendorSelections || [] };
+                }
+            }
+            const firstDayKey = Object.keys(upcomingOrder)[0];
+            const firstDayOrder = (upcomingOrder as any)[firstDayKey];
+            configToSet = {
+                serviceType: firstDayOrder?.serviceType || client.serviceType,
+                caseId: firstDayOrder?.caseId,
+                deliveryDayOrders
+            };
+        } else {
+            configToSet = { ...upcomingOrder };
+        }
+        if (!configToSet.serviceType) configToSet.serviceType = client.serviceType;
+    } else {
+        const defaultOrder: any = { serviceType: client.serviceType };
+        if (client.serviceType === 'Food') {
+            defaultOrder.vendorSelections = [{ vendorId: '', items: {} }];
+        }
+        configToSet = defaultOrder;
+    }
+    return configToSet;
+}
+
 export function ClientPortalInterface({ client: initialClient, statuses, navigators, vendors, menuItems, boxTypes, categories, upcomingOrder, activeOrder, mealCategories, mealItems, foodOrder, mealOrder, boxOrders }: Props) {
-    console.error(">>> [HEARTBEAT] ClientPortalInterface Rendered <<<");
     const router = useRouter();
     const [client, setClient] = useState<ClientProfile>(initialClient);
     const [activeBoxQuotas, setActiveBoxQuotas] = useState<BoxQuota[]>([]);
 
+    const [orderConfig, setOrderConfig] = useState<any>(() => computeInitialOrderConfig(upcomingOrder, initialClient));
+    const [originalOrderConfig, setOriginalOrderConfig] = useState<any>(() => {
+        const c = computeInitialOrderConfig(upcomingOrder, initialClient);
+        return JSON.parse(JSON.stringify(c));
+    });
 
     // Profile State
     const [profileData, setProfileData] = useState({
@@ -55,10 +98,6 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
         secondaryPhoneNumber: initialClient.secondaryPhoneNumber || '',
         address: initialClient.address || ''
     });
-
-    // Order Configuration State
-    const [orderConfig, setOrderConfig] = useState<any>({});
-    const [originalOrderConfig, setOriginalOrderConfig] = useState<any>({});
 
     // UI State
     const [saving, setSaving] = useState(false);
@@ -99,7 +138,8 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
     const lastSavedTimestampRef = useRef<string | null>(null);
     const lastUpcomingOrderIdRef = useRef<string | null>(null);
 
-    // Initialize order config from clients.upcoming_order (single source)
+    // Initialize order config from clients.upcoming_order only (current order — not activeOrder/old system).
+    // Order Summary sidebar reads this same orderConfig; do not use activeOrder for the summary.
     useEffect(() => {
         if (!client) return;
 
@@ -1154,6 +1194,7 @@ export function ClientPortalInterface({ client: initialClient, statuses, navigat
                 menuItems={menuItems}
                 mealCategories={mealCategories}
                 mealItems={mealItems}
+                categories={categories}
             />
 
             {

@@ -1,10 +1,35 @@
 'use client';
 
-import React from 'react';
-import { Vendor, MenuItem, MealCategory, MealItem } from '@/lib/types';
+import React, { useMemo } from 'react';
+import { Vendor, MenuItem, MealCategory, MealItem, ItemCategory } from '@/lib/types';
 import { getItemPoints } from '@/lib/utils';
 import { ShoppingCart, Package } from 'lucide-react';
 import styles from './ClientPortal.module.css';
+
+function isItemActive(item: { isActive?: boolean; is_active?: boolean } | null | undefined): boolean {
+    if (!item) return false;
+    const v = (item as any).isActive ?? (item as any).is_active;
+    return v === true;
+}
+
+function isVendorActive(v: { isActive?: boolean; is_active?: boolean } | null | undefined): boolean {
+    if (!v) return false;
+    const val = (v as any).isActive ?? (v as any).is_active;
+    return val === true;
+}
+
+/** Same as center (ClientPortalInterface box section): item is available for this box if it matches vendor and is in an active category. */
+function isMenuItemAvailableForBox(
+    item: MenuItem,
+    box: { vendorId?: string | null },
+    activeCategoryIds: Set<string>
+): boolean {
+    if (!isItemActive(item)) return false;
+    const catOk = item.categoryId != null && activeCategoryIds.has(item.categoryId);
+    if (!catOk) return false;
+    const vendorOk = !box.vendorId || (item.vendorId === box.vendorId) || (item.vendorId === null || item.vendorId === '');
+    return vendorOk;
+}
 
 interface Props {
     orderConfig: any;
@@ -12,8 +37,7 @@ interface Props {
     menuItems: MenuItem[];
     mealCategories: MealCategory[];
     mealItems: MealItem[];
-    // We might need to pass down handlers if we want items to be removable from here?
-    // For now, let's keep it read-only summary as per request "summarizes everything".
+    categories?: ItemCategory[];
 }
 
 export default function ClientPortalOrderSummary({
@@ -21,29 +45,36 @@ export default function ClientPortalOrderSummary({
     vendors,
     menuItems,
     mealCategories,
-    mealItems
+    mealItems,
+    categories = []
 }: Props) {
-
-    // -- Calculation Helpers -- (similar to FoodServiceWidget but focused on display)
+    const activeMenuItems = useMemo(() => menuItems.filter(i => isItemActive(i)), [menuItems]);
+    const activeMealItems = useMemo(() => mealItems.filter(i => isItemActive(i)), [mealItems]);
+    const activeVendors = useMemo(() => vendors.filter(v => isVendorActive(v)), [vendors]);
+    const activeCategoryIds = useMemo(
+        () => new Set((categories || []).filter(c => c.isActive !== false).map(c => c.id)),
+        [categories]
+    );
 
     const sections: {
         title: string;
         items: { name: string; qty: number; note?: string; value: number; sortOrder: number }[];
     }[] = [];
 
-    // 1. Vendor Selections
     if (orderConfig.vendorSelections) {
         orderConfig.vendorSelections.forEach((selection: any) => {
             if (!selection.vendorId) return;
-            const vendor = vendors.find(v => v.id === selection.vendorId);
+            const vendor = activeVendors.find(v => v.id === selection.vendorId);
             if (!vendor) return;
 
+            const vendorId = selection.vendorId;
             const itemsList: { name: string; qty: number; note?: string; value: number; sortOrder: number }[] = [];
 
-            // Helper to add item
             const addItem = (itemId: string, qty: number, note?: string) => {
-                const item = menuItems.find(i => i.id === itemId);
-                if (item && qty > 0) {
+                const item = activeMenuItems.find(i => i.id === itemId);
+                const matchVendor = item && (item as any).vendorId === vendorId;
+                const ok = !!item && matchVendor && qty > 0;
+                if (ok && item) {
                     itemsList.push({
                         name: item.name,
                         qty: qty,
@@ -54,37 +85,29 @@ export default function ClientPortalOrderSummary({
                 }
             };
 
-            // Multi-day
             if (selection.itemsByDay && selection.selectedDeliveryDays) {
-                // For summary, we can flatten day structure or show per day? 
-                // Request said "section for each vendor/meal type and each item".
-                // Let's flatten for simplicity but maybe indicate day? 
-                // Actually, if an item is ordered on Mon & Thu, it's 2 separate lines effectively in fulfillment.
-                // Let's group by Item for "Total Qty" or list per day?
-                // "Summarizes everything... section for each vendor... item and its note"
-                // If notes differ by day, we must separate.
-
                 for (const day of selection.selectedDeliveryDays) {
                     const dayItems = selection.itemsByDay[day] || {};
                     const dayNotes = selection.itemNotesByDay?.[day] || {};
 
                     Object.entries(dayItems).forEach(([itemId, qty]) => {
+                        const q = Number(qty) || 0;
+                        if (q <= 0) return;
                         const note = dayNotes[itemId];
-                        const item = menuItems.find(i => i.id === itemId);
-                        if (item && (Number(qty) || 0) > 0) {
+                        const item = activeMenuItems.find(i => i.id === itemId);
+                        const matchVendor = item && (item as any).vendorId === vendorId;
+                        if (item && matchVendor) {
                             itemsList.push({
-                                name: `${item.name} (${day})`, // Distinguish day
-                                qty: Number(qty),
+                                name: `${item.name} (${day})`,
+                                qty: q,
                                 note: note as string,
-                                value: getItemPoints(item) * Number(qty),
+                                value: getItemPoints(item) * q,
                                 sortOrder: item.sortOrder ?? 0
                             });
                         }
                     });
                 }
-            }
-            // Flat / Single-Day
-            else if (selection.items) {
+            } else if (selection.items) {
                 const notes = selection.itemNotes || {};
                 Object.entries(selection.items).forEach(([itemId, qty]) => {
                     addItem(itemId, Number(qty), notes[itemId]);
@@ -98,7 +121,6 @@ export default function ClientPortalOrderSummary({
         });
     }
 
-    // 2. Meal Selections
     if (orderConfig.mealSelections) {
         Object.entries(orderConfig.mealSelections).forEach(([mealType, config]: [string, any]) => {
             const itemsList: { name: string; qty: number; note?: string; value: number; sortOrder: number }[] = [];
@@ -106,13 +128,14 @@ export default function ClientPortalOrderSummary({
             if (config.items) {
                 const notes = config.itemNotes || {};
                 Object.entries(config.items).forEach(([itemId, qty]) => {
-                    const item = mealItems.find(i => i.id === itemId);
-                    if (item && (Number(qty) || 0) > 0) {
+                    const q = Number(qty) || 0;
+                    const item = activeMealItems.find(i => i.id === itemId);
+                    if (item && q > 0) {
                         itemsList.push({
                             name: item.name,
-                            qty: Number(qty),
+                            qty: q,
                             note: notes[itemId],
-                            value: getItemPoints(item) * Number(qty),
+                            value: getItemPoints(item) * q,
                             sortOrder: item.sortOrder ?? 0
                         });
                     }
@@ -126,26 +149,25 @@ export default function ClientPortalOrderSummary({
         });
     }
 
-    // 3. Boxes
     if (orderConfig.boxOrders && orderConfig.serviceType === 'Boxes') {
-        // Boxes usually don't have individual items listed in the same way, but let's see.
-        // They have "items" inside (custom box content).
         orderConfig.boxOrders.forEach((box: any, index: number) => {
             const itemsList: { name: string; qty: number; note?: string; value: number; sortOrder: number }[] = [];
 
             if (box.items) {
                 const notes = box.itemNotes || {};
                 Object.entries(box.items).forEach(([itemId, qty]) => {
+                    const q = Number(qty) || 0;
+                    if (q <= 0) return;
                     const item = menuItems.find(i => i.id === itemId);
-                    if (item && (Number(qty) || 0) > 0) {
-                        itemsList.push({
-                            name: item.name,
-                            qty: Number(qty),
-                            note: notes[itemId],
-                            value: getItemPoints(item) * Number(qty),
-                            sortOrder: item.sortOrder ?? 0
-                        });
-                    }
+                    if (!item) return;
+                    if (!isMenuItemAvailableForBox(item, box, activeCategoryIds)) return;
+                    itemsList.push({
+                        name: item.name,
+                        qty: q,
+                        note: notes[itemId],
+                        value: getItemPoints(item) * q,
+                        sortOrder: item.sortOrder ?? 0
+                    });
                 });
             }
 

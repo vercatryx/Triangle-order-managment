@@ -98,6 +98,20 @@ interface DeletedBoxItemIssue {
     missingItems: { itemId: string; quantity: number; boxIndex: number; itemName?: string }[];
 }
 
+interface InactiveMenuItemIssue {
+    clientId: string;
+    clientName: string;
+    orderDeliveryDay: string | null;
+    vendorId: string;
+    vendorName: string;
+    itemId: string;
+    itemName?: string;
+    quantity: number;
+    serviceType: string;
+    where: 'deliveryDayOrders' | 'vendorSelections' | 'mealSelections';
+    mealKey?: string;
+}
+
 function issueKeyVendor(issue: InvalidVendorIssue): string {
     return `${issue.clientId}-${issue.vendorId}-${issue.where}-${issue.day ?? ''}-${issue.mealKey ?? ''}-${issue.boxIndex ?? ''}`;
 }
@@ -112,6 +126,7 @@ export default function CleanupPage() {
     const [invalidVendorIssues, setInvalidVendorIssues] = useState<InvalidVendorIssue[]>([]);
     const [itemDayIssues, setItemDayIssues] = useState<ItemDayIssue[]>([]);
     const [deletedMenuItemIssues, setDeletedMenuItemIssues] = useState<DeletedMenuItemIssue[]>([]);
+    const [inactiveMenuItemIssues, setInactiveMenuItemIssues] = useState<InactiveMenuItemIssue[]>([]);
     const [boxQuotaIssues, setBoxQuotaIssues] = useState<BoxQuotaIssue[]>([]);
     const [deletedBoxItemIssues, setDeletedBoxItemIssues] = useState<DeletedBoxItemIssue[]>([]);
     const [inactiveBoxItemIssues, setInactiveBoxItemIssues] = useState<DeletedBoxItemIssue[]>([]);
@@ -126,6 +141,7 @@ export default function CleanupPage() {
     const [reassignItemDay, setReassignItemDay] = useState<Record<string, string>>({});
     const [reassigningItemDay, setReassigningItemDay] = useState<string | null>(null);
     const [removingDeletedItem, setRemovingDeletedItem] = useState<string | null>(null);
+    const [removingInactiveMenuItem, setRemovingInactiveMenuItem] = useState<string | null>(null);
     const [removingDeletedBoxItemsClientId, setRemovingDeletedBoxItemsClientId] = useState<string | null>(null);
     const [removingInactiveBoxItemsClientId, setRemovingInactiveBoxItemsClientId] = useState<string | null>(null);
     const [removeAllInactiveBoxItemsInProgress, setRemoveAllInactiveBoxItemsInProgress] = useState(false);
@@ -161,6 +177,7 @@ export default function CleanupPage() {
                 setInvalidVendorIssues(data.invalidVendorIssues || []);
                 setItemDayIssues(data.itemDayIssues || []);
                 setDeletedMenuItemIssues(data.deletedMenuItemIssues || []);
+                setInactiveMenuItemIssues(data.inactiveMenuItemIssues || []);
                 setBoxQuotaIssues(data.boxQuotaIssues || []);
                 setDeletedBoxItemIssues(data.deletedBoxItemIssues || []);
                 setInactiveBoxItemIssues(data.inactiveBoxItemIssues || []);
@@ -365,6 +382,22 @@ export default function CleanupPage() {
         setRemovingDeletedItem(null);
     };
 
+    const inactiveMenuItemKey = (m: InactiveMenuItemIssue) => `${m.clientId}-${m.orderDeliveryDay ?? 'flat'}-${m.vendorId}-${m.itemId}-${m.mealKey ?? ''}`;
+    const handleRemoveInactiveMenuItem = async (m: InactiveMenuItemIssue) => {
+        const key = inactiveMenuItemKey(m);
+        setRemovingInactiveMenuItem(key);
+        await runFix({
+            fix: 'deletedItem',
+            clientId: m.clientId,
+            vendorId: m.vendorId,
+            itemId: m.itemId,
+            orderDeliveryDay: m.orderDeliveryDay ?? undefined,
+            where: m.where,
+            mealKey: m.mealKey
+        });
+        setRemovingInactiveMenuItem(null);
+    };
+
     const handleCloseProfile = () => {
         setProfileClientId(null);
         fetchAll();
@@ -432,7 +465,7 @@ export default function CleanupPage() {
     };
 
     const mealTotal = mealIssues.length;
-    const totalIssues = mealTotal + vendorDayIssues.length + invalidVendorIssues.length + itemDayIssues.length + deletedMenuItemIssues.length + boxQuotaIssues.length + deletedBoxItemIssues.length + inactiveBoxItemIssues.length;
+    const totalIssues = mealTotal + vendorDayIssues.length + invalidVendorIssues.length + itemDayIssues.length + deletedMenuItemIssues.length + inactiveMenuItemIssues.length + boxQuotaIssues.length + deletedBoxItemIssues.length + inactiveBoxItemIssues.length;
 
     return (
         <div className={styles.container}>
@@ -484,6 +517,12 @@ export default function CleanupPage() {
                             <div className={styles.statLabel}>Deleted menu item</div>
                             <div className={`${styles.statValue} ${deletedMenuItemIssues.length > 0 ? styles.statValueWarning : ''}`}>
                                 {deletedMenuItemIssues.length}
+                            </div>
+                        </div>
+                        <div className={styles.statCard}>
+                            <div className={styles.statLabel}>Inactive menu/meal item</div>
+                            <div className={`${styles.statValue} ${inactiveMenuItemIssues.length > 0 ? styles.statValueWarning : ''}`}>
+                                {inactiveMenuItemIssues.length}
                             </div>
                         </div>
                         <div className={styles.statCard}>
@@ -842,6 +881,64 @@ export default function CleanupPage() {
                                                     <button
                                                         className={`${styles.actionButton} ${styles.btnClean}`}
                                                         onClick={() => handleRemoveDeletedItem(m)}
+                                                        disabled={isRemoving}
+                                                    >
+                                                        {isRemoving ? '…' : 'Remove'}
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        )}
+                    </section>
+
+                    {/* Section 5b: Inactive menu/meal item */}
+                    <section className={styles.section}>
+                        <h2 className={styles.sectionTitle}>5b. Inactive menu/meal item</h2>
+                        <p className={styles.sectionDesc}>
+                            The client&apos;s order references a menu or meal item that is inactive (or in an inactive category). Remove it from the order. These clients will not get orders created until fixed.
+                        </p>
+                        {inactiveMenuItemIssues.length === 0 && (
+                            <div className={styles.emptyState}>No inactive menu/meal item issues.</div>
+                        )}
+                        {inactiveMenuItemIssues.length > 0 && (
+                            <div className={styles.table}>
+                                <div className={styles.tableHeader}>
+                                    <div className={`${styles.tableRow} ${styles.rowDeletedItem}`}>
+                                        <div className={styles.tableHeaderCell}>Client</div>
+                                        <div className={styles.tableHeaderCell}>Day / Meal</div>
+                                        <div className={styles.tableHeaderCell}>Vendor</div>
+                                        <div className={styles.tableHeaderCell}>Item</div>
+                                        <div className={styles.tableHeaderCell}>Qty</div>
+                                        <div className={styles.tableHeaderCell}>Action</div>
+                                    </div>
+                                </div>
+                                {inactiveMenuItemIssues.map((m) => {
+                                    const key = inactiveMenuItemKey(m);
+                                    const isRemoving = removingInactiveMenuItem === key;
+                                    return (
+                                        <div key={key} className={styles.tableRowWrapper}>
+                                            <div className={`${styles.tableRow} ${styles.rowDeletedItem}`}>
+                                                <div className={styles.tableCell}>
+                                                    <Link href={`/clients?id=${m.clientId}`} className={styles.clientLink}>
+                                                        {m.clientName}
+                                                    </Link>
+                                                    <div className={styles.cellMeta}>{m.serviceType}</div>
+                                                </div>
+                                                <div className={styles.tableCell}>
+                                                    {m.orderDeliveryDay ?? (m.mealKey ?? '—')}
+                                                </div>
+                                                <div className={styles.tableCell}>{m.vendorName}</div>
+                                                <div className={styles.tableCell}>
+                                                    <span className={styles.invalidVendor}>{m.itemName || m.itemId}</span>
+                                                </div>
+                                                <div className={styles.tableCell}>{m.quantity}</div>
+                                                <div className={styles.tableCell}>
+                                                    <button
+                                                        className={`${styles.actionButton} ${styles.btnClean}`}
+                                                        onClick={() => handleRemoveInactiveMenuItem(m)}
                                                         disabled={isRemoving}
                                                     >
                                                         {isRemoving ? '…' : 'Remove'}
