@@ -1739,7 +1739,10 @@ export function ClientProfileDetail({
         const config = configToValidate ?? orderConfig;
         if (!config) return { isValid: true, messages: [] };
 
-        if (formData.serviceType === 'Food') {
+        // Source of truth for validation is the order (clients.upcoming_order), not the client row
+        const effectiveServiceType = config.serviceType ?? formData.serviceType;
+
+        if (effectiveServiceType === 'Food' || effectiveServiceType === 'Meal') {
             const messages: string[] = [];
 
             // Total value: use passed config when validating what we're about to save
@@ -1861,7 +1864,7 @@ export function ClientProfileDetail({
             }
         }
 
-        if (formData.serviceType === 'Boxes') {
+        if (effectiveServiceType === 'Boxes') {
             const messages: string[] = [];
 
             // Use the boxOrders array which supports multiple boxes
@@ -1939,7 +1942,7 @@ export function ClientProfileDetail({
             return { isValid: true, messages: [] };
         }
 
-        if (formData.serviceType === 'Custom') {
+        if (effectiveServiceType === 'Custom') {
             const messages: string[] = [];
             if (!config.custom_name || !config.custom_name.trim()) messages.push('Item Description is required.');
             if (!config.custom_price || Number(config.custom_price) <= 0) messages.push('Price must be greater than 0.');
@@ -6474,6 +6477,9 @@ export function ClientProfileDetail({
 
         const cleanedOrderConfig = { ...orderConfig };
 
+        // Source of truth: order (upcoming_order), not client row — same as validateOrder
+        const effectiveServiceType = orderConfig.serviceType ?? formData.serviceType;
+
         // CRITICAL: Always preserve caseId at the top level for both Food and Boxes
         cleanedOrderConfig.caseId = orderConfig.caseId;
 
@@ -6547,7 +6553,7 @@ export function ClientProfileDetail({
         }
                     */
 
-        if (formData.serviceType === 'Food') {
+        if (effectiveServiceType === 'Food' || effectiveServiceType === 'Meal') {
             // Single shape only: persist vendorSelections (with itemsByDay / selectedDeliveryDays). Never write deliveryDayOrders.
             if (Array.isArray(cleanedOrderConfig.vendorSelections)) {
                 cleanedOrderConfig.vendorSelections = cleanedOrderConfig.vendorSelections
@@ -6583,7 +6589,7 @@ export function ClientProfileDetail({
                     delete cleanedOrderConfig.mealSelections;
                 }
             }
-        } else if (formData.serviceType === 'Boxes') {
+        } else if (effectiveServiceType === 'Boxes') {
             console.log('[ClientProfile] prepareActiveOrder: Processing Boxes service');
             console.log('[ClientProfile] prepareActiveOrder: orderConfig.boxOrders:', orderConfig.boxOrders?.length || 0, 'boxes');
 
