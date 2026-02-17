@@ -4,9 +4,13 @@ import { useState, useEffect } from 'react';
 import { AppSettings } from '@/lib/types';
 import { updateSettings } from '@/lib/actions';
 import { useDataCache } from '@/lib/data-cache';
-import { Save } from 'lucide-react';
+import { Save, Download } from 'lucide-react';
 import { AdminManagement } from '@/components/admin/AdminManagement';
+import { ExportClientsModal } from '@/components/admin/ExportClientsModal';
 import styles from './GlobalSettings.module.css';
+
+// Set to true to show the Export clients button in Global Settings
+const SHOW_EXPORT_CLIENTS_BUTTON = false;
 
 export function GlobalSettings() {
     const { getSettings, invalidateReferenceData } = useDataCache();
@@ -19,6 +23,7 @@ export function GlobalSettings() {
     });
     const [saving, setSaving] = useState(false);
     const [message, setMessage] = useState<string | null>(null);
+    const [showExportModal, setShowExportModal] = useState(false);
 
     useEffect(() => {
         loadData();
@@ -122,9 +127,21 @@ export function GlobalSettings() {
                     <button className="btn btn-primary" onClick={handleSave} disabled={saving}>
                         <Save size={16} /> {saving ? 'Saving...' : 'Save Settings'}
                     </button>
+                    {SHOW_EXPORT_CLIENTS_BUTTON && (
+                        <button
+                            type="button"
+                            className="btn btn-secondary"
+                            onClick={() => setShowExportModal(true)}
+                            style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}
+                        >
+                            <Download size={16} /> Export clients
+                        </button>
+                    )}
                     {message && <span className={styles.successMessage}>{message}</span>}
                 </div>
             </div>
+
+            <ExportClientsModal isOpen={showExportModal} onClose={() => setShowExportModal(false)} />
 
             <div className={styles.card} style={{ marginTop: 'var(--spacing-lg)' }}>
                 <AdminManagement />
