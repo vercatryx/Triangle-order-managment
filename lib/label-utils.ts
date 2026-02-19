@@ -22,6 +22,51 @@ interface LabelGenerationOptions {
     deliveryDate?: string;
 }
 
+export interface GenerateLabelsPDFByDriverOptions {
+    orders: Order[];
+    getClientName: (clientId: string) => string;
+    getClientAddress: (clientId: string) => string;
+    getClientDriver: (clientId: string) => string | null;
+    getDriverName: (driverId: string) => string;
+    formatOrderedItemsForCSV: (order: Order) => string;
+    formatDate: (dateString: string | null | undefined) => string;
+    deliveryDate?: string;
+}
+
+/** Groups orders by driver and generates one PDF per driver using generateLabelsPDF. */
+export async function generateLabelsPDFByDriver(options: GenerateLabelsPDFByDriverOptions): Promise<void> {
+    const {
+        orders,
+        getClientName,
+        getClientAddress,
+        getClientDriver,
+        getDriverName,
+        formatOrderedItemsForCSV,
+        formatDate,
+        deliveryDate
+    } = options;
+
+    const byDriver = new Map<string, Order[]>();
+    for (const order of orders) {
+        const driverId = getClientDriver(order.client_id) ?? 'unassigned';
+        if (!byDriver.has(driverId)) byDriver.set(driverId, []);
+        byDriver.get(driverId)!.push(order);
+    }
+
+    for (const [driverId, driverOrders] of byDriver) {
+        const vendorName = driverId === 'unassigned' ? 'Unassigned' : getDriverName(driverId);
+        await generateLabelsPDF({
+            orders: driverOrders,
+            getClientName,
+            getClientAddress,
+            formatOrderedItemsForCSV,
+            formatDate,
+            vendorName,
+            deliveryDate
+        });
+    }
+}
+
 export async function generateLabelsPDF(options: LabelGenerationOptions): Promise<void> {
     const {
         orders,

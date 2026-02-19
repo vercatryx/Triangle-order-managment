@@ -879,7 +879,7 @@ export async function POST(request: NextRequest) {
         const debug = {
             clientCount: clients.length,
             workToDo: { foodOrders: foodOrders.length, mealOrders: mealOrders.length, boxOrders: boxOrders.length, customOrders: customOrders.length },
-            skipped: { foodNoData: foodSkippedNoData }
+            skipped: { foodBlocking: 0, foodNoData: foodSkippedNoData, mealBlocking: 0 }
         };
         const reportPayload = {
             ...report,
