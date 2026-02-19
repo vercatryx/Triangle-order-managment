@@ -1,0 +1,229 @@
+{
+  "debug": {
+    "clientCount": 1175,
+    "workToDo": {
+      "foodOrders": 125,
+      "mealOrders": 0,
+      "boxOrders": 1044,
+      "customOrders": 94
+    },
+    "skipped": {
+      "foodBlocking": 361,
+      "foodNoData": 46,
+      "mealBlocking": 348
+    }
+  },
+  "debugBatches": [
+    {
+      "batchIndex": 0,
+      "debug": {
+        "clientCount": 100,
+        "workToDo": {
+          "foodOrders": 0,
+          "mealOrders": 0,
+          "boxOrders": 0,
+          "customOrders": 32
+        },
+        "skipped": {
+          "foodBlocking": 57,
+          "foodNoData": 0,
+          "mealBlocking": 41
+        }
+      }
+    },
+    {
+      "batchIndex": 1,
+      "debug": {
+        "clientCount": 100,
+        "workToDo": {
+          "foodOrders": 11,
+          "mealOrders": 0,
+          "boxOrders": 102,
+          "customOrders": 8
+        },
+        "skipped": {
+          "foodBlocking": 19,
+          "foodNoData": 3,
+          "mealBlocking": 19
+        }
+      }
+    },
+    {
+      "batchIndex": 2,
+      "debug": {
+        "clientCount": 100,
+        "workToDo": {
+          "foodOrders": 20,
+          "mealOrders": 0,
+          "boxOrders": 57,
+          "customOrders": 7
+        },
+        "skipped": {
+          "foodBlocking": 40,
+          "foodNoData": 7,
+          "mealBlocking": 40
+        }
+      }
+    },
+    {
+      "batchIndex": 3,
+      "debug": {
+        "clientCount": 100,
+        "workToDo": {
+          "foodOrders": 15,
+          "mealOrders": 0,
+          "boxOrders": 77,
+          "customOrders": 9
+        },
+        "skipped": {
+          "foodBlocking": 36,
+          "foodNoData": 5,
+          "mealBlocking": 36
+        }
+      }
+    },
+    {
+      "batchIndex": 4,
+      "debug": {
+        "clientCount": 100,
+        "workToDo": {
+          "foodOrders": 4,
+          "mealOrders": 0,
+          "boxOrders": 156,
+          "customOrders": 11
+        },
+        "skipped": {
+          "foodBlocking": 13,
+          "foodNoData": 2,
+          "mealBlocking": 13
+        }
+      }
+    },
+    {
+      "batchIndex": 5,
+      "debug": {
+        "clientCount": 100,
+        "workToDo": {
+          "foodOrders": 1,
+          "mealOrders": 0,
+          "boxOrders": 161,
+          "customOrders": 9
+        },
+        "skipped": {
+          "foodBlocking": 17,
+          "foodNoData": 0,
+          "mealBlocking": 17
+        }
+      }
+    },
+    {
+      "batchIndex": 6,
+      "debug": {
+        "clientCount": 100,
+        "workToDo": {
+          "foodOrders": 3,
+          "mealOrders": 0,
+          "boxOrders": 109,
+          "customOrders": 3
+        },
+        "skipped": {
+          "foodBlocking": 28,
+          "foodNoData": 4,
+          "mealBlocking": 28
+        }
+      }
+    },
+    {
+      "batchIndex": 7,
+      "debug": {
+        "clientCount": 100,
+        "workToDo": {
+          "foodOrders": 11,
+          "mealOrders": 0,
+          "boxOrders": 128,
+          "customOrders": 1
+        },
+        "skipped": {
+          "foodBlocking": 18,
+          "foodNoData": 12,
+          "mealBlocking": 18
+        }
+      }
+    },
+    {
+      "batchIndex": 8,
+      "debug": {
+        "clientCount": 100,
+        "workToDo": {
+          "foodOrders": 17,
+          "mealOrders": 0,
+          "boxOrders": 51,
+          "customOrders": 6
+        },
+        "skipped": {
+          "foodBlocking": 39,
+          "foodNoData": 4,
+          "mealBlocking": 41
+        }
+      }
+    },
+    {
+      "batchIndex": 9,
+      "debug": {
+        "clientCount": 100,
+        "workToDo": {
+          "foodOrders": 13,
+          "mealOrders": 0,
+          "boxOrders": 85,
+          "customOrders": 7
+        },
+        "skipped": {
+          "foodBlocking": 32,
+          "foodNoData": 2,
+          "mealBlocking": 31
+        }
+      }
+    },
+    {
+      "batchIndex": 10,
+      "debug": {
+        "clientCount": 100,
+        "workToDo": {
+          "foodOrders": 25,
+          "mealOrders": 0,
+          "boxOrders": 39,
+          "customOrders": 0
+        },
+        "skipped": {
+          "foodBlocking": 51,
+          "foodNoData": 6,
+          "mealBlocking": 53
+        }
+      }
+    },
+    {
+      "batchIndex": 11,
+      "debug": {
+        "clientCount": 75,
+        "workToDo": {
+          "foodOrders": 5,
+          "mealOrders": 0,
+          "boxOrders": 79,
+          "customOrders": 1
+        },
+        "skipped": {
+          "foodBlocking": 11,
+          "foodNoData": 1,
+          "mealBlocking": 11
+        }
+      }
+    }
+  ],
+  "note": "Aggregated across all batches. debugBatches has per-batch workToDo/skipped if batched run.",
+  "mealFocus": {
+    "mealOrdersCreated": 0,
+    "mealWorkToDo": 0,
+    "mealSkippedBlocking": 348,
+    "alert": "No meal orders were created. Check: (1) clients have upcoming_order.mealSelections and serviceType Food/Meal, (2) Meal blocking = fix on Cleanup page (inactive vendor/item)."
+  }
+}

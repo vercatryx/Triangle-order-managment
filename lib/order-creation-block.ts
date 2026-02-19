@@ -34,7 +34,11 @@ export function hasBlockingCleanupIssues(
     return !v || !v.is_active;
   };
 
-  // Food: deliveryDayOrders or vendorSelections
+  // Only block when vendor missing from DB (not when inactive) — same as Meal so clients get orders when cleanup shows nothing
+  const vendorMissing = (vid: string) => !vendorMap.has(vid);
+  const itemDeleted = (itemId: string) => !allMenuItemIds.has(itemId) && !allBreakfastItemIds.has(itemId);
+
+  // Food: deliveryDayOrders or vendorSelections (relaxed: block only on missing vendor or deleted item)
   const ddo = uo.deliveryDayOrders as Record<string, { vendorSelections?: { vendorId?: string; items?: Record<string, number> }[] }> | undefined;
   if (ddo && typeof ddo === 'object') {
     for (const dayData of Object.values(ddo)) {
@@ -42,10 +46,10 @@ export function hasBlockingCleanupIssues(
       if (!Array.isArray(selections)) continue;
       for (const vs of selections) {
         const vid = vs.vendorId;
-        if (vid && vendorBlocking(vid)) return true;
+        if (vid && vendorMissing(vid)) return true;
         const items = vs.items && typeof vs.items === 'object' ? vs.items : {};
         for (const itemId of Object.keys(items)) {
-          if (Number(items[itemId]) > 0 && isItemBlocking(itemId)) return true;
+          if (Number(items[itemId]) > 0 && itemDeleted(itemId)) return true;
         }
       }
     }
@@ -55,26 +59,30 @@ export function hasBlockingCleanupIssues(
   if (Array.isArray(vsel) && (!ddo || typeof ddo !== 'object' || Object.keys(ddo).length === 0)) {
     for (const vs of vsel) {
       const vid = vs.vendorId;
-      if (vid && vendorBlocking(vid)) return true;
+      if (!vid) continue;
+      if (vendorMissing(vid)) return true;
       const itemsByDay = vs.itemsByDay && typeof vs.itemsByDay === 'object' ? vs.itemsByDay : {};
       for (const dayItems of Object.values(itemsByDay)) {
         if (!dayItems || typeof dayItems !== 'object') continue;
         for (const itemId of Object.keys(dayItems)) {
-          if (Number(dayItems[itemId]) > 0 && isItemBlocking(itemId)) return true;
+          if (Number(dayItems[itemId]) > 0 && itemDeleted(itemId)) return true;
         }
       }
     }
   }
 
-  // Meal: mealSelections
-  const mealSel = uo.mealSelections as Record<string, { vendorId?: string; items?: Record<string, number> }> | undefined;
+  // Meal: mealSelections (support snake_case meal_selections)
+  // Relaxed: only block on missing vendor or deleted item, so meal orders can be created when cleanup page shows nothing (e.g. inactive item/vendor still allow creation).
+  const mealSel = (uo.mealSelections ?? (uo as any).meal_selections) as Record<string, { vendorId?: string; vendor_id?: string; items?: Record<string, number> }> | undefined;
   if (mealSel && typeof mealSel === 'object') {
+    const mealVendorBlocking = (vid: string) => !vendorMap.has(vid); // only block if vendor missing, not if inactive
+    const mealItemBlocking = (itemId: string) => !allMenuItemIds.has(itemId) && !allBreakfastItemIds.has(itemId); // only block if item deleted (not in DB)
     for (const data of Object.values(mealSel)) {
-      const vid = data?.vendorId;
-      if (vid && vendorBlocking(vid)) return true;
+      const vid = data?.vendorId ?? data?.vendor_id;
+      if (vid && mealVendorBlocking(vid)) return true;
       const items = data?.items && typeof data.items === 'object' ? data.items : {};
       for (const itemId of Object.keys(items)) {
-        if (Number(items[itemId]) > 0 && isItemBlocking(itemId)) return true;
+        if (Number(items[itemId]) > 0 && mealItemBlocking(itemId)) return true;
       }
     }
   }

@@ -170,6 +170,8 @@ export function OrdersManagement() {
         let weekEnd = '';
         const allFailures: { clientName: string; orderType: string; date: string; reason: string }[] = [];
         const allDiagnostics: { clientId?: string; clientName?: string; vendorId?: string; vendorName?: string; date?: string; orderType?: string; outcome?: string; orderId?: string; reason?: string }[] = [];
+        const debugBatches: { batchIndex: number; debug: { clientCount: number; workToDo: { foodOrders: number; mealOrders: number; boxOrders: number; customOrders: number }; skipped: { foodBlocking: number; foodNoData: number; mealBlocking: number } } }[] = [];
+        const debugAgg = { clientCount: 0, workToDo: { foodOrders: 0, mealOrders: 0, boxOrders: 0, customOrders: 0 }, skipped: { foodBlocking: 0, foodNoData: 0, mealBlocking: 0 } };
         try {
             let batchIndex = 0;
             while (true) {
@@ -186,7 +188,11 @@ export function OrdersManagement() {
                     setNextWeekResult({ success: false, error: data.error || 'Request failed' });
                     break;
                 }
-                if (data.batch?.creationId != null) creationId = data.batch.creationId;
+                if (data.batch == null) {
+                    setNextWeekResult({ success: false, error: 'Batch response missing. Only the first batch may have run. Try the non-batched "Create orders for the next week" button, or run batched again.' });
+                    break;
+                }
+                if (data.batch.creationId != null) creationId = data.batch.creationId;
                 totalCreated += data.totalCreated ?? 0;
                 if (data.breakdown) {
                     breakdown.Food += data.breakdown.Food ?? 0;
@@ -222,6 +228,22 @@ export function OrdersManagement() {
                     }
                 }
                 allDiagnostics.push(...(data.batch?.diagnostics ?? []));
+                const batchDebug = data.debug ?? data.batch?.debug;
+                if (batchDebug) {
+                    debugBatches.push({ batchIndex, debug: batchDebug });
+                    debugAgg.clientCount += batchDebug.clientCount ?? 0;
+                    if (batchDebug.workToDo) {
+                        debugAgg.workToDo.foodOrders += batchDebug.workToDo.foodOrders ?? 0;
+                        debugAgg.workToDo.mealOrders += batchDebug.workToDo.mealOrders ?? 0;
+                        debugAgg.workToDo.boxOrders += batchDebug.workToDo.boxOrders ?? 0;
+                        debugAgg.workToDo.customOrders += batchDebug.workToDo.customOrders ?? 0;
+                    }
+                    if (batchDebug.skipped) {
+                        debugAgg.skipped.foodBlocking += batchDebug.skipped.foodBlocking ?? 0;
+                        debugAgg.skipped.foodNoData += batchDebug.skipped.foodNoData ?? 0;
+                        debugAgg.skipped.mealBlocking += batchDebug.skipped.mealBlocking ?? 0;
+                    }
+                }
                 if (!data.batch?.hasMore) break;
                 batchIndex++;
             }
@@ -239,7 +261,9 @@ export function OrdersManagement() {
                     excelRows: allExcelRows,
                     failures: allFailures,
                     vendorBreakdown: vendorBreakdownArray,
-                    diagnostics: allDiagnostics
+                    diagnostics: allDiagnostics,
+                    debug: debugBatches.length > 0 ? debugAgg : undefined,
+                    debugBatches: debugBatches.length > 0 ? debugBatches : undefined
                 })
             });
             const sendData = await sendRes.json();

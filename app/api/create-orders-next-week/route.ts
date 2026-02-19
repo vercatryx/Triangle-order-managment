@@ -4,7 +4,6 @@ import { DAY_NAME_TO_NUMBER, getFirstDeliveryDateInWeek } from '@/lib/order-date
 import { vendorSelectionsToDeliveryDayOrders } from '@/lib/upcoming-order-converter';
 import { sendSchedulingReport, sendVendorNextWeekSummary, type VendorBreakdownItem } from '@/lib/email-report';
 import { getNextCreationId } from '@/lib/actions';
-import { hasBlockingCleanupIssues, type BlockContext } from '@/lib/order-creation-block';
 import * as XLSX from 'xlsx';
 
 // Vercel limit is 800s; allow max so 800+ orders can complete (many sequential DB round-trips per order)
@@ -168,128 +167,110 @@ export async function POST(request: NextRequest) {
         const allMealItems = (mealItemsRes.data || []).map((i: any) => ({ ...i, itemType: 'meal' as const }));
         const allBoxTypes = boxTypesRes.data || [];
 
-        // Build block context: clients with inactive/deleted items or invalid vendors must not get orders (fix on cleanup page first)
-        const { data: itemCategories } = await supabase.from('item_categories').select('id, is_active');
-        const { data: breakfastCategories } = await supabase.from('breakfast_categories').select('id, is_active');
-        const activeItemCategoryIds = new Set<string>(
-            (itemCategories || []).filter((r: { is_active?: boolean }) => r.is_active === true).map((r: { id: string }) => r.id)
-        );
-        const activeBreakfastCategoryIds = new Set<string>(
-            (breakfastCategories || []).filter((r: { is_active?: boolean }) => r.is_active === true).map((r: { id: string }) => r.id)
-        );
-        const allMenuItemIds = new Set<string>((allMenuItems as { id: string }[]).map((r) => r.id));
-        const allBreakfastItemIds = new Set<string>((allMealItems as { id: string }[]).map((r) => r.id));
-        const activeMenuItemIds = new Set<string>(
-            (allMenuItems as { id: string; is_active?: boolean; category_id?: string | null }[]).filter((r) => {
-                if (r.is_active !== true) return false;
-                const cid = r.category_id;
-                if (cid == null || cid === '') return true;
-                return activeItemCategoryIds.size === 0 || activeItemCategoryIds.has(cid);
-            }).map((r) => r.id)
-        );
-        const activeBreakfastItemIds = new Set<string>(
-            (allMealItems as { id: string; is_active?: boolean; category_id?: string | null }[]).filter((r) => {
-                if (r.is_active !== true) return false;
-                const cid = r.category_id;
-                if (cid == null || cid === '') return true;
-                return activeBreakfastCategoryIds.size === 0 || activeBreakfastCategoryIds.has(cid);
-            }).map((r) => r.id)
-        );
-        const vendorActiveMap = new Map<string, { is_active: boolean }>();
+        // At start: know which vendors are active. We only skip creating an order for a given vendor if that vendor is inactive (no client-level blocking).
+        const vendorActiveMap = new Map<string, boolean>();
         for (const v of vendorsRes.data || []) {
-            vendorActiveMap.set(v.id, { is_active: !!v.is_active });
+            vendorActiveMap.set(v.id, !!v.is_active);
         }
-        const blockCtx: BlockContext = {
-            activeMenuItemIds,
-            activeBreakfastItemIds,
-            allMenuItemIds,
-            allBreakfastItemIds,
-            vendorMap: vendorActiveMap
-        };
 
         // Derive food/meal/box/custom from clients.upcoming_order only (single source of truth per UPCOMING_ORDER_SCHEMA)
-        // Type is determined by upcoming_order.serviceType, not clients.service_type.
+        // Support both camelCase (UI) and snake_case (DB/legacy) so no clients are missed (e.g. JOEL SCHLESINGER).
+        // Type is determined by upcoming_order.serviceType / service_type, not clients.service_type.
         // Food: serviceType 'Food' (or legacy missing), with deliveryDayOrders or vendorSelections
         const foodOrders: { client_id: string; delivery_day_orders: Record<string, { vendorSelections?: any[] }>; notes: string | null; case_id: string | null }[] = [];
+        let foodSkippedNoData = 0;
         for (const c of clients || []) {
             const uo = c.upcoming_order;
             if (!uo || typeof uo !== 'object') continue;
-            if (hasBlockingCleanupIssues(uo, blockCtx)) continue; // skip until fixed on cleanup page
-            // Only Food payloads (or legacy without serviceType) have delivery-day food data
-            const isFoodType = uo.serviceType === 'Food' || uo.serviceType === undefined;
+            const st = (uo as any).serviceType ?? (uo as any).service_type;
+            const isFoodType = st === 'Food' || st === undefined;
             if (!isFoodType) continue;
 
             let delivery_day_orders: Record<string, { vendorSelections?: any[] }> | null = null;
+            const ddo = (uo as any).deliveryDayOrders ?? (uo as any).delivery_day_orders;
+            const vsel = (uo as any).vendorSelections ?? (uo as any).vendor_selections;
 
-            if (uo.deliveryDayOrders && typeof uo.deliveryDayOrders === 'object' && Object.keys(uo.deliveryDayOrders).length > 0) {
-                delivery_day_orders = uo.deliveryDayOrders;
-            } else if (Array.isArray(uo.vendorSelections) && uo.vendorSelections.length > 0) {
-                const converted = vendorSelectionsToDeliveryDayOrders(uo.vendorSelections);
+            if (ddo && typeof ddo === 'object' && Object.keys(ddo).length > 0) {
+                delivery_day_orders = ddo;
+            } else if (Array.isArray(vsel) && vsel.length > 0) {
+                const normalized = vsel.map((vs: any) => ({ ...vs, vendorId: vs.vendorId ?? vs.vendor_id }));
+                const converted = vendorSelectionsToDeliveryDayOrders(normalized);
                 if (Object.keys(converted).length > 0) delivery_day_orders = converted;
             }
-
-            if (delivery_day_orders && Object.keys(delivery_day_orders).length > 0) {
-                foodOrders.push({
-                    client_id: c.id,
-                    delivery_day_orders,
-                    notes: uo.notes ?? null,
-                    case_id: uo.caseId ?? null
-                });
+            if (!delivery_day_orders || Object.keys(delivery_day_orders).length === 0) {
+                foodSkippedNoData++;
+                continue;
             }
+
+            foodOrders.push({
+                client_id: c.id,
+                delivery_day_orders,
+                notes: (uo as any).notes ?? null,
+                case_id: (uo as any).caseId ?? (uo as any).case_id ?? null
+            });
         }
         // Meal: serviceType 'Food' or 'Meal' with mealSelections (schema allows both in same payload)
         const mealOrders = (clients || [])
             .filter((c: any) => {
                 const uo = c.upcoming_order;
-                if (!uo || typeof uo !== 'object' || !uo.mealSelections) return false;
-                if (hasBlockingCleanupIssues(uo, blockCtx)) return false;
-                return uo.serviceType === 'Food' || uo.serviceType === 'Meal';
+                if (!uo || typeof uo !== 'object') return false;
+                const mealSel = (uo as any).mealSelections ?? (uo as any).meal_selections;
+                if (!mealSel || typeof mealSel !== 'object' || Object.keys(mealSel).length === 0) return false;
+                const st = (uo as any).serviceType ?? (uo as any).service_type;
+                return st === 'Food' || st === 'Meal';
             })
             .map((c: any) => ({
                 client_id: c.id,
-                meal_selections: c.upcoming_order.mealSelections,
-                notes: c.upcoming_order.notes ?? null,
-                case_id: c.upcoming_order.caseId ?? null
+                meal_selections: (c.upcoming_order as any).mealSelections ?? (c.upcoming_order as any).meal_selections,
+                notes: (c.upcoming_order as any).notes ?? null,
+                case_id: (c.upcoming_order as any).caseId ?? (c.upcoming_order as any).case_id ?? null
             }));
-        // Boxes: serviceType 'Boxes' with boxOrders
+        // Boxes: serviceType 'Boxes' with boxOrders (support snake_case)
         const boxOrders: { client_id: string; box_type_id?: string; vendor_id?: string; quantity: number; items: any; item_notes?: any; case_id?: string; notes?: string }[] = [];
         for (const c of clients || []) {
             const uo = c.upcoming_order;
-            if (!uo || typeof uo !== 'object' || uo.serviceType !== 'Boxes' || !uo.boxOrders?.length) continue;
-            if (hasBlockingCleanupIssues(uo, blockCtx)) continue;
-            for (const b of uo.boxOrders) {
+            if (!uo || typeof uo !== 'object') continue;
+            const st = (uo as any).serviceType ?? (uo as any).service_type;
+            const boxList = (uo as any).boxOrders ?? (uo as any).box_orders;
+            if (st !== 'Boxes' || !Array.isArray(boxList) || boxList.length === 0) continue;
+            for (const b of boxList) {
                 boxOrders.push({
                     client_id: c.id,
-                    box_type_id: b.boxTypeId ?? undefined,
-                    vendor_id: b.vendorId ?? undefined,
+                    box_type_id: b.boxTypeId ?? b.box_type_id ?? undefined,
+                    vendor_id: b.vendorId ?? b.vendor_id ?? undefined,
                     quantity: b.quantity ?? 1,
                     items: b.items ?? {},
-                    item_notes: b.itemNotes,
-                    case_id: uo.caseId ?? undefined,
-                    notes: uo.notes
+                    item_notes: b.itemNotes ?? b.item_notes,
+                    case_id: (uo as any).caseId ?? (uo as any).case_id ?? undefined,
+                    notes: (uo as any).notes
                 });
             }
         }
-        // Custom orders from clients.upcoming_order (single source of truth)
+        // Custom orders from clients.upcoming_order (single source of truth, support snake_case)
         const customOrders = (clients || [])
             .filter((c: any) => {
                 const uo = c.upcoming_order;
-                return uo && uo.serviceType === 'Custom' && !hasBlockingCleanupIssues(uo, blockCtx);
+                if (!uo || typeof uo !== 'object') return false;
+                const st = (uo as any).serviceType ?? (uo as any).service_type;
+                return st === 'Custom';
             })
             .map((c: any) => ({
                 client_id: c.id,
                 id: c.id,
-                delivery_day: c.upcoming_order?.deliveryDay ?? c.upcoming_order?.delivery_day,
-                total_value: c.upcoming_order?.custom_price ?? c.upcoming_order?.totalValue ?? 0,
-                notes: c.upcoming_order?.notes ?? null,
-                case_id: c.upcoming_order?.caseId ?? null,
-                custom_name: c.upcoming_order?.custom_name,
-                vendorId: c.upcoming_order?.vendorId,
+                delivery_day: (c.upcoming_order as any)?.deliveryDay ?? (c.upcoming_order as any)?.delivery_day,
+                total_value: (c.upcoming_order as any)?.custom_price ?? (c.upcoming_order as any)?.totalValue ?? 0,
+                notes: (c.upcoming_order as any)?.notes ?? null,
+                case_id: (c.upcoming_order as any)?.caseId ?? (c.upcoming_order as any)?.case_id ?? null,
+                custom_name: (c.upcoming_order as any)?.custom_name,
+                vendorId: (c.upcoming_order as any)?.vendorId ?? (c.upcoming_order as any)?.vendor_id,
                 upcoming_order: c.upcoming_order
             }))
             .filter((co: any) => co.delivery_day);
 
         console.log(`[Create Orders Next Week] Work to do: foodOrders=${foodOrders.length} mealOrders=${mealOrders.length} boxOrders=${boxOrders.length} customOrders=${customOrders.length}`);
+        if (foodSkippedNoData > 0) {
+            console.log(`[Create Orders Next Week] Food skipped (no delivery data): ${foodSkippedNoData}`);
+        }
 
         const reportEmail = (settingsRes.data as any)?.report_email || '';
         const sendVendorNextWeekEmails = (settingsRes.data as any)?.send_vendor_next_week_emails !== false;
@@ -444,6 +425,7 @@ export async function POST(request: NextRequest) {
                     if (!sel.vendorId) continue;
                     const vendor = vendorMap.get(sel.vendorId);
                     if (!vendor) continue;
+                    if (vendorActiveMap.get(sel.vendorId) === false) continue; // skip inactive vendor only
                     const clientName = clientMap.get(fo.client_id)?.full_name ?? fo.client_id;
 
                     if (await orderExists(fo.client_id, deliveryDateStr, 'Food', sel.vendorId)) {
@@ -519,15 +501,23 @@ export async function POST(request: NextRequest) {
 
             // One Meal order per mealSelections entry (each can be a different vendor). Multiple meal orders per client per week are supported.
             for (const [mealType, group] of Object.entries(rawSelections)) {
-                const g = group as { vendorId?: string; items?: Record<string, number>; itemNotes?: Record<string, string> };
-                if (!g?.vendorId) continue;
-                const vendor = vendorMap.get(g.vendorId);
+                const g = group as { vendorId?: string; vendor_id?: string; items?: Record<string, number>; itemNotes?: Record<string, string> };
+                const mealVendorId = g?.vendorId ?? g?.vendor_id;
+                if (!mealVendorId) continue;
+                const vendor = vendorMap.get(mealVendorId);
                 if (!vendor) continue;
+                if (vendorActiveMap.get(mealVendorId) === false) continue; // skip inactive vendor only
 
                 const deliveryDate = getFirstDeliveryDateInWeek(nextWeekStart, vendor.deliveryDays);
                 if (!deliveryDate) continue;
                 const deliveryDateStr = deliveryDate.toISOString().split('T')[0];
                 if (deliveryDateStr < weekStartStr || deliveryDateStr > weekEndStr) continue;
+
+                if (await orderExists(mo.client_id, deliveryDateStr, 'Meal', mealVendorId)) {
+                    const clientName = clientMap.get(mo.client_id)?.full_name ?? mo.client_id;
+                    diagnostics.push({ clientId: mo.client_id, clientName, vendorId: mealVendorId, vendorName: vendor.name, date: deliveryDateStr, orderType: 'Meal', outcome: 'skipped', reason: 'Order already exists for this client/date/vendor' });
+                    continue;
+                }
 
                 let orderTotalValue = 0;
                 let orderTotalItems = 0;
@@ -565,18 +555,18 @@ export async function POST(request: NextRequest) {
                     clientName
                 );
                 if (!newOrder) {
-                    diagnostics.push({ clientId: mo.client_id, clientName, vendorId: g.vendorId, vendorName: vendor.name, date: deliveryDateStr, orderType: 'Meal', outcome: 'failed', reason: report.unexpectedFailures[report.unexpectedFailures.length - 1]?.reason ?? 'createOrder failed' });
+                    diagnostics.push({ clientId: mo.client_id, clientName, vendorId: mealVendorId, vendorName: vendor.name, date: deliveryDateStr, orderType: 'Meal', outcome: 'failed', reason: report.unexpectedFailures[report.unexpectedFailures.length - 1]?.reason ?? 'createOrder failed' });
                     continue;
                 }
 
-                const { data: vs } = await supabase.from('order_vendor_selections').insert({ order_id: newOrder.id, vendor_id: g.vendorId }).select().single();
+                const { data: vs } = await supabase.from('order_vendor_selections').insert({ order_id: newOrder.id, vendor_id: mealVendorId }).select().single();
                 if (vs) {
-                    recordVendorOrder(g.vendorId, deliveryDateStr);
-                    recordReportOrder(mo.client_id, g.vendorId, 'Meal');
+                    recordVendorOrder(mealVendorId, deliveryDateStr);
+                    recordReportOrder(mo.client_id, mealVendorId, 'Meal');
                     await supabase.from('order_items').insert(itemsList.map(i => ({ ...i, vendor_selection_id: vs.id, order_id: newOrder.id })));
-                    diagnostics.push({ clientId: mo.client_id, clientName, vendorId: g.vendorId, vendorName: vendor.name, date: deliveryDateStr, orderType: 'Meal', outcome: 'created', orderId: newOrder.id });
+                    diagnostics.push({ clientId: mo.client_id, clientName, vendorId: mealVendorId, vendorName: vendor.name, date: deliveryDateStr, orderType: 'Meal', outcome: 'created', orderId: newOrder.id });
                 } else {
-                    diagnostics.push({ clientId: mo.client_id, clientName, vendorId: g.vendorId, vendorName: vendor.name, date: deliveryDateStr, orderType: 'Meal', outcome: 'failed', orderId: newOrder.id, reason: 'order_vendor_selections insert failed' });
+                    diagnostics.push({ clientId: mo.client_id, clientName, vendorId: mealVendorId, vendorName: vendor.name, date: deliveryDateStr, orderType: 'Meal', outcome: 'failed', orderId: newOrder.id, reason: 'order_vendor_selections insert failed' });
                 }
             }
         }
@@ -645,6 +635,7 @@ export async function POST(request: NextRequest) {
                 if (!bo.vendor_id) continue;
                 const vendor = vendorMap.get(bo.vendor_id);
                 if (!vendor) continue;
+                if (vendorActiveMap.get(bo.vendor_id) === false) continue; // skip inactive vendor only
                 const boxValue = computeBoxValue(bo);
                 const qty = bo.quantity || 1;
                 const totalBoxValue = boxValue * qty;
@@ -720,6 +711,7 @@ export async function POST(request: NextRequest) {
 
                 const vendorId = co.vendorId ?? co.upcoming_order?.vendorId;
                 if (!vendorId) continue;
+                if (vendorActiveMap.get(vendorId) === false) continue; // skip inactive vendor only
 
                 const deliveryDate = getDateForDayInWeek(nextWeekStart, co.delivery_day);
                 if (!deliveryDate) continue;
@@ -790,7 +782,7 @@ export async function POST(request: NextRequest) {
             if (row.ordersCreated === 0 && !row.reason) {
                 const client = clientMap.get(row.clientId);
                 const uo = client?.upcoming_order;
-                const st = uo && typeof uo === 'object' ? (uo.serviceType as string) : undefined;
+                const st = uo && typeof uo === 'object' ? ((uo as any).serviceType ?? (uo as any).service_type) : undefined;
                 if (st === 'Food') row.reason = 'No upcoming food orders';
                 else if (st === 'Meal') row.reason = 'No upcoming meal orders';
                 else if (st === 'Boxes') row.reason = 'No upcoming box orders';
@@ -826,8 +818,18 @@ export async function POST(request: NextRequest) {
 
         if (batchMode) {
             const totalClients = totalClientsCount ?? 0;
-            const hasMore = totalClients > (batchMode.batchIndex + 1) * batchMode.batchSize;
-            console.log(`[Create Orders Next Week] Batch ${batchMode.batchIndex} done. totalCreated=${report.totalCreated} hasMore=${hasMore}`);
+            const batchSize = batchMode.batchSize;
+            const nextBatchStart = (batchMode.batchIndex + 1) * batchSize;
+            // When count is missing/0, continue until we get a short batch so batched button still processes all clients
+            const hasMore = totalClients > 0
+                ? totalClients > nextBatchStart
+                : clients.length >= batchSize;
+            console.log(`[Create Orders Next Week] Batch ${batchMode.batchIndex} done. totalCreated=${report.totalCreated} totalClients=${totalClients} hasMore=${hasMore}`);
+            const debug = {
+                clientCount: clients.length,
+                workToDo: { foodOrders: foodOrders.length, mealOrders: mealOrders.length, boxOrders: boxOrders.length, customOrders: customOrders.length },
+                skipped: { foodNoData: foodSkippedNoData }
+            };
             return NextResponse.json({
                 success: true,
                 totalCreated: report.totalCreated,
@@ -835,6 +837,8 @@ export async function POST(request: NextRequest) {
                 weekStart: weekStartStr,
                 weekEnd: weekEndStr,
                 errors: report.unexpectedFailures.length ? report.unexpectedFailures : undefined,
+                skipped: foodSkippedNoData > 0 ? { foodNoData: foodSkippedNoData } : undefined,
+                debug,
                 batch: {
                     batchIndex: batchMode.batchIndex,
                     batchSize: batchMode.batchSize,
@@ -843,7 +847,8 @@ export async function POST(request: NextRequest) {
                     hasMore,
                     excelRows: excelData,
                     vendorBreakdown,
-                    diagnostics
+                    diagnostics,
+                    debug
                 }
             });
         }
@@ -871,16 +876,36 @@ export async function POST(request: NextRequest) {
             }
         }
 
+        const debug = {
+            clientCount: clients.length,
+            workToDo: { foodOrders: foodOrders.length, mealOrders: mealOrders.length, boxOrders: boxOrders.length, customOrders: customOrders.length },
+            skipped: { foodNoData: foodSkippedNoData }
+        };
         const reportPayload = {
             ...report,
             creationId,
             orderCreationDate: `Next week: ${weekStartStr} to ${weekEndStr}`,
             orderCreationDay: '',
-            vendorBreakdown
+            vendorBreakdown,
+            debug
         };
+        const attachments: { filename: string; content: Buffer; contentType: string }[] = [excelAttachment];
+        const debugPayload: { debug: typeof debug; mealFocus?: Record<string, unknown> } = { debug };
+        if (report.breakdown.Meal === 0) {
+            debugPayload.mealFocus = {
+                mealOrdersCreated: 0,
+                mealWorkToDo: debug.workToDo.mealOrders,
+                alert: 'No meal orders were created. Check: clients have upcoming_order.mealSelections and serviceType Food/Meal; inactive vendors are skipped per-vendor only.'
+            };
+        }
+        attachments.push({
+            filename: `Create_Orders_Next_Week_Debug_${weekStartStr}_to_${weekEndStr}.json`,
+            content: Buffer.from(JSON.stringify(debugPayload, null, 2), 'utf-8'),
+            contentType: 'application/json'
+        });
         console.log(`[Create Orders Next Week] Finished creating orders. totalCreated=${report.totalCreated} unexpectedFailures=${report.unexpectedFailures.length}. Sending report email.`);
         if (reportEmail) {
-            await sendSchedulingReport(reportPayload, reportEmail, [excelAttachment]);
+            await sendSchedulingReport(reportPayload, reportEmail, attachments);
         } else {
             console.warn('[Create Orders Next Week] No report_email in settings. Skipping email.');
         }
@@ -892,7 +917,9 @@ export async function POST(request: NextRequest) {
             reportEmail: reportEmail || null,
             weekStart: weekStartStr,
             weekEnd: weekEndStr,
-            errors: report.unexpectedFailures.length ? report.unexpectedFailures : undefined
+            errors: report.unexpectedFailures.length ? report.unexpectedFailures : undefined,
+            skipped: foodSkippedNoData > 0 ? { foodNoData: foodSkippedNoData } : undefined,
+            debug
         });
     } catch (error: any) {
         console.error('[Create Orders Next Week] Error:', error);

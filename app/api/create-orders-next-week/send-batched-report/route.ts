@@ -20,7 +20,9 @@ export async function POST(request: NextRequest) {
             excelRows = [],
             failures = [],
             vendorBreakdown = [],
-            diagnostics: diagnosticsInput = []
+            diagnostics: diagnosticsInput = [],
+            debug: debugInput,
+            debugBatches: debugBatchesInput = []
         } = body;
 
         const { data: settings } = await supabase.from('app_settings').select('report_email').single();
@@ -100,8 +102,32 @@ export async function POST(request: NextRequest) {
             creationId,
             orderCreationDate,
             orderCreationDay: '',
-            vendorBreakdown: Array.isArray(vendorBreakdown) ? vendorBreakdown : []
+            vendorBreakdown: Array.isArray(vendorBreakdown) ? vendorBreakdown : [],
+            debug: debugInput ?? undefined,
+            debugBatches: Array.isArray(debugBatchesInput) && debugBatchesInput.length > 0 ? debugBatchesInput : undefined
         };
+
+        if (reportPayload.debug || (reportPayload.debugBatches && reportPayload.debugBatches.length > 0)) {
+            const debugPayload: Record<string, unknown> = {
+                debug: reportPayload.debug,
+                debugBatches: reportPayload.debugBatches,
+                note: 'Aggregated across all batches. debugBatches has per-batch workToDo/skipped if batched run.'
+            };
+            if (breakdown.Meal === 0) {
+                debugPayload.mealFocus = {
+                    mealOrdersCreated: 0,
+                    mealWorkToDo: reportPayload.debug?.workToDo?.mealOrders ?? null,
+                    mealSkippedBlocking: reportPayload.debug?.skipped?.mealBlocking ?? null,
+                    alert: 'No meal orders were created. Check: (1) clients have upcoming_order.mealSelections and serviceType Food/Meal, (2) Meal blocking = fix on Cleanup page (inactive vendor/item).'
+                };
+            }
+            attachments.push({
+                filename: `Create_Orders_Next_Week_Debug_${weekStart || 'week'}_to_${weekEnd || 'week'}.json`,
+                content: Buffer.from(JSON.stringify(debugPayload, null, 2), 'utf-8'),
+                contentType: 'application/json'
+            });
+        }
+
         await sendSchedulingReport(reportPayload, reportEmail, attachments);
 
         return NextResponse.json({

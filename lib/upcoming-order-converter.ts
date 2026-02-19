@@ -79,30 +79,40 @@ export function vendorSelectionsToDeliveryDayOrders(
     if (!Array.isArray(vendorSelections)) return byDay;
 
     for (const vs of vendorSelections) {
-        if (!vs?.vendorId) continue;
+        const vendorId = (vs as any)?.vendorId ?? (vs as any)?.vendor_id;
+        if (!vendorId) continue;
 
-        const days: string[] = [];
-        if (vs.itemsByDay && typeof vs.itemsByDay === 'object' && Object.keys(vs.itemsByDay).length > 0) {
-            days.push(...Object.keys(vs.itemsByDay));
-        } else if (vs.selectedDeliveryDays && Array.isArray(vs.selectedDeliveryDays) && vs.selectedDeliveryDays.length > 0 && vs.items && Object.keys(vs.items || {}).length > 0) {
-            days.push(...vs.selectedDeliveryDays);
+        let days: string[] = [];
+        const itemsByDay = (vs as any).itemsByDay ?? (vs as any).items_by_day;
+        const selectedDeliveryDays = (vs as any).selectedDeliveryDays ?? (vs as any).selected_delivery_days;
+        const items = (vs as any).items;
+        if (itemsByDay && typeof itemsByDay === 'object' && Object.keys(itemsByDay).length > 0) {
+            days = Object.keys(itemsByDay);
+        } else if (selectedDeliveryDays && Array.isArray(selectedDeliveryDays) && selectedDeliveryDays.length > 0 && items && Object.keys(items || {}).length > 0) {
+            days = [...selectedDeliveryDays];
+        }
+        // Fallback: UI may save items without itemsByDay/selectedDeliveryDays; create at least one order (Monday) so orders are not dropped
+        if (days.length === 0 && items && typeof items === 'object' && Object.keys(items).length > 0) {
+            days = ['Monday'];
         }
         if (days.length === 0) continue;
 
         for (const day of days) {
-            const items = (vs.itemsByDay && vs.itemsByDay[day] && typeof vs.itemsByDay[day] === 'object')
-                ? { ...vs.itemsByDay[day] }
-                : (vs.items && typeof vs.items === 'object' ? { ...vs.items } : {});
-            if (Object.keys(items).length === 0) continue;
+            const dayItems = (itemsByDay && itemsByDay[day] && typeof itemsByDay[day] === 'object')
+                ? { ...itemsByDay[day] }
+                : (items && typeof items === 'object' ? { ...items } : {});
+            if (Object.keys(dayItems).length === 0) continue;
 
-            const dayNotes = (vs.itemNotesByDay && vs.itemNotesByDay[day] && typeof vs.itemNotesByDay[day] === 'object')
-                ? { ...vs.itemNotesByDay[day] }
-                : (vs.itemNotes && typeof vs.itemNotes === 'object' ? { ...vs.itemNotes } : {});
+            const itemNotesByDay = (vs as any).itemNotesByDay ?? (vs as any).item_notes_by_day;
+            const itemNotes = (vs as any).itemNotes ?? (vs as any).item_notes;
+            const dayNotes = (itemNotesByDay && itemNotesByDay[day] && typeof itemNotesByDay[day] === 'object')
+                ? { ...itemNotesByDay[day] }
+                : (itemNotes && typeof itemNotes === 'object' ? { ...itemNotes } : {});
 
             if (!byDay[day]) byDay[day] = { vendorSelections: [] };
             byDay[day].vendorSelections!.push({
-                vendorId: vs.vendorId,
-                items,
+                vendorId,
+                items: dayItems,
                 itemNotes: dayNotes
             });
         }

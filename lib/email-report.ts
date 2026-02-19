@@ -7,6 +7,19 @@ export interface VendorBreakdownItem {
     total: number;
 }
 
+/** Debug info for Create Orders Next Week: work-to-do and skipped counts (included in email body + JSON attachment). */
+export interface CreateOrdersDebugInfo {
+    clientCount: number;
+    workToDo: { foodOrders: number; mealOrders: number; boxOrders: number; customOrders: number };
+    skipped: { foodBlocking: number; foodNoData: number; mealBlocking: number };
+}
+
+/** Per-batch debug (for batched runs); array index = batchIndex. */
+export interface CreateOrdersDebugBatchItem {
+    batchIndex: number;
+    debug: CreateOrdersDebugInfo;
+}
+
 interface SimulationReport {
     totalCreated: number;
     breakdown: {
@@ -26,6 +39,10 @@ interface SimulationReport {
     orderCreationDay?: string; // Day name used for order creation
     /** Orders per vendor per day (for admin report and vendor emails) */
     vendorBreakdown?: VendorBreakdownItem[];
+    /** Debug: workToDo and skipped counts (shown in email + attached as JSON). */
+    debug?: CreateOrdersDebugInfo;
+    /** Per-batch debug (batched run); included in JSON attachment. */
+    debugBatches?: CreateOrdersDebugBatchItem[];
 }
 
 /** Format a YYYY-MM-DD string as "Sunday, Feb 10" */
@@ -97,7 +114,7 @@ export async function sendSchedulingReport(report: SimulationReport, recipient: 
         return;
     }
 
-    const { totalCreated, breakdown, unexpectedFailures, creationId, orderCreationDate, orderCreationDay, vendorBreakdown } = report;
+    const { totalCreated, breakdown, unexpectedFailures, creationId, orderCreationDate, orderCreationDay, vendorBreakdown, debug: reportDebug, debugBatches } = report;
 
     const subject = `Order Scheduling Report - ${new Date().toLocaleDateString()}${creationId ? ` (Creation ID: ${creationId})` : ''}`;
 
@@ -115,6 +132,20 @@ export async function sendSchedulingReport(report: SimulationReport, recipient: 
         <li>Custom Orders: ${breakdown.Custom}</li>
     </ul>
     `;
+
+    if (breakdown.Meal === 0) {
+        const mealWorkToDo = reportDebug?.workToDo?.mealOrders ?? '—';
+        const mealBlocking = reportDebug?.skipped?.mealBlocking ?? '—';
+        html += `
+        <div style="border: 2px solid #c00; background: #fff5f5; padding: 12px; margin: 16px 0;">
+        <h2 style="color: #c00; margin-top: 0;">⚠️ Meal orders – none created</h2>
+        <p><strong>Meal orders created:</strong> 0</p>
+        <p><strong>Meal work to do</strong> (from upcoming_order.mealSelections): ${mealWorkToDo}</p>
+        <p><strong>Meal skipped (blocking):</strong> ${mealBlocking} — clients skipped by cleanup (inactive vendor or item). Fix on Cleanup page.</p>
+        <p>If work to do is 0, clients have no <code>mealSelections</code> or wrong <code>serviceType</code>. If blocking &gt; 0, fix invalid vendors/items then re-run.</p>
+        </div>
+        `;
+    }
 
     if (vendorBreakdown && vendorBreakdown.length > 0) {
         html += `<h2>Orders by vendor (next week, by day)</h2><table border="1" style="border-collapse: collapse; width: 100%;"><thead><tr style="background-color: #f8f9fa;"><th style="padding: 8px;">Vendor</th><th style="padding: 8px;">By day</th><th style="padding: 8px;">Total</th></tr></thead><tbody>`;
@@ -155,6 +186,18 @@ export async function sendSchedulingReport(report: SimulationReport, recipient: 
         html += `</tbody></table>`;
     } else {
         html += `<p style="color: green;"><strong>No unexpected failures reported.</strong></p>`;
+    }
+
+    if (reportDebug) {
+        const d = reportDebug;
+        const batchNote = debugBatches && debugBatches.length > 0 ? ` (aggregated from ${debugBatches.length} batch${debugBatches.length !== 1 ? 'es' : ''}; per-batch in attached JSON)` : '';
+        html += `
+        <h2>Debug (Create Orders Next Week)</h2>
+        <p><strong>Clients in run${batchNote}:</strong> ${d.clientCount}</p>
+        <p><strong>Work to do</strong> (orders derived from upcoming_order before creating): Food ${d.workToDo.foodOrders}, <strong>Meal ${d.workToDo.mealOrders}</strong>, Boxes ${d.workToDo.boxOrders}, Custom ${d.workToDo.customOrders}</p>
+        <p><strong>Skipped:</strong> Food blocking ${d.skipped.foodBlocking}, Food no data ${d.skipped.foodNoData}, <strong>Meal blocking ${d.skipped.mealBlocking}</strong></p>
+        <p style="font-size: 11px; color: #666;">Full debug JSON is attached to this email.</p>
+        `;
     }
 
     html += `

@@ -269,9 +269,10 @@ export async function GET() {
             const clientName = (client.full_name as string) || client.id;
             const st = ((uo.serviceType ?? (uo as any).service_type) as string) || 'Food';
 
-            // 1) Invalid meal types: mealSelections keys + root mealType
-            if (uo.mealSelections && typeof uo.mealSelections === 'object') {
-                const sel = uo.mealSelections as Record<string, unknown>;
+            // 1) Invalid meal types: mealSelections keys + root mealType (support snake_case meal_selections)
+            const mealSelectionsRaw = (uo.mealSelections ?? (uo as any).meal_selections) as Record<string, unknown> | undefined;
+            if (mealSelectionsRaw && typeof mealSelectionsRaw === 'object') {
+                const sel = mealSelectionsRaw;
                 const invalidKeys = Object.keys(sel).filter((k) => isInvalidMealKey(k, validMealTypes));
                 const rootMealType = uo.mealType != null ? String(uo.mealType) : null;
                 const invalidRoot = rootMealType && isInvalidMealTypeValue(rootMealType, validMealTypes) ? rootMealType : null;
@@ -502,11 +503,11 @@ export async function GET() {
                 }
             }
 
-            // 3) Invalid vendor from mealSelections + deleted/inactive items in mealSelections
-            if (uo.mealSelections && typeof uo.mealSelections === 'object') {
-                const sel = uo.mealSelections as Record<string, { vendorId?: string; items?: Record<string, number> }>;
+            // 3) Invalid vendor from mealSelections + deleted/inactive items in mealSelections (support snake_case)
+            if (mealSelectionsRaw && typeof mealSelectionsRaw === 'object') {
+                const sel = mealSelectionsRaw as Record<string, { vendorId?: string; vendor_id?: string; items?: Record<string, number> }>;
                 for (const [mealKey, data] of Object.entries(sel)) {
-                    const vid = data?.vendorId;
+                    const vid = data?.vendorId ?? data?.vendor_id;
                     const vendor = vid ? vendorMap.get(vid) : null;
                     const vendorName = vendor?.name ?? (vid ? `Vendor ${vid}` : '');
                     if (vid && (!vendor || !vendor.is_active)) {
