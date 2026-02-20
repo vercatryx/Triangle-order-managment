@@ -499,25 +499,42 @@ export async function POST(request: NextRequest) {
             const rawSelections = typeof mo.meal_selections === 'string' ? JSON.parse(mo.meal_selections) : mo.meal_selections;
             if (!rawSelections) continue;
 
-            // One Meal order per mealSelections entry (each can be a different vendor). Multiple meal orders per client per week are supported.
-            for (const [mealType, group] of Object.entries(rawSelections)) {
+            // Pre-check: for each (date, vendor) we would create, see if an order already exists. Skip only those; then create all meal-type orders without checking again.
+            const skipDateVendor = new Set<string>();
+            for (const [_mt, group] of Object.entries(rawSelections)) {
+                const g = group as { vendorId?: string; vendor_id?: string };
+                const mealVendorId = g?.vendorId ?? g?.vendor_id;
+                if (!mealVendorId) continue;
+                const vendor = vendorMap.get(mealVendorId);
+                if (!vendor) continue;
+                if (vendorActiveMap.get(mealVendorId) === false) continue;
+                const deliveryDate = getFirstDeliveryDateInWeek(nextWeekStart, vendor.deliveryDays);
+                if (!deliveryDate) continue;
+                const deliveryDateStr = deliveryDate.toISOString().split('T')[0];
+                if (deliveryDateStr < weekStartStr || deliveryDateStr > weekEndStr) continue;
+                const key = `${deliveryDateStr}|${mealVendorId}`;
+                if (skipDateVendor.has(key)) continue;
+                if (await orderExists(mo.client_id, deliveryDateStr, 'Meal', mealVendorId)) {
+                    skipDateVendor.add(key);
+                    const clientName = clientMap.get(mo.client_id)?.full_name ?? mo.client_id;
+                    diagnostics.push({ clientId: mo.client_id, clientName, vendorId: mealVendorId, vendorName: vendor.name, date: deliveryDateStr, orderType: 'Meal', outcome: 'skipped', reason: 'Order already exists for this client/date/vendor' });
+                }
+            }
+
+            const clientName = clientMap.get(mo.client_id)?.full_name ?? mo.client_id;
+            for (const [_mealType, group] of Object.entries(rawSelections)) {
                 const g = group as { vendorId?: string; vendor_id?: string; items?: Record<string, number>; itemNotes?: Record<string, string> };
                 const mealVendorId = g?.vendorId ?? g?.vendor_id;
                 if (!mealVendorId) continue;
                 const vendor = vendorMap.get(mealVendorId);
                 if (!vendor) continue;
-                if (vendorActiveMap.get(mealVendorId) === false) continue; // skip inactive vendor only
+                if (vendorActiveMap.get(mealVendorId) === false) continue;
 
                 const deliveryDate = getFirstDeliveryDateInWeek(nextWeekStart, vendor.deliveryDays);
                 if (!deliveryDate) continue;
                 const deliveryDateStr = deliveryDate.toISOString().split('T')[0];
                 if (deliveryDateStr < weekStartStr || deliveryDateStr > weekEndStr) continue;
-
-                if (await orderExists(mo.client_id, deliveryDateStr, 'Meal', mealVendorId)) {
-                    const clientName = clientMap.get(mo.client_id)?.full_name ?? mo.client_id;
-                    diagnostics.push({ clientId: mo.client_id, clientName, vendorId: mealVendorId, vendorName: vendor.name, date: deliveryDateStr, orderType: 'Meal', outcome: 'skipped', reason: 'Order already exists for this client/date/vendor' });
-                    continue;
-                }
+                if (skipDateVendor.has(`${deliveryDateStr}|${mealVendorId}`)) continue;
 
                 let orderTotalValue = 0;
                 let orderTotalItems = 0;
@@ -541,7 +558,6 @@ export async function POST(request: NextRequest) {
                 }
                 if (itemsList.length === 0) continue;
 
-                const clientName = clientMap.get(mo.client_id)?.full_name ?? mo.client_id;
                 const assignedId = nextOrderNumber++;
                 const newOrder = await createOrder(
                     mo.client_id,

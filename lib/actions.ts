@@ -5989,6 +5989,46 @@ export async function getOrdersByVendorForDate(vendorId: string, deliveryDate: s
     }
 }
 
+/** Same as getOrdersByVendorForDate but uses provided Supabase client and skips session check. For scripts/backends only. */
+export async function getOrdersByVendorForDateWithClient(
+    supabaseClient: any,
+    vendorId: string,
+    deliveryDate: string | null
+): Promise<any[]> {
+    if (!vendorId) return [];
+    try {
+        const dateArg = deliveryDate && deliveryDate !== 'no-date' ? deliveryDate : null;
+        const pageSize = 100;
+        let rows: any[] = [];
+        let from = 0;
+        while (true) {
+            const { data: pageData, error } = await supabaseClient
+                .rpc('get_orders_by_vendor_and_date', {
+                    p_vendor_id: vendorId,
+                    p_delivery_date: dateArg
+                })
+                .range(from, from + pageSize - 1);
+            if (error) {
+                console.error('[getOrdersByVendorForDateWithClient] RPC error:', error);
+                return [];
+            }
+            const page = Array.isArray(pageData) ? pageData : [];
+            rows = rows.concat(page);
+            if (page.length < pageSize) break;
+            from += pageSize;
+        }
+        if (rows.length === 0) return [];
+        const maps = await batchLoadVendorOrderDetails(supabaseClient, rows, vendorId);
+        return rows.map((order: any) => {
+            const assembled = assembleVendorOrderFromBatch(order, vendorId, maps);
+            return { ...assembled, orderType: 'completed' as const };
+        });
+    } catch (err) {
+        console.error('Error in getOrdersByVendorForDateWithClient:', err);
+        return [];
+    }
+}
+
 export async function processVendorOrderDetails(supabaseClient: any, order: any, vendorId: string, isUpcoming: boolean) {
     const orderIdField = isUpcoming ? 'upcoming_order_id' : 'order_id';
     const vendorSelectionsTable = isUpcoming ? 'upcoming_order_vendor_selections' : 'order_vendor_selections';

@@ -67,7 +67,8 @@ export async function generateLabelsPDFByDriver(options: GenerateLabelsPDFByDriv
     }
 }
 
-export async function generateLabelsPDF(options: LabelGenerationOptions): Promise<void> {
+/** Build the labels PDF doc. Returns null if no orders. */
+async function buildLabelsPDFDoc(options: LabelGenerationOptions): Promise<InstanceType<typeof jsPDF> | null> {
     const {
         orders,
         getClientName,
@@ -79,8 +80,8 @@ export async function generateLabelsPDF(options: LabelGenerationOptions): Promis
     } = options;
 
     if (orders.length === 0) {
-        alert('No orders to export');
-        return;
+        if (typeof window !== 'undefined') alert('No orders to export');
+        return null;
     }
 
     // Avery 5163 Template Dimensions (in inches)
@@ -232,15 +233,31 @@ export async function generateLabelsPDF(options: LabelGenerationOptions): Promis
         }
     }
 
-    // Generate filename
-    let filename = `${vendorName || 'vendor'}_labels`;
-    if (deliveryDate) {
-        const formattedDate = formatDate(deliveryDate).replace(/\s/g, '_');
-        filename += `_${formattedDate}`;
+    return doc;
+}
+
+export async function generateLabelsPDF(options: LabelGenerationOptions, outputPath?: string): Promise<void> {
+    const doc = await buildLabelsPDFDoc(options);
+    if (!doc) return;
+    let filename = `${options.vendorName || 'vendor'}_labels`;
+    if (options.deliveryDate) {
+        filename += `_${options.formatDate(options.deliveryDate).replace(/\s/g, '_')}`;
     }
     filename += '.pdf';
+    if (outputPath && typeof window === 'undefined') {
+        const fs = await import('fs');
+        const buf = Buffer.from(doc.output('arraybuffer') as ArrayBuffer);
+        fs.writeFileSync(outputPath, buf);
+    } else {
+        doc.save(filename);
+    }
+}
 
-    doc.save(filename);
+/** Build labels PDF and return as Buffer (Node only). Returns null if no orders. */
+export async function generateLabelsPDFToBuffer(options: LabelGenerationOptions): Promise<Buffer | null> {
+    const doc = await buildLabelsPDFDoc(options);
+    if (!doc) return null;
+    return Buffer.from(doc.output('arraybuffer') as ArrayBuffer);
 }
 
 

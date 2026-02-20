@@ -183,9 +183,10 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate, isVendorView }: P
             if (items.length === 0) return [];
 
             return items.map((item: any) => {
-                let menuItem: any = menuItems.find(mi => mi.id === item.menu_item_id);
+                const itemId = item.menu_item_id || item.meal_item_id;
+                let menuItem: any = menuItems.find(mi => mi.id === itemId);
                 if (!menuItem) {
-                    menuItem = mealItems.find(mi => mi.id === item.menu_item_id);
+                    menuItem = mealItems.find(mi => mi.id === itemId);
                 }
 
                 let itemName = 'Unknown Item';
@@ -791,9 +792,10 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate, isVendorView }: P
             // Calculate total value
             let totalValue = 0;
             items.forEach((item: any) => {
-                let menuItem: any = menuItems.find(mi => mi.id === item.menu_item_id);
+                const itemId = item.menu_item_id || item.meal_item_id;
+                let menuItem: any = menuItems.find(mi => mi.id === itemId);
                 if (!menuItem) {
-                    menuItem = mealItems.find(mi => mi.id === item.menu_item_id);
+                    menuItem = mealItems.find(mi => mi.id === itemId);
                 }
                 const quantity = parseInt(item.quantity || 0);
                 const unitValue = item.unit_value
@@ -817,9 +819,10 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate, isVendorView }: P
                         </thead>
                         <tbody>
                             {items.map((item: any, index: number) => {
-                                let menuItem: any = menuItems.find(mi => mi.id === item.menu_item_id);
+                                const itemId = item.menu_item_id || item.meal_item_id;
+                                let menuItem: any = menuItems.find(mi => mi.id === itemId);
                                 if (!menuItem) {
-                                    menuItem = mealItems.find(mi => mi.id === item.menu_item_id);
+                                    menuItem = mealItems.find(mi => mi.id === itemId);
                                 }
                                 const quantity = parseInt(item.quantity || 0);
                                 const itemKey = item.id || `${order.id}-item-${index}`;
@@ -901,8 +904,9 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate, isVendorView }: P
                 } else if (Array.isArray(items)) {
                     const itemsObj: any = {};
                     for (const item of items) {
-                        if (item && typeof item === 'object' && 'menu_item_id' in item) {
-                            itemsObj[item.menu_item_id] = item.quantity || 0;
+                        const id = item?.menu_item_id || item?.meal_item_id;
+                        if (item && typeof item === 'object' && id) {
+                            itemsObj[id] = item.quantity || 0;
                         } else if (item && typeof item === 'object' && 'id' in item) {
                             itemsObj[item.id] = item.quantity || item.qty || 1;
                         }
