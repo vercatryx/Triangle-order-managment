@@ -177,7 +177,7 @@ function getParsedOrderItems(
       return {
         name: itemName,
         quantity,
-        category: menuItem?.category_id,
+        category: menuItem?.category_id ?? undefined,
         notes: item.notes,
       };
     });
@@ -205,7 +205,7 @@ function getParsedOrderItems(
           result.push({
             name: menuItem?.name ?? 'Unknown Item',
             quantity: qty,
-            category: menuItem?.category_id,
+            category: menuItem?.category_id ?? undefined,
             notes,
           });
         }
