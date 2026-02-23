@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import Link from 'next/link';
-import { ChevronLeft, ChevronRight, Loader2, Search, PlusCircle, X, Trash2 } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Loader2, Search, PlusCircle, X, Trash2, Download } from 'lucide-react';
 import ClientPortalOrderSummary from '@/components/clients/ClientPortalOrderSummary';
 import { deleteOrder } from '@/lib/actions';
 
@@ -35,6 +35,7 @@ type ClientRow = {
   approvedMealsPerWeek: number | null;
   orderNumbers: number[];
   ordersTotal: number;
+  vendors?: string[];
 };
 
 type MissingItem = {
@@ -260,6 +261,30 @@ export default function MissingOrdersPage() {
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
+  const handleDownloadList = () => {
+    const headers = ['Client name', 'Auth meals/week', 'Orders total', 'Order numbers', 'Vendors'];
+    const escape = (v: string) => {
+      const s = String(v);
+      if (/[",\n\r]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
+      return s;
+    };
+    const rows = clients.map((row) => [
+      row.fullName,
+      row.approvedMealsPerWeek ?? '',
+      row.ordersTotal > 0 ? row.ordersTotal.toFixed(2) : '',
+      (row.orderNumbers || []).join(', '),
+      (row.vendors || []).join(', ')
+    ]);
+    const csv = [headers.map(escape).join(','), ...rows.map((r) => r.map(escape).join(','))].join('\r\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `missing-orders-list-${weekStart}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <main style={{ padding: '2rem', maxWidth: '1400px', margin: '0 auto' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '1.5rem', flexWrap: 'wrap' }}>
@@ -400,6 +425,7 @@ export default function MissingOrdersPage() {
                   <th style={{ textAlign: 'right', padding: '0.75rem 1rem', fontWeight: 600 }}>Auth meals/week</th>
                   <th style={{ textAlign: 'right', padding: '0.75rem 1rem', fontWeight: 600 }}>Orders total</th>
                   <th style={{ textAlign: 'left', padding: '0.75rem 1rem', fontWeight: 600 }}>Order numbers</th>
+                  <th style={{ textAlign: 'left', padding: '0.75rem 1rem', fontWeight: 600 }}>Vendors</th>
                   <th style={{ textAlign: 'center', padding: '0.75rem 1rem', fontWeight: 600 }}>Actions</th>
                 </tr>
               </thead>
@@ -415,6 +441,9 @@ export default function MissingOrdersPage() {
                     </td>
                     <td style={{ padding: '0.75rem 1rem', fontSize: '0.9rem' }}>
                       {row.orderNumbers.length ? row.orderNumbers.join(', ') : '–'}
+                    </td>
+                    <td style={{ padding: '0.75rem 1rem', fontSize: '0.9rem' }}>
+                      {(row.vendors && row.vendors.length) ? row.vendors.join(', ') : '–'}
                     </td>
                     <td style={{ padding: '0.75rem 1rem', textAlign: 'center' }}>
                       <button
@@ -453,7 +482,29 @@ export default function MissingOrdersPage() {
             <span style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
               Page {page + 1} of {totalPages} · {total} client{total !== 1 ? 's' : ''}
             </span>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+              <button
+                type="button"
+                onClick={handleDownloadList}
+                disabled={clients.length === 0}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '0.35rem',
+                  padding: '0.5rem 0.75rem',
+                  border: '1px solid var(--border-color)',
+                  borderRadius: '6px',
+                  background: 'var(--bg-panel)',
+                  cursor: clients.length === 0 ? 'not-allowed' : 'pointer',
+                  opacity: clients.length === 0 ? 0.5 : 1,
+                  fontSize: '0.9rem',
+                  fontWeight: 500
+                }}
+              >
+                <Download size={16} />
+                Download list (CSV)
+              </button>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
               <button
                 type="button"
                 onClick={() => setPage((p) => Math.max(0, p - 1))}
@@ -484,6 +535,7 @@ export default function MissingOrdersPage() {
               >
                 <ChevronRight size={18} />
               </button>
+              </div>
             </div>
           </div>
         </>

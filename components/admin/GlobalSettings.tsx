@@ -10,7 +10,7 @@ import { ExportClientsModal } from '@/components/admin/ExportClientsModal';
 import styles from './GlobalSettings.module.css';
 
 // Set to true to show the Export clients button in Global Settings
-const SHOW_EXPORT_CLIENTS_BUTTON = false;
+const SHOW_EXPORT_CLIENTS_BUTTON = true;
 
 export function GlobalSettings() {
     const { getSettings, invalidateReferenceData } = useDataCache();

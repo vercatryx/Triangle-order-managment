@@ -91,7 +91,8 @@ export async function GET(request: NextRequest) {
     }
     const effectiveClientId = (orderClientId: string) => dependentToParent.get(orderClientId) || orderClientId;
 
-    let byClientAll: Map<string, { orderNumbers: number[]; total: number }> = new Map();
+    type ClientOrderRec = { orderNumbers: number[]; total: number; orderIds: string[] };
+    let byClientAll: Map<string, ClientOrderRec> = new Map();
 
     const fetchAllOrdersForWeek = async (): Promise<{ id: string; client_id: string; order_number: number | null; total_value: number | null }[]> => {
       const allOrders: { id: string; client_id: string; order_number: number | null; total_value: number | null }[] = [];
@@ -126,12 +127,13 @@ export async function GET(request: NextRequest) {
       }
 
       for (const cid of parentIdsAll) {
-        byClientAll.set(cid, { orderNumbers: [], total: 0 });
+        byClientAll.set(cid, { orderNumbers: [], total: 0, orderIds: [] });
       }
       for (const o of ordersAll) {
         const rowClientId = effectiveClientId(o.client_id);
         if (!byClientAll.has(rowClientId)) continue;
         const rec = byClientAll.get(rowClientId)!;
+        rec.orderIds.push(o.id);
         if (o.order_number != null) rec.orderNumbers.push(Number(o.order_number));
         const amt = o.total_value ?? 0;
         rec.total += Number(amt);
@@ -168,7 +170,7 @@ export async function GET(request: NextRequest) {
     if (!hasFilter || byClientAll.size === 0) {
       byClient = new Map();
       for (const cid of parentIds) {
-        byClient.set(cid, { orderNumbers: [], total: 0 });
+        byClient.set(cid, { orderNumbers: [], total: 0, orderIds: [] });
       }
       let orders: { id: string; client_id: string; order_number: number | null; total_value: number | null }[];
       try {
@@ -181,20 +183,64 @@ export async function GET(request: NextRequest) {
         const rowClientId = effectiveClientId(o.client_id);
         if (!byClient.has(rowClientId)) continue;
         const rec = byClient.get(rowClientId)!;
+        rec.orderIds.push(o.id);
         if (o.order_number != null) rec.orderNumbers.push(Number(o.order_number));
         const amt = o.total_value ?? 0;
         rec.total += Number(amt);
       }
     }
 
+    // Resolve vendor names for current page clients' orders
+    const orderIdsForPage = new Set<string>();
+    for (const c of clients || []) {
+      const rec = byClient.get(c.id);
+      if (rec?.orderIds?.length) rec.orderIds.forEach((id: string) => orderIdsForPage.add(id));
+    }
+    const vendorNamesByOrderId = new Map<string, string[]>();
+    if (orderIdsForPage.size > 0) {
+      const orderIdsArr = Array.from(orderIdsForPage);
+      const allVendorIds = new Set<string>();
+      const pairs: { orderId: string; vendorId: string | null }[] = [];
+      const chunk = 500;
+      for (let i = 0; i < orderIdsArr.length; i += chunk) {
+        const batch = orderIdsArr.slice(i, i + chunk);
+        const [ovs, obs] = await Promise.all([
+          supabase.from('order_vendor_selections').select('order_id, vendor_id').in('order_id', batch),
+          supabase.from('order_box_selections').select('order_id, vendor_id').in('order_id', batch)
+        ]);
+        const ovsData = (ovs.data || []) as { order_id: string; vendor_id: string | null }[];
+        const obsData = (obs.data || []) as { order_id: string; vendor_id: string | null }[];
+        ovsData.forEach((r) => { pairs.push({ orderId: r.order_id, vendorId: r.vendor_id }); if (r.vendor_id) allVendorIds.add(r.vendor_id); });
+        obsData.forEach((r) => { pairs.push({ orderId: r.order_id, vendorId: r.vendor_id }); if (r.vendor_id) allVendorIds.add(r.vendor_id); });
+      }
+      const vendorById = new Map<string, string>();
+      if (allVendorIds.size > 0) {
+        const { data: vendors } = await supabase.from('vendors').select('id, name').in('id', Array.from(allVendorIds));
+        (vendors || []).forEach((v: any) => vendorById.set(v.id, v.name));
+      }
+      for (const { orderId, vendorId } of pairs) {
+        const name = vendorId ? (vendorById.get(vendorId) ?? 'Unknown') : 'Unknown';
+        const existing = vendorNamesByOrderId.get(orderId) || [];
+        if (!existing.includes(name)) existing.push(name);
+        vendorNamesByOrderId.set(orderId, existing);
+      }
+    }
+
     const rows = (clients || []).map((c: any) => {
-      const rec = byClient.get(c.id) ?? { orderNumbers: [] as number[], total: 0 };
+      const rec = byClient.get(c.id) ?? { orderNumbers: [] as number[], total: 0, orderIds: [] as string[] };
+      const vendorSet = new Set<string>();
+      for (const oid of rec.orderIds || []) {
+        const names = vendorNamesByOrderId.get(oid) || [];
+        names.forEach((n) => vendorSet.add(n));
+      }
+      const vendors = Array.from(vendorSet).sort();
       return {
         id: c.id,
         fullName: c.full_name || c.id,
         approvedMealsPerWeek: c.approved_meals_per_week ?? null,
         orderNumbers: [...rec.orderNumbers].sort((a, b) => a - b),
-        ordersTotal: rec.total
+        ordersTotal: rec.total,
+        vendors
       };
     });
 
