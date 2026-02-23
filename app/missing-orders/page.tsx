@@ -539,7 +539,20 @@ export default function MissingOrdersPage() {
                   if (!parts.has(key)) parts.set(key, { date: row.scheduled_delivery_date, vendorName: row.vendorName, type: (row.mealType ?? row.service_type) ?? '', expected: row, existing: [] });
                   else parts.get(key)!.expected = row;
                 }
+                const expectedOrderNumbers = new Set(modalClient.expectedSummary.map((e) => e.existingOrderNumber).filter((n): n is number => n != null));
                 for (const o of modalClient.existingOrders || []) {
+                  const matchedToExpected = o.status === 'matched' && expectedOrderNumbers.has(o.order_number);
+                  if (matchedToExpected) {
+                    const expectedRow = modalClient.expectedSummary.find(
+                      (e) => e.scheduled_delivery_date === o.scheduled_delivery_date && e.vendorName === o.vendorName && e.existingOrderNumber === o.order_number
+                    );
+                    if (expectedRow) {
+                      const key = partKey(expectedRow.scheduled_delivery_date, expectedRow.vendorName, (expectedRow.mealType ?? expectedRow.service_type) ?? '');
+                      if (parts.has(key)) parts.get(key)!.existing.push(o);
+                      else parts.set(key, { date: o.scheduled_delivery_date, vendorName: o.vendorName, type: o.mealType, expected: expectedRow, existing: [o] });
+                      continue;
+                    }
+                  }
                   const key = partKey(o.scheduled_delivery_date, o.vendorName, o.mealType);
                   if (!parts.has(key)) parts.set(key, { date: o.scheduled_delivery_date, vendorName: o.vendorName, type: o.mealType, expected: null, existing: [] });
                   parts.get(key)!.existing.push(o);
@@ -575,14 +588,18 @@ export default function MissingOrdersPage() {
                                 </tr>
                               </thead>
                               <tbody>
-                                {part.expected && (
+                                {part.expected && (() => {
+                                      const matchedExisting = part.existing.find((r) => r.order_number === part.expected!.existingOrderNumber);
+                                      const displayItems = matchedExisting?.total_items ?? part.expected.payload?.totalItems ?? 0;
+                                      const displayValue = matchedExisting?.total_value ?? part.expected.payload?.totalValue ?? 0;
+                                      return (
                                   <tr style={{ borderBottom: '1px solid var(--border-color)' }}>
                                     <td style={{ padding: '0.4rem 0.6rem', fontWeight: part.expected.existingOrderNumber ? 600 : undefined }}>
                                       {part.expected.existingOrderNumber ?? '\u2014'}
                                     </td>
-                                    <td style={{ padding: '0.4rem 0.6rem', textAlign: 'right' }}>{part.expected.payload?.totalItems ?? 0}</td>
+                                    <td style={{ padding: '0.4rem 0.6rem', textAlign: 'right' }}>{displayItems}</td>
                                     <td style={{ padding: '0.4rem 0.6rem', textAlign: 'right' }}>
-                                      ${(part.expected.payload?.totalValue ?? 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                      ${Number(displayValue).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                                     </td>
                                     <td style={{ padding: '0.4rem 0.6rem' }}>
                                       {isMissing ? <span style={{ color: 'var(--color-danger, #dc2626)', fontWeight: 500 }}>Missing</span> : <span style={{ color: 'var(--color-success, #16a34a)' }}>Expected</span>}
@@ -614,8 +631,10 @@ export default function MissingOrdersPage() {
                                       )}
                                     </td>
                                   </tr>
-                                )}
-                                {part.existing.map((row) => (
+                                ); })()}
+                                {part.existing
+                                  .filter((row) => row.order_number !== part.expected?.existingOrderNumber)
+                                  .map((row) => (
                                   <tr key={row.orderId} style={{ borderBottom: '1px solid var(--border-color)', backgroundColor: row.status === 'extra' ? 'var(--bg-panel)' : undefined }}>
                                     <td style={{ padding: '0.4rem 0.6rem', fontWeight: 600 }}>{row.order_number}</td>
                                     <td style={{ padding: '0.4rem 0.6rem', textAlign: 'right' }}>{row.total_items != null ? row.total_items : '\u2014'}</td>

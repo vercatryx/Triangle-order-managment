@@ -296,6 +296,8 @@ export function OrdersManagement() {
             <p className={styles.subtitle}>Create orders and manage order creation runs.</p>
             <p className={styles.toolsBar}>
                 <Link href="/admin/cleanup" className={styles.toolsLink}>Cleanup</Link>
+                <br />
+                <Link href="/missing-orders" className={styles.toolsLink}>Validate client orders</Link>
             </p>
 
             {/* Create Orders (date-based) */}

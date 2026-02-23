@@ -91,24 +91,42 @@ export async function GET(request: NextRequest) {
 
     let byClientAll: Map<string, { orderNumbers: number[]; total: number }> = new Map();
 
-    if (hasFilter) {
-      // Fetch orders for all Food/Meal clients so we can filter by amount
-      const { data: ordersAll, error: ordersError } = await supabase
-        .from('orders')
-        .select('id, client_id, order_number, total_value')
-        .in('client_id', Array.from(allClientIds))
-        .gte('scheduled_delivery_date', weekStart)
-        .lte('scheduled_delivery_date', weekEndStr);
+    const fetchAllOrdersForWeek = async (): Promise<{ id: string; client_id: string; order_number: number | null; total_value: number | null }[]> => {
+      const allOrders: { id: string; client_id: string; order_number: number | null; total_value: number | null }[] = [];
+      const chunkSize = 1000;
+      let offset = 0;
+      let page: typeof allOrders;
+      const baseQuery = () =>
+        supabase
+          .from('orders')
+          .select('id, client_id, order_number, total_value')
+          .in('client_id', Array.from(allClientIds))
+          .gte('scheduled_delivery_date', weekStart)
+          .lte('scheduled_delivery_date', weekEndStr);
+      do {
+        const { data, error } = await baseQuery().range(offset, offset + chunkSize - 1);
+        if (error) throw error;
+        page = (data || []) as typeof allOrders;
+        allOrders.push(...page);
+        offset += chunkSize;
+      } while (page.length === chunkSize);
+      return allOrders;
+    };
 
-      if (ordersError) {
+    if (hasFilter) {
+      // Fetch all orders for the week (paginated so we never hit row limit)
+      let ordersAll: { id: string; client_id: string; order_number: number | null; total_value: number | null }[];
+      try {
+        ordersAll = await fetchAllOrdersForWeek();
+      } catch (ordersError: any) {
         console.error('[missing-orders/clients] orders fetch:', ordersError);
-        return NextResponse.json({ error: ordersError.message }, { status: 500 });
+        return NextResponse.json({ error: ordersError?.message ?? 'Failed to fetch orders' }, { status: 500 });
       }
 
       for (const cid of parentIdsAll) {
         byClientAll.set(cid, { orderNumbers: [], total: 0 });
       }
-      for (const o of ordersAll || []) {
+      for (const o of ordersAll) {
         const rowClientId = effectiveClientId(o.client_id);
         if (!byClientAll.has(rowClientId)) continue;
         const rec = byClientAll.get(rowClientId)!;
@@ -148,18 +166,14 @@ export async function GET(request: NextRequest) {
       for (const cid of parentIds) {
         byClient.set(cid, { orderNumbers: [], total: 0 });
       }
-      const { data: orders, error: ordersError } = await supabase
-        .from('orders')
-        .select('id, client_id, order_number, total_value')
-        .in('client_id', Array.from(allClientIds))
-        .gte('scheduled_delivery_date', weekStart)
-        .lte('scheduled_delivery_date', weekEndStr);
-
-      if (ordersError) {
+      let orders: { id: string; client_id: string; order_number: number | null; total_value: number | null }[];
+      try {
+        orders = await fetchAllOrdersForWeek();
+      } catch (ordersError: any) {
         console.error('[missing-orders/clients] orders fetch:', ordersError);
-        return NextResponse.json({ error: ordersError.message }, { status: 500 });
+        return NextResponse.json({ error: ordersError?.message ?? 'Failed to fetch orders' }, { status: 500 });
       }
-      for (const o of orders || []) {
+      for (const o of orders) {
         const rowClientId = effectiveClientId(o.client_id);
         if (!byClient.has(rowClientId)) continue;
         const rec = byClient.get(rowClientId)!;

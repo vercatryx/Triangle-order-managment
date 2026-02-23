@@ -69,6 +69,31 @@ function normalizeMealType(key: string): string {
   return idx > 0 ? key.slice(0, idx) : key;
 }
 
+/** Normalize vendor selection items from various stored shapes to { itemId: quantity }. */
+function getItemsMapFromVendorSelection(vs: any): Record<string, number> {
+  if (!vs || typeof vs !== 'object') return {};
+  const raw =
+    vs.items ?? vs.itemQuantities ?? vs.menu_items ?? (vs.item_quantities as Record<string, number> | undefined);
+  if (!raw || typeof raw !== 'object') return {};
+  if (Array.isArray(raw)) {
+    const out: Record<string, number> = {};
+    for (const entry of raw) {
+      if (entry && typeof entry === 'object') {
+        const id = (entry as any).menu_item_id ?? (entry as any).menuItemId ?? (entry as any).itemId ?? (entry as any).id;
+        const q = Number((entry as any).quantity ?? (entry as any).qty ?? 0);
+        if (id && q > 0) out[String(id)] = q;
+      }
+    }
+    return out;
+  }
+  const out: Record<string, number> = {};
+  for (const [id, val] of Object.entries(raw)) {
+    const q = typeof val === 'number' ? val : Number((val as any)?.quantity ?? (val as any)?.qty ?? val ?? 0);
+    if (q > 0) out[String(id)] = q;
+  }
+  return out;
+}
+
 /** Get the date for a given day name (e.g. "Monday") within the week that starts on weekStart (Sunday). */
 function getDateForDayNameInWeek(weekStart: Date, dayName: string): Date | null {
   const dayNum = (DAY_NAME_TO_NUMBER as Record<string, number>)[dayName];
@@ -315,8 +340,8 @@ export async function computeMissingOrders(
       const ddo = uo.deliveryDayOrders ?? uo.delivery_day_orders;
       if (ddo && typeof ddo === 'object') {
         for (const [dayName, dayData] of Object.entries(ddo)) {
-          const dayObj = dayData as { vendorSelections?: Array<{ vendorId?: string; vendor_id?: string; items?: Record<string, number>; itemNotes?: Record<string, string> }> };
-          const selections = dayObj?.vendorSelections ?? [];
+          const dayObj = dayData as { vendorSelections?: any[]; vendor_selections?: any[] };
+          const selections = dayObj?.vendorSelections ?? dayObj?.vendor_selections ?? [];
           const deliveryDate = getDateForDayNameInWeek(weekStartDate, dayName);
           if (!deliveryDate) continue;
           const dateStr = deliveryDate.toISOString().split('T')[0];
@@ -329,8 +354,9 @@ export async function computeMissingOrders(
             let orderTotalValue = 0;
             let orderTotalItems = 0;
             const itemsList: { menu_item_id: string; quantity: number; unit_value: number; total_value: number; notes: string | null }[] = [];
-            if (vs.items) {
-              for (const [itemId, qty] of Object.entries(vs.items)) {
+            const itemsMap = getItemsMapFromVendorSelection(vs);
+            if (Object.keys(itemsMap).length > 0) {
+              for (const [itemId, qty] of Object.entries(itemsMap)) {
                 const q = Number(qty);
                 if (q <= 0) continue;
                 const resolved = resolveItem(itemId);
@@ -379,9 +405,9 @@ export async function computeMissingOrders(
           let orderTotalValue = 0;
           let orderTotalItems = 0;
           const itemsList: { menu_item_id: string; quantity: number; unit_value: number; total_value: number; notes: string | null }[] = [];
-          const items = (vs as any)?.items;
-          if (items && typeof items === 'object') {
-            for (const [itemId, qty] of Object.entries(items)) {
+          const itemsMap = getItemsMapFromVendorSelection(vs);
+          if (Object.keys(itemsMap).length > 0) {
+            for (const [itemId, qty] of Object.entries(itemsMap)) {
               const q = Number(qty);
               if (q <= 0) continue;
               const resolved = resolveItem(itemId);
@@ -394,7 +420,7 @@ export async function computeMissingOrders(
                 quantity: q,
                 unit_value: price,
                 total_value: price * q,
-                notes: (vs as any)?.itemNotes?.[itemId] || null
+                notes: (vs as any)?.itemNotes?.[itemId] ?? (vs as any)?.item_notes?.[itemId] ?? null
               });
             }
           }
@@ -602,6 +628,32 @@ export async function computeMissingOrders(
     if (orderId) matchedToOrderId.set(exp, orderId);
   }
 
+  // Same-week matching for Food: expected on one day can match existing on another day (same client + vendor in week)
+  const matchedOrderIdsSoFar = new Set(matchedToOrderId.values());
+  const unmatchedExpectedFood = expectedOrders.filter(
+    (exp) => exp.service_type === 'Food' && !matchedToOrderId.has(exp)
+  );
+  const unmatchedExistingFoodByClientVendor = new Map<string, { orderId: string; o: any }[]>();
+  for (const o of ordersList) {
+    if (o.service_type !== 'Food' || matchedOrderIdsSoFar.has(o.id)) continue;
+    const eff = effectiveClientId(o.client_id);
+    const vsList = vsByOrderId.get(o.id) || [];
+    for (const vs of vsList) {
+      const k = `${eff}|${vs.vendor_id}`;
+      if (!unmatchedExistingFoodByClientVendor.has(k)) unmatchedExistingFoodByClientVendor.set(k, []);
+      unmatchedExistingFoodByClientVendor.get(k)!.push({ orderId: o.id, o });
+      break;
+    }
+  }
+  for (const exp of unmatchedExpectedFood) {
+    const k = `${exp.client_id}|${exp.vendor_id}`;
+    const pool = unmatchedExistingFoodByClientVendor.get(k);
+    if (!pool || pool.length === 0) continue;
+    const chosen = pool.shift()!;
+    matchedToOrderId.set(exp, chosen.orderId);
+    matchedOrderIdsSoFar.add(chosen.orderId);
+  }
+
   const missing: ExpectedOrder[] = [];
   for (const exp of expectedOrders) {
     if (exp.service_type === 'Boxes') {
@@ -621,11 +673,19 @@ export async function computeMissingOrders(
     missing.push(exp);
   }
 
+  const orderById = new Map(ordersList.map((o: any) => [o.id, o]));
   type ExpectedWithOrderNumber = ExpectedOrder & { existingOrderNumber: number | null };
   const expectedWithDetails: ExpectedWithOrderNumber[] = expectedOrders.map((exp) => {
     const orderId = matchedToOrderId.get(exp);
     const existingOrderNumber = orderId ? (orderIdToOrderNumber.get(orderId) ?? null) : null;
-    return { ...exp, existingOrderNumber };
+    const matchedOrder = orderId ? orderById.get(orderId) : null;
+    const totalValue = matchedOrder?.total_value != null ? Number(matchedOrder.total_value) : exp.payload.totalValue;
+    const totalItems = matchedOrder?.total_items != null ? Number(matchedOrder.total_items) : exp.payload.totalItems;
+    return {
+      ...exp,
+      existingOrderNumber,
+      payload: { ...exp.payload, totalValue, totalItems }
+    };
   });
 
   const matchedOrderIds = new Set(matchedToOrderId.values());
