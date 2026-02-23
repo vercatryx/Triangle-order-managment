@@ -43,7 +43,17 @@ export async function POST(request: NextRequest) {
     };
     const diagnostics: DiagnosticEntry[] = [];
 
-    type ClientReportRow = { clientId: string; clientName: string; ordersCreated: number; reason: string; vendors: Set<string>; types: Set<string> };
+    type ClientReportRow = {
+        clientId: string;
+        clientName: string;
+        ordersCreated: number;
+        reason: string;
+        vendors: Set<string>;
+        types: Set<string>;
+        authMealsPerWeek?: number | null;
+        totalValue: number;
+        orderBreakdown: { orderNumber: number; amount: number }[];
+    };
     const clientReportMap = new Map<string, ClientReportRow>();
 
     let batchMode: { batchIndex: number; batchSize: number; creationId?: number } | null = null;
@@ -102,7 +112,7 @@ export async function POST(request: NextRequest) {
             // Single-client or name-search mode: load only specified IDs (primary clients only)
             const { data: pageData, error: clientsError } = await supabase
                 .from('clients')
-                .select('id, full_name, status_id, service_type, parent_client_id, expiration_date, upcoming_order')
+                .select('id, full_name, status_id, service_type, parent_client_id, expiration_date, upcoming_order, approved_meals_per_week')
                 .in('id', clientIdsFilter)
                 .is('parent_client_id', null);
             if (clientsError) {
@@ -119,7 +129,7 @@ export async function POST(request: NextRequest) {
             totalClientsCount = count ?? 0;
             const { data: pageData, error: clientsError } = await supabase
                 .from('clients')
-                .select('id, full_name, status_id, service_type, parent_client_id, expiration_date, upcoming_order')
+                .select('id, full_name, status_id, service_type, parent_client_id, expiration_date, upcoming_order, approved_meals_per_week')
                 .is('parent_client_id', null)
                 .order('id', { ascending: true })
                 .range(from, to);
@@ -135,7 +145,7 @@ export async function POST(request: NextRequest) {
             while (true) {
                 const { data: pageData, error: clientsError } = await supabase
                     .from('clients')
-                    .select('id, full_name, status_id, service_type, parent_client_id, expiration_date, upcoming_order')
+                    .select('id, full_name, status_id, service_type, parent_client_id, expiration_date, upcoming_order, approved_meals_per_week')
                     .is('parent_client_id', null)
                     .order('id', { ascending: true })
                     .range(clientPage * clientPageSize, (clientPage + 1) * clientPageSize - 1);
@@ -302,7 +312,10 @@ export async function POST(request: NextRequest) {
                 ordersCreated: 0,
                 reason: '',
                 vendors: new Set(),
-                types: new Set()
+                types: new Set(),
+                authMealsPerWeek: c.approved_meals_per_week ?? null,
+                totalValue: 0,
+                orderBreakdown: []
             });
         }
 
@@ -312,6 +325,13 @@ export async function POST(request: NextRequest) {
             const vendor = vendorMap.get(vendorId);
             if (vendor?.name) row.vendors.add(vendor.name);
             row.types.add(serviceType);
+        }
+
+        function recordReportOrderValue(clientId: string, orderNumber: number, amount: number) {
+            const row = clientReportMap.get(clientId);
+            if (!row) return;
+            row.totalValue += amount;
+            row.orderBreakdown.push({ orderNumber, amount });
         }
 
         const { data: maxOrderData } = await supabase.from('orders').select('order_number').order('order_number', { ascending: false }).limit(1).maybeSingle();
@@ -478,6 +498,7 @@ export async function POST(request: NextRequest) {
                     if (vs) {
                         recordVendorOrder(sel.vendorId, deliveryDateStr);
                         recordReportOrder(fo.client_id, sel.vendorId, 'Food');
+                        recordReportOrderValue(fo.client_id, newOrder.order_number, valueTotal);
                         await supabase.from('order_items').insert(itemsList.map(i => ({ ...i, vendor_selection_id: vs.id, order_id: newOrder.id })));
                         diagnostics.push({ clientId: fo.client_id, clientName, vendorId: sel.vendorId, vendorName: vendor.name, date: deliveryDateStr, orderType: 'Food', outcome: 'created', orderId: newOrder.id });
                     } else {
@@ -579,6 +600,7 @@ export async function POST(request: NextRequest) {
                 if (vs) {
                     recordVendorOrder(mealVendorId, deliveryDateStr);
                     recordReportOrder(mo.client_id, mealVendorId, 'Meal');
+                    recordReportOrderValue(mo.client_id, newOrder.order_number, orderTotalValue);
                     await supabase.from('order_items').insert(itemsList.map(i => ({ ...i, vendor_selection_id: vs.id, order_id: newOrder.id })));
                     diagnostics.push({ clientId: mo.client_id, clientName, vendorId: mealVendorId, vendorName: vendor.name, date: deliveryDateStr, orderType: 'Meal', outcome: 'created', orderId: newOrder.id });
                 } else {
@@ -700,6 +722,7 @@ export async function POST(request: NextRequest) {
                 const v = vendorMap.get(vid);
                 diagnostics.push({ clientId, clientName: clientMap.get(clientId)?.full_name ?? clientId, vendorId: vid, vendorName: v?.name ?? vid, date: deliveryDateStr, orderType: 'Boxes', outcome: 'created', orderId: newOrder.id });
             }
+            recordReportOrderValue(clientId, newOrder.order_number, totalOrderValue);
             for (const sel of selectionsToInsert) {
                 await supabase.from('order_box_selections').insert({
                     order_id: newOrder.id,
@@ -769,6 +792,7 @@ export async function POST(request: NextRequest) {
                 if (newVs) {
                     recordVendorOrder(vendorId, deliveryDateStr);
                     recordReportOrder(co.client_id, vendorId, 'Custom');
+                    recordReportOrderValue(co.client_id, newOrder.order_number, totalValue);
                     const itemsToInsert = names.map((name: string, i: number) => {
                         // Put rounding remainder on last item so total sums exactly
                         const isLast = i === names.length - 1;
@@ -811,6 +835,11 @@ export async function POST(request: NextRequest) {
             'Client ID': row.clientId,
             'Client Name': row.clientName,
             'Orders Created': row.ordersCreated,
+            'Auth Meals/Week': row.authMealsPerWeek != null ? row.authMealsPerWeek : '',
+            'Total Value ($)': row.totalValue > 0 ? Number(row.totalValue.toFixed(2)) : '',
+            'Orders (Order #, Amount)': row.orderBreakdown.length > 0
+                ? row.orderBreakdown.map(o => `${o.orderNumber}: $${o.amount.toFixed(2)}`).join(', ')
+                : '-',
             'Vendor(s)': Array.from(row.vendors).sort().join(', ') || '-',
             'Type(s)': Array.from(row.types).sort().join(', ') || '-',
             'Reason (if no orders)': row.reason || '-'
@@ -871,7 +900,7 @@ export async function POST(request: NextRequest) {
 
         const wb = XLSX.utils.book_new();
         const ws = XLSX.utils.json_to_sheet(excelData);
-        ws['!cols'] = [{ wch: 15 }, { wch: 30 }, { wch: 15 }, { wch: 35 }, { wch: 25 }, { wch: 45 }];
+        ws['!cols'] = [{ wch: 15 }, { wch: 30 }, { wch: 15 }, { wch: 14 }, { wch: 14 }, { wch: 50 }, { wch: 35 }, { wch: 25 }, { wch: 45 }];
         XLSX.utils.book_append_sheet(wb, ws, 'Next Week Report');
 
         const excelBuffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });

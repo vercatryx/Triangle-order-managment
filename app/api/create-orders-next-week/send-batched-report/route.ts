@@ -43,9 +43,9 @@ export async function POST(request: NextRequest) {
 
         const wb = XLSX.utils.book_new();
         const ws = XLSX.utils.json_to_sheet(
-            excelRows.length ? excelRows : [{ 'Client ID': '-', 'Client Name': '-', 'Orders Created': 0, 'Vendor(s)': '-', 'Type(s)': '-', 'Reason (if no orders)': 'No clients in batch' }]
+            excelRows.length ? excelRows : [{ 'Client ID': '-', 'Client Name': '-', 'Orders Created': 0, 'Auth Meals/Week': '', 'Total Value ($)': '', 'Orders (Order #, Amount)': '-', 'Vendor(s)': '-', 'Type(s)': '-', 'Reason (if no orders)': 'No clients in batch' }]
         );
-        ws['!cols'] = [{ wch: 15 }, { wch: 30 }, { wch: 15 }, { wch: 35 }, { wch: 25 }, { wch: 45 }];
+        ws['!cols'] = [{ wch: 15 }, { wch: 30 }, { wch: 15 }, { wch: 14 }, { wch: 14 }, { wch: 50 }, { wch: 35 }, { wch: 25 }, { wch: 45 }];
         XLSX.utils.book_append_sheet(wb, ws, 'Next Week Report');
         const mainBuffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
         const attachments: { filename: string; content: Buffer; contentType: string }[] = [

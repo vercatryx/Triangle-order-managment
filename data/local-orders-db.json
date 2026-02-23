@@ -24690,44 +24690,6 @@
       "meal_type": "Triangle Breakfast/Lunch (12 Meals)_1768943038159"
     },
     {
-      "id": "334845e2-cfbb-4a99-b88d-ccff6d5d1bf6",
-      "client_id": "CLIENT-740",
-      "service_type": "Meal",
-      "case_id": "https://app.uniteus.io/dashboard/cases/open/f89c2f0f-37b2-460d-8aa5-251c9c06820a/contact/f1736a2b-042d-4207-bc33-af2cbddecde9",
-      "status": "scheduled",
-      "last_updated": "2026-02-04T19:00:15+00:00",
-      "updated_by": "orit",
-      "created_at": "2026-02-04T19:00:16.888817+00:00",
-      "take_effect_date": null,
-      "total_value": 0,
-      "total_items": 0,
-      "notes": null,
-      "processed_order_id": null,
-      "processed_at": null,
-      "delivery_day": "Monday",
-      "order_number": 113179,
-      "meal_type": "Lunch"
-    },
-    {
-      "id": "92244d6a-a49f-4716-9ecf-17001f0cd96e",
-      "client_id": "CLIENT-740",
-      "service_type": "Meal",
-      "case_id": "https://app.uniteus.io/dashboard/cases/open/f89c2f0f-37b2-460d-8aa5-251c9c06820a/contact/f1736a2b-042d-4207-bc33-af2cbddecde9",
-      "status": "scheduled",
-      "last_updated": "2026-02-04T19:00:15+00:00",
-      "updated_by": "orit",
-      "created_at": "2026-02-04T19:00:16.906885+00:00",
-      "take_effect_date": null,
-      "total_value": 0,
-      "total_items": 0,
-      "notes": null,
-      "processed_order_id": null,
-      "processed_at": null,
-      "delivery_day": "Thursday",
-      "order_number": 113180,
-      "meal_type": "Lunch"
-    },
-    {
       "id": "0c0284f0-141a-4f2e-8dff-1f3aef6b567d",
       "client_id": "CLIENT-106",
       "service_type": "Food",
@@ -26549,6 +26511,44 @@
       "processed_at": null,
       "delivery_day": "Tuesday",
       "order_number": 112373,
+      "meal_type": "Lunch"
+    },
+    {
+      "id": "334845e2-cfbb-4a99-b88d-ccff6d5d1bf6",
+      "client_id": "CLIENT-740",
+      "service_type": "Meal",
+      "case_id": "https://app.uniteus.io/dashboard/cases/open/f89c2f0f-37b2-460d-8aa5-251c9c06820a/contact/f1736a2b-042d-4207-bc33-af2cbddecde9",
+      "status": "scheduled",
+      "last_updated": "2026-02-04T19:00:15+00:00",
+      "updated_by": "orit",
+      "created_at": "2026-02-04T19:00:16.888817+00:00",
+      "take_effect_date": null,
+      "total_value": 0,
+      "total_items": 0,
+      "notes": null,
+      "processed_order_id": null,
+      "processed_at": null,
+      "delivery_day": "Monday",
+      "order_number": 113179,
+      "meal_type": "Lunch"
+    },
+    {
+      "id": "92244d6a-a49f-4716-9ecf-17001f0cd96e",
+      "client_id": "CLIENT-740",
+      "service_type": "Meal",
+      "case_id": "https://app.uniteus.io/dashboard/cases/open/f89c2f0f-37b2-460d-8aa5-251c9c06820a/contact/f1736a2b-042d-4207-bc33-af2cbddecde9",
+      "status": "scheduled",
+      "last_updated": "2026-02-04T19:00:15+00:00",
+      "updated_by": "orit",
+      "created_at": "2026-02-04T19:00:16.906885+00:00",
+      "take_effect_date": null,
+      "total_value": 0,
+      "total_items": 0,
+      "notes": null,
+      "processed_order_id": null,
+      "processed_at": null,
+      "delivery_day": "Thursday",
+      "order_number": 113180,
       "meal_type": "Lunch"
     }
   ],
@@ -30661,18 +30661,6 @@
       "created_at": "2026-02-04T21:20:39.256814+00:00"
     },
     {
-      "id": "2c06d6f7-1ffd-4803-bd60-38c685d2062a",
-      "upcoming_order_id": "334845e2-cfbb-4a99-b88d-ccff6d5d1bf6",
-      "vendor_id": "1e9e2218-fdff-434f-b279-93d9d7bf4bd2",
-      "created_at": "2026-02-04T19:00:18.552803+00:00"
-    },
-    {
-      "id": "bc22336b-1579-4fd1-844c-8a1b4c60f0a7",
-      "upcoming_order_id": "92244d6a-a49f-4716-9ecf-17001f0cd96e",
-      "vendor_id": "1e9e2218-fdff-434f-b279-93d9d7bf4bd2",
-      "created_at": "2026-02-04T19:00:18.63117+00:00"
-    },
-    {
       "id": "c948e8f4-7d9a-4449-9007-1a6eda6486c6",
       "upcoming_order_id": "0c0284f0-141a-4f2e-8dff-1f3aef6b567d",
       "vendor_id": "1e9e2218-fdff-434f-b279-93d9d7bf4bd2",
@@ -31247,6 +31235,18 @@
       "upcoming_order_id": "7e623dc3-cb4e-41fc-8557-b625fae163c7",
       "vendor_id": "3152cbbc-662b-4cb4-bd70-6d4c505aee7c",
       "created_at": "2026-02-04T17:51:02.333977+00:00"
+    },
+    {
+      "id": "2c06d6f7-1ffd-4803-bd60-38c685d2062a",
+      "upcoming_order_id": "334845e2-cfbb-4a99-b88d-ccff6d5d1bf6",
+      "vendor_id": "1e9e2218-fdff-434f-b279-93d9d7bf4bd2",
+      "created_at": "2026-02-04T19:00:18.552803+00:00"
+    },
+    {
+      "id": "bc22336b-1579-4fd1-844c-8a1b4c60f0a7",
+      "upcoming_order_id": "92244d6a-a49f-4716-9ecf-17001f0cd96e",
+      "vendor_id": "1e9e2218-fdff-434f-b279-93d9d7bf4bd2",
+      "created_at": "2026-02-04T19:00:18.63117+00:00"
     }
   ],
   "upcomingOrderItems": [
@@ -67409,47 +67409,6 @@
       "case_id": "https://app.uniteus.io/dashboard/cases/open/0a9876cf-00a9-4a4d-8a5c-7eb1d3a75b27/contact/40d8b0b0-fde7-49d5-8593-dea70ac816e2"
     },
     {
-      "client_id": "CLIENT-740",
-      "delivery_day_orders": {
-        "Monday": {
-          "vendorSelections": [
-            {
-              "items": {
-                "0ce32cef-5015-4b72-860c-4e79117f648f": 1,
-                "232f02a7-d145-492e-8370-76b25f249886": 1,
-                "2a8859a9-4cc7-4334-aa3b-8f7bd9658b06": 1,
-                "3d7bdcac-fbf5-4568-a2ef-772164bbb47f": 2,
-                "4ca9cfbe-019f-4b9f-a82c-93a93e1ee527": 1,
-                "5112ed21-d6c3-4ee1-946e-cc699725dc0b": 1,
-                "b0adeabb-41a1-4c15-9637-e80d8bcf477e": 1,
-                "b38720f7-7eaf-43ae-9dbd-05da336c3993": 1,
-                "cfaf9f1b-5006-4edc-ae86-65d576c1d678": 1,
-                "e8f1ec7b-fdf8-48e4-b397-1e809ecc2c95": 1,
-                "eaad36a7-479f-4030-88a0-fcba6b920272": 1
-              },
-              "vendorId": "7236a901-ffeb-4c85-99b9-4746f7927c6e"
-            }
-          ]
-        },
-        "Thursday": {
-          "vendorSelections": [
-            {
-              "items": {
-                "0f78e662-863d-4502-be12-3ffea80c518a": 1,
-                "18db3f4c-8a2e-4832-aff7-f154ca68cad4": 3,
-                "8ce1d790-e518-45a6-b03a-b14dcd8dff7f": 1,
-                "d7002389-0347-41a5-87b3-240fbbcb56fc": 1,
-                "f27649d5-9141-43a4-9a05-c93c351115a7": 1,
-                "fa59f4c7-3557-46be-ab98-0b569d16f69e": 2
-              },
-              "vendorId": "1e9e2218-fdff-434f-b279-93d9d7bf4bd2"
-            }
-          ]
-        }
-      },
-      "case_id": "https://app.uniteus.io/dashboard/cases/open/f89c2f0f-37b2-460d-8aa5-251c9c06820a/contact/f1736a2b-042d-4207-bc33-af2cbddecde9"
-    },
-    {
       "client_id": "CLIENT-106",
       "delivery_day_orders": {
         "Thursday": {
@@ -71466,6 +71425,20 @@
         }
       },
       "case_id": "https://app.uniteus.io/dashboard/cases/open/71e4dd7f-19a5-4951-9645-6fcfdf0b38e6/contact/280f93fe-849f-4409-b8f3-53379d6b6f8c"
+    },
+    {
+      "client_id": "CLIENT-740",
+      "meal_selections": {
+        "Triangle Breakfast/Lunch (9 Meals)_1771369928664": {
+          "items": {
+            "8c026443-d79c-4d05-a21b-51541de91529": 1
+          },
+          "mealType": "Triangle Breakfast/Lunch (9 Meals)",
+          "vendorId": "3152cbbc-662b-4cb4-bd70-6d4c505aee7c",
+          "itemNotes": {}
+        }
+      },
+      "case_id": "https://app.uniteus.io/dashboard/cases/open/f89c2f0f-37b2-460d-8aa5-251c9c06820a/contact/f1736a2b-042d-4207-bc33-af2cbddecde9"
     }
   ],
   "clientBoxOrders": [
@@ -77121,5 +77094,5 @@
       "case_id": "https://app.uniteus.io/dashboard/cases/open/c856d15a-98a7-4edd-b088-1ab82e5169c9/contact/16173a47-37f7-4474-81ca-1f006abde7fc"
     }
   ],
-  "lastSynced": "2026-02-17T15:19:22.306Z"
+  "lastSynced": "2026-02-23T20:37:46.045Z"
 }

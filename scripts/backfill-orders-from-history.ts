@@ -148,10 +148,10 @@ async function main() {
     supabase.from('vendors').select('id, name, delivery_days, is_active'),
     supabase.from('client_statuses').select('id, name, deliveries_allowed'),
     supabase.from('menu_items').select('id, vendor_id, value, price_each, is_active, category_id'),
-    supabase.from('breakfast_items').select('id, category_id, price_each, is_active, vendor_id'),
+    supabase.from('breakfast_items').select('id, category_id, price_each, is_active'),
     supabase.from('box_types').select('id, name'),
     supabase.from('breakfast_categories').select('id, name, meal_type'),
-    supabase.from('item_categories').select('id, name')
+    supabase.from('item_categories').select('id, name, meal_type')
   ]);
 
   const allVendors = (vendorsRes.data || []) as { id: string; name: string; delivery_days?: string[]; is_active?: boolean }[];
@@ -159,8 +159,26 @@ async function main() {
   const allMenuItems = (menuItemsRes.data || []) as any[];
   const allMealItems = ((mealItemsRes.data || []) as any[]).map((i) => ({ ...i, itemType: 'meal' as const }));
   const allBoxTypes = (boxTypesRes.data || []) as any[];
-  const allBreakfastCategories = (breakfastCategoriesRes.data || []) as { id: string; name?: string; meal_type: string }[];
-  const allItemCategories = (itemCategoriesRes.data || []) as { id: string; name?: string; meal_type?: string }[];
+  const allBreakfastCategories = (breakfastCategoriesRes.data || []) as { id: string; name?: string; meal_type: string; is_active?: boolean }[];
+  const allItemCategories = (itemCategoriesRes.data || []) as { id: string; name?: string; meal_type?: string; is_active?: boolean }[];
+
+  /** Meal types that are currently active (have at least one active category). We do not create backfill orders for deactivated meal types. */
+  const activeMealTypes = new Set<string>();
+  for (const c of allBreakfastCategories) {
+    if (c.is_active !== false) activeMealTypes.add(c.meal_type || 'Lunch');
+  }
+  for (const c of allItemCategories) {
+    const mt = (c as any).meal_type;
+    if (mt && (c as any).is_active !== false) activeMealTypes.add(mt);
+  }
+  // If all categories are inactive, fall back to all meal types so we don't skip every client (e.g. CHAYA GLAUBER)
+  if (activeMealTypes.size === 0) {
+    for (const c of allBreakfastCategories) activeMealTypes.add(c.meal_type || 'Lunch');
+    for (const c of allItemCategories) {
+      const mt = (c as any).meal_type;
+      if (mt) activeMealTypes.add(mt);
+    }
+  }
 
   const categoryIdToMealType = new Map<string, string>(allBreakfastCategories.map((c) => [c.id, c.meal_type || 'Lunch']));
   const mealItemIdToMealType = new Map<string, string>(
@@ -189,6 +207,24 @@ async function main() {
   const statusMap = new Map(allStatuses.map((s) => [s.id, s]));
   const menuItemMap = new Map(allMenuItems.map((i) => [i.id, i]));
   const mealItemMap = new Map(allMealItems.map((i) => [i.id, i]));
+  /** Lookup meal/menu item by id (and by id.toLowerCase()) so snapshot item IDs match even if casing differs */
+  const mealItemById = new Map<string, any>();
+  const menuItemById = new Map<string, any>();
+  for (const i of allMealItems) {
+    mealItemById.set(i.id, i);
+    if (typeof i.id === 'string') mealItemById.set(i.id.toLowerCase(), i);
+  }
+  for (const i of allMenuItems) {
+    menuItemById.set(i.id, i);
+    if (typeof i.id === 'string') menuItemById.set(i.id.toLowerCase(), i);
+  }
+  function resolveItem(itemId: string): { item: any; itemType: 'meal' | 'menu' } | null {
+    const m = mealItemById.get(itemId) ?? mealItemById.get(String(itemId).toLowerCase());
+    if (m) return { item: m, itemType: 'meal' };
+    const u = menuItemById.get(itemId) ?? menuItemById.get(String(itemId).toLowerCase());
+    if (u) return { item: u, itemType: 'menu' };
+    return null;
+  }
 
   let clients: any[];
   if (clientArg) {
@@ -229,9 +265,9 @@ async function main() {
     if (!isEligible(client)) continue;
     const updatedAfter = clientUpdatedAfterCutoff(client.order_history || [], cutoffDate);
     const snapshotAt = snapshotAtCutoff(client.order_history || [], cutoffDate);
-    const uo = (updatedAfter ? snapshotAt : client.upcoming_order ?? snapshotAt) as any;
+    // Prefer snapshot at cutoff when client was updated after cutoff; if no snapshot, use current upcoming_order so we don't skip the client
+    const uo = (updatedAfter ? (snapshotAt ?? client.upcoming_order) : (client.upcoming_order ?? snapshotAt)) as any;
     if (!uo || typeof uo !== 'object') continue;
-    if (updatedAfter && !snapshotAt) continue;
 
     const st = uo.serviceType ?? uo.service_type;
     const clientName = client.full_name || client.id;
@@ -256,8 +292,9 @@ async function main() {
           for (const [itemId, qty] of Object.entries(g.items)) {
             const q = Number(qty);
             if (q <= 0) continue;
-            const mItem = allMealItems.find((i: any) => i.id === itemId) || allMenuItems.find((i: any) => i.id === itemId);
-            const price = mItem ? ((mItem as any).itemType === 'meal' ? (mItem.price_each ?? 0) : (mItem.price_each ?? mItem.value ?? 0)) : 0;
+            const resolved = resolveItem(itemId);
+            if (!resolved) continue; // skip items that don't exist in breakfast_items/menu_items
+            const price = resolved.itemType === 'meal' ? (resolved.item.price_each ?? 0) : (resolved.item.price_each ?? resolved.item.value ?? 0);
             orderTotalValue += price * q;
             orderTotalItems += q;
             itemsList.push({
@@ -271,6 +308,7 @@ async function main() {
         }
         if (itemsList.length === 0) continue;
         const mealTypeCanonical = categoryNameOrTypeToCanonicalMealType.get(_mealType) ?? categoryNameOrTypeToCanonicalMealType.get(normalizeMealType(_mealType)) ?? normalizeMealType(_mealType);
+        if (!activeMealTypes.has(mealTypeCanonical)) continue; // do not create backfill orders for deactivated meal types (e.g. Lunch)
         expectedOrders.push({
           client_id: client.id,
           clientName,
@@ -295,26 +333,52 @@ async function main() {
   const expectedOrdersFinal = expectedOrders;
 
   // Load existing orders in week; for Meal, key by (client, date, vendor, meal_type) using items
+  // Supabase returns at most 1000 rows by default - paginate to load ALL orders in the week
   let ordersList: any[] = [];
-  if (clientArg) {
-    const { data } = await supabase
-      .from('orders')
-      .select('id, client_id, scheduled_delivery_date, service_type')
-      .eq('client_id', clientArg)
-      .gte('scheduled_delivery_date', weekStartStr)
-      .lte('scheduled_delivery_date', weekEndStr);
-    ordersList = data || [];
-  } else {
-    const { data } = await supabase
-      .from('orders')
-      .select('id, client_id, scheduled_delivery_date, service_type')
-      .gte('scheduled_delivery_date', weekStartStr)
-      .lte('scheduled_delivery_date', weekEndStr);
-    ordersList = data || [];
-  }
+  const weekEndInclusive = weekEndStr + 'T23:59:59.999';
+  const pageSize = 1000;
+  let offset = 0;
+  let page: any[];
+  do {
+    if (clientArg) {
+      const { data } = await supabase
+        .from('orders')
+        .select('id, client_id, scheduled_delivery_date, service_type')
+        .eq('client_id', clientArg)
+        .gte('scheduled_delivery_date', weekStartStr)
+        .lte('scheduled_delivery_date', weekEndInclusive)
+        .range(offset, offset + pageSize - 1);
+      page = data || [];
+    } else {
+      const { data } = await supabase
+        .from('orders')
+        .select('id, client_id, scheduled_delivery_date, service_type')
+        .gte('scheduled_delivery_date', weekStartStr)
+        .lte('scheduled_delivery_date', weekEndInclusive)
+        .range(offset, offset + pageSize - 1);
+      page = data || [];
+    }
+    ordersList = ordersList.concat(page);
+    offset += pageSize;
+  } while (page.length === pageSize);
   const existingKeyCount = new Map<string, number>();
   const existingMealCountByClientDateVendor = new Map<string, number>();
   const orderIds = ordersList.map((o: any) => o.id);
+  /** For Meal matching: treat orders under a dependent as belonging to the parent so they count toward parent's expected. */
+  const distinctOrderClientIds = [...new Set(ordersList.map((o: any) => o.client_id).filter(Boolean))];
+  const clientIdToParent = new Map<string, string>();
+  if (distinctOrderClientIds.length > 0) {
+    const { data: orderClients } = await supabase
+      .from('clients')
+      .select('id, parent_client_id')
+      .in('id', distinctOrderClientIds);
+    for (const row of orderClients || []) {
+      const r = row as { id: string; parent_client_id: string | null };
+      if (r.parent_client_id) clientIdToParent.set(r.id, r.parent_client_id);
+    }
+  }
+  const effectiveClientId = (cid: string) => clientIdToParent.get(cid) || cid;
+
   let allVs: { order_id: string; vendor_id: string }[] = [];
   if (orderIds.length > 0) {
     const batchSize = 200;
@@ -358,10 +422,17 @@ async function main() {
         }
       }
     }
+    // Build set of order IDs that have at least one line item (for fallback below)
+    const orderIdsWithItems = new Set(allItems.map((r) => r.order_id));
+
     for (const oid of mealOrderIds) {
       const types = mealTypesByOrderId.get(oid);
       if (types && types.size > 0) {
         orderIdToMealType.set(oid, [...types].sort()[0]);
+      } else if (orderIdsWithItems.has(oid)) {
+        // Order has line items but we couldn't derive a type (e.g. all custom items, or item IDs not in breakfast_items/menu_items).
+        // Treat as Lunch so it's not shown as "(unclassified)" and still counts toward existing slots.
+        orderIdToMealType.set(oid, 'Lunch');
       } else {
         orderIdUnclassified.add(oid);
       }
@@ -400,37 +471,37 @@ async function main() {
 
   const missing: ExpectedOrder[] = [];
   if (expectedOrdersFinal.some((e) => e.service_type === 'Meal')) {
-    const slotKey = (c: string, d: string, v: string) => `${c}|${d}|Meal|${v}`;
-    const existingBySlot = new Map<string, { orderId: string; mealType: string }[]>();
+    /** Match by (client_id, date) only so existing orders count even if vendor_id differs (profile vs created order). */
+    const clientDateKey = (c: string, d: string) => `${String(c).trim()}|${String(d).slice(0, 10)}`;
+    const norm = (s: string) => (s || '').trim().toLowerCase();
+    const existingByClientDate = new Map<string, { orderId: string; mealType: string }[]>();
     for (const o of ordersList) {
       if (o.service_type !== 'Meal') continue;
       const dateStr = o.scheduled_delivery_date ? String(o.scheduled_delivery_date).slice(0, 10) : '';
       const derived = orderIdToMealType.get(o.id) ?? (orderIdUnclassified.has(o.id) ? '__any_meal__' : null);
       if (!derived) continue;
-      for (const vs of vsByOrderId.get(o.id) || []) {
-        const key = slotKey(o.client_id, dateStr, vs.vendor_id);
-        if (!existingBySlot.has(key)) existingBySlot.set(key, []);
-        existingBySlot.get(key)!.push({ orderId: o.id, mealType: derived });
-      }
+      const key = clientDateKey(effectiveClientId(o.client_id), dateStr);
+      if (!existingByClientDate.has(key)) existingByClientDate.set(key, []);
+      existingByClientDate.get(key)!.push({ orderId: o.id, mealType: derived });
     }
-    const expectedMealBySlot = new Map<string, ExpectedOrder[]>();
+    const expectedMealByClientDate = new Map<string, ExpectedOrder[]>();
     for (const exp of expectedOrdersFinal) {
       if (exp.service_type !== 'Meal' || !exp.mealType) continue;
-      const key = slotKey(exp.client_id, exp.scheduled_delivery_date, exp.vendor_id);
-      if (!expectedMealBySlot.has(key)) expectedMealBySlot.set(key, []);
-      expectedMealBySlot.get(key)!.push(exp);
+      const key = clientDateKey(exp.client_id, exp.scheduled_delivery_date);
+      if (!expectedMealByClientDate.has(key)) expectedMealByClientDate.set(key, []);
+      expectedMealByClientDate.get(key)!.push(exp);
     }
     const matched = new Set<ExpectedOrder>();
-    for (const [key, expectedList] of expectedMealBySlot) {
-      const existingList = existingBySlot.get(key) || [];
-      const used = new Set<number>();
+    for (const [key, expectedList] of expectedMealByClientDate) {
+      const existingList = existingByClientDate.get(key) || [];
       for (const ex of existingList) {
-        const canonical = ex.mealType === '__any_meal__' ? null : ex.mealType;
-        let idx = canonical != null ? expectedList.findIndex((e) => !matched.has(e) && e.mealTypeCanonical === canonical) : -1;
+        const canonical = ex.mealType === '__any_meal__' ? null : (ex.mealType || '').trim();
+        const canonicalLower = canonical ? norm(canonical) : '';
+        let idx = canonicalLower
+          ? expectedList.findIndex((e) => !matched.has(e) && norm(e.mealTypeCanonical || '') === canonicalLower)
+          : -1;
         if (idx < 0) idx = expectedList.findIndex((e) => !matched.has(e));
-        if (idx >= 0) {
-          matched.add(expectedList[idx]);
-        }
+        if (idx >= 0) matched.add(expectedList[idx]);
       }
     }
     for (const exp of expectedOrdersFinal) {

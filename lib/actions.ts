@@ -4,12 +4,12 @@
 import { getCurrentTime } from './time';
 import { revalidatePath } from 'next/cache';
 import { cache as reactCache } from 'react';
-import { supabase } from './supabase';
+import { supabase, supabaseClientOptions } from './supabase';
 import { ClientStatus, Vendor, MenuItem, BoxType, AppSettings, Navigator, Nutritionist, ClientProfile, DeliveryRecord, ItemCategory, BoxQuota, ServiceType, Equipment, ClientFoodOrder, ClientMealOrder, ClientBoxOrder } from './types';
 import { uploadFile, deleteFile } from './storage';
 import { randomUUID } from 'crypto';
 import { getSession } from './session';
-import { createClient } from '@supabase/supabase-js';
+import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { roundCurrency, getWeekStart, getWeekEnd, getWeekRangeString, isDateInWeek } from './utils';
 import { normalizeUpcomingOrder } from './upcoming-order-converter';
 import { hasBlockingCleanupIssues, type BlockContext } from './order-creation-block';
@@ -1477,22 +1477,25 @@ export async function deleteNutritionist(id: string) {
 // --- CLIENT ACTIONS ---
 
 // Client to use for client/dependent inserts when we want to bypass RLS (same as ID generation).
+// Uses same long timeout as default supabase client (see lib/supabase.ts) to avoid 522/timeouts.
 function getSupabaseForClientWrite() {
     const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-    return serviceRoleKey
-        ? createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, serviceRoleKey, { auth: { persistSession: false } })
-        : supabase;
+    if (!serviceRoleKey) return supabase;
+    return createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, serviceRoleKey, {
+        auth: { persistSession: false },
+        ...supabaseClientOptions,
+    });
+}
+
+/** Use service role for client reads when available (bypasses RLS, more reliable when anon has 522/latency). */
+function getSupabaseForClientRead() {
+    return getSupabaseForClientWrite();
 }
 
 // Helper to generate next client ID. Uses service-role client when available to read all rows
 // (bypassing RLS) and compute max+1 with pagination; skips RPC to avoid schema/RLS mismatches.
 async function generateNextClientId(afterCollisionId?: string) {
-    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-    const supabaseAdmin = serviceRoleKey
-        ? createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, serviceRoleKey, { auth: { persistSession: false } })
-        : null;
-
-    const clientForFallback = supabaseAdmin ?? supabase;
+    const clientForFallback = getSupabaseForClientWrite();
     const pageSize = 1000;
     let allRows: { id: string }[] = [];
     let page = 0;
@@ -1577,12 +1580,13 @@ function mapClientFromDB(c: any): ClientProfile {
 }
 
 export async function getClients() {
+    const db = getSupabaseForClientRead();
     let allClients: any[] = [];
     let page = 0;
     const pageSize = 1000;
 
     while (true) {
-        const { data, error } = await supabase
+        const { data, error } = await db
             .from('clients')
             .select('*')
             .order('created_at', { ascending: true })
@@ -1633,7 +1637,8 @@ export async function getClientsLight() {
 }
 
 export const getClient = reactCache(async function (id: string) {
-    const { data, error } = await supabase.from('clients').select('*').eq('id', id).single();
+    const db = getSupabaseForClientRead();
+    const { data, error } = await db.from('clients').select('*').eq('id', id).single();
     if (error || !data) return undefined;
     return mapClientFromDB(data);
 });
@@ -1641,7 +1646,8 @@ export const getClient = reactCache(async function (id: string) {
 export async function checkClientNameExists(fullName: string, excludeId?: string): Promise<boolean> {
     if (!fullName || !fullName.trim()) return false;
 
-    let query = supabase
+    const db = getSupabaseForClientRead();
+    let query = db
         .from('clients')
         .select('id')
         .ilike('full_name', fullName.trim());
@@ -1662,7 +1668,8 @@ export async function checkClientNameExists(fullName: string, excludeId?: string
 /** Exact full_name match only (no case folding, no pattern). Use for extension create-client. */
 export async function checkClientNameExistsExact(fullName: string): Promise<boolean> {
     if (!fullName || !fullName.trim()) return false;
-    const { data, error } = await supabase
+    const db = getSupabaseForClientRead();
+    const { data, error } = await db
         .from('clients')
         .select('id')
         .eq('full_name', fullName.trim())
@@ -1678,12 +1685,13 @@ export async function getPublicClient(id: string) {
     if (!id) return undefined;
 
     // Use Service Role if available to bypass RLS for this specific public view
-    let supabaseClient = supabase;
+    let supabaseClient: SupabaseClient = supabase;
     const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
     if (serviceRoleKey) {
         supabaseClient = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, serviceRoleKey, {
-            auth: { persistSession: false }
-        });
+            auth: { persistSession: false },
+            ...supabaseClientOptions,
+        }) as typeof supabase;
     }
 
     const { data, error } = await supabaseClient.from('clients').select('*').eq('id', id).single();
@@ -1824,13 +1832,14 @@ export async function addDependent(name: string, parentClientId: string, dob?: s
 }
 
 export async function getRegularClients() {
+    const db = getSupabaseForClientRead();
     let allData: any[] = [];
     let page = 0;
     const pageSize = 1000;
 
     try {
         while (true) {
-            const { data, error } = await supabase
+            const { data, error } = await db
                 .from('clients')
                 .select('*')
                 .is('parent_client_id', null)
@@ -1859,7 +1868,7 @@ export async function getRegularClients() {
             allData = [];
             page = 0;
             while (true) {
-                const { data, error } = await supabase
+                const { data, error } = await db
                     .from('clients')
                     .select('*')
                     .order('full_name', { ascending: true })
@@ -1887,7 +1896,8 @@ export async function searchClientsByName(query: string): Promise<Array<{ id: st
     if (!query || query.trim().length < 1) return [];
     const term = query.trim();
     try {
-        const { data, error } = await supabase
+        const db = getSupabaseForClientRead();
+        const { data, error } = await db
             .from('clients')
             .select('id, full_name')
             .is('parent_client_id', null)
@@ -1904,7 +1914,8 @@ export async function searchClientsByName(query: string): Promise<Array<{ id: st
 
 export async function getDependentsByParentId(parentClientId: string) {
     try {
-        const { data, error } = await supabase
+        const db = getSupabaseForClientRead();
+        const { data, error } = await db
             .from('clients')
             .select('*')
             .eq('parent_client_id', parentClientId)
@@ -2974,7 +2985,7 @@ export async function getBillingRequestsByWeek(weekStartDate?: Date): Promise<Bi
     if (serviceRoleKey) {
         supabaseClient = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, serviceRoleKey, {
             auth: { persistSession: false }
-        });
+        }) as typeof supabase;
     } else {
         console.warn('[getBillingRequestsByWeek] Service role key not found - using regular client (may be blocked by RLS)');
     }
@@ -4406,7 +4417,7 @@ export async function processUpcomingOrders() {
     if (serviceRoleKey) {
         supabaseClient = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, serviceRoleKey, {
             auth: { persistSession: false }
-        });
+        }) as typeof supabase;
     }
 
     // Find all upcoming orders where take_effect_date <= today and status is 'scheduled'
@@ -5543,7 +5554,7 @@ export async function getOrdersByVendor(vendorId: string) {
     if (serviceRoleKey) {
         supabaseClient = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, serviceRoleKey, {
             auth: { persistSession: false }
-        });
+        }) as typeof supabase;
     }
 
     try {
@@ -5717,7 +5728,7 @@ export async function getVendorDeliveryDateSummary(vendorId: string): Promise<Ar
     let supabaseClient = supabase;
     const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
     if (serviceRoleKey) {
-        supabaseClient = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, serviceRoleKey, { auth: { persistSession: false } });
+        supabaseClient = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, serviceRoleKey, { auth: { persistSession: false }, ...supabaseClientOptions }) as typeof supabase;
     }
 
     try {
@@ -5944,7 +5955,7 @@ export async function getOrdersByVendorForDate(vendorId: string, deliveryDate: s
     let supabaseClient = supabase;
     const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
     if (serviceRoleKey) {
-        supabaseClient = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, serviceRoleKey, { auth: { persistSession: false } });
+        supabaseClient = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, serviceRoleKey, { auth: { persistSession: false }, ...supabaseClientOptions }) as typeof supabase;
     }
 
     try {
@@ -7094,7 +7105,7 @@ export async function getOrdersPaginated(page: number, pageSize: number, filter?
 export async function getAllOrders() {
     const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
     const db = serviceRoleKey
-        ? createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, serviceRoleKey, { auth: { persistSession: false } })
+        ? createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, serviceRoleKey, { auth: { persistSession: false }, ...supabaseClientOptions })
         : supabase;
 
     // For the Orders tab, show orders from the orders table
@@ -7211,8 +7222,9 @@ export async function getOrderById(orderId: string) {
     if (serviceRoleKey) {
         console.log('[getOrderById] Using service role for lookup');
         supabaseClient = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, serviceRoleKey, {
-            auth: { persistSession: false }
-        });
+            auth: { persistSession: false },
+            ...supabaseClientOptions,
+        }) as typeof supabase;
     }
 
     // Fetch the order

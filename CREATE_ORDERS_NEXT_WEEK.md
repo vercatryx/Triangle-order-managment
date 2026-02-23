@@ -155,7 +155,7 @@ For large client lists, a single "Create orders for the next week" request can h
 ## 8. Excel and email
 
 - **Sheet name:** “Next Week Report”.
-- **Columns:** Client ID, Client Name, Orders Created, Vendor(s), Type(s), Reason (if no orders).
+- **Columns:** Client ID, Client Name, Orders Created, Auth Meals/Week, Total Value ($), Orders (Order #, Amount), Vendor(s), Type(s), Reason (if no orders).
 - **Filename:** `Create_Orders_Next_Week_YYYY-MM-DD_to_YYYY-MM-DD.xlsx`.
 - **Email:** If `app_settings.report_email` is set, the report (and totals/breakdown) is sent via `sendSchedulingReport()` to that address. If empty, no email is sent (only a console warning).
 
