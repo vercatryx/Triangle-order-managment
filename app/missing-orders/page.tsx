@@ -263,7 +263,7 @@ export default function MissingOrdersPage() {
 
   const handleDownloadList = () => {
     const headers = ['Client name', 'Auth meals/week', 'Orders total', 'Order numbers', 'Vendors'];
-    const escape = (v: string) => {
+    const escape = (v: string | number) => {
       const s = String(v);
       if (/[",\n\r]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
       return s;
