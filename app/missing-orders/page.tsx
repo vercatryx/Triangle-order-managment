@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import Link from 'next/link';
 import { ChevronLeft, ChevronRight, Loader2, Search, PlusCircle, X, Trash2 } from 'lucide-react';
 import ClientPortalOrderSummary from '@/components/clients/ClientPortalOrderSummary';
@@ -89,6 +89,13 @@ export default function MissingOrdersPage() {
   const [authMealsFilter, setAuthMealsFilter] = useState('');
   const [amountTargetFilter, setAmountTargetFilter] = useState('');
   const [amountToleranceFilter, setAmountToleranceFilter] = useState('');
+  /** Amount filter direction: '+' = above target, '-' = below target, '+/-' = either (outside range). */
+  const [amountDirection, setAmountDirection] = useState<'+' | '-' | '+/-'>('+/-');
+  /** Ref so loadPage can read latest filters without triggering search on every keystroke. */
+  const filtersRef = useRef({ authMealsFilter, amountTargetFilter, amountToleranceFilter, amountDirection });
+  useEffect(() => {
+    filtersRef.current = { authMealsFilter, amountTargetFilter, amountToleranceFilter, amountDirection };
+  }, [authMealsFilter, amountTargetFilter, amountToleranceFilter, amountDirection]);
   const [referenceData, setReferenceData] = useState<{
     vendors: any[];
     menuItems: any[];
@@ -97,21 +104,25 @@ export default function MissingOrdersPage() {
     categories: any[];
   } | null>(null);
 
-  const loadPage = useCallback(async () => {
+  const loadPage = useCallback(async (overridePage?: number) => {
     setLoading(true);
     try {
+      const pageToUse = overridePage ?? page;
+      const f = filtersRef.current;
       const params = new URLSearchParams();
       params.set('weekStart', weekStart);
-      params.set('page', String(page));
+      params.set('page', String(pageToUse));
       params.set('pageSize', String(PAGE_SIZE));
-      if (authMealsFilter.trim() !== '') params.set('authMeals', authMealsFilter.trim());
-      if (amountTargetFilter.trim() !== '') params.set('amountTarget', amountTargetFilter.trim());
-      if (amountToleranceFilter.trim() !== '') params.set('amountTolerance', amountToleranceFilter.trim());
+      if (f.authMealsFilter.trim() !== '') params.set('authMeals', f.authMealsFilter.trim());
+      if (f.amountTargetFilter.trim() !== '') params.set('amountTarget', f.amountTargetFilter.trim());
+      if (f.amountToleranceFilter.trim() !== '') params.set('amountTolerance', f.amountToleranceFilter.trim());
+      params.set('amountDirection', f.amountDirection);
       const res = await fetch(`/api/missing-orders/clients?${params.toString()}`);
       if (!res.ok) throw new Error(await res.text());
       const data = await res.json();
       setClients(data.clients || []);
       setTotal(data.total ?? 0);
+      if (overridePage !== undefined) setPage(overridePage);
     } catch (e) {
       console.error(e);
       setClients([]);
@@ -119,11 +130,16 @@ export default function MissingOrdersPage() {
     } finally {
       setLoading(false);
     }
-  }, [weekStart, page, authMealsFilter, amountTargetFilter, amountToleranceFilter]);
+  }, [weekStart, page]);
 
   useEffect(() => {
     loadPage();
   }, [loadPage]);
+
+  const handleSearch = () => {
+    setPage(0);
+    loadPage(0);
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -301,7 +317,19 @@ export default function MissingOrdersPage() {
             />
           </label>
           <label style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
-            <span style={{ fontSize: '0.9rem' }}>+/-:</span>
+            <span style={{ fontSize: '0.9rem' }}>Direction:</span>
+            <select
+              value={amountDirection}
+              onChange={(e) => setAmountDirection(e.target.value as '+' | '-' | '+/-')}
+              style={{ padding: '0.5rem 0.5rem', border: '1px solid var(--border-color)', borderRadius: '6px', background: 'var(--bg-panel)', color: 'var(--text-primary)', fontSize: '0.9rem' }}
+            >
+              <option value="+/-">+/- (either)</option>
+              <option value="+">+ (above)</option>
+              <option value="-">- (below)</option>
+            </select>
+          </label>
+          <label style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+            <span style={{ fontSize: '0.9rem' }}>Tolerance ($):</span>
             <input
               type="text"
               inputMode="decimal"
@@ -313,7 +341,7 @@ export default function MissingOrdersPage() {
           </label>
           <button
             type="button"
-            onClick={() => setPage(0)}
+            onClick={handleSearch}
             style={{
               padding: '0.5rem 1rem',
               background: 'var(--color-primary)',
@@ -329,7 +357,7 @@ export default function MissingOrdersPage() {
           </button>
         </div>
         <p style={{ margin: '0.5rem 0 0', color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
-          Shows clients <strong>outside</strong> the range: auth meals = exact match; amount = orders total <strong>not</strong> in [target - +/-, target + +/-].
+          Auth meals = exact match. Amount: <strong>+/-</strong> = outside [target − tolerance, target + tolerance]; <strong>+</strong> = above target + tolerance; <strong>−</strong> = below target − tolerance.
         </p>
       </div>
 

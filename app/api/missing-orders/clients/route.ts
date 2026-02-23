@@ -21,6 +21,8 @@ export async function GET(request: NextRequest) {
     const authMeals = authMealsParam != null && authMealsParam !== '' ? parseInt(authMealsParam, 10) : null;
     const amountTarget = amountTargetParam != null && amountTargetParam !== '' ? parseFloat(amountTargetParam) : null;
     const amountTolerance = amountToleranceParam != null && amountToleranceParam !== '' ? Math.max(0, parseFloat(amountToleranceParam)) : 0;
+    const amountDirectionParam = searchParams.get('amountDirection');
+    const amountDirection = (amountDirectionParam === '+' || amountDirectionParam === '-' || amountDirectionParam === '+/-') ? amountDirectionParam : '+/-';
     const hasFilter = authMeals != null && !Number.isNaN(authMeals) || amountTarget != null && !Number.isNaN(amountTarget);
 
     if (!weekStart || !/^\d{4}-\d{2}-\d{2}$/.test(weekStart)) {
@@ -141,7 +143,9 @@ export async function GET(request: NextRequest) {
         foodOrMealClients = foodOrMealClients.filter((c: any) => {
           const rec = byClientAll.get(c.id);
           const total = rec?.total ?? 0;
-          return total < low || total > high;
+          if (amountDirection === '+') return total > high;
+          if (amountDirection === '-') return total < low;
+          return total < low || total > high; // +/-
         });
       }
     }
