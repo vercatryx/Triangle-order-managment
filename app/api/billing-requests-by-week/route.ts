@@ -112,6 +112,15 @@ export async function GET(request: NextRequest) {
             }
         }
 
+        // Sort by client name so all of one client's entries are together; then by date within client
+        const byClientThenDate = (a: { name: string; date: string }, b: { name: string; date: string }) => {
+            const nameCmp = (a.name || '').localeCompare(b.name || '', undefined, { sensitivity: 'base' });
+            if (nameCmp !== 0) return nameCmp;
+            return (a.date || '').localeCompare(b.date || '');
+        };
+        billingRequests.sort(byClientThenDate);
+        equipmentBillingRequests.sort(byClientThenDate);
+
         return NextResponse.json({
             billingRequests,
             equipmentBillingRequests
