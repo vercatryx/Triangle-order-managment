@@ -157,8 +157,7 @@
     border-top: 1px solid var(--border-color);
     white-space: nowrap;
     /* overflow: hidden; Removed to allow popup */
-    height: 60px;
-    /* Fix height */
+    min-height: 60px;
     display: flex;
     align-items: center;
     position: relative;

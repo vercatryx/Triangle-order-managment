@@ -7741,13 +7741,26 @@ export async function saveClientFoodOrder(clientId: string, data: Partial<Client
         process.env.SUPABASE_SERVICE_ROLE_KEY!
     );
 
-    // Write to clients.upcoming_order (single source of truth)
-    const upcomingOrder = {
+    // Merge with existing so clients with BOTH Food and Meal keep mealSelections (batched create-orders-next-week creates both)
+    const { data: existingClient } = await supabaseAdmin
+        .from('clients')
+        .select('upcoming_order')
+        .eq('id', clientId)
+        .maybeSingle();
+    const existing = (existingClient as any)?.upcoming_order;
+
+    const upcomingOrder: Record<string, unknown> = {
         serviceType: 'Food',
         caseId: data.caseId ?? null,
         deliveryDayOrders: data.deliveryDayOrders ?? {},
         notes: data.notes ?? null
     };
+    if (existing && typeof existing === 'object' && (existing as any).mealSelections != null && typeof (existing as any).mealSelections === 'object' && Object.keys((existing as any).mealSelections).length > 0) {
+        (upcomingOrder as any).mealSelections = (existing as any).mealSelections;
+    }
+    if (existing && typeof existing === 'object' && Array.isArray((existing as any).vendorSelections) && (existing as any).vendorSelections.length > 0 && (!data.deliveryDayOrders || Object.keys(data.deliveryDayOrders).length === 0)) {
+        (upcomingOrder as any).vendorSelections = (existing as any).vendorSelections;
+    }
 
     const { error } = await supabaseAdmin
         .from('clients')
@@ -7855,13 +7868,31 @@ export async function saveClientMealOrder(clientId: string, data: Partial<Client
     const updatedBy = session?.role !== 'client' && session?.userId ? session.userId : null;
     const supabaseAdmin = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
 
-    // Write to clients.upcoming_order (single source of truth)
-    const upcomingOrder = {
+    // Merge with existing so clients with BOTH Food and Meal keep deliveryDayOrders/vendorSelections (batched create-orders-next-week creates both)
+    const { data: existingClient } = await supabaseAdmin
+        .from('clients')
+        .select('upcoming_order')
+        .eq('id', clientId)
+        .maybeSingle();
+    const existing = (existingClient as any)?.upcoming_order;
+
+    const upcomingOrder: Record<string, unknown> = {
         serviceType: 'Meal',
         caseId: data.caseId ?? null,
         mealSelections: data.mealSelections ?? {},
         notes: data.notes ?? null
     };
+    if (existing && typeof existing === 'object') {
+        const ex = existing as Record<string, unknown>;
+        if (ex.deliveryDayOrders != null && typeof ex.deliveryDayOrders === 'object' && Object.keys(ex.deliveryDayOrders as object).length > 0) {
+            (upcomingOrder as any).deliveryDayOrders = ex.deliveryDayOrders;
+            (upcomingOrder as any).serviceType = 'Food';
+        }
+        if (Array.isArray(ex.vendorSelections) && ex.vendorSelections.length > 0) {
+            (upcomingOrder as any).vendorSelections = ex.vendorSelections;
+            (upcomingOrder as any).serviceType = 'Food';
+        }
+    }
 
     const { error } = await supabaseAdmin
         .from('clients')

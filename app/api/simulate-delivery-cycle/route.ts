@@ -112,7 +112,7 @@ export async function POST(request: NextRequest) {
             supabase.from('client_statuses').select('id, name, is_system_default, deliveries_allowed'),
             // Only fetch fields needed for pricing/validation
             supabase.from('menu_items').select('id, vendor_id, name, value, price_each, is_active, category_id, minimum_order, image_url, sort_order'),
-            supabase.from('breakfast_items').select('id, category_id, name, quota_value, price_each, is_active, vendor_id, image_url, sort_order')
+            supabase.from('breakfast_items').select('id, category_id, name, quota_value, price_each, is_active, image_url, sort_order')
         ]);
 
         const allVendors = (vendorsRes.data || []).map((v: any) => ({

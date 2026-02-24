@@ -236,48 +236,53 @@ export function Sidebar({
 
 
             <div className={styles.footer}>
-                <div
-                    className={`${isCollapsed ? styles.userCollapsed : styles.user} cursor-pointer`}
-                    onClick={() => setIsLogoutVisible(!isLogoutVisible)}
-                    style={{ cursor: 'pointer', position: 'relative' }}
-                >
-                    {!isCollapsed ? userName : (userName[0] || 'A').toUpperCase()}
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: isCollapsed ? 'center' : 'flex-start', width: '100%' }}>
+                    <div
+                        className={`${isCollapsed ? styles.userCollapsed : styles.user} cursor-pointer`}
+                        onClick={() => setIsLogoutVisible(!isLogoutVisible)}
+                        style={{ cursor: 'pointer', position: 'relative' }}
+                    >
+                        {!isCollapsed ? userName : (userName[0] || 'A').toUpperCase()}
 
-                    {isLogoutVisible && (
-                        <div style={{
-                            position: 'absolute',
-                            bottom: '100%',
-                            left: '0',
-                            width: '100%',
-                            backgroundColor: 'var(--bg-panel)',
-                            border: '1px solid var(--border-color)',
-                            borderRadius: '0.375rem',
-                            padding: '0.5rem',
-                            marginBottom: '0.5rem',
-                            zIndex: 50,
-                            minWidth: isCollapsed ? 'max-content' : 'auto',
-                            boxShadow: 'var(--shadow-md)'
-                        }}>
-                            <button
-                                onClick={() => logout()}
-                                style={{
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    gap: '0.5rem',
-                                    width: '100%',
-                                    color: 'var(--color-danger)',
-                                    background: 'none',
-                                    border: 'none',
-                                    cursor: 'pointer',
-                                    fontSize: '0.875rem',
-                                    padding: '0.25rem'
-                                }}
-                            >
-                                <LogOut size={16} />
-                                <span>Log Out</span>
-                            </button>
-                        </div>
-                    )}
+                        {isLogoutVisible && (
+                            <div style={{
+                                position: 'absolute',
+                                bottom: '100%',
+                                left: '0',
+                                width: '100%',
+                                backgroundColor: 'var(--bg-panel)',
+                                border: '1px solid var(--border-color)',
+                                borderRadius: '0.375rem',
+                                padding: '0.5rem',
+                                marginBottom: '0.5rem',
+                                zIndex: 50,
+                                minWidth: isCollapsed ? 'max-content' : 'auto',
+                                boxShadow: 'var(--shadow-md)'
+                            }}>
+                                <button
+                                    onClick={() => logout()}
+                                    style={{
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        gap: '0.5rem',
+                                        width: '100%',
+                                        color: 'var(--color-danger)',
+                                        background: 'none',
+                                        border: 'none',
+                                        cursor: 'pointer',
+                                        fontSize: '0.875rem',
+                                        padding: '0.25rem'
+                                    }}
+                                >
+                                    <LogOut size={16} />
+                                    <span>Log Out</span>
+                                </button>
+                            </div>
+                        )}
+                    </div>
+                    <span style={{ fontSize: '0.625rem', color: 'var(--text-tertiary)', opacity: 0.5, marginTop: '2px' }}>
+                        {isCollapsed ? 'v1.1' : 'v1.1'}
+                    </span>
                 </div>
             </div>
         </aside>

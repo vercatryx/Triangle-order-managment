@@ -4,7 +4,7 @@ This document describes the **exact schema** for how all order types are saved i
 
 - **Database**: `clients` table  
 - **Column**: `upcoming_order` (JSONB)  
-- **Behavior on save**: The entire column value is **replaced** with the payload for the current service type. No merging with existing data; only fields valid for that service type are stored.
+- **Behavior on save**: For **Boxes** and **Custom**, the column is **replaced** with the payload for that type. For **Food** and **Meal**, saves **merge** with existing: `saveClientFoodOrder` preserves existing `mealSelections`; `saveClientMealOrder` preserves existing `deliveryDayOrders`/`vendorSelections` and keeps `serviceType: 'Food'` when both exist, so batched "Create orders next week" creates both Food and Meal orders.
 
 ---
 

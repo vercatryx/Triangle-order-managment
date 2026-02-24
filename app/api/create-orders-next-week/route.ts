@@ -43,6 +43,25 @@ export async function POST(request: NextRequest) {
     };
     const diagnostics: DiagnosticEntry[] = [];
 
+    /** One row per expected order for Excel: every (client, type, vendor, date) we consider, with outcome and reason. */
+    type ExcelOrderRow = {
+        clientId: string;
+        clientName: string;
+        orderType: string;
+        vendorName: string;
+        date: string;
+        outcome: 'created' | 'skipped' | 'failed';
+        reason: string;
+        orderId?: string;
+        orderNumber?: number;
+        totalValue?: number;
+        mealType?: string;
+    };
+    const excelOrderRows: ExcelOrderRow[] = [];
+    function pushExcelRow(row: ExcelOrderRow) {
+        excelOrderRows.push(row);
+    }
+
     type ClientReportRow = {
         clientId: string;
         clientName: string;
@@ -102,7 +121,7 @@ export async function POST(request: NextRequest) {
             supabase.from('vendors').select('id, name, email, service_type, delivery_days, delivery_frequency, is_active, minimum_meals, cutoff_hours'),
             supabase.from('client_statuses').select('id, name, is_system_default, deliveries_allowed'),
             supabase.from('menu_items').select('id, vendor_id, name, value, price_each, is_active, category_id, minimum_order, image_url, sort_order'),
-            supabase.from('breakfast_items').select('id, category_id, name, quota_value, price_each, is_active, vendor_id, image_url, sort_order'),
+            supabase.from('breakfast_items').select('id, category_id, name, quota_value, price_each, is_active, image_url, sort_order'),
             supabase.from('box_types').select('id, name'),
             supabase.from('app_settings').select('report_email, send_vendor_next_week_emails').single()
         ]);
@@ -186,14 +205,15 @@ export async function POST(request: NextRequest) {
         // Derive food/meal/box/custom from clients.upcoming_order only (single source of truth per UPCOMING_ORDER_SCHEMA)
         // Support both camelCase (UI) and snake_case (DB/legacy) so no clients are missed (e.g. JOEL SCHLESINGER).
         // Type is determined by upcoming_order.serviceType / service_type, not clients.service_type.
-        // Food: serviceType 'Food' (or legacy missing), with deliveryDayOrders or vendorSelections
+        // Food: serviceType 'Food', 'Meal', or legacy missing — with deliveryDayOrders or vendorSelections.
+        // 'Meal' is included because a client can have both food and meal data in the same upcoming_order.
         const foodOrders: { client_id: string; delivery_day_orders: Record<string, { vendorSelections?: any[] }>; notes: string | null; case_id: string | null }[] = [];
         let foodSkippedNoData = 0;
         for (const c of clients || []) {
             const uo = c.upcoming_order;
             if (!uo || typeof uo !== 'object') continue;
             const st = (uo as any).serviceType ?? (uo as any).service_type;
-            const isFoodType = st === 'Food' || st === undefined;
+            const isFoodType = st === 'Food' || st === 'Meal' || st === undefined;
             if (!isFoodType) continue;
 
             let delivery_day_orders: Record<string, { vendorSelections?: any[] }> | null = null;
@@ -402,54 +422,136 @@ export async function POST(request: NextRequest) {
             }
         }
 
-        async function orderExists(clientId: string, deliveryDateStr: string, serviceType: string, vendorId?: string): Promise<boolean> {
+        // --- Per-client snapshot of existing orders for the target week ---
+        // Loaded lazily on first access for each client (1-2 DB queries per client, cached).
+        // Snapshot is taken BEFORE creating any orders for that client, so orders created
+        // during this run never falsely trigger duplicate detection. Count-based: if a client
+        // needs 3 Meal orders for the same vendor+date and 1 already exists, 1 is consumed
+        // as duplicate and 2 are created.
+        type ClientSnapshot = { dupCounts: Map<string, number>; hasBoxes: boolean };
+        const clientSnapshotCache = new Map<string, ClientSnapshot>();
+
+        async function getClientSnapshot(clientId: string): Promise<ClientSnapshot> {
+            const cached = clientSnapshotCache.get(clientId);
+            if (cached) return cached;
+
+            const dupCounts = new Map<string, number>();
+            let hasBoxes = false;
+
             const { data: existing } = await supabase
                 .from('orders')
-                .select('id')
+                .select('id, service_type, scheduled_delivery_date')
                 .eq('client_id', clientId)
-                .eq('scheduled_delivery_date', deliveryDateStr)
-                .eq('service_type', serviceType)
-                .limit(1)
-                .maybeSingle();
-            if (!existing) return false;
-            if (vendorId) {
-                const { count } = await supabase
-                    .from('order_vendor_selections')
-                    .select('*', { count: 'exact', head: true })
-                    .eq('order_id', existing.id)
-                    .eq('vendor_id', vendorId);
-                return (count ?? 0) > 0;
+                .gte('scheduled_delivery_date', weekStartStr)
+                .lte('scheduled_delivery_date', weekEndStr);
+
+            if (existing && existing.length > 0) {
+                hasBoxes = existing.some(o => o.service_type === 'Boxes');
+                const nonBoxIds = existing.filter(o => o.service_type !== 'Boxes').map(o => o.id);
+
+                if (nonBoxIds.length > 0) {
+                    const ovsMap = new Map<string, string[]>();
+                    const { data: ovs } = await supabase
+                        .from('order_vendor_selections')
+                        .select('order_id, vendor_id')
+                        .in('order_id', nonBoxIds);
+                    if (ovs) {
+                        for (const row of ovs) {
+                            if (!ovsMap.has(row.order_id)) ovsMap.set(row.order_id, []);
+                            ovsMap.get(row.order_id)!.push(row.vendor_id);
+                        }
+                    }
+                    for (const o of existing) {
+                        if (o.service_type === 'Boxes') continue;
+                        const vids = ovsMap.get(o.id) || [''];
+                        for (const vid of vids) {
+                            const key = `${o.scheduled_delivery_date}|${o.service_type}|${vid}`;
+                            dupCounts.set(key, (dupCounts.get(key) ?? 0) + 1);
+                        }
+                    }
+                }
             }
-            return true;
+
+            const snapshot: ClientSnapshot = { dupCounts, hasBoxes };
+            clientSnapshotCache.set(clientId, snapshot);
+            return snapshot;
+        }
+
+        /**
+         * Check if a pre-existing order matches this candidate. If yes, consume
+         * one "slot" so that only truly duplicate orders are skipped.
+         * E.g. 3 meal types → same vendor+date, 1 pre-existing → skip 1, create 2.
+         */
+        function isDuplicateOfPreExisting(snapshot: ClientSnapshot, deliveryDateStr: string, serviceType: string, vendorId: string): boolean {
+            const key = `${deliveryDateStr}|${serviceType}|${vendorId}`;
+            const count = snapshot.dupCounts.get(key) ?? 0;
+            if (count > 0) {
+                snapshot.dupCounts.set(key, count - 1);
+                return true;
+            }
+            return false;
         }
 
         for (const fo of foodOrders) {
+            const clientName = clientMap.get(fo.client_id)?.full_name ?? fo.client_id;
             const eligible = isClientEligible(fo.client_id);
+            const dayOrders = typeof fo.delivery_day_orders === 'string' ? JSON.parse(fo.delivery_day_orders) : fo.delivery_day_orders;
+
             if (!eligible.ok) {
                 const row = clientReportMap.get(fo.client_id);
                 if (row && !row.reason) row.reason = eligible.reason || 'Not eligible';
+                if (dayOrders && typeof dayOrders === 'object') {
+                    for (const dayName of Object.keys(dayOrders)) {
+                        const vendorSelections = dayOrders[dayName]?.vendorSelections || [];
+                        for (const sel of vendorSelections) {
+                            const v = sel.vendorId ? vendorMap.get(sel.vendorId) : null;
+                            pushExcelRow({ clientId: fo.client_id, clientName, orderType: 'Food', vendorName: v?.name ?? (sel.vendorId || '—'), date: dayName, outcome: 'skipped', reason: eligible.reason || 'Not eligible' });
+                        }
+                    }
+                }
+                if (!dayOrders || Object.keys(dayOrders).length === 0) pushExcelRow({ clientId: fo.client_id, clientName, orderType: 'Food', vendorName: '—', date: '—', outcome: 'skipped', reason: eligible.reason || 'Not eligible' });
                 continue;
             }
 
-            const dayOrders = typeof fo.delivery_day_orders === 'string' ? JSON.parse(fo.delivery_day_orders) : fo.delivery_day_orders;
-            if (!dayOrders) continue;
+            if (!dayOrders || Object.keys(dayOrders).length === 0) {
+                pushExcelRow({ clientId: fo.client_id, clientName, orderType: 'Food', vendorName: '—', date: '—', outcome: 'skipped', reason: 'No delivery day orders data' });
+                continue;
+            }
 
             for (const dayName of Object.keys(dayOrders)) {
                 const deliveryDate = getDateForDayInWeek(nextWeekStart, dayName);
-                if (!deliveryDate) continue;
-                const deliveryDateStr = deliveryDate.toISOString().split('T')[0];
-                if (deliveryDateStr < weekStartStr || deliveryDateStr > weekEndStr) continue;
+                const deliveryDateStr = deliveryDate ? deliveryDate.toISOString().split('T')[0] : '';
 
                 const vendorSelections = dayOrders[dayName].vendorSelections || [];
                 for (const sel of vendorSelections) {
-                    if (!sel.vendorId) continue;
-                    const vendor = vendorMap.get(sel.vendorId);
-                    if (!vendor) continue;
-                    if (vendorActiveMap.get(sel.vendorId) === false) continue; // skip inactive vendor only
-                    const clientName = clientMap.get(fo.client_id)?.full_name ?? fo.client_id;
+                    const vendor = sel.vendorId ? vendorMap.get(sel.vendorId) : null;
+                    const vendorName = vendor?.name ?? (sel.vendorId || '—');
 
-                    if (await orderExists(fo.client_id, deliveryDateStr, 'Food', sel.vendorId)) {
-                        diagnostics.push({ clientId: fo.client_id, clientName, vendorId: sel.vendorId, vendorName: vendor.name, date: deliveryDateStr, orderType: 'Food', outcome: 'skipped', reason: 'Order already exists for this client/date/vendor' });
+                    if (!deliveryDate) {
+                        pushExcelRow({ clientId: fo.client_id, clientName, orderType: 'Food', vendorName, date: dayName, outcome: 'skipped', reason: 'Invalid or out-of-range delivery day name' });
+                        continue;
+                    }
+                    if (deliveryDateStr < weekStartStr || deliveryDateStr > weekEndStr) {
+                        pushExcelRow({ clientId: fo.client_id, clientName, orderType: 'Food', vendorName, date: deliveryDateStr, outcome: 'skipped', reason: 'Delivery date outside target week' });
+                        continue;
+                    }
+                    if (!sel.vendorId) {
+                        pushExcelRow({ clientId: fo.client_id, clientName, orderType: 'Food', vendorName: '—', date: deliveryDateStr, outcome: 'skipped', reason: 'No vendor on selection' });
+                        continue;
+                    }
+                    if (!vendor) {
+                        pushExcelRow({ clientId: fo.client_id, clientName, orderType: 'Food', vendorName: sel.vendorId, date: deliveryDateStr, outcome: 'skipped', reason: 'Vendor not found' });
+                        continue;
+                    }
+                    if (vendorActiveMap.get(sel.vendorId) === false) {
+                        pushExcelRow({ clientId: fo.client_id, clientName, orderType: 'Food', vendorName, date: deliveryDateStr, outcome: 'skipped', reason: 'Vendor inactive' });
+                        continue;
+                    }
+
+                    const foodSnap = await getClientSnapshot(fo.client_id);
+                    if (isDuplicateOfPreExisting(foodSnap, deliveryDateStr, 'Food', sel.vendorId)) {
+                        diagnostics.push({ clientId: fo.client_id, clientName, vendorId: sel.vendorId, vendorName: vendor.name, date: deliveryDateStr, orderType: 'Food', outcome: 'skipped', reason: 'Pre-existing order already covers this client/date/vendor' });
+                        pushExcelRow({ clientId: fo.client_id, clientName, orderType: 'Food', vendorName, date: deliveryDateStr, outcome: 'skipped', reason: 'Pre-existing order already covers this client/date/vendor' });
                         continue;
                     }
 
@@ -474,6 +576,7 @@ export async function POST(request: NextRequest) {
                     }
                     if (itemsList.length === 0) {
                         diagnostics.push({ clientId: fo.client_id, clientName, vendorId: sel.vendorId, vendorName: vendor.name, date: deliveryDateStr, orderType: 'Food', outcome: 'skipped', reason: 'No valid items in selection' });
+                        pushExcelRow({ clientId: fo.client_id, clientName, orderType: 'Food', vendorName, date: deliveryDateStr, outcome: 'skipped', reason: 'No valid items in selection' });
                         continue;
                     }
 
@@ -490,7 +593,9 @@ export async function POST(request: NextRequest) {
                         clientName
                     );
                     if (!newOrder) {
-                        diagnostics.push({ clientId: fo.client_id, clientName, vendorId: sel.vendorId, vendorName: vendor.name, date: deliveryDateStr, orderType: 'Food', outcome: 'failed', reason: report.unexpectedFailures[report.unexpectedFailures.length - 1]?.reason ?? 'createOrder failed' });
+                        const reason = report.unexpectedFailures[report.unexpectedFailures.length - 1]?.reason ?? 'createOrder failed';
+                        diagnostics.push({ clientId: fo.client_id, clientName, vendorId: sel.vendorId, vendorName: vendor.name, date: deliveryDateStr, orderType: 'Food', outcome: 'failed', reason });
+                        pushExcelRow({ clientId: fo.client_id, clientName, orderType: 'Food', vendorName, date: deliveryDateStr, outcome: 'failed', reason });
                         continue;
                     }
 
@@ -501,8 +606,10 @@ export async function POST(request: NextRequest) {
                         recordReportOrderValue(fo.client_id, newOrder.order_number, valueTotal);
                         await supabase.from('order_items').insert(itemsList.map(i => ({ ...i, vendor_selection_id: vs.id, order_id: newOrder.id })));
                         diagnostics.push({ clientId: fo.client_id, clientName, vendorId: sel.vendorId, vendorName: vendor.name, date: deliveryDateStr, orderType: 'Food', outcome: 'created', orderId: newOrder.id });
+                        pushExcelRow({ clientId: fo.client_id, clientName, orderType: 'Food', vendorName, date: deliveryDateStr, outcome: 'created', reason: '—', orderId: newOrder.id, orderNumber: newOrder.order_number, totalValue: valueTotal });
                     } else {
                         diagnostics.push({ clientId: fo.client_id, clientName, vendorId: sel.vendorId, vendorName: vendor.name, date: deliveryDateStr, orderType: 'Food', outcome: 'failed', orderId: newOrder.id, reason: 'order_vendor_selections insert failed' });
+                        pushExcelRow({ clientId: fo.client_id, clientName, orderType: 'Food', vendorName, date: deliveryDateStr, outcome: 'failed', reason: 'order_vendor_selections insert failed', orderId: newOrder.id });
                     }
                 }
             }
@@ -510,52 +617,67 @@ export async function POST(request: NextRequest) {
         console.log(`[Create Orders Next Week] Food phase done. totalCreated=${report.totalCreated}`);
 
         for (const mo of mealOrders) {
+            const clientName = clientMap.get(mo.client_id)?.full_name ?? mo.client_id;
             const eligible = isClientEligible(mo.client_id);
+            const rawSelections = typeof mo.meal_selections === 'string' ? JSON.parse(mo.meal_selections) : mo.meal_selections;
+
             if (!eligible.ok) {
                 const row = clientReportMap.get(mo.client_id);
                 if (row && !row.reason) row.reason = eligible.reason || 'Not eligible';
+                if (rawSelections && typeof rawSelections === 'object') {
+                    for (const [mealType, group] of Object.entries(rawSelections)) {
+                        const g = group as { vendorId?: string; vendor_id?: string };
+                        const vid = g?.vendorId ?? g?.vendor_id;
+                        const v = vid ? vendorMap.get(vid) : null;
+                        pushExcelRow({ clientId: mo.client_id, clientName, orderType: 'Meal', vendorName: v?.name ?? (vid || '—'), date: '—', outcome: 'skipped', reason: eligible.reason || 'Not eligible', mealType });
+                    }
+                } else {
+                    pushExcelRow({ clientId: mo.client_id, clientName, orderType: 'Meal', vendorName: '—', date: '—', outcome: 'skipped', reason: eligible.reason || 'Not eligible' });
+                }
                 continue;
             }
 
-            const rawSelections = typeof mo.meal_selections === 'string' ? JSON.parse(mo.meal_selections) : mo.meal_selections;
-            if (!rawSelections) continue;
-
-            // Pre-check: for each (date, vendor) we would create, see if an order already exists. Skip only those; then create all meal-type orders without checking again.
-            const skipDateVendor = new Set<string>();
-            for (const [_mt, group] of Object.entries(rawSelections)) {
-                const g = group as { vendorId?: string; vendor_id?: string };
-                const mealVendorId = g?.vendorId ?? g?.vendor_id;
-                if (!mealVendorId) continue;
-                const vendor = vendorMap.get(mealVendorId);
-                if (!vendor) continue;
-                if (vendorActiveMap.get(mealVendorId) === false) continue;
-                const deliveryDate = getFirstDeliveryDateInWeek(nextWeekStart, vendor.deliveryDays);
-                if (!deliveryDate) continue;
-                const deliveryDateStr = deliveryDate.toISOString().split('T')[0];
-                if (deliveryDateStr < weekStartStr || deliveryDateStr > weekEndStr) continue;
-                const key = `${deliveryDateStr}|${mealVendorId}`;
-                if (skipDateVendor.has(key)) continue;
-                if (await orderExists(mo.client_id, deliveryDateStr, 'Meal', mealVendorId)) {
-                    skipDateVendor.add(key);
-                    const clientName = clientMap.get(mo.client_id)?.full_name ?? mo.client_id;
-                    diagnostics.push({ clientId: mo.client_id, clientName, vendorId: mealVendorId, vendorName: vendor.name, date: deliveryDateStr, orderType: 'Meal', outcome: 'skipped', reason: 'Order already exists for this client/date/vendor' });
-                }
+            if (!rawSelections || typeof rawSelections !== 'object' || Object.keys(rawSelections).length === 0) {
+                pushExcelRow({ clientId: mo.client_id, clientName, orderType: 'Meal', vendorName: '—', date: '—', outcome: 'skipped', reason: 'No meal selections data' });
+                continue;
             }
 
-            const clientName = clientMap.get(mo.client_id)?.full_name ?? mo.client_id;
             for (const [_mealType, group] of Object.entries(rawSelections)) {
                 const g = group as { vendorId?: string; vendor_id?: string; items?: Record<string, number>; itemNotes?: Record<string, string> };
                 const mealVendorId = g?.vendorId ?? g?.vendor_id;
-                if (!mealVendorId) continue;
-                const vendor = vendorMap.get(mealVendorId);
-                if (!vendor) continue;
-                if (vendorActiveMap.get(mealVendorId) === false) continue;
+                const mealType = _mealType;
+                const vendor = mealVendorId ? vendorMap.get(mealVendorId) : null;
+                const vendorName = vendor?.name ?? (mealVendorId || '—');
+
+                if (!mealVendorId) {
+                    pushExcelRow({ clientId: mo.client_id, clientName, orderType: 'Meal', vendorName: '—', date: '—', outcome: 'skipped', reason: 'No vendor on meal selection', mealType });
+                    continue;
+                }
+                if (!vendor) {
+                    pushExcelRow({ clientId: mo.client_id, clientName, orderType: 'Meal', vendorName: mealVendorId, date: '—', outcome: 'skipped', reason: 'Vendor not found', mealType });
+                    continue;
+                }
+                if (vendorActiveMap.get(mealVendorId) === false) {
+                    pushExcelRow({ clientId: mo.client_id, clientName, orderType: 'Meal', vendorName, date: '—', outcome: 'skipped', reason: 'Vendor inactive', mealType });
+                    continue;
+                }
 
                 const deliveryDate = getFirstDeliveryDateInWeek(nextWeekStart, vendor.deliveryDays);
-                if (!deliveryDate) continue;
+                if (!deliveryDate) {
+                    pushExcelRow({ clientId: mo.client_id, clientName, orderType: 'Meal', vendorName, date: '—', outcome: 'skipped', reason: 'No delivery day in week for vendor', mealType });
+                    continue;
+                }
                 const deliveryDateStr = deliveryDate.toISOString().split('T')[0];
-                if (deliveryDateStr < weekStartStr || deliveryDateStr > weekEndStr) continue;
-                if (skipDateVendor.has(`${deliveryDateStr}|${mealVendorId}`)) continue;
+                if (deliveryDateStr < weekStartStr || deliveryDateStr > weekEndStr) {
+                    pushExcelRow({ clientId: mo.client_id, clientName, orderType: 'Meal', vendorName, date: deliveryDateStr, outcome: 'skipped', reason: 'Delivery date outside target week', mealType });
+                    continue;
+                }
+                const mealSnap = await getClientSnapshot(mo.client_id);
+                if (isDuplicateOfPreExisting(mealSnap, deliveryDateStr, 'Meal', mealVendorId)) {
+                    diagnostics.push({ clientId: mo.client_id, clientName, vendorId: mealVendorId, vendorName: vendor.name, date: deliveryDateStr, orderType: 'Meal', outcome: 'skipped', reason: 'Pre-existing order already covers this client/date/vendor' });
+                    pushExcelRow({ clientId: mo.client_id, clientName, orderType: 'Meal', vendorName, date: deliveryDateStr, outcome: 'skipped', reason: 'Pre-existing order already covers this client/date/vendor', mealType });
+                    continue;
+                }
 
                 let orderTotalValue = 0;
                 let orderTotalItems = 0;
@@ -577,7 +699,10 @@ export async function POST(request: NextRequest) {
                         });
                     }
                 }
-                if (itemsList.length === 0) continue;
+                if (itemsList.length === 0) {
+                    pushExcelRow({ clientId: mo.client_id, clientName, orderType: 'Meal', vendorName, date: deliveryDateStr, outcome: 'skipped', reason: 'No valid items in meal selection', mealType });
+                    continue;
+                }
 
                 const assignedId = nextOrderNumber++;
                 const newOrder = await createOrder(
@@ -592,7 +717,9 @@ export async function POST(request: NextRequest) {
                     clientName
                 );
                 if (!newOrder) {
-                    diagnostics.push({ clientId: mo.client_id, clientName, vendorId: mealVendorId, vendorName: vendor.name, date: deliveryDateStr, orderType: 'Meal', outcome: 'failed', reason: report.unexpectedFailures[report.unexpectedFailures.length - 1]?.reason ?? 'createOrder failed' });
+                    const reason = report.unexpectedFailures[report.unexpectedFailures.length - 1]?.reason ?? 'createOrder failed';
+                    diagnostics.push({ clientId: mo.client_id, clientName, vendorId: mealVendorId, vendorName: vendor.name, date: deliveryDateStr, orderType: 'Meal', outcome: 'failed', reason });
+                    pushExcelRow({ clientId: mo.client_id, clientName, orderType: 'Meal', vendorName, date: deliveryDateStr, outcome: 'failed', reason, mealType });
                     continue;
                 }
 
@@ -603,8 +730,10 @@ export async function POST(request: NextRequest) {
                     recordReportOrderValue(mo.client_id, newOrder.order_number, orderTotalValue);
                     await supabase.from('order_items').insert(itemsList.map(i => ({ ...i, vendor_selection_id: vs.id, order_id: newOrder.id })));
                     diagnostics.push({ clientId: mo.client_id, clientName, vendorId: mealVendorId, vendorName: vendor.name, date: deliveryDateStr, orderType: 'Meal', outcome: 'created', orderId: newOrder.id });
+                    pushExcelRow({ clientId: mo.client_id, clientName, orderType: 'Meal', vendorName, date: deliveryDateStr, outcome: 'created', reason: '—', orderId: newOrder.id, orderNumber: newOrder.order_number, totalValue: orderTotalValue, mealType });
                 } else {
                     diagnostics.push({ clientId: mo.client_id, clientName, vendorId: mealVendorId, vendorName: vendor.name, date: deliveryDateStr, orderType: 'Meal', outcome: 'failed', orderId: newOrder.id, reason: 'order_vendor_selections insert failed' });
+                    pushExcelRow({ clientId: mo.client_id, clientName, orderType: 'Meal', vendorName, date: deliveryDateStr, outcome: 'failed', reason: 'order_vendor_selections insert failed', orderId: newOrder.id, mealType });
                 }
             }
         }
@@ -631,10 +760,13 @@ export async function POST(request: NextRequest) {
         }
 
         for (const [clientId, clientBoxOrders] of boxOrdersByClient) {
+            const clientName = clientMap.get(clientId)?.full_name ?? clientId;
             const eligible = isClientEligible(clientId);
             if (!eligible.ok) {
                 const row = clientReportMap.get(clientId);
                 if (row && !row.reason) row.reason = eligible.reason || 'Not eligible';
+                const vendorNames = [...new Set(clientBoxOrders.map((bo: any) => vendorMap.get(bo.vendor_id)?.name ?? bo.vendor_id ?? '—').filter(Boolean))].join(', ') || '—';
+                pushExcelRow({ clientId, clientName, orderType: 'Boxes', vendorName: vendorNames, date: '—', outcome: 'skipped', reason: eligible.reason || 'Not eligible' });
                 continue;
             }
 
@@ -642,6 +774,7 @@ export async function POST(request: NextRequest) {
             if (hasNoVendor) {
                 const row = clientReportMap.get(clientId);
                 if (row && !row.reason) row.reason = 'No vendor set for box order';
+                pushExcelRow({ clientId, clientName, orderType: 'Boxes', vendorName: '—', date: '—', outcome: 'skipped', reason: 'No vendor set for box order' });
                 continue;
             }
 
@@ -653,18 +786,24 @@ export async function POST(request: NextRequest) {
                 const d = getFirstDeliveryDateInWeek(nextWeekStart, vendor.deliveryDays);
                 if (d && (!earliestDelivery || d < earliestDelivery)) earliestDelivery = d;
             }
-            if (!earliestDelivery) continue;
+            if (!earliestDelivery) {
+                const vendorNames = [...new Set(clientBoxOrders.map((bo: any) => vendorMap.get(bo.vendor_id)?.name ?? bo.vendor_id).filter(Boolean))].join(', ') || '—';
+                pushExcelRow({ clientId, clientName, orderType: 'Boxes', vendorName: vendorNames, date: '—', outcome: 'skipped', reason: 'No delivery date in week for any box vendor' });
+                continue;
+            }
             const deliveryDateStr = earliestDelivery.toISOString().split('T')[0];
-            if (deliveryDateStr < weekStartStr || deliveryDateStr > weekEndStr) continue;
+            if (deliveryDateStr < weekStartStr || deliveryDateStr > weekEndStr) {
+                const vendorNames = [...new Set(clientBoxOrders.map((bo: any) => vendorMap.get(bo.vendor_id)?.name ?? bo.vendor_id).filter(Boolean))].join(', ') || '—';
+                pushExcelRow({ clientId, clientName, orderType: 'Boxes', vendorName: vendorNames, date: deliveryDateStr, outcome: 'skipped', reason: 'Delivery date outside target week' });
+                continue;
+            }
 
-            const { count } = await supabase
-                .from('orders')
-                .select('*', { count: 'exact', head: true })
-                .eq('client_id', clientId)
-                .eq('service_type', 'Boxes')
-                .gte('scheduled_delivery_date', weekStartStr)
-                .lte('scheduled_delivery_date', weekEndStr);
-            if ((count ?? 0) >= 1) continue;
+            const boxSnap = await getClientSnapshot(clientId);
+            if (boxSnap.hasBoxes) {
+                const vendorNames = [...new Set(clientBoxOrders.map((bo: any) => vendorMap.get(bo.vendor_id)?.name ?? bo.vendor_id).filter(Boolean))].join(', ') || '—';
+                pushExcelRow({ clientId, clientName, orderType: 'Boxes', vendorName: vendorNames, date: deliveryDateStr, outcome: 'skipped', reason: 'Pre-existing Boxes order already exists this week' });
+                continue;
+            }
 
             let totalOrderValue = 0;
             let totalBoxCount = 0;
@@ -690,7 +829,11 @@ export async function POST(request: NextRequest) {
                     item_notes: bo.item_notes ?? {}
                 });
             }
-            if (selectionsToInsert.length === 0) continue;
+            if (selectionsToInsert.length === 0) {
+                const vendorNames = [...new Set(clientBoxOrders.map((bo: any) => vendorMap.get(bo.vendor_id)?.name ?? bo.vendor_id).filter(Boolean))].join(', ') || '—';
+                pushExcelRow({ clientId, clientName, orderType: 'Boxes', vendorName: vendorNames, date: deliveryDateStr, outcome: 'skipped', reason: 'No valid box selections (e.g. all vendors inactive or not found)' });
+                continue;
+            }
 
             const firstBo = clientBoxOrders[0];
             const assignedId = nextOrderNumber++;
@@ -703,19 +846,22 @@ export async function POST(request: NextRequest) {
                 (firstBo as any).notes || null,
                 firstBo.case_id,
                 assignedId,
-                clientMap.get(clientId)?.full_name
+                clientName
             );
             if (!newOrder) {
-                const clientName = clientMap.get(clientId)?.full_name ?? clientId;
+                const reason = report.unexpectedFailures[report.unexpectedFailures.length - 1]?.reason ?? 'createOrder failed';
+                const vendorNames = [...new Set(selectionsToInsert.map(s => s.vendor_id).map(vid => vendorMap.get(vid)?.name ?? vid))].join(', ') || '—';
                 for (const vid of [...new Set(selectionsToInsert.map(s => s.vendor_id))]) {
                     const v = vendorMap.get(vid);
-                    diagnostics.push({ clientId, clientName, vendorId: vid, vendorName: v?.name ?? vid, date: deliveryDateStr, orderType: 'Boxes', outcome: 'failed', reason: report.unexpectedFailures[report.unexpectedFailures.length - 1]?.reason ?? 'createOrder failed' });
+                    diagnostics.push({ clientId, clientName, vendorId: vid, vendorName: v?.name ?? vid, date: deliveryDateStr, orderType: 'Boxes', outcome: 'failed', reason });
                 }
+                pushExcelRow({ clientId, clientName, orderType: 'Boxes', vendorName: vendorNames, date: deliveryDateStr, outcome: 'failed', reason });
                 continue;
             }
 
             // Count each vendor once per order (one Box order can have multiple box lines for same vendor)
             const vendorIdsInOrder = [...new Set(selectionsToInsert.map(s => s.vendor_id))];
+            const vendorNamesCreated = vendorIdsInOrder.map(vid => vendorMap.get(vid)?.name ?? vid).join(', ');
             for (const vid of vendorIdsInOrder) {
                 recordVendorOrder(vid, deliveryDateStr);
                 recordReportOrder(clientId, vid, 'Boxes');
@@ -723,6 +869,7 @@ export async function POST(request: NextRequest) {
                 diagnostics.push({ clientId, clientName: clientMap.get(clientId)?.full_name ?? clientId, vendorId: vid, vendorName: v?.name ?? vid, date: deliveryDateStr, orderType: 'Boxes', outcome: 'created', orderId: newOrder.id });
             }
             recordReportOrderValue(clientId, newOrder.order_number, totalOrderValue);
+            pushExcelRow({ clientId, clientName, orderType: 'Boxes', vendorName: vendorNamesCreated, date: deliveryDateStr, outcome: 'created', reason: '—', orderId: newOrder.id, orderNumber: newOrder.order_number, totalValue: totalOrderValue });
             for (const sel of selectionsToInsert) {
                 await supabase.from('order_box_selections').insert({
                     order_id: newOrder.id,
@@ -740,27 +887,52 @@ export async function POST(request: NextRequest) {
 
         if (customOrders.length > 0) {
             for (const co of customOrders) {
+                const clientName = clientMap.get(co.client_id)?.full_name ?? co.client_id;
                 const eligible = isClientEligible(co.client_id);
                 if (!eligible.ok) {
                     const row = clientReportMap.get(co.client_id);
                     if (row && !row.reason) row.reason = eligible.reason || 'Not eligible';
+                    const vendorId = co.vendorId ?? co.upcoming_order?.vendorId;
+                    const v = vendorId ? vendorMap.get(vendorId) : null;
+                    pushExcelRow({ clientId: co.client_id, clientName, orderType: 'Custom', vendorName: v?.name ?? (vendorId || '—'), date: co.delivery_day || '—', outcome: 'skipped', reason: eligible.reason || 'Not eligible' });
                     continue;
                 }
-                if (!co.delivery_day) continue;
+                if (!co.delivery_day) {
+                    const vendorId = co.vendorId ?? co.upcoming_order?.vendorId;
+                    const v = vendorId ? vendorMap.get(vendorId) : null;
+                    pushExcelRow({ clientId: co.client_id, clientName, orderType: 'Custom', vendorName: v?.name ?? (vendorId || '—'), date: '—', outcome: 'skipped', reason: 'No delivery day' });
+                    continue;
+                }
 
                 const vendorId = co.vendorId ?? co.upcoming_order?.vendorId;
-                if (!vendorId) continue;
-                if (vendorActiveMap.get(vendorId) === false) continue; // skip inactive vendor only
+                if (!vendorId) {
+                    pushExcelRow({ clientId: co.client_id, clientName, orderType: 'Custom', vendorName: '—', date: co.delivery_day, outcome: 'skipped', reason: 'No vendor' });
+                    continue;
+                }
+                if (vendorActiveMap.get(vendorId) === false) {
+                    const vendor = vendorMap.get(vendorId);
+                    pushExcelRow({ clientId: co.client_id, clientName, orderType: 'Custom', vendorName: vendor?.name ?? vendorId, date: co.delivery_day, outcome: 'skipped', reason: 'Vendor inactive' });
+                    continue;
+                }
 
                 const deliveryDate = getDateForDayInWeek(nextWeekStart, co.delivery_day);
-                if (!deliveryDate) continue;
+                if (!deliveryDate) {
+                    const vendor = vendorMap.get(vendorId);
+                    pushExcelRow({ clientId: co.client_id, clientName, orderType: 'Custom', vendorName: vendor?.name ?? vendorId, date: co.delivery_day, outcome: 'skipped', reason: 'Invalid or out-of-range delivery day name' });
+                    continue;
+                }
                 const deliveryDateStr = deliveryDate.toISOString().split('T')[0];
-                if (deliveryDateStr < weekStartStr || deliveryDateStr > weekEndStr) continue;
+                if (deliveryDateStr < weekStartStr || deliveryDateStr > weekEndStr) {
+                    const vendor = vendorMap.get(vendorId);
+                    pushExcelRow({ clientId: co.client_id, clientName, orderType: 'Custom', vendorName: vendor?.name ?? vendorId, date: deliveryDateStr, outcome: 'skipped', reason: 'Delivery date outside target week' });
+                    continue;
+                }
 
                 const vendor = vendorMap.get(vendorId);
-                const clientName = clientMap.get(co.client_id)?.full_name ?? co.client_id;
-                if (await orderExists(co.client_id, deliveryDateStr, 'Custom', vendorId)) {
-                    diagnostics.push({ clientId: co.client_id, clientName, vendorId, vendorName: vendor?.name ?? vendorId, date: deliveryDateStr, orderType: 'Custom', outcome: 'skipped', reason: 'Order already exists for this client/date/vendor' });
+                const customSnap = await getClientSnapshot(co.client_id);
+                if (isDuplicateOfPreExisting(customSnap, deliveryDateStr, 'Custom', vendorId)) {
+                    diagnostics.push({ clientId: co.client_id, clientName, vendorId, vendorName: vendor?.name ?? vendorId, date: deliveryDateStr, orderType: 'Custom', outcome: 'skipped', reason: 'Pre-existing order already covers this client/date/vendor' });
+                    pushExcelRow({ clientId: co.client_id, clientName, orderType: 'Custom', vendorName: vendor?.name ?? vendorId, date: deliveryDateStr, outcome: 'skipped', reason: 'Pre-existing order already covers this client/date/vendor' });
                     continue;
                 }
 
@@ -784,7 +956,9 @@ export async function POST(request: NextRequest) {
                     clientName
                 );
                 if (!newOrder) {
-                    diagnostics.push({ clientId: co.client_id, clientName, vendorId, vendorName: vendor?.name ?? vendorId, date: deliveryDateStr, orderType: 'Custom', outcome: 'failed', reason: report.unexpectedFailures[report.unexpectedFailures.length - 1]?.reason ?? 'createOrder failed' });
+                    const reason = report.unexpectedFailures[report.unexpectedFailures.length - 1]?.reason ?? 'createOrder failed';
+                    diagnostics.push({ clientId: co.client_id, clientName, vendorId, vendorName: vendor?.name ?? vendorId, date: deliveryDateStr, orderType: 'Custom', outcome: 'failed', reason });
+                    pushExcelRow({ clientId: co.client_id, clientName, orderType: 'Custom', vendorName: vendor?.name ?? vendorId, date: deliveryDateStr, outcome: 'failed', reason });
                     continue;
                 }
 
@@ -794,7 +968,6 @@ export async function POST(request: NextRequest) {
                     recordReportOrder(co.client_id, vendorId, 'Custom');
                     recordReportOrderValue(co.client_id, newOrder.order_number, totalValue);
                     const itemsToInsert = names.map((name: string, i: number) => {
-                        // Put rounding remainder on last item so total sums exactly
                         const isLast = i === names.length - 1;
                         const unitVal = isLast ? totalValue - valuePerItem * (names.length - 1) : valuePerItem;
                         return {
@@ -811,8 +984,10 @@ export async function POST(request: NextRequest) {
                     });
                     await supabase.from('order_items').insert(itemsToInsert);
                     diagnostics.push({ clientId: co.client_id, clientName, vendorId, vendorName: vendor?.name ?? vendorId, date: deliveryDateStr, orderType: 'Custom', outcome: 'created', orderId: newOrder.id });
+                    pushExcelRow({ clientId: co.client_id, clientName, orderType: 'Custom', vendorName: vendor?.name ?? vendorId, date: deliveryDateStr, outcome: 'created', reason: '—', orderId: newOrder.id, orderNumber: newOrder.order_number, totalValue });
                 } else {
                     diagnostics.push({ clientId: co.client_id, clientName, vendorId, vendorName: vendor?.name ?? vendorId, date: deliveryDateStr, orderType: 'Custom', outcome: 'failed', orderId: newOrder.id, reason: 'order_vendor_selections insert failed' });
+                    pushExcelRow({ clientId: co.client_id, clientName, orderType: 'Custom', vendorName: vendor?.name ?? vendorId, date: deliveryDateStr, outcome: 'failed', reason: 'order_vendor_selections insert failed', orderId: newOrder.id });
                 }
             }
         }
@@ -831,18 +1006,48 @@ export async function POST(request: NextRequest) {
             }
         }
 
-        const excelData = Array.from(clientReportMap.values()).map(row => ({
+        // At least one Excel row per client: if client has 0 orders and no per-order row yet, add one with their reason
+        const clientIdsInExcel = new Set(excelOrderRows.map(r => r.clientId));
+        for (const row of clientReportMap.values()) {
+            if (row.ordersCreated === 0 && !clientIdsInExcel.has(row.clientId)) {
+                pushExcelRow({
+                    clientId: row.clientId,
+                    clientName: row.clientName,
+                    orderType: '—',
+                    vendorName: '—',
+                    date: '—',
+                    outcome: 'skipped',
+                    reason: row.reason || 'No upcoming orders'
+                });
+            }
+        }
+
+        const excelData = excelOrderRows.map(r => ({
+            'Client ID': r.clientId,
+            'Client Name': r.clientName,
+            'Order Type': r.orderType,
+            'Meal Type': r.mealType ?? '',
+            'Vendor': r.vendorName,
+            'Date': r.date,
+            'Outcome': r.outcome,
+            'Reason': r.reason,
+            'Order ID': r.orderId ?? '',
+            'Order #': r.orderNumber ?? '',
+            'Total Value ($)': r.totalValue != null ? Number(r.totalValue.toFixed(2)) : ''
+        }));
+
+        const clientSummaryRows = Array.from(clientReportMap.values()).map(row => ({
             'Client ID': row.clientId,
             'Client Name': row.clientName,
             'Orders Created': row.ordersCreated,
-            'Auth Meals/Week': row.authMealsPerWeek != null ? row.authMealsPerWeek : '',
-            'Total Value ($)': row.totalValue > 0 ? Number(row.totalValue.toFixed(2)) : '',
-            'Orders (Order #, Amount)': row.orderBreakdown.length > 0
-                ? row.orderBreakdown.map(o => `${o.orderNumber}: $${o.amount.toFixed(2)}`).join(', ')
-                : '-',
-            'Vendor(s)': Array.from(row.vendors).sort().join(', ') || '-',
-            'Type(s)': Array.from(row.types).sort().join(', ') || '-',
-            'Reason (if no orders)': row.reason || '-'
+            'Service Types': [...row.types].join(', ') || '—',
+            'Vendors': [...row.vendors].join(', ') || '—',
+            'Auth Meals/Week': row.authMealsPerWeek ?? '',
+            'Total Value ($)': row.totalValue > 0 ? Number(row.totalValue.toFixed(2)) : 0,
+            'Order Breakdown': row.orderBreakdown.length > 0
+                ? row.orderBreakdown.map(o => `#${o.orderNumber}: $${o.amount.toFixed(2)}`).join(', ')
+                : '—',
+            'Status': row.ordersCreated > 0 ? 'OK' : (row.reason || 'No orders')
         }));
 
         // Build vendor breakdown for admin report and vendor emails
@@ -891,6 +1096,7 @@ export async function POST(request: NextRequest) {
                     creationId,
                     hasMore,
                     excelRows: excelData,
+                    clientSummaryRows,
                     vendorBreakdown,
                     diagnostics,
                     debug
@@ -900,13 +1106,24 @@ export async function POST(request: NextRequest) {
 
         const wb = XLSX.utils.book_new();
         const ws = XLSX.utils.json_to_sheet(excelData);
-        ws['!cols'] = [{ wch: 15 }, { wch: 30 }, { wch: 15 }, { wch: 14 }, { wch: 14 }, { wch: 50 }, { wch: 35 }, { wch: 25 }, { wch: 45 }];
+        ws['!cols'] = [{ wch: 12 }, { wch: 28 }, { wch: 10 }, { wch: 12 }, { wch: 22 }, { wch: 12 }, { wch: 10 }, { wch: 52 }, { wch: 38 }, { wch: 10 }, { wch: 12 }];
         XLSX.utils.book_append_sheet(wb, ws, 'Next Week Report');
 
         const excelBuffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
         const excelAttachment = {
             filename: `Create_Orders_Next_Week_${weekStartStr}_to_${weekEndStr}.xlsx`,
             content: excelBuffer,
+            contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        };
+
+        const wbClients = XLSX.utils.book_new();
+        const wsClients = XLSX.utils.json_to_sheet(clientSummaryRows.length ? clientSummaryRows : [{ 'Client ID': '-', 'Client Name': '-', 'Orders Created': 0, 'Service Types': '-', 'Vendors': '-', 'Auth Meals/Week': '', 'Total Value ($)': '', 'Order Breakdown': '-', 'Status': 'No clients' }]);
+        wsClients['!cols'] = [{ wch: 12 }, { wch: 28 }, { wch: 14 }, { wch: 18 }, { wch: 30 }, { wch: 16 }, { wch: 14 }, { wch: 40 }, { wch: 36 }];
+        XLSX.utils.book_append_sheet(wbClients, wsClients, 'Client Summary');
+        const clientExcelBuffer = XLSX.write(wbClients, { type: 'buffer', bookType: 'xlsx' });
+        const clientExcelAttachment = {
+            filename: `Create_Orders_Clients_${weekStartStr}_to_${weekEndStr}.xlsx`,
+            content: clientExcelBuffer,
             contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
         };
 
@@ -934,7 +1151,7 @@ export async function POST(request: NextRequest) {
             vendorBreakdown,
             debug
         };
-        const attachments: { filename: string; content: Buffer; contentType: string }[] = [excelAttachment];
+        const attachments: { filename: string; content: Buffer; contentType: string }[] = [excelAttachment, clientExcelAttachment];
         const debugPayload: { debug: typeof debug; mealFocus?: Record<string, unknown> } = { debug };
         if (report.breakdown.Meal === 0) {
             debugPayload.mealFocus = {

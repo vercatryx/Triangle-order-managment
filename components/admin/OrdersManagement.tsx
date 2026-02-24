@@ -163,6 +163,7 @@ export function OrdersManagement() {
         setNextWeekResult(null);
         let creationId: number | undefined;
         const allExcelRows: Record<string, string | number>[] = [];
+        const allClientSummaryRows: Record<string, string | number>[] = [];
         const vendorBreakdownMap = new Map<string, { vendorId: string; vendorName: string; byDay: Record<string, number>; total: number }>();
         let totalCreated = 0;
         const breakdown = { Food: 0, Meal: 0, Boxes: 0, Custom: 0 };
@@ -216,6 +217,8 @@ export function OrdersManagement() {
                 }
                 const rows = data.batch?.excelRows ?? [];
                 allExcelRows.push(...rows);
+                const cRows = data.batch?.clientSummaryRows ?? [];
+                allClientSummaryRows.push(...cRows);
                 for (const v of data.batch?.vendorBreakdown ?? []) {
                     const existing = vendorBreakdownMap.get(v.vendorId);
                     if (!existing) {
@@ -259,6 +262,7 @@ export function OrdersManagement() {
                     breakdown,
                     creationId,
                     excelRows: allExcelRows,
+                    clientSummaryRows: allClientSummaryRows,
                     failures: allFailures,
                     vendorBreakdown: vendorBreakdownArray,
                     diagnostics: allDiagnostics,
@@ -376,7 +380,18 @@ export function OrdersManagement() {
 
             {/* Order Creation Management */}
             <div className={styles.card} style={{ marginTop: 'var(--spacing-lg)' }}>
-                <h3 className={styles.sectionTitle}>Order Creation Management</h3>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem' }}>
+                    <h3 className={styles.sectionTitle} style={{ margin: 0 }}>Order Creation Management</h3>
+                    <button
+                        className="btn btn-secondary"
+                        onClick={loadCreationIds}
+                        disabled={loadingCreationIds}
+                        style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem', padding: '0.4rem 0.75rem', fontSize: '0.85rem' }}
+                    >
+                        <RefreshCw className={loadingCreationIds ? 'spin' : ''} size={14} />
+                        Refresh
+                    </button>
+                </div>
                 <p className={styles.description}>
                     Manage orders by creation ID. Each round of order creation gets a unique numeric ID. You can delete all orders from a specific creation round.
                 </p>

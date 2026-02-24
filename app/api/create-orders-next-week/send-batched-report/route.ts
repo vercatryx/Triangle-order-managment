@@ -18,6 +18,7 @@ export async function POST(request: NextRequest) {
             breakdown = { Food: 0, Meal: 0, Boxes: 0, Custom: 0 },
             creationId,
             excelRows = [],
+            clientSummaryRows = [],
             failures = [],
             vendorBreakdown = [],
             diagnostics: diagnosticsInput = [],
@@ -42,16 +43,28 @@ export async function POST(request: NextRequest) {
             : [];
 
         const wb = XLSX.utils.book_new();
-        const ws = XLSX.utils.json_to_sheet(
-            excelRows.length ? excelRows : [{ 'Client ID': '-', 'Client Name': '-', 'Orders Created': 0, 'Auth Meals/Week': '', 'Total Value ($)': '', 'Orders (Order #, Amount)': '-', 'Vendor(s)': '-', 'Type(s)': '-', 'Reason (if no orders)': 'No clients in batch' }]
-        );
-        ws['!cols'] = [{ wch: 15 }, { wch: 30 }, { wch: 15 }, { wch: 14 }, { wch: 14 }, { wch: 50 }, { wch: 35 }, { wch: 25 }, { wch: 45 }];
+        const emptyRow = { 'Client ID': '-', 'Client Name': '-', 'Order Type': '-', 'Meal Type': '', 'Vendor': '-', 'Date': '-', 'Outcome': 'skipped', 'Reason': 'No clients in batch', 'Order ID': '', 'Order #': '', 'Total Value ($)': '' };
+        const ws = XLSX.utils.json_to_sheet(excelRows.length ? excelRows : [emptyRow]);
+        ws['!cols'] = [{ wch: 12 }, { wch: 28 }, { wch: 10 }, { wch: 12 }, { wch: 22 }, { wch: 12 }, { wch: 10 }, { wch: 52 }, { wch: 38 }, { wch: 10 }, { wch: 12 }];
         XLSX.utils.book_append_sheet(wb, ws, 'Next Week Report');
         const mainBuffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+
+        const emptyClientRow = { 'Client ID': '-', 'Client Name': '-', 'Orders Created': 0, 'Service Types': '-', 'Vendors': '-', 'Auth Meals/Week': '', 'Total Value ($)': '', 'Order Breakdown': '-', 'Status': 'No clients' };
+        const wbClients = XLSX.utils.book_new();
+        const wsClients = XLSX.utils.json_to_sheet(clientSummaryRows.length ? clientSummaryRows : [emptyClientRow]);
+        wsClients['!cols'] = [{ wch: 12 }, { wch: 28 }, { wch: 14 }, { wch: 18 }, { wch: 30 }, { wch: 16 }, { wch: 14 }, { wch: 40 }, { wch: 36 }];
+        XLSX.utils.book_append_sheet(wbClients, wsClients, 'Client Summary');
+        const clientBuffer = XLSX.write(wbClients, { type: 'buffer', bookType: 'xlsx' });
+
         const attachments: { filename: string; content: Buffer; contentType: string }[] = [
             {
                 filename: `Create_Orders_Next_Week_${weekStart || 'week'}_to_${weekEnd || 'week'}.xlsx`,
                 content: mainBuffer,
+                contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+            },
+            {
+                filename: `Create_Orders_Clients_${weekStart || 'week'}_to_${weekEnd || 'week'}.xlsx`,
+                content: clientBuffer,
                 contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
             }
         ];
