@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { Vendor, ClientProfile, MenuItem, BoxType, ItemCategory } from '@/lib/types';
 import { getVendors, getClients, getMenuItems, getBoxTypes, getCategories, getMealItems } from '@/lib/cached-data';
 import { getOrdersByVendorForDate, saveDeliveryProofUrlAndProcessOrder, updateOrderDeliveryProof, isOrderUnderVendor, orderHasDeliveryProof, resolveOrderId } from '@/lib/actions';
-import { ArrowLeft, Calendar, Package, Clock, ShoppingCart, Upload, ChevronDown, ChevronUp, Save, X, CheckCircle, AlertCircle, Download, XCircle, FileText, ChevronsDown, ChevronsUp } from 'lucide-react';
+import { ArrowLeft, Calendar, Package, Clock, ShoppingCart, Upload, ChevronDown, ChevronUp, Save, X, CheckCircle, AlertCircle, Download, XCircle, FileText, ChevronsDown, ChevronsUp, Loader2 } from 'lucide-react';
 import { generateLabelsPDF } from '@/lib/label-utils';
 import * as XLSX from 'xlsx';
 import styles from './VendorDetail.module.css';
@@ -26,6 +26,7 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate, isVendorView }: P
     const [boxTypes, setBoxTypes] = useState<BoxType[]>([]);
     const [categories, setCategories] = useState<ItemCategory[]>([]);
     const [isLoading, setIsLoading] = useState(true);
+    const [isExportingLabels, setIsExportingLabels] = useState(false);
     const [expandedOrders, setExpandedOrders] = useState<Set<string>>(new Set());
     const [proofUrls, setProofUrls] = useState<Record<string, string>>({});
     const [isSaving, setIsSaving] = useState(false);
@@ -327,13 +328,7 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate, isVendorView }: P
         }).join('; ');
     }
 
-    function exportOrdersToExcel() {
-        if (orders.length === 0) {
-            alert('No orders to export');
-            return;
-        }
-
-        /* --- Sheet 1: Orders Summary (Original CSV format) --- */
+    function buildExcelWorkbook(ordersSubset: any[]) {
         const headers = [
             'Order Number',
             'Order ID',
@@ -347,7 +342,7 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate, isVendorView }: P
             'Delivery Proof URL'
         ];
 
-        const summaryData = orders.map(order => [
+        const summaryData = ordersSubset.map(order => [
             order.orderNumber || '',
             order.id || '',
             order.client_id || '',
@@ -362,20 +357,17 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate, isVendorView }: P
 
         const wsSummary = XLSX.utils.aoa_to_sheet([headers, ...summaryData]);
 
-        /* --- Sheet 2: Detailed Items per Client --- */
         const detailsData: any[][] = [];
 
-        orders.forEach(order => {
+        ordersSubset.forEach(order => {
             const clientName = getClientName(order.client_id);
             const clientAddress = getClientAddress(order.client_id);
             const items = getParsedOrderItems(order);
 
-            // Header for this order block
             detailsData.push([`Client: ${clientName}`, `Order ID: ${order.orderNumber || order.id}`, '', '']);
             detailsData.push([`Address: ${clientAddress}`, '', '', '']);
             detailsData.push(['Item Name', 'Quantity', 'Category', 'Notes']);
 
-            // Items
             if (items.length > 0) {
                 items.forEach(item => {
                     let category = item.category ? getCategoryName(item.category) : '';
@@ -387,22 +379,17 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate, isVendorView }: P
                 detailsData.push(['No items found', '', '', '']);
             }
 
-            // Empty row for separation
             detailsData.push([]);
         });
 
         const wsDetails = XLSX.utils.aoa_to_sheet(detailsData);
-        // Auto-width columns for readability
         wsDetails['!cols'] = [{ wch: 30 }, { wch: 10 }, { wch: 20 }, { wch: 40 }];
 
-        /* --- Sheet 3: Cooking List (Aggregated Totals) --- */
         const aggregation: Record<string, { name: string; quantity: number; notes: string }> = {};
 
-        // Parse all items from all orders
-        orders.forEach(order => {
+        ordersSubset.forEach(order => {
             const items = getParsedOrderItems(order);
             items.forEach(item => {
-                // Key is Name + Note to ensure distinct entries for modified items
                 const noteKey = item.notes ? item.notes.trim().toLowerCase() : '';
                 const key = `${item.name}||${noteKey}`;
 
@@ -418,10 +405,8 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate, isVendorView }: P
             });
         });
 
-        // Convert to array and sort
         const cookingListData = Object.values(aggregation)
             .sort((a, b) => {
-                // Sort by name, then by notes
                 const nameCompare = a.name.localeCompare(b.name);
                 if (nameCompare !== 0) return nameCompare;
                 return (a.notes || '').localeCompare(b.notes || '');
@@ -432,7 +417,6 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate, isVendorView }: P
                 item.notes
             ]);
 
-        // Add headers
         const cookingListFinal = [
             ['Item Name', 'Total Quantity', 'Notes'],
             ...cookingListData
@@ -441,14 +425,35 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate, isVendorView }: P
         const wsCookingList = XLSX.utils.aoa_to_sheet(cookingListFinal);
         wsCookingList['!cols'] = [{ wch: 30 }, { wch: 15 }, { wch: 40 }];
 
-        /* --- Workbook Creation --- */
         const wb = XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(wb, wsSummary, "Orders Summary");
         XLSX.utils.book_append_sheet(wb, wsDetails, "Client Breakdown");
         XLSX.utils.book_append_sheet(wb, wsCookingList, "Cooking List");
 
+        return wb;
+    }
+
+    function exportOrdersToExcel() {
+        if (orders.length === 0) {
+            alert('No orders to export');
+            return;
+        }
+
         const formattedDate = formatDate(deliveryDate).replace(/\s/g, '_');
-        XLSX.writeFile(wb, `${vendor?.name || 'vendor'}_orders_${formattedDate}.xlsx`);
+        const vName = vendor?.name || 'vendor';
+
+        const boxOrders = orders.filter(o => o.service_type === 'Boxes');
+        const foodOrders = orders.filter(o => o.service_type !== 'Boxes');
+
+        if (boxOrders.length > 0) {
+            const wb = buildExcelWorkbook(boxOrders);
+            XLSX.writeFile(wb, `${vName}_boxes_${formattedDate}.xlsx`);
+        }
+
+        if (foodOrders.length > 0) {
+            const wb = buildExcelWorkbook(foodOrders);
+            XLSX.writeFile(wb, `${vName}_food_${formattedDate}.xlsx`);
+        }
     }
 
     async function exportLabelsPDF() {
@@ -457,15 +462,38 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate, isVendorView }: P
             return;
         }
 
-        await generateLabelsPDF({
-            orders,
-            getClientName,
-            getClientAddress,
-            formatOrderedItemsForCSV,
-            formatDate,
-            vendorName: vendor?.name,
-            deliveryDate
-        });
+        setIsExportingLabels(true);
+        try {
+            const boxOrders = orders.filter(o => o.service_type === 'Boxes');
+            const foodOrders = orders.filter(o => o.service_type !== 'Boxes');
+            const vName = vendor?.name || 'vendor';
+
+            if (boxOrders.length > 0) {
+                await generateLabelsPDF({
+                    orders: boxOrders,
+                    getClientName,
+                    getClientAddress,
+                    formatOrderedItemsForCSV,
+                    formatDate,
+                    vendorName: `${vName}_boxes`,
+                    deliveryDate
+                });
+            }
+
+            if (foodOrders.length > 0) {
+                await generateLabelsPDF({
+                    orders: foodOrders,
+                    getClientName,
+                    getClientAddress,
+                    formatOrderedItemsForCSV,
+                    formatDate,
+                    vendorName: `${vName}_food`,
+                    deliveryDate
+                });
+            }
+        } finally {
+            setIsExportingLabels(false);
+        }
     }
 
 
@@ -1159,8 +1187,9 @@ export function VendorDeliveryOrders({ vendorId, deliveryDate, isVendorView }: P
                     {orders.length > 0 && (
                         <div style={{ display: 'flex', gap: '1rem' }}>
 
-                            <button className="btn btn-secondary" onClick={exportLabelsPDF} style={{ padding: '0.75rem 1.5rem', fontSize: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                                <FileText size={20} /> Download Labels
+                            <button className="btn btn-secondary" onClick={exportLabelsPDF} disabled={isExportingLabels} style={{ padding: '0.75rem 1.5rem', fontSize: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem', opacity: isExportingLabels ? 0.7 : 1 }}>
+                                {isExportingLabels ? <Loader2 size={20} style={{ animation: 'spin 1s linear infinite' }} /> : <FileText size={20} />}
+                                {isExportingLabels ? 'Generating...' : 'Download Labels'}
                             </button>
                             <button className="btn btn-secondary" onClick={exportOrdersToExcel} style={{ padding: '0.75rem 1.5rem', fontSize: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                                 <Download size={20} /> Download Excel
