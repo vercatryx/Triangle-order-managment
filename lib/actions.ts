@@ -5751,6 +5751,26 @@ export async function getVendorDeliveryDateSummary(vendorId: string): Promise<Ar
 const VENDOR_ORDERS_BATCH_CHUNK = 200;
 
 /** Batch-load vendor selections, items, box selections (and client upcoming_order for Box) in few Supabase round-trips. */
+async function fetchAllRows(
+    buildQuery: () => any,
+    pageSize = 500
+): Promise<any[]> {
+    let allRows: any[] = [];
+    let from = 0;
+    while (true) {
+        const { data, error } = await buildQuery().range(from, from + pageSize - 1);
+        if (error) {
+            console.error('[fetchAllRows] error:', error);
+            break;
+        }
+        const page = Array.isArray(data) ? data : [];
+        allRows = allRows.concat(page);
+        if (page.length < pageSize) break;
+        from += pageSize;
+    }
+    return allRows;
+}
+
 async function batchLoadVendorOrderDetails(
     supabaseClient: any,
     orderRows: any[],
@@ -5774,45 +5794,45 @@ async function batchLoadVendorOrderDetails(
     };
 
     for (const ids of chunk(orderIds, VENDOR_ORDERS_BATCH_CHUNK)) {
-        const { data: vsList } = await supabaseClient
-            .from('order_vendor_selections')
-            .select('id, order_id')
-            .in('order_id', ids)
-            .eq('vendor_id', vendorId);
-        if (vsList?.length) {
-            for (const vs of vsList) {
-                vsByOrderId.set(vs.order_id, { id: vs.id });
-            }
+        const vsList = await fetchAllRows(() =>
+            supabaseClient
+                .from('order_vendor_selections')
+                .select('id, order_id')
+                .in('order_id', ids)
+                .eq('vendor_id', vendorId)
+        );
+        for (const vs of vsList) {
+            vsByOrderId.set(vs.order_id, { id: vs.id });
         }
     }
 
     const vsIds = Array.from(vsByOrderId.values()).map((v) => v.id);
     for (const ids of chunk(vsIds, VENDOR_ORDERS_BATCH_CHUNK)) {
-        const { data: itemsList } = await supabaseClient
-            .from('order_items')
-            .select('*')
-            .in('vendor_selection_id', ids);
-        if (itemsList?.length) {
-            for (const item of itemsList) {
-                const vsId = item.vendor_selection_id;
-                if (!itemsByVsId.has(vsId)) itemsByVsId.set(vsId, []);
-                itemsByVsId.get(vsId)!.push(item);
-            }
+        const itemsList = await fetchAllRows(() =>
+            supabaseClient
+                .from('order_items')
+                .select('*')
+                .in('vendor_selection_id', ids)
+        );
+        for (const item of itemsList) {
+            const vsId = item.vendor_selection_id;
+            if (!itemsByVsId.has(vsId)) itemsByVsId.set(vsId, []);
+            itemsByVsId.get(vsId)!.push(item);
         }
     }
 
     for (const ids of chunk(orderIds, VENDOR_ORDERS_BATCH_CHUNK)) {
-        const { data: boxList } = await supabaseClient
-            .from('order_box_selections')
-            .select('*')
-            .in('order_id', ids)
-            .eq('vendor_id', vendorId);
-        if (boxList?.length) {
-            for (const bs of boxList) {
-                const oid = bs.order_id;
-                if (!boxSelectionsByOrderId.has(oid)) boxSelectionsByOrderId.set(oid, []);
-                boxSelectionsByOrderId.get(oid)!.push(bs);
-            }
+        const boxList = await fetchAllRows(() =>
+            supabaseClient
+                .from('order_box_selections')
+                .select('*')
+                .in('order_id', ids)
+                .eq('vendor_id', vendorId)
+        );
+        for (const bs of boxList) {
+            const oid = bs.order_id;
+            if (!boxSelectionsByOrderId.has(oid)) boxSelectionsByOrderId.set(oid, []);
+            boxSelectionsByOrderId.get(oid)!.push(bs);
         }
     }
 
@@ -5820,14 +5840,14 @@ async function batchLoadVendorOrderDetails(
         orderRows.filter((o: any) => o.service_type === 'Boxes').map((o: any) => o.client_id ?? o.clientId).filter(Boolean)
     )];
     for (const cids of chunk(boxOrderClientIds, VENDOR_ORDERS_BATCH_CHUNK)) {
-        const { data: clientRows } = await supabaseClient
-            .from('clients')
-            .select('id, upcoming_order')
-            .in('id', cids);
-        if (clientRows?.length) {
-            for (const r of clientRows) {
-                if (r.upcoming_order != null) upcomingOrderByClientId.set(r.id, r.upcoming_order);
-            }
+        const clientRows = await fetchAllRows(() =>
+            supabaseClient
+                .from('clients')
+                .select('id, upcoming_order')
+                .in('id', cids)
+        );
+        for (const r of clientRows) {
+            if (r.upcoming_order != null) upcomingOrderByClientId.set(r.id, r.upcoming_order);
         }
     }
 
