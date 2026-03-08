@@ -1,10 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { after } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { DAY_NAME_TO_NUMBER, getFirstDeliveryDateInWeek } from '@/lib/order-dates';
 import { vendorSelectionsToDeliveryDayOrders } from '@/lib/upcoming-order-converter';
 import { sendSchedulingReport, sendVendorNextWeekSummary, type VendorBreakdownItem } from '@/lib/email-report';
 import { getNextCreationId } from '@/lib/actions';
 import * as XLSX from 'xlsx';
+
+function getBaseUrl(): string {
+    const url = process.env.VERCEL_URL;
+    if (url) return `https://${url}`;
+    return process.env.NEXT_PUBLIC_APP_URL || 'https://trianglesquareservices.com';
+}
 
 // Vercel limit is 800s; allow max so 800+ orders can complete (many sequential DB round-trips per order)
 export const maxDuration = 800;
@@ -1080,6 +1087,103 @@ export async function POST(request: NextRequest) {
                 workToDo: { foodOrders: foodOrders.length, mealOrders: mealOrders.length, boxOrders: boxOrders.length, customOrders: customOrders.length },
                 skipped: { foodNoData: foodSkippedNoData }
             };
+
+            // Async run: persist batch and chain next batch or send report (so cron gets 202 and doesn't wait)
+            const { data: runRow } = await supabase.from('create_orders_run').select('batch_results').eq('creation_id', creationId).maybeSingle();
+            if (runRow) {
+                const batchPayload = {
+                    batchIndex: batchMode.batchIndex,
+                    totalCreated: report.totalCreated,
+                    breakdown: report.breakdown,
+                    excelRows: excelData,
+                    clientSummaryRows,
+                    errors: report.unexpectedFailures,
+                    vendorBreakdown,
+                    diagnostics,
+                    weekStart: weekStartStr,
+                    weekEnd: weekEndStr,
+                    debug
+                };
+                const nextResults = [...(Array.isArray(runRow.batch_results) ? runRow.batch_results : []), batchPayload];
+                await supabase.from('create_orders_run').update({ batch_results: nextResults, updated_at: new Date().toISOString() }).eq('creation_id', creationId);
+
+                const baseUrl = getBaseUrl();
+                if (hasMore) {
+                    after(async () => {
+                        try {
+                            await fetch(`${baseUrl}/api/create-orders-next-week`, {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ batchIndex: batchMode.batchIndex + 1, batchSize, creationId })
+                            });
+                        } catch (e) {
+                            console.error('[Create Orders Next Week] Failed to trigger next batch:', e);
+                        }
+                    });
+                } else {
+                    after(async () => {
+                        try {
+                            const { data: finalRow } = await supabase.from('create_orders_run').select('batch_results').eq('creation_id', creationId).single();
+                            const batches = (finalRow?.batch_results as any[]) || [];
+                            const totalCreated = batches.reduce((s, b) => s + (b.totalCreated ?? 0), 0);
+                            const breakdown = batches.reduce(
+                                (acc, b) => ({
+                                    Food: acc.Food + (b.breakdown?.Food ?? 0),
+                                    Meal: acc.Meal + (b.breakdown?.Meal ?? 0),
+                                    Boxes: acc.Boxes + (b.breakdown?.Boxes ?? 0),
+                                    Custom: acc.Custom + (b.breakdown?.Custom ?? 0)
+                                }),
+                                { Food: 0, Meal: 0, Boxes: 0, Custom: 0 }
+                            );
+                            const excelRows = batches.flatMap(b => b.excelRows ?? []);
+                            const clientSummaryRows = batches.flatMap(b => b.clientSummaryRows ?? []);
+                            const failures = batches.flatMap(b => b.errors ?? []);
+                            const diagnostics = batches.flatMap(b => b.diagnostics ?? []);
+                            const vbByVendor = new Map<string, { vendorId: string; vendorName: string; byDay: Record<string, number>; total: number }>();
+                            for (const b of batches) {
+                                for (const v of b.vendorBreakdown ?? []) {
+                                    const cur = vbByVendor.get(v.vendorId);
+                                    if (!cur) {
+                                        vbByVendor.set(v.vendorId, { vendorId: v.vendorId, vendorName: v.vendorName ?? v.vendorId, byDay: { ...(v.byDay || {}) }, total: v.total ?? 0 });
+                                    } else {
+                                        cur.total += v.total ?? 0;
+                                        for (const [day, n] of Object.entries(v.byDay || {})) {
+                                            cur.byDay[day] = (cur.byDay[day] ?? 0) + (n as number);
+                                        }
+                                    }
+                                }
+                            }
+                            const vendorBreakdown = Array.from(vbByVendor.values());
+                            const weekStart = batches[0]?.weekStart ?? '';
+                            const weekEnd = batches[0]?.weekEnd ?? '';
+                            const debugBatches = batches.map(b => b.debug);
+                            const reportPayload = {
+                                weekStart,
+                                weekEnd,
+                                totalCreated,
+                                breakdown,
+                                creationId,
+                                excelRows,
+                                clientSummaryRows,
+                                failures,
+                                vendorBreakdown,
+                                diagnostics,
+                                debug: batches[batches.length - 1]?.debug,
+                                debugBatches
+                            };
+                            await fetch(`${baseUrl}/api/create-orders-next-week/send-batched-report`, {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify(reportPayload)
+                            });
+                            await supabase.from('create_orders_run').delete().eq('creation_id', creationId);
+                        } catch (e) {
+                            console.error('[Create Orders Next Week] Failed to merge and send report:', e);
+                        }
+                    });
+                }
+            }
+
             return NextResponse.json({
                 success: true,
                 totalCreated: report.totalCreated,
