@@ -8300,3 +8300,74 @@ export async function saveClientCustomOrder(clientId: string, vendorId: string, 
     revalidatePath(`/clients/${clientId}`);
     return { success: true, data: newUpcoming };
 }
+
+export async function massAssignVendorToBoxOrders(clientIds: string[], vendorId: string) {
+    const supabaseAdmin = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
+    const session = await getSession();
+    if (!session) return { success: false, error: 'Unauthorized' };
+
+    const results: { clientId: string; success: boolean; error?: string }[] = [];
+
+    for (const clientId of clientIds) {
+        try {
+            const { data: client, error: fetchError } = await supabaseAdmin
+                .from('clients')
+                .select('upcoming_order')
+                .eq('id', clientId)
+                .single();
+
+            if (fetchError || !client) {
+                results.push({ clientId, success: false, error: 'Client not found' });
+                continue;
+            }
+
+            const upcomingOrder = client.upcoming_order;
+            if (!upcomingOrder) {
+                results.push({ clientId, success: false, error: 'No upcoming order' });
+                continue;
+            }
+
+            let updated = false;
+
+            if (upcomingOrder.serviceType === 'Boxes' && Array.isArray(upcomingOrder.boxOrders)) {
+                upcomingOrder.boxOrders = upcomingOrder.boxOrders.map((bo: any) => {
+                    if (!bo.vendorId) {
+                        updated = true;
+                        return { ...bo, vendorId };
+                    }
+                    return bo;
+                });
+            }
+
+            if (upcomingOrder.mealSelections) {
+                for (const mealType of Object.keys(upcomingOrder.mealSelections)) {
+                    if (!upcomingOrder.mealSelections[mealType].vendorId) {
+                        upcomingOrder.mealSelections[mealType].vendorId = vendorId;
+                        updated = true;
+                    }
+                }
+            }
+
+            if (!updated) {
+                results.push({ clientId, success: true });
+                continue;
+            }
+
+            const { error: updateError } = await supabaseAdmin
+                .from('clients')
+                .update({ upcoming_order: upcomingOrder, updated_at: new Date().toISOString() })
+                .eq('id', clientId);
+
+            if (updateError) {
+                results.push({ clientId, success: false, error: updateError.message });
+            } else {
+                results.push({ clientId, success: true });
+            }
+        } catch (err: any) {
+            results.push({ clientId, success: false, error: err.message });
+        }
+    }
+
+    revalidatePath('/clients');
+    return { success: true, results };
+}

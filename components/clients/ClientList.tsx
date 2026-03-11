@@ -1514,6 +1514,12 @@ export function ClientList({ currentUser }: ClientListProps = {}) {
                             Needs Attention
                         </button>
                         <button
+                            className={styles.viewBtn}
+                            onClick={() => router.push('/assign-vendors')}
+                        >
+                            Assign Vendors
+                        </button>
+                        <button
                             className={`${styles.viewBtn} ${currentView === 'billing' ? styles.viewBtnActive : ''}`}
                             onClick={() => router.push('/billing')}
                         >

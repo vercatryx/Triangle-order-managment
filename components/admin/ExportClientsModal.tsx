@@ -16,7 +16,9 @@ const EXPORT_FIELDS: { key: keyof ExportClientRow; label: string }[] = [
     { key: 'authorized_amount', label: 'Auth amount' },
     { key: 'screening_status', label: 'Screening status' },
     { key: 'expiration_date', label: 'Exp date' },
-    { key: 'food_box_custom_client_type', label: 'Food box / custom client type (from upcoming order)' }
+    { key: 'food_box_custom_client_type', label: 'Food box / custom client type (from upcoming order)' },
+    { key: 'status', label: 'Status' },
+    { key: 'upcoming_order_meal_total', label: 'Upcoming order meal total' }
 ];
 
 const defaultFields: Record<keyof ExportClientRow, boolean> = {
@@ -30,7 +32,9 @@ const defaultFields: Record<keyof ExportClientRow, boolean> = {
     authorized_amount: false,
     screening_status: false,
     expiration_date: false,
-    food_box_custom_client_type: false
+    food_box_custom_client_type: false,
+    status: false,
+    upcoming_order_meal_total: false
 };
 
 interface ExportClientsModalProps {

@@ -10,6 +10,89 @@ const supabase = createClient(
     process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
 
+/** Effective points for a menu/meal item – mirrors getItemPoints() in lib/utils.ts. */
+function itemPoints(item: { value?: number; quota_value?: number } | undefined): number {
+    if (!item) return 0;
+    const v = Number(item.value ?? 0);
+    const q = Number(item.quota_value ?? 0);
+    return v > 0 ? v : (q || 0);
+}
+
+/** Compute total meal value from clients.upcoming_order using item point values. */
+function computeUpcomingOrderMealTotal(
+    upcomingOrder: unknown,
+    menuItemMap: Map<string, { value?: number; quota_value?: number }>,
+    mealItemMap: Map<string, { value?: number; quota_value?: number }>
+): number | '' {
+    if (!upcomingOrder || typeof upcomingOrder !== 'object') return '';
+    const uo = upcomingOrder as Record<string, unknown>;
+    const st = uo.serviceType;
+    if (!st || typeof st !== 'string') return '';
+
+    let total = 0;
+    const countedItemIds = new Set<string>();
+
+    function sumItems(items: unknown) {
+        if (!items || typeof items !== 'object') return;
+        for (const [itemId, qty] of Object.entries(items as Record<string, unknown>)) {
+            const q = Number(qty);
+            if (q <= 0) continue;
+            if (countedItemIds.has(itemId)) continue;
+            countedItemIds.add(itemId);
+            const item = menuItemMap.get(itemId) ?? mealItemMap.get(itemId);
+            total += itemPoints(item) * q;
+        }
+    }
+
+    if (st === 'Food' || st === 'Meal') {
+        const dayOrders = uo.deliveryDayOrders;
+        if (dayOrders && typeof dayOrders === 'object') {
+            for (const dayData of Object.values(dayOrders as Record<string, unknown>)) {
+                const vendorSels = (dayData as Record<string, unknown>)?.vendorSelections;
+                if (Array.isArray(vendorSels)) {
+                    for (const sel of vendorSels) {
+                        sumItems((sel as Record<string, unknown>)?.items);
+                    }
+                }
+            }
+        }
+        const mealSels = uo.mealSelections;
+        if (mealSels && typeof mealSels === 'object') {
+            for (const mealConfig of Object.values(mealSels as Record<string, unknown>)) {
+                sumItems((mealConfig as Record<string, unknown>)?.items);
+            }
+        }
+        const vendorSels = uo.vendorSelections;
+        if (Array.isArray(vendorSels)) {
+            for (const sel of vendorSels) {
+                sumItems((sel as Record<string, unknown>)?.items);
+            }
+        }
+    } else if (st === 'Boxes') {
+        const boxOrders = uo.boxOrders;
+        if (Array.isArray(boxOrders)) {
+            for (const bo of boxOrders) {
+                const rec = bo as Record<string, unknown>;
+                const boxQty = Number(rec.quantity ?? 1) || 1;
+                const items = rec.items;
+                if (items && typeof items === 'object') {
+                    for (const [itemId, qty] of Object.entries(items as Record<string, unknown>)) {
+                        const q = Number(qty);
+                        if (q <= 0) continue;
+                        const item = menuItemMap.get(itemId) ?? mealItemMap.get(itemId);
+                        total += itemPoints(item) * q * boxQty;
+                    }
+                }
+            }
+        }
+    } else if (st === 'Custom') {
+        const price = Number(uo.custom_price);
+        if (price > 0) total = price;
+    }
+
+    return total;
+}
+
 /** Derive "food box custom client type" from upcoming_order (source of truth). */
 function foodBoxCustomClientTypeFromUpcoming(
     upcomingOrder: unknown,
@@ -51,6 +134,8 @@ export type ExportClientRow = {
     screening_status: string;
     expiration_date: string;
     food_box_custom_client_type: string;
+    status: string;
+    upcoming_order_meal_total: number | '';
 };
 
 const EXPORT_FIELD_LABELS: Record<keyof ExportClientRow, string> = {
@@ -64,7 +149,9 @@ const EXPORT_FIELD_LABELS: Record<keyof ExportClientRow, string> = {
     authorized_amount: 'Auth amount',
     screening_status: 'Screening status',
     expiration_date: 'Exp date',
-    food_box_custom_client_type: 'Food box / custom client type (from upcoming order)'
+    food_box_custom_client_type: 'Food box / custom client type (from upcoming order)',
+    status: 'Status',
+    upcoming_order_meal_total: 'Upcoming order meal total'
 };
 
 const VALID_KEYS = new Set<string>(Object.keys(EXPORT_FIELD_LABELS));
@@ -74,10 +161,36 @@ export async function POST(request: NextRequest) {
         const body = await request.json().catch(() => ({}));
         const includeDependants = !!body.includeDependants;
 
-        const { data: boxTypes } = await supabase.from('box_types').select('id, name');
+        const [
+            { data: boxTypes },
+            { data: statuses },
+            { data: menuItems },
+            { data: mealItems }
+        ] = await Promise.all([
+            supabase.from('box_types').select('id, name'),
+            supabase.from('client_statuses').select('id, name'),
+            supabase.from('menu_items').select('id, value, quota_value'),
+            supabase.from('breakfast_items').select('id, quota_value')
+        ]);
+
         const boxTypeNames = new Map<string, string>();
         for (const bt of boxTypes ?? []) {
             boxTypeNames.set(bt.id, bt.name ?? bt.id);
+        }
+
+        const statusNames = new Map<string, string>();
+        for (const s of statuses ?? []) {
+            statusNames.set(s.id, s.name ?? '');
+        }
+
+        const menuItemMap = new Map<string, { value?: number; quota_value?: number }>();
+        for (const mi of menuItems ?? []) {
+            menuItemMap.set(mi.id, { value: mi.value, quota_value: mi.quota_value });
+        }
+
+        const mealItemMap = new Map<string, { value?: number; quota_value?: number }>();
+        for (const mi of mealItems ?? []) {
+            mealItemMap.set(mi.id, { value: undefined, quota_value: mi.quota_value });
         }
 
         const pageSize = 1000;
@@ -87,7 +200,7 @@ export async function POST(request: NextRequest) {
         while (true) {
             let query = supabase
                 .from('clients')
-                .select('id, full_name, address, phone_number, secondary_phone_number, approved_meals_per_week, email, authorized_amount, screening_status, expiration_date, upcoming_order')
+                .select('id, full_name, address, phone_number, secondary_phone_number, approved_meals_per_week, email, authorized_amount, screening_status, expiration_date, upcoming_order, status_id')
                 .order('full_name', { ascending: true })
                 .order('id', { ascending: true })
                 .range(page * pageSize, (page + 1) * pageSize - 1);
@@ -119,7 +232,9 @@ export async function POST(request: NextRequest) {
             authorized_amount: c.authorized_amount != null ? Number(c.authorized_amount) : '',
             screening_status: c.screening_status ?? '',
             expiration_date: c.expiration_date ? String(c.expiration_date).slice(0, 10) : '',
-            food_box_custom_client_type: foodBoxCustomClientTypeFromUpcoming(c.upcoming_order, boxTypeNames)
+            food_box_custom_client_type: foodBoxCustomClientTypeFromUpcoming(c.upcoming_order, boxTypeNames),
+            status: c.status_id ? (statusNames.get(c.status_id) ?? '') : '',
+            upcoming_order_meal_total: computeUpcomingOrderMealTotal(c.upcoming_order, menuItemMap, mealItemMap)
         }));
 
         const columns = Array.isArray(body.columns) ? (body.columns as string[]).filter(k => VALID_KEYS.has(k)) : [];
