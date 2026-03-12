@@ -478,6 +478,7 @@ export function AssignVendors({ currentUser }: AssignVendorsProps = {}) {
                     </span>
                     <span style={{ minWidth: '50px', flex: 0.3, paddingRight: '8px' }}>#</span>
                     <span style={{ minWidth: '200px', flex: 2, paddingRight: '16px' }}>Name</span>
+                    <span style={{ minWidth: '180px', flex: 1.5, paddingRight: '16px' }}>Address</span>
                     <span style={{ minWidth: '120px', flex: 1, paddingRight: '16px' }}>Status</span>
                     <span style={{ minWidth: '120px', flex: 1, paddingRight: '16px' }}>Service Type</span>
                     <span style={{ minWidth: '180px', flex: 1.5, paddingRight: '16px' }}>Current Vendor</span>
@@ -531,6 +532,9 @@ export function AssignVendors({ currentUser }: AssignVendorsProps = {}) {
                                 </span>
                                 <span title={client.fullName} style={{ minWidth: '200px', flex: 2, fontWeight: 600, paddingRight: '16px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                                     {client.fullName}
+                                </span>
+                                <span title={client.address || ''} style={{ minWidth: '180px', flex: 1.5, paddingRight: '16px', fontSize: '0.85rem', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                    {client.address || '-'}
                                 </span>
                                 <span style={{ minWidth: '120px', flex: 1, paddingRight: '16px' }}>
                                     <span className={`badge ${statusName === 'Active' ? 'badge-success' : ''}`}>
