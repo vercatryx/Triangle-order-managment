@@ -13,7 +13,6 @@ import {
     getMealItems,
     getClient,
     getClientFullDetails,
-    getBatchClientDetails,
     massAssignVendorToBoxOrders
 } from '@/lib/actions';
 import { getClient as getClientCached } from '@/lib/cached-data';
@@ -40,7 +39,6 @@ export function AssignVendors({ currentUser }: AssignVendorsProps = {}) {
     const [detailsCache, setDetailsCache] = useState<Record<string, ClientFullDetails>>({});
     const [search, setSearch] = useState('');
     const [isLoading, setIsLoading] = useState(true);
-    const [isLoadingDetails, setIsLoadingDetails] = useState(false);
     const [selectedClients, setSelectedClients] = useState<Set<string>>(new Set());
     const [selectedVendorId, setSelectedVendorId] = useState<string>('');
     const [isAssigning, setIsAssigning] = useState(false);
@@ -88,36 +86,10 @@ export function AssignVendors({ currentUser }: AssignVendorsProps = {}) {
             setMenuItems(mData);
             setMealItems(mealData as any);
             setClients(allClients);
-            setIsLoading(false);
-
-            loadDetailsInBackground(allClients, sData, bData);
         } catch (error) {
             console.error("Error loading data:", error);
-            setIsLoading(false);
-        }
-    }
-
-    async function loadDetailsInBackground(allClients: ClientProfile[], sData: ClientStatus[], _bData: BoxType[]) {
-        setIsLoadingDetails(true);
-        try {
-            const eligibleStatusIds = new Set(sData.filter(s => s.deliveriesAllowed).map(s => s.id));
-            const eligibleClients = allClients.filter(c => eligibleStatusIds.has(c.statusId) && !c.parentClientId);
-            const eligibleIds = eligibleClients.map(c => c.id);
-
-            if (eligibleIds.length > 0) {
-                const batchSize = 50;
-                for (let i = 0; i < eligibleIds.length; i += batchSize) {
-                    const batch = eligibleIds.slice(i, i + batchSize);
-                    const details = await getBatchClientDetails(batch);
-                    if (details) {
-                        setDetailsCache(prev => ({ ...prev, ...details }));
-                    }
-                }
-            }
-        } catch (error) {
-            console.error("Error loading details:", error);
         } finally {
-            setIsLoadingDetails(false);
+            setIsLoading(false);
         }
     }
 
@@ -147,67 +119,45 @@ export function AssignVendors({ currentUser }: AssignVendorsProps = {}) {
         if (!status?.deliveriesAllowed) return { needs: false, reasons };
         if (client.parentClientId) return { needs: false, reasons };
 
-        if (client.serviceType === 'Boxes') {
-            const clientDetails = detailsCache[client.id];
-            const upcomingBoxOrders = client.upcomingOrder?.boxOrders || [];
-
-            if (clientDetails) {
-                const boxOrders = clientDetails.boxOrders || [];
-                if (boxOrders.length === 0 && upcomingBoxOrders.length === 0) {
-                    reasons.push('Boxes: No orders / no vendor');
-                } else {
-                    const ordersToCheck = boxOrders.length > 0 ? boxOrders : upcomingBoxOrders;
-                    const missing = ordersToCheck.some((bo: any) => {
-                        if (bo.vendorId) return false;
-                        const bt = boxTypes.find(b => b.id === bo.boxTypeId);
-                        return !bt?.vendorId;
-                    });
-                    if (missing) reasons.push('Box order: Missing vendor');
-                }
-            } else {
-                if (upcomingBoxOrders.length === 0) {
-                    reasons.push('Boxes: No orders / no vendor');
-                } else {
-                    const missing = upcomingBoxOrders.some((bo: any) => {
-                        if (bo.vendorId) return false;
-                        const bt = boxTypes.find(b => b.id === bo.boxTypeId);
-                        return !bt?.vendorId;
-                    });
-                    if (missing) reasons.push('Box order: Missing vendor');
-                }
-
-                if (!client.upcomingOrder) {
-                    reasons.push('Boxes: No upcoming order');
-                }
-            }
-        }
-
-        const activeBoxOrders = client.upcomingOrder?.boxOrders || [];
-        const clientDetails = detailsCache[client.id];
-        const cachedBoxOrders = clientDetails?.boxOrders || [];
-        const allBoxOrders = activeBoxOrders.length > 0 ? activeBoxOrders : cachedBoxOrders;
-        if (allBoxOrders.length > 0 && client.serviceType !== 'Boxes') {
-            const missing = allBoxOrders.some((bo: Partial<ClientBoxOrder>) => {
-                if (bo.vendorId) return false;
-                const bt = boxTypes.find(b => b.id === bo.boxTypeId);
-                return !bt?.vendorId;
-            });
-            if (missing) {
-                reasons.push('Box order: No vendor attached');
-            }
-        }
-
+        // #5 — Meal orders with no vendor assigned (same as needs-attention)
         const mealSelections = client.mealOrder?.mealSelections || client.upcomingOrder?.mealSelections;
         if (mealSelections) {
             const mealTypes = Object.keys(mealSelections);
-            const missingMeals = mealTypes.filter(type => !mealSelections[type].vendorId);
-            if (missingMeals.length > 0) {
-                reasons.push(`Meal: No vendor (${missingMeals.join(', ')})`);
+            if (mealTypes.length > 0) {
+                const missingMeals = mealTypes.filter(type => !mealSelections[type].vendorId);
+                if (missingMeals.length > 0) {
+                    reasons.push(`Meal: No vendor (${missingMeals.join(', ')})`);
+                }
+            }
+        }
+
+        // #6 — Any box order with no vendor attached (same as needs-attention)
+        const allBoxOrders = client.upcomingOrder?.boxOrders || [];
+        if (allBoxOrders.length > 0) {
+            const hasMissing = allBoxOrders.some((boxOrder: any) => {
+                if (boxOrder.vendorId) return false;
+                const bt = boxTypes.find(b => b.id === boxOrder.boxTypeId);
+                return !bt?.vendorId;
+            });
+            if (hasMissing) reasons.push('Box order: No vendor attached');
+        }
+
+        // #7 — Box clients with items selected but no vendor (same as needs-attention)
+        if (client.serviceType === 'Boxes' && allBoxOrders.length > 0) {
+            const hasItemsNoVendor = allBoxOrders.some((boxOrder: any) => {
+                const hasItems = Object.keys(boxOrder.items || {}).length > 0;
+                if (!hasItems) return false;
+                if (boxOrder.vendorId) return false;
+                const bt = boxTypes.find(b => b.id === boxOrder.boxTypeId);
+                return !bt?.vendorId;
+            });
+            if (hasItemsNoVendor && !reasons.some(r => r.includes('No vendor'))) {
+                reasons.push('Boxes: Items selected but no vendor');
             }
         }
 
         return { needs: reasons.length > 0, reasons };
-    }, [statuses, boxTypes, detailsCache]);
+    }, [statuses, boxTypes]);
 
     const filteredClients = clients.filter(c => {
         const { needs } = needsVendor(c);
@@ -267,7 +217,6 @@ export function AssignVendors({ currentUser }: AssignVendorsProps = {}) {
                 setAssignResult({ success: successCount, failed: failedCount });
                 setSelectedClients(new Set());
                 setSelectedVendorId('');
-                setDetailsCache({});
                 await loadData();
             }
         } catch (error) {
@@ -402,12 +351,6 @@ export function AssignVendors({ currentUser }: AssignVendorsProps = {}) {
                 <div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                         <h1 className="title">Clients</h1>
-                        {isLoadingDetails && (
-                            <div className={styles.refreshIndicator} style={{ color: 'var(--primary)', backgroundColor: 'var(--primary-light)' }}>
-                                <Loader2 size={14} className="animate-spin" />
-                                <span>Loading details...</span>
-                            </div>
-                        )}
                     </div>
                     <p className="text-secondary" style={{ marginTop: '4px' }}>
                         {filteredClients.length} clients missing vendor assignment
@@ -514,7 +457,7 @@ export function AssignVendors({ currentUser }: AssignVendorsProps = {}) {
                 <div style={{ marginLeft: 'auto' }}>
                     <button
                         className="btn btn-secondary"
-                        onClick={() => { setDetailsCache({}); loadData(); }}
+                        onClick={() => loadData()}
                         disabled={isLoading}
                         title="Refresh List"
                     >
@@ -548,9 +491,7 @@ export function AssignVendors({ currentUser }: AssignVendorsProps = {}) {
                     </div>
                 ) : filteredClients.length === 0 ? (
                     <div className={styles.empty}>
-                        {isLoadingDetails
-                            ? 'Still loading client details — more clients may appear...'
-                            : 'No clients need vendor assignment.'}
+                        No clients need vendor assignment.
                     </div>
                 ) : (
                     filteredClients.map((client, index) => {

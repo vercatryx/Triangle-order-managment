@@ -18,7 +18,10 @@ function itemPoints(item: { value?: number; quota_value?: number } | undefined):
     return v > 0 ? v : (q || 0);
 }
 
-/** Compute total meal value from clients.upcoming_order using item point values. */
+/** Compute total meal value from clients.upcoming_order using item point values.
+ *  Mirrors getTotalMealCountAllDays() in FoodServiceWidget.tsx:
+ *  - deliveryDayOrders & vendorSelections are summed freely (same item on multiple days counts each time)
+ *  - mealSelections items are only added if NOT already seen in deliveryDayOrders/vendorSelections */
 function computeUpcomingOrderMealTotal(
     upcomingOrder: unknown,
     menuItemMap: Map<string, { value?: number; quota_value?: number }>,
@@ -30,42 +33,66 @@ function computeUpcomingOrderMealTotal(
     if (!st || typeof st !== 'string') return '';
 
     let total = 0;
-    const countedItemIds = new Set<string>();
 
-    function sumItems(items: unknown) {
+    function sumItemMap(items: unknown, trackSet?: Set<string>) {
         if (!items || typeof items !== 'object') return;
         for (const [itemId, qty] of Object.entries(items as Record<string, unknown>)) {
             const q = Number(qty);
             if (q <= 0) continue;
-            if (countedItemIds.has(itemId)) continue;
-            countedItemIds.add(itemId);
+            trackSet?.add(itemId);
             const item = menuItemMap.get(itemId) ?? mealItemMap.get(itemId);
             total += itemPoints(item) * q;
         }
     }
 
+    /** Sum a vendor selection, handling both flat `items` and per-day `itemsByDay`. */
+    function sumVendorSelection(sel: Record<string, unknown>, trackSet?: Set<string>) {
+        const itemsByDay = sel.itemsByDay;
+        if (itemsByDay && typeof itemsByDay === 'object') {
+            const days = Array.isArray(sel.selectedDeliveryDays)
+                ? (sel.selectedDeliveryDays as string[])
+                : Object.keys(itemsByDay as Record<string, unknown>);
+            for (const day of days) {
+                sumItemMap((itemsByDay as Record<string, unknown>)[day], trackSet);
+            }
+        } else {
+            sumItemMap(sel.items, trackSet);
+        }
+    }
+
     if (st === 'Food' || st === 'Meal') {
+        const foodItemIds = new Set<string>();
+
         const dayOrders = uo.deliveryDayOrders;
         if (dayOrders && typeof dayOrders === 'object') {
             for (const dayData of Object.values(dayOrders as Record<string, unknown>)) {
                 const vendorSels = (dayData as Record<string, unknown>)?.vendorSelections;
                 if (Array.isArray(vendorSels)) {
                     for (const sel of vendorSels) {
-                        sumItems((sel as Record<string, unknown>)?.items);
+                        sumVendorSelection(sel as Record<string, unknown>, foodItemIds);
                     }
                 }
-            }
-        }
-        const mealSels = uo.mealSelections;
-        if (mealSels && typeof mealSels === 'object') {
-            for (const mealConfig of Object.values(mealSels as Record<string, unknown>)) {
-                sumItems((mealConfig as Record<string, unknown>)?.items);
             }
         }
         const vendorSels = uo.vendorSelections;
         if (Array.isArray(vendorSels)) {
             for (const sel of vendorSels) {
-                sumItems((sel as Record<string, unknown>)?.items);
+                sumVendorSelection(sel as Record<string, unknown>, foodItemIds);
+            }
+        }
+
+        const mealSels = uo.mealSelections;
+        if (mealSels && typeof mealSels === 'object') {
+            for (const mealConfig of Object.values(mealSels as Record<string, unknown>)) {
+                const items = (mealConfig as Record<string, unknown>)?.items;
+                if (!items || typeof items !== 'object') continue;
+                for (const [itemId, qty] of Object.entries(items as Record<string, unknown>)) {
+                    const q = Number(qty);
+                    if (q <= 0) continue;
+                    if (foodItemIds.has(itemId)) continue;
+                    const item = menuItemMap.get(itemId) ?? mealItemMap.get(itemId);
+                    total += itemPoints(item) * q;
+                }
             }
         }
     } else if (st === 'Boxes') {

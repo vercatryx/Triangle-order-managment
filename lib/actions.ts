@@ -8331,19 +8331,33 @@ export async function massAssignVendorToBoxOrders(clientIds: string[], vendorId:
 
             if (upcomingOrder.serviceType === 'Boxes' && Array.isArray(upcomingOrder.boxOrders)) {
                 upcomingOrder.boxOrders = upcomingOrder.boxOrders.map((bo: any) => {
-                    if (!bo.vendorId) {
-                        updated = true;
-                        return { ...bo, vendorId };
-                    }
-                    return bo;
+                    updated = true;
+                    return { ...bo, vendorId };
                 });
             }
 
             if (upcomingOrder.mealSelections) {
                 for (const mealType of Object.keys(upcomingOrder.mealSelections)) {
-                    if (!upcomingOrder.mealSelections[mealType].vendorId) {
-                        upcomingOrder.mealSelections[mealType].vendorId = vendorId;
-                        updated = true;
+                    upcomingOrder.mealSelections[mealType].vendorId = vendorId;
+                    updated = true;
+                }
+            }
+
+            if (upcomingOrder.vendorSelections && Array.isArray(upcomingOrder.vendorSelections)) {
+                upcomingOrder.vendorSelections = upcomingOrder.vendorSelections.map((vs: any) => {
+                    updated = true;
+                    return { ...vs, vendorId };
+                });
+            }
+
+            if (upcomingOrder.deliveryDayOrders && typeof upcomingOrder.deliveryDayOrders === 'object') {
+                for (const day of Object.keys(upcomingOrder.deliveryDayOrders)) {
+                    const dayOrder = upcomingOrder.deliveryDayOrders[day];
+                    if (dayOrder?.vendorSelections && Array.isArray(dayOrder.vendorSelections)) {
+                        dayOrder.vendorSelections = dayOrder.vendorSelections.map((vs: any) => {
+                            updated = true;
+                            return { ...vs, vendorId };
+                        });
                     }
                 }
             }
