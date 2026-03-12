@@ -101,15 +101,7 @@ function computeUpcomingOrderMealTotal(
             for (const bo of boxOrders) {
                 const rec = bo as Record<string, unknown>;
                 const boxQty = Number(rec.quantity ?? 1) || 1;
-                const items = rec.items;
-                if (items && typeof items === 'object') {
-                    for (const [itemId, qty] of Object.entries(items as Record<string, unknown>)) {
-                        const q = Number(qty);
-                        if (q <= 0) continue;
-                        const item = menuItemMap.get(itemId) ?? mealItemMap.get(itemId);
-                        total += itemPoints(item) * q * boxQty;
-                    }
-                }
+                total += boxQty;
             }
         }
     } else if (st === 'Custom') {
