@@ -533,7 +533,7 @@ export function AssignVendors({ currentUser }: AssignVendorsProps = {}) {
                                 <span title={client.fullName} style={{ minWidth: '200px', flex: 2, fontWeight: 600, paddingRight: '16px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                                     {client.fullName}
                                 </span>
-                                <span title={client.address || ''} style={{ minWidth: '280px', flex: 2.5, paddingRight: '16px', fontSize: '0.85rem', color: 'var(--text-secondary)', lineHeight: '1.3' }}>
+                                <span title={client.address || ''} style={{ minWidth: '280px', maxWidth: '320px', flex: 2.5, paddingRight: '16px', fontSize: '0.85rem', color: 'var(--text-secondary)', lineHeight: '1.3', wordBreak: 'break-word', whiteSpace: 'normal', overflow: 'hidden' }}>
                                     {client.address || '-'}
                                 </span>
                                 <span style={{ minWidth: '120px', flex: 1, paddingRight: '16px' }}>
